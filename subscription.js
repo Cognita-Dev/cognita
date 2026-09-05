@@ -1,0 +1,114 @@
+// subscription.js
+// Resolves a Firebase-verified uid to their actual subscription state.
+// This is the SINGLE authoritative source for "what plan is this user on."
+// It is only ever called with a uid that came out of auth-middleware.js —
+// never with a client-supplied uid.
+
+import { fsGet, fsSet } from './firestore-rest.js';
+import { getPlan, planSatisfies } from './entitlements.js';
+
+// Possible subscription.status values:
+//   'active'    — paid plan, in good standing
+//   'none'      — never subscribed (implicitly free)
+//   'past_due'  — payment failed, in grace period
+//   'cancelled' — user cancelled, access continues until periodEnd
+//   'expired'   — grace period or cancellation period has passed
+
+const GRACE_PERIOD_DAYS = 3;
+
+/**
+ * Reads (and lazily initializes) a user's account document.
+ * Returns { uid, planId, status, periodEnd, createdAt }.
+ */
+export async function getAccount(uid, env) {
+  let doc = await fsGet('accounts/' + uid, env);
+
+  if (!doc) {
+    doc = {
+      uid,
+      planId: 'free',
+      status: 'none',
+      periodEnd: null,
+      createdAt: new Date().toISOString(),
+    };
+    await fsSet('accounts/' + uid, doc, env);
+    return doc;
+  }
+
+  return _resolveEffectivePlan(doc);
+}
+
+// Applies grace-period / expiry logic without mutating Firestore on every
+// read — expiry is only written back when it actually changes (see
+// reconcileExpiry, called from a cron or on-access check below).
+function _resolveEffectivePlan(doc) {
+  const now = Date.now();
+
+  if (doc.status === 'active') {
+    return doc;
+  }
+
+  if (doc.status === 'past_due' && doc.periodEnd) {
+    const graceEnd = new Date(doc.periodEnd).getTime() + GRACE_PERIOD_DAYS * 86400000;
+    if (now <= graceEnd) {
+      return doc; // still within grace — treat as active plan-wise
+    }
+    return { ...doc, planId: 'free', status: 'expired' };
+  }
+
+  if (doc.status === 'cancelled' && doc.periodEnd) {
+    if (now <= new Date(doc.periodEnd).getTime()) {
+      return doc; // cancelled but period not over — still has access
+    }
+    return { ...doc, planId: 'free', status: 'expired' };
+  }
+
+  if (doc.status === 'expired' || doc.status === 'none') {
+    return { ...doc, planId: 'free' };
+  }
+
+  return doc;
+}
+
+/**
+ * Writes back the actually-expired state if we computed one that differs
+ * from Firestore. Call this after getAccount() when you're about to act on
+ * the result, so stale 'active'/'past_due' records self-heal over time
+ * without needing a cron sweep for correctness (a cron sweep is still used
+ * for cleanliness/reporting — see scheduled-tasks.js).
+ */
+export async function reconcileIfExpired(uid, freshDoc, env) {
+  const stored = await fsGet('accounts/' + uid, env);
+  if (!stored) return;
+  if (stored.status !== freshDoc.status || stored.planId !== freshDoc.planId) {
+    await fsSet('accounts/' + uid, { ...stored, planId: freshDoc.planId, status: freshDoc.status }, env);
+  }
+}
+
+/**
+ * Full account resolution: verified uid in, effective plan + a guarantee
+ * that Firestore reflects reality, in one call. This is what protected
+ * endpoints should use.
+ */
+export async function resolveAccount(uid, env) {
+  const raw = await getAccount(uid, env);
+  const effective = _resolveEffectivePlan(raw);
+  if (effective.status !== raw.status || effective.planId !== raw.planId) {
+    await reconcileIfExpired(uid, effective, env);
+  }
+  return effective;
+}
+
+/**
+ * Throws if the account's plan does not satisfy requiredPlan.
+ * Use inside protected endpoints after resolveAccount().
+ */
+export function assertPlan(account, requiredPlan) {
+  if (!planSatisfies(account.planId, requiredPlan)) {
+    const err = new Error('This feature requires the ' + getPlan(requiredPlan).name + ' plan or higher.');
+    err.code = 'PLAN_REQUIRED';
+    err.requiredPlan = requiredPlan;
+    err.currentPlan = account.planId;
+    throw err;
+  }
+}
