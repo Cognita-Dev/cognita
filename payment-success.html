@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payment received — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/payment.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="payment-page">
+
+<div class="payment-shell">
+  <img src="/assets/cognita.png" alt="Cognita" class="payment-logo">
+
+  <div class="payment-status" id="paymentStatus">
+    <span class="btn-spinner btn-spinner--dark"></span>
+    <h1>Confirming your payment…</h1>
+    <p>This usually takes just a few seconds.</p>
+  </div>
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module">
+  const WORKER_URL = 'https://YOUR_WORKER_SUBDOMAIN.workers.dev';
+
+  const statusEl = document.getElementById('paymentStatus');
+  const params = new URLSearchParams(window.location.search);
+  const reference = params.get('reference') || params.get('trxref');
+
+  const MAX_ATTEMPTS = 12;   // ~24 seconds of polling
+  const POLL_INTERVAL_MS = 2000;
+
+  function showSuccess(planName) {
+    statusEl.innerHTML =
+      '<i class="ph ph-check-circle" style="font-size:2.5rem;color:var(--success);"></i>' +
+      '<h1>You\'re on ' + planName + '</h1>' +
+      '<p>Your plan is active. Enjoy the extra room to work.</p>' +
+      '<a href="/app.html" class="payment-retry-btn payment-retry-btn--primary">Go to Cognita</a>';
+  }
+
+  function showPending() {
+    statusEl.innerHTML =
+      '<i class="ph ph-clock" style="font-size:2.5rem;color:var(--warning);"></i>' +
+      '<h1>Almost there</h1>' +
+      '<p>Your payment was received and is still being confirmed. This page will update automatically — you can also check back in your account in a minute.</p>' +
+      '<a href="/account.html" class="payment-retry-btn">Go to account</a>';
+  }
+
+  function showError(message) {
+    statusEl.innerHTML =
+      '<i class="ph ph-warning-circle" style="font-size:2.5rem;color:var(--danger);"></i>' +
+      '<h1>Something went wrong</h1>' +
+      '<p>' + message + '</p>' +
+      '<a href="/pricing.html" class="payment-retry-btn">Back to plans</a>';
+  }
+
+  const user = await window.Auth.requireAuthOrRedirect();
+  if (!user) throw new Error('redirecting to login');
+
+  if (!reference) {
+    showError('No payment reference was found. If you completed a payment, check your account page in a minute.');
+  } else {
+    let attempts = 0;
+    let lastKnownPlanId = null;
+
+    // Poll /api/account rather than trusting the redirect itself — the
+    // Paystack webhook is the only thing that actually activates the plan,
+    // and it may land a moment after this page loads.
+    async function pollAccount() {
+      attempts++;
+      try {
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
+        const data = await res.json();
+
+        if (res.ok && data.status === 'active' && data.planId !== 'free') {
+          showSuccess(data.planName);
+          return;
+        }
+
+        lastKnownPlanId = data.planId;
+      } catch (e) {
+        console.error('[payment-success] poll error:', e.message);
+      }
+
+      if (attempts >= MAX_ATTEMPTS) {
+        showPending();
+        return;
+      }
+
+      setTimeout(pollAccount, POLL_INTERVAL_MS);
+    }
+
+    pollAccount();
+  }
+</script>
+
+</body>
+</html>
