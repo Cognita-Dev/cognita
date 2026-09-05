@@ -10,6 +10,7 @@ import { handleDocumentRequest } from './document-endpoint.js';
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
+import { handleSubscriptionCancel } from './cancel-endpoint.js';
 
 function _corsPreflight() {
   return new Response(null, {
@@ -63,6 +64,10 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/payment/webhook') {
       return handlePaystackWebhook(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
+      return handleSubscriptionCancel(request, env);
     }
 
     return new Response(JSON.stringify({ error: 'Not found.' }), {
