@@ -9,6 +9,7 @@ import { handleImageRequest } from './image-endpoint.js';
 import { handleDocumentRequest } from './document-endpoint.js';
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
+import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
 
 function _corsPreflight() {
   return new Response(null, {
@@ -34,6 +35,14 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/api/plans') {
       return handlePlansRequest();
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/account') {
+      return handleAccountRequest(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/usage') {
+      return handleUsageRequest(request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/chat') {
