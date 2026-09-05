@@ -1,0 +1,84 @@
+/* css/marketing.css
+   Shared header, footer, and nav used across public-facing pages:
+   index.html, pricing.html, terms.html, privacy.html.
+*/
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-base);
+  z-index: 100;
+}
+
+.site-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+
+.site-logo img {
+  height: 24px;
+  width: auto;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.site-nav a.is-active {
+  color: var(--text-1);
+}
+
+.site-nav a:hover {
+  color: var(--text-1);
+}
+
+.site-nav-cta {
+  padding: var(--space-2) var(--space-4);
+  background: var(--text-1);
+  color: var(--bg-base);
+  border-radius: var(--radius-md);
+  transition: opacity var(--duration-fast) var(--ease);
+}
+
+.site-nav-cta:hover {
+  opacity: 0.85;
+}
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-6);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.site-footer-links {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.site-footer-links a:hover {
+  color: var(--text-1);
+}
+
+@media (max-width: 640px) {
+  .site-nav { gap: var(--space-3); }
+  .site-footer { flex-direction: column; gap: var(--space-3); text-align: center; }
+}
