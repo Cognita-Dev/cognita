@@ -1,0 +1,79 @@
+/* css/payment.css */
+
+.payment-page {
+  background: var(--bg-subtle);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.payment-shell {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.payment-logo {
+  height: 32px;
+  width: auto;
+}
+
+.payment-status {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-6);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  box-shadow: var(--shadow-md);
+  animation: fadeInUp var(--duration-slow) var(--ease);
+}
+
+.payment-status h1 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin-top: var(--space-2);
+}
+
+.payment-status p {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.payment-retry-btn {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-strong);
+  color: var(--text-1);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.payment-retry-btn:hover {
+  background: var(--border);
+}
+
+.payment-retry-btn--primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+}
+
+.payment-retry-btn--primary:hover {
+  background: var(--accent-hover);
+}
