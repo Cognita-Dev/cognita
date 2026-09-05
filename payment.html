@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redirecting to payment — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/payment.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="payment-page">
+
+<div class="payment-shell">
+  <img src="/assets/cognita.png" alt="Cognita" class="payment-logo">
+
+  <div class="payment-status" id="paymentStatus">
+    <span class="btn-spinner btn-spinner--dark"></span>
+    <h1>Preparing your checkout…</h1>
+    <p>You'll be redirected to our secure payment provider in a moment.</p>
+  </div>
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module">
+  const WORKER_URL = 'https://YOUR_WORKER_SUBDOMAIN.workers.dev';
+
+  const params = new URLSearchParams(window.location.search);
+  const planId = params.get('plan');
+
+  const statusEl = document.getElementById('paymentStatus');
+
+  function showError(message) {
+    statusEl.innerHTML =
+      '<i class="ph ph-warning-circle" style="font-size:2rem;color:var(--danger);"></i>' +
+      '<h1>Could not start checkout</h1>' +
+      '<p>' + message + '</p>' +
+      '<a href="/pricing.html" class="payment-retry-btn">Back to plans</a>';
+  }
+
+  const user = await window.Auth.requireAuthOrRedirect();
+  if (!user) throw new Error('redirecting to login');
+
+  if (!planId || !['plus', 'studio'].includes(planId)) {
+    showError('No plan was specified. Please choose a plan again.');
+  } else {
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/payment/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not start checkout.');
+
+      window.location.href = data.authorizationUrl;
+    } catch (e) {
+      showError(e.message);
+    }
+  }
+</script>
+
+</body>
+</html>
