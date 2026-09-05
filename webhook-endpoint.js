@@ -131,6 +131,9 @@ async function _handleChargeSuccess(data, env) {
     updatedAt: new Date().toISOString(),
   }, env);
 
+  if (data.customer?.customer_code) {
+    await fsSet('customerCodeIndex/' + data.customer.customer_code, { uid }, env);
+  }
   if (attempt) {
     await fsUpdate('paymentAttempts/' + reference, { status: 'completed' }, env);
   }
