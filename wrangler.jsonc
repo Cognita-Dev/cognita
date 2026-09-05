@@ -1,0 +1,40 @@
+{
+  "name": "cognita-worker",
+  "main": "worker.js",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Workers AI binding — used for Flux image generation and as a
+  // last-resort text fallback provider.
+  "ai": {
+    "binding": "AI"
+  },
+
+  // KV namespace for server-side daily usage counters. Create this via:
+  //   wrangler kv:namespace create COGNITA_USAGE
+  // then paste the returned id below.
+  "kv_namespaces": [
+    {
+      "binding": "COGNITA_USAGE",
+      "id": "YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+
+  // Secrets (API keys, private keys, etc.) are NOT declared here.
+  // They are set via:
+  //   wrangler secret put GROQ_API_KEY
+  //   wrangler secret put OPENROUTER_API_KEY
+  //   wrangler secret put PAYSTACK_SECRET_KEY
+  //   wrangler secret put FIREBASE_CLIENT_EMAIL
+  //   wrangler secret put FIREBASE_PRIVATE_KEY
+  // (Wrangler also supports setting these directly in the Cloudflare
+  // dashboard under Workers & Pages > cognita-worker > Settings > Variables,
+  // which is the recommended path if you're working GitHub-first with no
+  // local terminal — see the placeholder list at the end of this build.)
+
+  // Non-secret configuration values (safe to commit).
+  "vars": {
+    "FIREBASE_PROJECT_ID": "YOUR_FIREBASE_PROJECT_ID",
+    "APP_ORIGIN": "https://YOUR_DOMAIN.pages.dev"
+  }
+}
