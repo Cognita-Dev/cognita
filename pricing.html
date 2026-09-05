@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/marketing.css">
+<link rel="stylesheet" href="/css/pricing.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a href="/index.html" class="site-logo">
+    <img src="/assets/cognita.png" alt="Cognita">
+    <span>Cognita</span>
+  </a>
+  <nav class="site-nav">
+    <a href="/pricing.html" class="is-active">Pricing</a>
+    <a href="/login.html">Sign in</a>
+    <a href="/signup.html" class="site-nav-cta">Get started</a>
+  </nav>
+</header>
+
+<main class="pricing-shell">
+  <div class="pricing-intro">
+    <h1>Simple pricing, real value</h1>
+    <p>Start free. Upgrade when Cognita becomes part of how you work.</p>
+  </div>
+
+  <div class="pricing-grid" id="pricingGrid">
+    <div class="pricing-card skeleton" style="height:420px;"></div>
+    <div class="pricing-card skeleton" style="height:420px;"></div>
+    <div class="pricing-card skeleton" style="height:420px;"></div>
+  </div>
+
+  <p class="pricing-note" id="pricingError" hidden>Could not load plans right now. Please refresh the page.</p>
+
+  <section class="pricing-faq">
+    <h2>Frequently asked questions</h2>
+
+    <div class="faq-item">
+      <h3>Can I change plans later?</h3>
+      <p>Yes. You can upgrade at any time, and cancel a paid plan from your account page — you'll keep access until the end of your current billing period.</p>
+    </div>
+
+    <div class="faq-item">
+      <h3>What happens if I hit my daily limit?</h3>
+      <p>You'll see a clear notice when a limit is reached, and it resets automatically at midnight UTC. Upgrading raises your limits immediately.</p>
+    </div>
+
+    <div class="faq-item">
+      <h3>What payment methods are supported?</h3>
+      <p>Payments are processed securely through Paystack, supporting cards, bank transfers, and other methods available in your region.</p>
+    </div>
+
+    <div class="faq-item">
+      <h3>Is my data used to train models?</h3>
+      <p>No. Your conversations are used only to generate your responses and are not used for model training.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>&copy; <span id="year"></span> Cognita. All rights reserved.</p>
+  <div class="site-footer-links">
+    <a href="/terms.html">Terms</a>
+    <a href="/privacy.html">Privacy</a>
+  </div>
+</footer>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module">
+  const WORKER_URL = 'https://YOUR_WORKER_SUBDOMAIN.workers.dev';
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  const PLAN_TAGLINES = {
+    free: 'Enough to see what Cognita can do.',
+    plus: 'For regular writing, research, and document work.',
+    studio: 'The complete Cognita experience for heavy daily use.',
+  };
+
+  const PLAN_ICONS = {
+    free: 'ph-sparkle',
+    plus: 'ph-lightning',
+    studio: 'ph-crown-simple',
+  };
+
+  function featureList(plan) {
+    const items = [
+      plan.limits.messagesPerDay + ' messages per day',
+      plan.hasVision ? 'Advanced model access' : 'Standard model access',
+      plan.limits.imageGenPerDay + ' visual generations per day',
+      plan.features.documentExport
+        ? plan.limits.documentGenPerDay + ' exportable documents per day'
+        : 'Plain-text document drafts',
+      plan.limits.maxFileSizeMB + 'MB max file size',
+    ];
+    if (plan.features.longContext) items.push('Extended conversation memory');
+    if (plan.features.prioritySupport) items.push('Priority support');
+    return items;
+  }
+
+  function renderCard(plan) {
+    const isFree = plan.id === 'free';
+    const priceDisplay = isFree ? '₦0' : '₦' + plan.priceNGN.toLocaleString();
+    const period = isFree ? '' : '<span class="price-period">/month</span>';
+    const ctaLabel = isFree ? 'Start for free' : 'Choose ' + plan.name;
+    const ctaAttrs = isFree
+      ? 'href="/signup.html"'
+      : 'data-plan-id="' + plan.id + '"';
+    const ctaTag = isFree ? 'a' : 'button';
+    const highlightClass = plan.id === 'plus' ? ' is-highlighted' : '';
+
+    return (
+      '<div class="pricing-card' + highlightClass + '">' +
+        (plan.id === 'plus' ? '<div class="pricing-badge">Most popular</div>' : '') +
+        '<div class="pricing-card-icon"><i class="ph ' + PLAN_ICONS[plan.id] + '"></i></div>' +
+        '<h2 class="pricing-card-name">' + plan.name + '</h2>' +
+        '<p class="pricing-card-tagline">' + PLAN_TAGLINES[plan.id] + '</p>' +
+        '<div class="pricing-card-price">' + priceDisplay + period + '</div>' +
+        '<' + ctaTag + ' class="pricing-cta' + (plan.id === 'plus' ? ' pricing-cta--primary' : '') + '" ' + ctaAttrs + '>' +
+          ctaLabel +
+        '</' + ctaTag + '>' +
+        '<ul class="pricing-feature-list">' +
+          featureList(plan).map((f) => '<li><i class="ph ph-check"></i>' + f + '</li>').join('') +
+        '</ul>' +
+      '</div>'
+    );
+  }
+
+  async function loadPlans() {
+    try {
+      const res = await fetch(WORKER_URL + '/api/plans');
+      const data = await res.json();
+      if (!res.ok) throw new Error('Failed to load plans.');
+
+      const order = ['free', 'plus', 'studio'];
+      const sorted = order.map((id) => data.plans.find((p) => p.id === id)).filter(Boolean);
+
+      document.getElementById('pricingGrid').innerHTML = sorted.map(renderCard).join('');
+      wireCheckoutButtons();
+    } catch (e) {
+      document.getElementById('pricingGrid').hidden = true;
+      document.getElementById('pricingError').hidden = false;
+      console.error('[pricing] ' + e.message);
+    }
+  }
+
+  function wireCheckoutButtons() {
+    document.querySelectorAll('[data-plan-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const user = window.Auth.getCurrentUser();
+        if (!user) {
+          window.location.href = '/signup.html?next=pricing';
+          return;
+        }
+
+        const planId = btn.dataset.planId;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Redirecting…';
+
+        try {
+          const res = await window.Auth.authedFetch(WORKER_URL + '/api/payment/initialize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ planId }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Could not start checkout.');
+
+          window.location.href = data.authorizationUrl;
+        } catch (e) {
+          alert('Could not start checkout: ' + e.message);
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      });
+    });
+  }
+
+  await window.Auth.ready();
+  loadPlans();
+</script>
+
+</body>
+</html>
