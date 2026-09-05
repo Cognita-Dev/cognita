@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/account.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="account-page">
+
+<header class="account-topbar">
+  <a href="/app.html" class="account-back">
+    <i class="ph ph-arrow-left"></i> Back to Cognita
+  </a>
+</header>
+
+<main class="account-shell">
+  <h1 class="account-page-title">Account</h1>
+
+  <section class="account-section">
+    <div class="account-section-header">
+      <div>
+        <h2>Plan</h2>
+        <p class="account-section-sub" id="planStatusLine">Loading…</p>
+      </div>
+      <a href="/pricing.html" class="account-upgrade-btn" id="planActionBtn">View plans</a>
+    </div>
+  </section>
+
+  <section class="account-section">
+    <h2>Today's usage</h2>
+    <div class="usage-detail-grid" id="usageDetailGrid">
+      <div class="usage-detail-card skeleton" style="height:88px;"></div>
+      <div class="usage-detail-card skeleton" style="height:88px;"></div>
+      <div class="usage-detail-card skeleton" style="height:88px;"></div>
+      <div class="usage-detail-card skeleton" style="height:88px;"></div>
+    </div>
+    <p class="usage-reset-note">Usage resets daily at midnight UTC.</p>
+  </section>
+
+  <section class="account-section">
+    <h2>Account details</h2>
+    <div class="detail-row">
+      <span>Email</span>
+      <span id="detailEmail">—</span>
+    </div>
+  </section>
+
+  <section class="account-section account-section--danger">
+    <h2>Sign out</h2>
+    <p class="account-section-sub">You'll need to sign in again to use Cognita.</p>
+    <button class="danger-btn" id="signOutBtn">
+      <i class="ph ph-sign-out"></i> Sign out
+    </button>
+  </section>
+</main>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module">
+  const WORKER_URL = 'https://YOUR_WORKER_SUBDOMAIN.workers.dev';
+
+  const user = await window.Auth.requireAuthOrRedirect();
+  if (!user) throw new Error('redirecting');
+
+  document.getElementById('detailEmail').textContent = user.email || '—';
+
+  function usageCard(label, icon, used, limit) {
+    const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+    const barClass = pct >= 100 ? 'is-at-limit' : pct >= 70 ? 'is-near-limit' : '';
+    return (
+      '<div class="usage-detail-card">' +
+        '<div class="usage-detail-top">' +
+          '<i class="ph ' + icon + '"></i>' +
+          '<span>' + label + '</span>' +
+        '</div>' +
+        '<div class="usage-detail-count">' + used + ' <span>/ ' + limit + '</span></div>' +
+        '<div class="usage-bar"><div class="usage-bar-fill ' + barClass + '" style="width:' + pct + '%;"></div></div>' +
+      '</div>'
+    );
+  }
+
+  async function loadAccount() {
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load account.');
+
+      const statusLabel = {
+        active: 'Active',
+        past_due: 'Payment issue — grace period',
+        cancelled: 'Cancelled — active until ' + formatDate(data.periodEnd),
+        expired: 'Expired',
+        none: 'Free plan',
+      }[data.status] || data.status;
+
+      document.getElementById('planStatusLine').textContent = data.planName + ' — ' + statusLabel;
+
+      const actionBtn = document.getElementById('planActionBtn');
+      if (data.planId === 'studio' && data.status === 'active') {
+        actionBtn.textContent = 'Manage plan';
+      }
+    } catch (e) {
+      document.getElementById('planStatusLine').textContent = 'Could not load plan details.';
+      console.error('[account] ' + e.message);
+    }
+  }
+
+  async function loadUsage() {
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/usage');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load usage.');
+
+      const u = data.usage;
+      document.getElementById('usageDetailGrid').innerHTML =
+        usageCard('Messages', 'ph-chat-circle', u.messages.used, u.messages.limit) +
+        usageCard('Advanced model', 'ph-brain', u.advancedModel.used, u.advancedModel.limit) +
+        usageCard('Images', 'ph-image', u.imageGen.used, u.imageGen.limit) +
+        usageCard('Documents', 'ph-file-text', u.documentGen.used, u.documentGen.limit);
+    } catch (e) {
+      document.getElementById('usageDetailGrid').innerHTML =
+        '<p style="color:var(--text-3);">Could not load usage details.</p>';
+      console.error('[account] ' + e.message);
+    }
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  document.getElementById('signOutBtn').addEventListener('click', async () => {
+    await window.Auth.logOut();
+    window.location.href = '/login.html';
+  });
+
+  loadAccount();
+  loadUsage();
+</script>
+
+</body>
+</html>
