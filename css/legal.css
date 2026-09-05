@@ -1,0 +1,64 @@
+/* css/legal.css */
+
+.legal-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-5) var(--space-8);
+}
+
+.legal-shell h1 {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-2);
+}
+
+.legal-updated {
+  font-size: var(--text-sm);
+  color: var(--text-4);
+  margin-bottom: var(--space-5);
+}
+
+.legal-notice {
+  background: var(--accent-subtle);
+  color: var(--text-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  margin-bottom: var(--space-7);
+}
+
+.legal-shell section {
+  margin-bottom: var(--space-6);
+}
+
+.legal-shell h2 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  margin-bottom: var(--space-3);
+}
+
+.legal-shell p {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.75;
+  margin-bottom: var(--space-3);
+}
+
+.legal-shell ul {
+  padding-left: var(--space-5);
+  margin-bottom: var(--space-3);
+}
+
+.legal-shell li {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.75;
+  margin-bottom: var(--space-2);
+}
+
+.legal-shell a {
+  color: var(--accent);
+  text-decoration: underline;
+}
