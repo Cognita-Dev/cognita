@@ -28,6 +28,9 @@
       </div>
       <a href="/pricing.html" class="account-upgrade-btn" id="planActionBtn">View plans</a>
     </div>
+    <button class="danger-btn" id="cancelPlanBtn" hidden style="margin-top: var(--space-3);">
+      <i class="ph ph-x-circle"></i> Cancel subscription
+    </button>
   </section>
 
   <section class="account-section">
@@ -82,6 +85,11 @@
     );
   }
 
+  function formatDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
   async function loadAccount() {
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
@@ -99,8 +107,17 @@
       document.getElementById('planStatusLine').textContent = data.planName + ' — ' + statusLabel;
 
       const actionBtn = document.getElementById('planActionBtn');
-      if (data.planId === 'studio' && data.status === 'active') {
-        actionBtn.textContent = 'Manage plan';
+      const cancelBtn = document.getElementById('cancelPlanBtn');
+
+      if (data.planId !== 'free' && data.status === 'active') {
+        actionBtn.textContent = 'Change plan';
+        cancelBtn.hidden = false;
+      } else if (data.status === 'cancelled') {
+        cancelBtn.hidden = true;
+        actionBtn.textContent = 'Resubscribe';
+      } else {
+        cancelBtn.hidden = true;
+        actionBtn.textContent = 'View plans';
       }
     } catch (e) {
       document.getElementById('planStatusLine').textContent = 'Could not load plan details.';
@@ -127,14 +144,33 @@
     }
   }
 
-  function formatDate(iso) {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  }
-
   document.getElementById('signOutBtn').addEventListener('click', async () => {
     await window.Auth.logOut();
     window.location.href = '/login.html';
+  });
+
+  document.getElementById('cancelPlanBtn').addEventListener('click', async () => {
+    const confirmed = confirm(
+      'Cancel your subscription? You\'ll keep access until the end of your current billing period, then move to the Free plan.'
+    );
+    if (!confirmed) return;
+
+    const btn = document.getElementById('cancelPlanBtn');
+    btn.disabled = true;
+    btn.textContent = 'Cancelling…';
+
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/subscription/cancel', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not cancel subscription.');
+
+      alert(data.message);
+      loadAccount();
+    } catch (e) {
+      alert('Something went wrong: ' + e.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="ph ph-x-circle"></i> Cancel subscription';
+    }
   });
 
   loadAccount();
