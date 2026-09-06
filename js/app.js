@@ -8,10 +8,17 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 const HISTORY_KEY = 'cognita:conversations';
 
 const QUALITY_META = {
-  standard: { label: 'Standard', icon: 'ph-lightning' },
-  advanced: { label: 'Advanced', icon: 'ph-brain' },
-  thorough: { label: 'Thorough', icon: 'ph-magnifying-glass' },
+  standard: { label: 'Standard' },
+  advanced: { label: 'Advanced' },
+  thorough: { label: 'Thorough' },
 };
+
+const PLACEHOLDERS = [
+  'Message Cognita',
+  'Ask me anything…',
+  'Draft, plan, or explain something',
+  'What can Cognita help with today?',
+];
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string }
@@ -19,6 +26,10 @@ let conversationMeta = [];
 let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
+
+let placeholderIndex = 0;
+let placeholderRotationInterval = null;
+let placeholderResumeTimeout = null;
 
 const THINKING_WORDS = [
   'Thinking',
@@ -49,6 +60,7 @@ const THINKING_WORDS = [
   wireAccountMenu();
   wireVisualModal();
   wireSuggestionCards();
+  startPlaceholderRotation();
 })();
 
 /* ════════════════════════════════════════════════════════
@@ -247,6 +259,10 @@ function wireSidebar() {
     sidebar.classList.toggle('is-collapsed');
   });
 
+  document.getElementById('sidebarCloseBtn').addEventListener('click', () => {
+    closeMobileSidebar();
+  });
+
   document.getElementById('mobileSidebarBtn').addEventListener('click', () => {
     sidebar.classList.add('is-open');
     scrim.classList.add('is-visible');
@@ -288,16 +304,16 @@ function wireAccountMenu() {
 }
 
 /* ════════════════════════════════════════════════════════
-   QUALITY PICKER — lives in the composer now, not the topbar
+   QUALITY PICKER — lives above the composer, not inside the text field
 ════════════════════════════════════════════════════════ */
 
 function setQuality(quality) {
   currentQuality = quality;
   const meta = QUALITY_META[quality] || QUALITY_META.standard;
 
+  // The trigger icon stays fixed (sliders) regardless of quality — only
+  // the label changes. No more "search icon" appearing for Thorough.
   document.getElementById('qualityPickerLabel').textContent = meta.label;
-  const iconEl = document.getElementById('qualityPickerIcon');
-  iconEl.className = 'ph ' + meta.icon;
 
   document.querySelectorAll('.quality-picker-option').forEach((opt) => {
     opt.classList.toggle('is-active', opt.dataset.quality === quality);
@@ -332,18 +348,58 @@ function wireQualityPicker() {
 }
 
 /* ════════════════════════════════════════════════════════
+   COMPOSER PLACEHOLDER ROTATION
+════════════════════════════════════════════════════════ */
+
+function startPlaceholderRotation() {
+  stopPlaceholderRotation();
+  placeholderRotationInterval = setInterval(() => {
+    const input = document.getElementById('composerInput');
+    if (!input || input.value) return; // don't rotate while user has typed something
+    placeholderIndex = (placeholderIndex + 1) % PLACEHOLDERS.length;
+    input.placeholder = PLACEHOLDERS[placeholderIndex];
+  }, 3500);
+}
+
+function stopPlaceholderRotation() {
+  if (placeholderRotationInterval) {
+    clearInterval(placeholderRotationInterval);
+    placeholderRotationInterval = null;
+  }
+}
+
+// Called on any composer activity: pause rotation immediately, and
+// schedule it to resume a few seconds after the user goes quiet again.
+function notifyComposerActivity() {
+  stopPlaceholderRotation();
+  if (placeholderResumeTimeout) clearTimeout(placeholderResumeTimeout);
+
+  placeholderResumeTimeout = setTimeout(() => {
+    const input = document.getElementById('composerInput');
+    if (input && !input.value) {
+      startPlaceholderRotation();
+    }
+  }, 4000);
+}
+
+/* ════════════════════════════════════════════════════════
    COMPOSER + SENDING MESSAGES
 ════════════════════════════════════════════════════════ */
 
 function wireComposer() {
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
+  const attachBtn = document.getElementById('attachBtn');
+  const fileInput = document.getElementById('fileInput');
 
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
     sendBtn.disabled = !input.value.trim() || isSending;
+    notifyComposerActivity();
   });
+
+  input.addEventListener('focus', notifyComposerActivity);
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -355,6 +411,28 @@ function wireComposer() {
   sendBtn.addEventListener('click', () => {
     const text = input.value.trim();
     if (text) sendMessage(text);
+  });
+
+  // File picker: clicking the paperclip opens the OS file dialog, and the
+  // chosen file's name is inserted into the message as a reference.
+  attachBtn.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const note = '[Attached file: ' + file.name + ']';
+    input.value = input.value ? input.value + '\n' + note : note;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    sendBtn.disabled = !input.value.trim() || isSending;
+    input.focus();
+    notifyComposerActivity();
+
+    // Reset so selecting the same file twice in a row still fires 'change'
+    e.target.value = '';
   });
 }
 
@@ -374,6 +452,7 @@ async function sendMessage(text) {
   input.value = '';
   input.style.height = 'auto';
   document.getElementById('sendBtn').disabled = true;
+  notifyComposerActivity();
 
   conversation.push({ role: 'user', content: text });
   renderConversation();
