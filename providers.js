@@ -1,15 +1,10 @@
 // providers.js
 // The ONLY module that knows how to talk to Groq, OpenRouter, or Workers AI.
 // Callers pass in a resolved model-tier config (from entitlements.js) and
-// get back plain text (and, when tools are offered, tool calls). They
-// never see provider names, model strings, or keys.
+// get back plain text. They never see provider names, model strings, or keys.
 
-async function _callGroq(messages, model, env, tools) {
+async function _callGroq(messages, model, env) {
   const body = { model, max_tokens: 2048, temperature: 0.5, messages };
-  if (tools && tools.length) {
-    body.tools = tools;
-    body.tool_choice = 'auto';
-  }
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -25,13 +20,11 @@ async function _callGroq(messages, model, env, tools) {
   }
   const data = await res.json();
   const message = data.choices?.[0]?.message || {};
-  const toolCalls = message.tool_calls && message.tool_calls.length ? message.tool_calls : null;
   const text = message.content;
-  if (!toolCalls && (!text || !text.trim())) throw new Error('groq_empty');
+  if (!text || !text.trim()) throw new Error('groq_empty');
   return {
-    text: text ? text.trim() : '',
+    text: text.trim(),
     finishReason: data.choices?.[0]?.finish_reason,
-    toolCalls,
     // Reasoning models on Groq (e.g. deepseek-r1-distill variants) may
     // return their chain of thought in one of these fields depending on
     // the model's reasoning_format setting.
@@ -39,12 +32,8 @@ async function _callGroq(messages, model, env, tools) {
   };
 }
 
-async function _callOpenRouter(messages, model, env, tools) {
+async function _callOpenRouter(messages, model, env) {
   const body = { model, max_tokens: 2048, temperature: 0.5, messages };
-  if (tools && tools.length) {
-    body.tools = tools;
-    body.tool_choice = 'auto';
-  }
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -62,22 +51,18 @@ async function _callOpenRouter(messages, model, env, tools) {
   }
   const data = await res.json();
   const message = data.choices?.[0]?.message || {};
-  const toolCalls = message.tool_calls && message.tool_calls.length ? message.tool_calls : null;
   const text = message.content;
-  if (!toolCalls && (!text || !text.trim())) throw new Error('openrouter_empty');
+  if (!text || !text.trim()) throw new Error('openrouter_empty');
   return {
-    text: text ? text.trim() : '',
+    text: text.trim(),
     finishReason: data.choices?.[0]?.finish_reason,
-    toolCalls,
     reasoning: message.reasoning || message.reasoning_content || null,
   };
 }
 
 async function _callWorkersAI(messages, model, env) {
-  // Workers AI is not wired up for tool calling here, so it always
-  // answers directly — no search, no tool loop. The messages it receives
-  // are always plain role/content pairs now (see chat-endpoint.js), so
-  // this filter is just a safety net, not load-bearing.
+  // The messages it receives are always plain role/content pairs (see
+  // chat-endpoint.js), so this filter is just a safety net, not load-bearing.
   if (!env.AI) throw new Error('workersai_not_bound');
   const cleaned = messages
     .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
@@ -88,16 +73,16 @@ async function _callWorkersAI(messages, model, env) {
   const res = await env.AI.run(model, { messages: cleaned });
   const text = typeof res?.response === 'string' ? res.response.trim() : '';
   if (!text) throw new Error('workersai_empty');
-  return { text, finishReason: 'stop', toolCalls: null, reasoning: null };
+  return { text, finishReason: 'stop', reasoning: null };
 }
 
 /**
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
-async function _dispatch(providerName, messages, model, env, tools) {
-  if (providerName === 'groq') return _callGroq(messages, model, env, tools);
-  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, tools);
+async function _dispatch(providerName, messages, model, env) {
+  if (providerName === 'groq') return _callGroq(messages, model, env);
+  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env);
   if (providerName === 'workersai') return _callWorkersAI(messages, model, env);
   throw new Error('Unknown provider: ' + providerName);
 }
@@ -111,21 +96,12 @@ async function _dispatch(providerName, messages, model, env, tools) {
  *
  * @param {object} tierConfig - one entry from MODEL_TIERS (entitlements.js)
  * @param {array} messages - chat messages array (always plain role/content
- *   pairs — the tool-calling message shape never gets stored in history;
- *   see chat-endpoint.js)
+ *   pairs; see chat-endpoint.js)
  * @param {object} env - Worker env bindings
- * @param {object} [options] - { tools } — an OpenAI-style tools array to
- *   offer the model (e.g. web_search). Only Groq and OpenRouter honor it;
- *   Workers AI ignores it and always answers directly. If the model
- *   responds with tool_calls instead of a final answer, the result is
- *   returned as-is (finishReason/truncation handling is skipped) so the
- *   caller can run the tool and ask a plain follow-up question.
  */
-export async function callWithFallback(tierConfig, messages, env, options = {}) {
-  const tools = options.tools || null;
+export async function callWithFallback(tierConfig, messages, env) {
   try {
-    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env, tools);
-    if (result.toolCalls) return result;
+    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env);
     if (result.finishReason === 'length') {
       return await _continueIfTruncated(tierConfig.provider, tierConfig.model, messages, result, env);
     }
@@ -134,8 +110,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
     console.warn('[providers] primary failed:', primaryErr.message);
     if (!tierConfig.fallback) throw primaryErr;
     try {
-      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env, tools);
-      if (result.toolCalls) return result;
+      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env);
       if (result.finishReason === 'length') {
         return await _continueIfTruncated(tierConfig.fallback.provider, tierConfig.fallback.model, messages, result, env);
       }
@@ -159,7 +134,6 @@ async function _continueIfTruncated(providerName, model, messages, partial, env)
     return {
       text: (partial.text + '\n\n' + extra.text).trim(),
       finishReason: 'stop',
-      toolCalls: null,
       reasoning: partial.reasoning || extra.reasoning || null,
     };
   } catch (e) {
