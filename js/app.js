@@ -96,18 +96,29 @@ async function refreshUsage() {
 ════════════════════════════════════════════════════════ */
 
 function wireSidebar() {
+  const sidebar = document.getElementById('appSidebar');
+  const scrim = document.getElementById('sidebarScrim');
+
   document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
-    document.getElementById('appSidebar').classList.toggle('is-collapsed');
+    sidebar.classList.toggle('is-collapsed');
   });
 
   document.getElementById('mobileSidebarBtn').addEventListener('click', () => {
-    document.getElementById('appSidebar').classList.toggle('is-open');
+    sidebar.classList.add('is-open');
+    scrim.classList.add('is-visible');
+  });
+
+  scrim.addEventListener('click', () => {
+    sidebar.classList.remove('is-open');
+    scrim.classList.remove('is-visible');
   });
 
   document.getElementById('newChatBtn').addEventListener('click', () => {
     conversation = [];
     conversationMeta = [];
     renderConversation();
+    sidebar.classList.remove('is-open');
+    scrim.classList.remove('is-visible');
   });
 }
 
