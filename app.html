@@ -12,7 +12,9 @@
 <body class="app-page">
 
 <div class="app-shell">
+
   <div class="sidebar-scrim" id="sidebarScrim"></div>
+
   <!-- ── Sidebar ── -->
   <aside class="app-sidebar" id="appSidebar">
     <div class="sidebar-top">
@@ -31,7 +33,7 @@
     </button>
 
     <nav class="sidebar-history" id="sidebarHistory" aria-label="Chat history">
-      <!-- Populated by app.js from local session state -->
+      <!-- Populated by app.js from localStorage -->
     </nav>
 
     <div class="sidebar-bottom">
@@ -54,7 +56,7 @@
           <span class="account-name skeleton" id="accountEmail">Loading</span>
           <span class="account-plan skeleton" id="accountPlan">Loading</span>
         </span>
-        <i class="ph ph-dots-three-vertical"></i>
+        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
       </button>
 
       <div class="account-menu" id="accountMenu" hidden>
@@ -73,17 +75,7 @@
         <i class="ph ph-list"></i>
       </button>
 
-      <div class="quality-selector" id="qualitySelector">
-        <button class="quality-option is-active" data-quality="standard">
-          Standard
-        </button>
-        <button class="quality-option" data-quality="advanced">
-          Advanced
-        </button>
-        <button class="quality-option" data-quality="thorough">
-          Thorough
-        </button>
-      </div>
+      <h1 class="conversation-title" id="conversationTitle">New chat</h1>
 
       <div class="topbar-spacer"></div>
     </header>
@@ -122,6 +114,41 @@
         <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
           <i class="ph ph-paperclip"></i>
         </button>
+
+        <div class="quality-picker" id="qualityPicker">
+          <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
+            <i class="ph ph-lightning" id="qualityPickerIcon"></i>
+            <span id="qualityPickerLabel">Standard</span>
+            <i class="ph ph-caret-down quality-picker-caret"></i>
+          </button>
+          <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
+            <button class="quality-picker-option is-active" data-quality="standard">
+              <i class="ph ph-lightning"></i>
+              <span class="quality-picker-option-text">
+                <span class="quality-picker-option-name">Standard</span>
+                <span class="quality-picker-option-desc">Fast, everyday answers</span>
+              </span>
+              <i class="ph ph-check quality-picker-check"></i>
+            </button>
+            <button class="quality-picker-option" data-quality="advanced">
+              <i class="ph ph-brain"></i>
+              <span class="quality-picker-option-text">
+                <span class="quality-picker-option-name">Advanced</span>
+                <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
+              </span>
+              <i class="ph ph-check quality-picker-check"></i>
+            </button>
+            <button class="quality-picker-option" data-quality="thorough">
+              <i class="ph ph-magnifying-glass"></i>
+              <span class="quality-picker-option-text">
+                <span class="quality-picker-option-name">Thorough</span>
+                <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
+              </span>
+              <i class="ph ph-check quality-picker-check"></i>
+            </button>
+          </div>
+        </div>
+
         <textarea
           id="composerInput"
           class="composer-input"
