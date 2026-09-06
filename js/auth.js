@@ -89,17 +89,11 @@ async function getIdToken(forceRefresh = false) {
   }
 }
 
-/**
- * Waits for the Google Identity Services script (loaded via <script> tag
- * in the page's <head>) to be ready. Resolves once window.google.accounts.id
- * exists, or rejects after a timeout if the script failed to load (e.g.
- * blocked by a network issue).
- */
 function _waitForGis(timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     (function check() {
-      if (window.google?.accounts?.id) {
+      if (window.google?.accounts?.oauth2) {
         resolve();
         return;
       }
@@ -113,38 +107,46 @@ function _waitForGis(timeoutMs = 8000) {
 }
 
 /**
- * Starts Google sign-in using Google Identity Services (GIS), NOT
- * Firebase's popup/redirect. GIS shows Google's own sign-in prompt
- * directly, then hands us an ID token via a callback, which we exchange
- * for a Firebase credential. Returns the signed-in Firebase user.
+ * Starts Google sign-in using Google Identity Services' OAuth2 token
+ * popup, NOT One Tap and NOT Firebase's popup/redirect. Unlike One Tap,
+ * this opens a real, reliable popup directly to accounts.google.com in
+ * response to the user's click, so it isn't subject to One Tap's
+ * display/cooldown restrictions or FedCM quirks on Safari. It still
+ * never touches firebaseapp.com's iframe. We get back an access token,
+ * which Firebase accepts directly to build a credential.
  */
 async function signInWithGoogle() {
   await _waitForGis();
 
-  const idToken = await new Promise((resolve, reject) => {
-    window.google.accounts.id.initialize({
+  const accessToken = await new Promise((resolve, reject) => {
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_WEB_CLIENT_ID,
+      scope: 'openid email profile',
       callback: (response) => {
-        if (response?.credential) {
-          resolve(response.credential);
+        if (response?.access_token) {
+          resolve(response.access_token);
         } else {
-          reject(new Error('Google sign-in did not return a credential.'));
+          reject(new Error('Google sign-in did not return an access token.'));
+        }
+      },
+      error_callback: (err) => {
+        if (err?.type === 'popup_closed') {
+          reject(new Error('Sign-in was cancelled.'));
+        } else if (err?.type === 'popup_failed_to_open') {
+          reject(
+            new Error(
+              'Sign-in popup was blocked by your browser. Please allow popups for this site.'
+            )
+          );
+        } else {
+          reject(new Error('Google sign-in failed. Please try again.'));
         }
       },
     });
-
-    window.google.accounts.id.prompt((notification) => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        reject(
-          new Error(
-            'Google sign-in prompt was blocked or dismissed. Please try again, or use email/password.'
-          )
-        );
-      }
-    });
+    tokenClient.requestAccessToken();
   });
 
-  const credential = GoogleAuthProvider.credential(idToken);
+  const credential = GoogleAuthProvider.credential(null, accessToken);
   const result = await signInWithCredential(auth, credential);
   return result.user;
 }
