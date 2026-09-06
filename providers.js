@@ -4,11 +4,11 @@
 // get back plain text (and, when tools are offered, tool calls). They
 // never see provider names, model strings, or keys.
 
-async function _callGroq(messages, model, env, tools, toolChoice) {
+async function _callGroq(messages, model, env, tools) {
   const body = { model, max_tokens: 2048, temperature: 0.5, messages };
   if (tools && tools.length) {
     body.tools = tools;
-    body.tool_choice = toolChoice || 'auto';
+    body.tool_choice = 'auto';
   }
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -39,11 +39,11 @@ async function _callGroq(messages, model, env, tools, toolChoice) {
   };
 }
 
-async function _callOpenRouter(messages, model, env, tools, toolChoice) {
+async function _callOpenRouter(messages, model, env, tools) {
   const body = { model, max_tokens: 2048, temperature: 0.5, messages };
   if (tools && tools.length) {
     body.tools = tools;
-    body.tool_choice = toolChoice || 'auto';
+    body.tool_choice = 'auto';
   }
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -75,7 +75,9 @@ async function _callOpenRouter(messages, model, env, tools, toolChoice) {
 
 async function _callWorkersAI(messages, model, env) {
   // Workers AI is not wired up for tool calling here, so it always
-  // answers directly — no search, no tool loop.
+  // answers directly — no search, no tool loop. The messages it receives
+  // are always plain role/content pairs now (see chat-endpoint.js), so
+  // this filter is just a safety net, not load-bearing.
   if (!env.AI) throw new Error('workersai_not_bound');
   const cleaned = messages
     .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
@@ -93,9 +95,9 @@ async function _callWorkersAI(messages, model, env) {
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
-async function _dispatch(providerName, messages, model, env, tools, toolChoice) {
-  if (providerName === 'groq') return _callGroq(messages, model, env, tools, toolChoice);
-  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, tools, toolChoice);
+async function _dispatch(providerName, messages, model, env, tools) {
+  if (providerName === 'groq') return _callGroq(messages, model, env, tools);
+  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, tools);
   if (providerName === 'workersai') return _callWorkersAI(messages, model, env);
   throw new Error('Unknown provider: ' + providerName);
 }
@@ -108,25 +110,21 @@ async function _dispatch(providerName, messages, model, env, tools, toolChoice) 
  * just because the primary provider happened to fail.
  *
  * @param {object} tierConfig - one entry from MODEL_TIERS (entitlements.js)
- * @param {array} messages - chat messages array
+ * @param {array} messages - chat messages array (always plain role/content
+ *   pairs — the tool-calling message shape never gets stored in history;
+ *   see chat-endpoint.js)
  * @param {object} env - Worker env bindings
- * @param {object} [options] - { tools, toolChoice }
- *   tools: an OpenAI-style tools array to offer the model (e.g. web_search).
- *     Only Groq and OpenRouter honor it; Workers AI ignores it and always
- *     answers directly.
- *   toolChoice: 'auto' (default) lets the model decide, 'none' tells it
- *     the tools exist but it must not call one right now — used to end a
- *     tool-calling loop without yanking the tools list out from under a
- *     model that just used one, which some providers reject.
- *   If the model responds with tool_calls instead of a final answer, the
- *   result is returned as-is (finishReason/truncation handling is skipped)
- *   so the caller can run the tool and call back in with the results.
+ * @param {object} [options] - { tools } — an OpenAI-style tools array to
+ *   offer the model (e.g. web_search). Only Groq and OpenRouter honor it;
+ *   Workers AI ignores it and always answers directly. If the model
+ *   responds with tool_calls instead of a final answer, the result is
+ *   returned as-is (finishReason/truncation handling is skipped) so the
+ *   caller can run the tool and ask a plain follow-up question.
  */
 export async function callWithFallback(tierConfig, messages, env, options = {}) {
   const tools = options.tools || null;
-  const toolChoice = options.toolChoice || 'auto';
   try {
-    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env, tools, toolChoice);
+    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env, tools);
     if (result.toolCalls) return result;
     if (result.finishReason === 'length') {
       return await _continueIfTruncated(tierConfig.provider, tierConfig.model, messages, result, env);
@@ -136,7 +134,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
     console.warn('[providers] primary failed:', primaryErr.message);
     if (!tierConfig.fallback) throw primaryErr;
     try {
-      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env, tools, toolChoice);
+      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env, tools);
       if (result.toolCalls) return result;
       if (result.finishReason === 'length') {
         return await _continueIfTruncated(tierConfig.fallback.provider, tierConfig.fallback.model, messages, result, env);
