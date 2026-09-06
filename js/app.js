@@ -4,7 +4,7 @@
 // directly, and never constructs a request containing a provider or
 // model name. The Worker decides all of that.
 
-const WORKER_URL = 'https://YOUR_WORKER_SUBDOMAIN.workers.dev';
+const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string }
