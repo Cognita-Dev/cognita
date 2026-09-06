@@ -36,7 +36,7 @@ export const PLANS = {
     name: 'Cognita Plus',
     priceNGN: 4500,
     priceUSD: 6,
-    paystackPlanCode: 'YOUR_PAYSTACK_PLAN_CODE_PLUS',
+    paystackPlanCode: 'PLN_yoh2zim6qlr20c0',
     limits: {
       messagesPerDay: 300,
       advancedModelPerDay: 60,
@@ -62,7 +62,7 @@ export const PLANS = {
     name: 'Cognita Studio',
     priceNGN: 12000,
     priceUSD: 16,
-    paystackPlanCode: 'YOUR_PAYSTACK_PLAN_CODE_STUDIO',
+    paystackPlanCode: 'PLN_23azph4eskh5wwj',
     limits: {
       messagesPerDay: 1200,
       advancedModelPerDay: 400,
