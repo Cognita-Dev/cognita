@@ -91,22 +91,22 @@
         <h1 class="empty-state-title">What are you working on?</h1>
         <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
 
-        <div class="suggestion-grid">
-          <button class="suggestion-card" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
-            <span class="suggestion-icon"><i class="ph ph-envelope-simple"></i></span>
-            <span class="suggestion-label">Draft an email</span>
+        <div class="suggestion-list">
+          <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
+            <i class="ph ph-envelope-simple"></i>
+            <span>Draft an email</span>
           </button>
-          <button class="suggestion-card" data-prompt="Explain the difference between correlation and causation with a simple example.">
-            <span class="suggestion-icon"><i class="ph ph-lightbulb"></i></span>
-            <span class="suggestion-label">Explain a concept</span>
+          <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
+            <i class="ph ph-lightbulb"></i>
+            <span>Explain a concept</span>
           </button>
-          <button class="suggestion-card" data-prompt="Create an outline for a business proposal for a new product launch.">
-            <span class="suggestion-icon"><i class="ph ph-file-text"></i></span>
-            <span class="suggestion-label">Outline a document</span>
+          <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
+            <i class="ph ph-file-text"></i>
+            <span>Outline a document</span>
           </button>
-          <button class="suggestion-card" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
-            <span class="suggestion-icon"><i class="ph ph-chart-line"></i></span>
-            <span class="suggestion-label">Think through a decision</span>
+          <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
+            <i class="ph ph-chart-line"></i>
+            <span>Think through a decision</span>
           </button>
         </div>
       </div>
@@ -116,47 +116,7 @@
 
     <div class="composer-wrap">
 
-      <div class="composer-toolbar">
-        <div class="quality-picker" id="qualityPicker">
-          <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
-            <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
-            <span id="qualityPickerLabel">Standard</span>
-            <i class="ph ph-caret-down quality-picker-caret"></i>
-          </button>
-          <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
-            <button class="quality-picker-option is-active" data-quality="standard">
-              <i class="ph ph-lightning"></i>
-              <span class="quality-picker-option-text">
-                <span class="quality-picker-option-name">Standard</span>
-                <span class="quality-picker-option-desc">Fast, everyday answers</span>
-              </span>
-              <i class="ph ph-check quality-picker-check"></i>
-            </button>
-            <button class="quality-picker-option" data-quality="advanced">
-              <i class="ph ph-brain"></i>
-              <span class="quality-picker-option-text">
-                <span class="quality-picker-option-name">Advanced</span>
-                <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
-              </span>
-              <i class="ph ph-check quality-picker-check"></i>
-            </button>
-            <button class="quality-picker-option" data-quality="thorough">
-              <i class="ph ph-magnifying-glass"></i>
-              <span class="quality-picker-option-text">
-                <span class="quality-picker-option-name">Thorough</span>
-                <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
-              </span>
-              <i class="ph ph-check quality-picker-check"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div class="composer" id="composer">
-        <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
-          <i class="ph ph-paperclip"></i>
-        </button>
-
         <textarea
           id="composerInput"
           class="composer-input"
@@ -165,13 +125,55 @@
           aria-label="Message Cognita"
         ></textarea>
 
-        <div class="composer-actions">
-          <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
-            <i class="ph ph-image"></i>
-          </button>
-          <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
-            <i class="ph ph-arrow-up"></i>
-          </button>
+        <div class="composer-tools-row">
+          <div class="composer-tools-left">
+            <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
+              <i class="ph ph-paperclip"></i>
+            </button>
+            <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
+              <i class="ph ph-image"></i>
+            </button>
+          </div>
+
+          <div class="composer-tools-right">
+            <div class="quality-picker" id="qualityPicker">
+              <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
+                <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
+                <span id="qualityPickerLabel">Standard</span>
+                <i class="ph ph-caret-down quality-picker-caret"></i>
+              </button>
+              <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
+                <button class="quality-picker-option is-active" data-quality="standard">
+                  <i class="ph ph-lightning"></i>
+                  <span class="quality-picker-option-text">
+                    <span class="quality-picker-option-name">Standard</span>
+                    <span class="quality-picker-option-desc">Fast, everyday answers</span>
+                  </span>
+                  <i class="ph ph-check quality-picker-check"></i>
+                </button>
+                <button class="quality-picker-option" data-quality="advanced">
+                  <i class="ph ph-brain"></i>
+                  <span class="quality-picker-option-text">
+                    <span class="quality-picker-option-name">Advanced</span>
+                    <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
+                  </span>
+                  <i class="ph ph-check quality-picker-check"></i>
+                </button>
+                <button class="quality-picker-option" data-quality="thorough">
+                  <i class="ph ph-magnifying-glass"></i>
+                  <span class="quality-picker-option-text">
+                    <span class="quality-picker-option-name">Thorough</span>
+                    <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
+                  </span>
+                  <i class="ph ph-check quality-picker-check"></i>
+                </button>
+              </div>
+            </div>
+
+            <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
+              <i class="ph ph-arrow-up"></i>
+            </button>
+          </div>
         </div>
       </div>
 
