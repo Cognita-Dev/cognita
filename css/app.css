@@ -700,6 +700,69 @@
 .modal-submit-btn:hover { background: var(--accent-hover); }
 .modal-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
+/* ── Markdown-lite rendered elements ── */
+
+.message-content ul,
+.message-content ol {
+  margin: 0 0 var(--space-3) 0;
+  padding-left: var(--space-5);
+}
+
+.message-content li {
+  margin: var(--space-1) 0;
+  line-height: 1.6;
+}
+
+.message-content code {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.875em;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.message-content pre {
+  margin: 0 0 var(--space-3) 0;
+}
+
+.message-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  display: block;
+  white-space: pre;
+}
+
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 var(--space-3) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.md-table th,
+.md-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.md-table th {
+  background: var(--bg-subtle);
+  font-weight: 700;
+}
+
+.md-table tr:last-child td {
+  border-bottom: none;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 860px) {
