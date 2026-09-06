@@ -176,8 +176,6 @@
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
 
-  // Restrained scroll-reveal: elements fade/slide in once, no repeated
-  // triggering, no parallax. Skipped entirely for reduced-motion users.
   if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && 'IntersectionObserver' in window) {
     const targets = document.querySelectorAll('.capability-card, .use-case-row, .trust-item');
     targets.forEach((el) => el.classList.add('reveal-target'));
