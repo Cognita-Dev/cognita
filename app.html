@@ -38,28 +38,28 @@
       <div class="usage-widget" id="usageWidget">
         <div class="usage-row">
           <span class="usage-label">Messages today</span>
-          <span class="usage-value" id="usageMessages">—</span>
+          <span class="usage-value skeleton" id="usageMessages">00 / 00</span>
         </div>
         <div class="usage-bar"><div class="usage-bar-fill" id="usageMessagesBar"></div></div>
       </div>
 
       <a href="/pricing.html" class="upgrade-link" id="upgradeLink" hidden>
-        <i class="ph ph-sparkle"></i>
+        <i class="ph ph-arrow-up-circle"></i>
         <span>Upgrade plan</span>
       </a>
 
       <button class="account-btn" id="accountBtn">
         <span class="account-avatar" id="accountAvatar">C</span>
         <span class="account-info">
-          <span class="account-name" id="accountEmail">Loading…</span>
-          <span class="account-plan" id="accountPlan">—</span>
+          <span class="account-name skeleton" id="accountEmail">Loading</span>
+          <span class="account-plan skeleton" id="accountPlan">Loading</span>
         </span>
         <i class="ph ph-dots-three-vertical"></i>
       </button>
 
       <div class="account-menu" id="accountMenu" hidden>
         <a href="/account.html"><i class="ph ph-gear"></i> Settings</a>
-        <a href="/pricing.html"><i class="ph ph-sparkle"></i> Plans</a>
+        <a href="/pricing.html"><i class="ph ph-arrow-up-circle"></i> Plans</a>
         <button id="logOutBtn"><i class="ph ph-sign-out"></i> Sign out</button>
       </div>
     </div>
@@ -75,13 +75,13 @@
 
       <div class="quality-selector" id="qualitySelector">
         <button class="quality-option is-active" data-quality="standard">
-          <i class="ph ph-lightning"></i> Standard
+          Standard
         </button>
         <button class="quality-option" data-quality="advanced">
-          <i class="ph ph-brain"></i> Advanced
+          Advanced
         </button>
         <button class="quality-option" data-quality="thorough">
-          <i class="ph ph-magnifying-glass"></i> Thorough
+          Thorough
         </button>
       </div>
 
@@ -92,16 +92,16 @@
       <div class="empty-state" id="emptyState">
         <img src="/assets/cognita.png" alt="" class="empty-state-mark">
         <h1 class="empty-state-title">What are you working on?</h1>
-        <p class="empty-state-subtitle">Ask Cognita to write, research, plan, analyse, or prepare a document.</p>
+        <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
 
         <div class="suggestion-grid">
           <button class="suggestion-card" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
             <i class="ph ph-envelope-simple"></i>
-            <span>Draft a professional email</span>
+            <span>Draft an email</span>
           </button>
           <button class="suggestion-card" data-prompt="Explain the difference between correlation and causation with a simple example.">
             <i class="ph ph-lightbulb"></i>
-            <span>Explain a concept clearly</span>
+            <span>Explain a concept</span>
           </button>
           <button class="suggestion-card" data-prompt="Create an outline for a business proposal for a new product launch.">
             <i class="ph ph-file-text"></i>
@@ -125,7 +125,7 @@
         <textarea
           id="composerInput"
           class="composer-input"
-          placeholder="Message Cognita…"
+          placeholder="Message Cognita"
           rows="1"
           aria-label="Message Cognita"
         ></textarea>
