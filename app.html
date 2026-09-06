@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Cognita</title>
 <link rel="icon" href="/assets/cognita.png">
 <link rel="stylesheet" href="/css/shared.css">
@@ -22,9 +22,14 @@
         <img src="/assets/cognita.png" alt="Cognita">
         <span>Cognita</span>
       </a>
-      <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Collapse sidebar">
-        <i class="ph ph-sidebar-simple"></i>
-      </button>
+      <div class="sidebar-top-actions">
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Collapse sidebar">
+          <i class="ph ph-sidebar-simple"></i>
+        </button>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" aria-label="Close sidebar">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
     </div>
 
     <button class="new-chat-btn" id="newChatBtn">
@@ -88,20 +93,20 @@
 
         <div class="suggestion-grid">
           <button class="suggestion-card" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
-            <i class="ph ph-envelope-simple"></i>
-            <span>Draft an email</span>
+            <span class="suggestion-icon"><i class="ph ph-envelope-simple"></i></span>
+            <span class="suggestion-label">Draft an email</span>
           </button>
           <button class="suggestion-card" data-prompt="Explain the difference between correlation and causation with a simple example.">
-            <i class="ph ph-lightbulb"></i>
-            <span>Explain a concept</span>
+            <span class="suggestion-icon"><i class="ph ph-lightbulb"></i></span>
+            <span class="suggestion-label">Explain a concept</span>
           </button>
           <button class="suggestion-card" data-prompt="Create an outline for a business proposal for a new product launch.">
-            <i class="ph ph-file-text"></i>
-            <span>Outline a document</span>
+            <span class="suggestion-icon"><i class="ph ph-file-text"></i></span>
+            <span class="suggestion-label">Outline a document</span>
           </button>
           <button class="suggestion-card" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
-            <i class="ph ph-chart-line"></i>
-            <span>Think through a decision</span>
+            <span class="suggestion-icon"><i class="ph ph-chart-line"></i></span>
+            <span class="suggestion-label">Think through a decision</span>
           </button>
         </div>
       </div>
@@ -110,14 +115,11 @@
     </div>
 
     <div class="composer-wrap">
-      <div class="composer" id="composer">
-        <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
-          <i class="ph ph-paperclip"></i>
-        </button>
 
+      <div class="composer-toolbar">
         <div class="quality-picker" id="qualityPicker">
           <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
-            <i class="ph ph-lightning" id="qualityPickerIcon"></i>
+            <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
             <span id="qualityPickerLabel">Standard</span>
             <i class="ph ph-caret-down quality-picker-caret"></i>
           </button>
@@ -148,6 +150,12 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <div class="composer" id="composer">
+        <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
+          <i class="ph ph-paperclip"></i>
+        </button>
 
         <textarea
           id="composerInput"
@@ -156,13 +164,17 @@
           rows="1"
           aria-label="Message Cognita"
         ></textarea>
-        <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
-          <i class="ph ph-image"></i>
-        </button>
-        <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
-          <i class="ph ph-arrow-up"></i>
-        </button>
+
+        <div class="composer-actions">
+          <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
+            <i class="ph ph-image"></i>
+          </button>
+          <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
+            <i class="ph ph-arrow-up"></i>
+          </button>
+        </div>
       </div>
+
       <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
       <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt,.csv,image/*">
     </div>
