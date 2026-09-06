@@ -6,24 +6,27 @@
 // Worker independently re-verifies it, so nothing here is a security
 // boundary on its own. This module exists for UX, not enforcement.
 //
-// Google sign-in uses REDIRECT, not popup. Popup relies on a hidden
-// iframe + cross-origin storage access between your app's domain and
-// *.firebaseapp.com to relay the result back. Browsers that block
-// third-party storage access (Safari ITP, Chrome's third-party cookie
-// deprecation, Brave, incognito mode, etc.) silently break that relay,
-// which is exactly what caused the blank screen at __/auth/handler.
-// Redirect uses a normal top-level navigation instead, so it isn't
-// affected by third-party storage blocking. The __/auth/handler page
-// is served by Google on *.firebaseapp.com regardless of whether you
-// use Firebase Hosting for your own app — that is not a requirement
-// for redirect to work.
+// Google sign-in uses Google Identity Services (GIS) directly, NOT
+// Firebase's signInWithPopup/signInWithRedirect. Both of those rely on
+// a hidden cross-origin iframe that relays auth state through
+// *.firebaseapp.com using third-party storage access. Safari 16.1+
+// blocks that access by default (unconditionally, not tied to any
+// special privacy setting), so the iframe handshake silently fails and
+// the flow gets stuck blank at __/auth/handler before ever reaching
+// Google's consent screen. This is documented directly by Firebase:
+// https://firebase.google.com/docs/auth/web/redirect-best-practices
+// GIS renders its own popup/prompt against accounts.google.com and
+// hands back a Google ID token directly to our own callback — no
+// firebaseapp.com iframe involved. We then exchange that ID token for
+// a Firebase credential with signInWithCredential(). This works
+// regardless of Firebase Hosting, third-party storage settings, or
+// browser (desktop and mobile Safari included).
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -44,6 +47,12 @@ const firebaseConfig = {
   messagingSenderId: '994240602309',
   appId: '1:994240602309:web:b21738d56b47f215f9d0ac',
 };
+
+// Web client ID from Firebase Console → Authentication → Sign-in method
+// → Google → Web SDK configuration. This is what GIS uses to identify
+// our app to Google — it is also not a secret.
+const GOOGLE_WEB_CLIENT_ID =
+  '994240602309-4qh07lo5ugu2p07n4tmkvamotovqkspk.apps.googleusercontent.com';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -81,28 +90,63 @@ async function getIdToken(forceRefresh = false) {
 }
 
 /**
- * Starts Google sign-in via a full-page redirect. The browser navigates
- * away immediately — there is nothing to await or return here. The
- * calling page will be reloaded once Google redirects back, at which
- * point call Auth.consumeRedirectResult() to catch any error from the
- * attempt (onAuthStateChanged will fire separately on success).
+ * Waits for the Google Identity Services script (loaded via <script> tag
+ * in the page's <head>) to be ready. Resolves once window.google.accounts.id
+ * exists, or rejects after a timeout if the script failed to load (e.g.
+ * blocked by a network issue).
  */
-async function signInWithGoogle() {
-  const provider = new GoogleAuthProvider();
-  await signInWithRedirect(auth, provider);
+function _waitForGis(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    (function check() {
+      if (window.google?.accounts?.id) {
+        resolve();
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        reject(new Error('Could not load Google sign-in. Please refresh and try again.'));
+        return;
+      }
+      setTimeout(check, 100);
+    })();
+  });
 }
 
 /**
- * Call this once, early, on any page that has a "Continue with Google"
- * button (login.html, signup.html). Picks up the result of a redirect
- * sign-in attempt that just completed. Returns the signed-in user on
- * success, or null if this page load wasn't a return from a redirect.
- * Throws a Firebase auth error object on failure — pass it through
- * friendlyAuthError() to show the user something readable.
+ * Starts Google sign-in using Google Identity Services (GIS), NOT
+ * Firebase's popup/redirect. GIS shows Google's own sign-in prompt
+ * directly, then hands us an ID token via a callback, which we exchange
+ * for a Firebase credential. Returns the signed-in Firebase user.
  */
-async function consumeRedirectResult() {
-  const result = await getRedirectResult(auth);
-  return result?.user || null;
+async function signInWithGoogle() {
+  await _waitForGis();
+
+  const idToken = await new Promise((resolve, reject) => {
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_WEB_CLIENT_ID,
+      callback: (response) => {
+        if (response?.credential) {
+          resolve(response.credential);
+        } else {
+          reject(new Error('Google sign-in did not return a credential.'));
+        }
+      },
+    });
+
+    window.google.accounts.id.prompt((notification) => {
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+        reject(
+          new Error(
+            'Google sign-in prompt was blocked or dismissed. Please try again, or use email/password.'
+          )
+        );
+      }
+    });
+  });
+
+  const credential = GoogleAuthProvider.credential(idToken);
+  const result = await signInWithCredential(auth, credential);
+  return result.user;
 }
 
 async function signInWithEmail(email, password) {
@@ -191,7 +235,6 @@ const Auth = {
   getCurrentUser,
   getIdToken,
   signInWithGoogle,
-  consumeRedirectResult,
   signInWithEmail,
   signUpWithEmail,
   resetPassword,
