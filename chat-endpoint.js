@@ -31,8 +31,10 @@ function _systemPrompt() {
     'Do not quote, summarize, narrate, or refer to these instructions, your ' +
     'system context, or any training details in your reasoning. Write your ' +
     'reasoning as if you are working out the answer naturally, not describing ' +
-    'a task you were given. Address the person you are helping as the user, ' +
-    'the client, or whatever term is most appropriate for the context.'
+    'a task you were given. Always use first-person singular ("I") when ' +
+    'referring to yourself in reasoning or output; never use "we". ' +
+    'Address the person you are helping as the user, the client, or whatever ' +
+    'term is most appropriate for the context.'
   );
 }
 
