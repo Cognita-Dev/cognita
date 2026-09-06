@@ -8,7 +8,20 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string }
+// Parallel to `conversation`, holds UI-only extras per assistant message
+// (thinking text, sources, how long it took) — never sent back to the Worker.
+let conversationMeta = [];
 let isSending = false;
+let activeThinkingTimers = {};
+
+const THINKING_WORDS = [
+  'Thinking',
+  'Reasoning',
+  'Working through it',
+  'Digging into it',
+  'Considering the angles',
+  'Piecing it together',
+];
 
 /* ════════════════════════════════════════════════════════
    INIT
@@ -90,6 +103,7 @@ function wireSidebar() {
 
   document.getElementById('newChatBtn').addEventListener('click', () => {
     conversation = [];
+    conversationMeta = [];
     renderConversation();
   });
 }
@@ -177,6 +191,7 @@ async function sendMessage(text) {
   renderConversation();
 
   const thinkingId = appendThinkingIndicator();
+  const startedAt = performance.now();
 
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat', {
@@ -197,7 +212,14 @@ async function sendMessage(text) {
       return;
     }
 
+    const elapsedMs = performance.now() - startedAt;
+
     conversation.push({ role: 'assistant', content: data.reply });
+    conversationMeta[conversation.length - 1] = {
+      thinking: data.thinking || null,
+      sources: data.sources || null,
+      elapsedMs,
+    };
     renderConversation();
     refreshUsage();
   } catch (e) {
@@ -234,12 +256,39 @@ function renderConversation() {
 function renderMessage(msg, index) {
   const isUser = msg.role === 'user';
   const avatarContent = isUser ? 'Y' : '<img src="/assets/cognita.png" alt="" style="width:16px;height:16px;">';
+  const meta = conversationMeta[index] || {};
+
+  let thoughtHtml = '';
+  if (!isUser && meta.thinking) {
+    const secs = meta.elapsedMs ? (meta.elapsedMs / 1000).toFixed(1) : null;
+    thoughtHtml =
+      '<details class="thought-block">' +
+        '<summary>' + (secs ? 'Thought for ' + secs + 's' : 'Thought process') + '</summary>' +
+        '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>' +
+      '</details>';
+  }
+
+  let sourcesHtml = '';
+  if (!isUser && meta.sources && meta.sources.length) {
+    sourcesHtml =
+      '<div class="message-sources">' +
+        '<div class="message-sources-label">Sources</div>' +
+        '<ol class="message-sources-list">' +
+          meta.sources.map((s) =>
+            '<li><a href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener noreferrer">' +
+              escapeHtml(s.title || s.url) + '</a></li>'
+          ).join('') +
+        '</ol>' +
+      '</div>';
+  }
 
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
       '<div class="message-avatar">' + avatarContent + '</div>' +
       '<div class="message-body">' +
-        '<div class="message-content">' + renderMarkdownLite(msg.content) + '</div>' +
+        thoughtHtml +
+        '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' +
+        sourcesHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
@@ -268,6 +317,7 @@ function wireMessageActionButtons() {
       const priorUserMsg = [...conversation.slice(0, idx)].reverse().find((m) => m.role === 'user');
       if (!priorUserMsg) return;
       conversation = conversation.slice(0, idx - 1);
+      conversationMeta = conversationMeta.slice(0, idx - 1);
       renderConversation();
       await sendMessage(priorUserMsg.content);
     });
@@ -283,16 +333,40 @@ function appendThinkingIndicator() {
   el.innerHTML =
     '<div class="message-avatar"><img src="/assets/cognita.png" alt="" style="width:16px;height:16px;"></div>' +
     '<div class="message-body"><div class="thinking-indicator">' +
-      '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>' +
+      '<span class="thinking-word" id="' + id + '-word">' + THINKING_WORDS[0] + '</span>' +
+      '<span class="thinking-timer" id="' + id + '-timer">0.0s</span>' +
     '</div></div>';
   document.getElementById('emptyState').hidden = true;
   list.hidden = false;
   list.appendChild(el);
   scrollToBottom();
+
+  const startedAt = performance.now();
+  const wordEl = document.getElementById(id + '-word');
+  const timerEl = document.getElementById(id + '-timer');
+  let wordIdx = 0;
+
+  const wordInterval = setInterval(() => {
+    wordIdx = (wordIdx + 1) % THINKING_WORDS.length;
+    if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
+  }, 2200);
+
+  const timerInterval = setInterval(() => {
+    const elapsed = (performance.now() - startedAt) / 1000;
+    if (timerEl) timerEl.textContent = elapsed.toFixed(1) + 's';
+  }, 100);
+
+  activeThinkingTimers[id] = { wordInterval, timerInterval };
   return id;
 }
 
 function removeThinkingIndicator(id) {
+  const timers = activeThinkingTimers[id];
+  if (timers) {
+    clearInterval(timers.wordInterval);
+    clearInterval(timers.timerInterval);
+    delete activeThinkingTimers[id];
+  }
   const el = document.getElementById(id);
   if (el) el.remove();
 }
@@ -317,15 +391,16 @@ function scrollToBottom() {
 
 /* ── Markdown-lite renderer ──
    Escapes HTML first, then applies a controlled set of transforms:
-   bold/italic, code fences, inline code, tables, lists, paragraphs.
-   Not a full markdown parser — Cognita's system prompt asks for plain
-   prose, so this only needs to handle the formatting patterns models
-   commonly produce, safely. */
-function renderMarkdownLite(text) {
+   bold/italic, citation markers, code fences, inline code, tables, lists,
+   paragraphs. Not a full markdown parser — Cognita's system prompt asks
+   for plain prose, so this only needs to handle the formatting patterns
+   models commonly produce, safely.
+   `sources`, if given, turns [1], [2] style citations into links. */
+function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
 
   // ── Code fences (```...```) stashed before other processing so their
-  //    contents are never touched by bold/table/list transforms. ──
+  //    contents are never touched by bold/table/list/citation transforms. ──
   const codeBlocks = [];
   raw = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
     codeBlocks.push(code.replace(/\n$/, ''));
@@ -338,6 +413,16 @@ function renderMarkdownLite(text) {
   // ── Bold / italic ──
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
   raw = raw.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+
+  // ── Citation markers ([1], [2]...) — only when sources were provided ──
+  if (sources && sources.length) {
+    raw = raw.replace(/\[(\d+)\]/g, (whole, n) => {
+      const i = parseInt(n, 10) - 1;
+      if (i < 0 || i >= sources.length) return whole;
+      const src = sources[i];
+      return '<a class="citation-marker" href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(src.title || src.url) + '">[' + n + ']</a>';
+    });
+  }
 
   // ── Tables (markdown pipe syntax) ──
   raw = raw.replace(/((?:^\|.+\|\s*$\n?)+)/gm, (block) => {
