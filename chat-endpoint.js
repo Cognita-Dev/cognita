@@ -184,11 +184,14 @@ export async function handleChatRequest(request, env) {
         });
       }
 
-      // On the final allowed round, don't offer the tool again — force a
-      // written answer instead of another search request.
+      // On the final allowed round, keep the tools declared but tell the
+      // model explicitly not to call one — pulling the tools list out
+      // entirely here is what caused providers to reject the request,
+      // since the model still had a just-used tool in its own history.
       const isLastRound = rounds >= MAX_SEARCH_ROUNDS;
       result = await callWithFallback(tierConfig, messages, env, {
-        tools: isLastRound ? null : searchTools,
+        tools: searchTools,
+        toolChoice: isLastRound ? 'none' : 'auto',
       });
     }
   } catch (e) {
