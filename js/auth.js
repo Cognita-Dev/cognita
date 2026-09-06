@@ -6,15 +6,19 @@
 // Worker independently re-verifies it, so nothing here is a security
 // boundary on its own. This module exists for UX, not enforcement.
 //
-// Google sign-in uses REDIRECT (not popup) because signInWithPopup is
-// unreliable on mobile browsers — popups often render blank or get
-// blocked. Redirect-based sign-in navigates the whole page to Google and
-// back, which works reliably everywhere.
+// Google sign-in uses POPUP (not redirect). Redirect requires Firebase
+// Hosting to serve the auth handler page (__/auth/handler). Because this
+// app is hosted on Vercel, that handler page is unreachable, which is
+// why you were seeing a blank screen. Popup opens Google directly in a
+// new tab/window and works reliably on desktop and mobile Safari.
+// If a popup is blocked, we surface a clear message so the user can
+// allow it or fall back to email/password.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signInWithEmailAndPassword,
@@ -27,8 +31,8 @@ import {
 // Firebase web config is NOT a secret — it's meant to be public and is
 // safe to commit. It only identifies which Firebase project to talk to;
 // it grants no access on its own. Actual security comes from Firestore
-// rules (server-side, see firestore.rules) and the Worker's independent
-// token verification (see auth-middleware.js) — never from hiding this.
+// rules (server-side) and the Worker's independent token verification
+// (see auth-middleware.js) — never from hiding this.
 const firebaseConfig = {
   apiKey: 'AIzaSyB2K_ST2Crl-u-DoWsN8QoIN2rpBOA2XOs',
   authDomain: 'cognita-b94eb.firebaseapp.com',
@@ -74,22 +78,27 @@ async function getIdToken(forceRefresh = false) {
 }
 
 /**
- * Starts Google sign-in via full-page redirect. Execution does not
- * continue past this call in any meaningful way — the browser navigates
- * to Google, then back to this same page. The signed-in user is picked
- * up by handleRedirectResult() below, which must be called on page load.
+ * Starts Google sign-in via popup. Returns the signed-in user.
+ * Throws a clear message if the browser blocks the popup.
  */
 async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
-  await signInWithRedirect(auth, provider);
+  try {
+    const result = await signInWithPopup(auth, provider);
+    return result.user;
+  } catch (err) {
+    if (err.code === 'auth/popup-blocked') {
+      throw new Error(
+        'Google sign-in was blocked by your browser. Please allow popups for this site, or use email/password instead.'
+      );
+    }
+    throw err;
+  }
 }
 
 /**
- * Call this once, on every page that offers Google sign-in, right after
- * Auth.ready(). Catches the user coming back from Google after a
- * redirect. Returns the user if a redirect sign-in just completed, or
- * null if this page load wasn't the result of one (e.g. a normal visit).
- * Throws if the redirect sign-in itself failed.
+ * Legacy helper for redirect-based flows. Still exported in case any
+ * other page needs it, but the login/signup pages no longer use redirect.
  */
 async function handleRedirectResult() {
   const result = await getRedirectResult(auth);
@@ -124,13 +133,14 @@ async function authedFetch(url, options = {}) {
   let token = await getIdToken(false);
   if (!token) throw new Error('Not signed in.');
 
-  const doFetch = (t) => fetch(url, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      Authorization: 'Bearer ' + t,
-    },
-  });
+  const doFetch = (t) =>
+    fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        Authorization: 'Bearer ' + t,
+      },
+    });
 
   let res = await doFetch(token);
   if (res.status === 401) {
@@ -155,22 +165,28 @@ async function requireAuthOrRedirect() {
 
 function friendlyAuthError(error) {
   const code = error?.code || '';
+  const message = error?.message || '';
   const map = {
-    'auth/invalid-email': 'That email address doesn\'t look right.',
+    'auth/invalid-email': "That email address doesn't look right.",
     'auth/user-not-found': 'No account found with that email.',
     'auth/wrong-password': 'Incorrect password.',
     'auth/invalid-credential': 'Incorrect email or password.',
     'auth/email-already-in-use': 'An account already exists with that email.',
     'auth/weak-password': 'Please choose a password with at least 6 characters.',
     'auth/popup-closed-by-user': 'Sign-in was cancelled.',
-    'auth/network-request-failed': 'Network error. Please check your connection.',
-    'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
-    'auth/account-exists-with-different-credential': 'An account already exists with this email using a different sign-in method.',
+    'auth/popup-blocked':
+      'Sign-in was blocked by your browser. Please allow popups for this site.',
+    'auth/network-request-failed':
+      'Network error. Please check your connection.',
+    'auth/too-many-requests':
+      'Too many attempts. Please wait a moment and try again.',
+    'auth/account-exists-with-different-credential':
+      'An account already exists with this email using a different sign-in method.',
   };
-  return map[code] || 'Something went wrong. Please try again.';
+  return map[code] || message || 'Something went wrong. Please try again.';
 }
 
-window.Auth = {
+const Auth = {
   ready,
   getCurrentUser,
   getIdToken,
@@ -184,3 +200,7 @@ window.Auth = {
   requireAuthOrRedirect,
   friendlyAuthError,
 };
+
+// Keep the global for any legacy code, but pages should import directly.
+window.Auth = Auth;
+export { Auth };
