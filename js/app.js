@@ -59,7 +59,9 @@ async function refreshAccount() {
     if (!res.ok) return;
     const data = await res.json();
     document.getElementById('accountPlan').textContent = data.planName;
-
+    document.getElementById('accountPlan').classList.remove('skeleton');
+    document.getElementById('accountEmail').classList.remove('skeleton');
+    
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
       upgradeLink.hidden = false;
@@ -77,7 +79,8 @@ async function refreshUsage() {
 
     const { used, limit } = data.usage.messages;
     document.getElementById('usageMessages').textContent = used + ' / ' + limit;
-
+    document.getElementById('usageMessages').classList.remove('skeleton');
+    
     const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
     const fill = document.getElementById('usageMessagesBar');
     fill.style.width = pct + '%';
