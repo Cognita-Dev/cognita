@@ -59,12 +59,6 @@
 
 <script type="module" src="/js/auth.js"></script>
 <script type="module">
-  await window.Auth.ready();
-
-  if (window.Auth.getCurrentUser()) {
-    window.location.href = '/app.html';
-  }
-
   const form = document.getElementById('signupForm');
   const errorEl = document.getElementById('authError');
   const submitBtn = document.getElementById('submitBtn');
@@ -79,6 +73,26 @@
     submitBtn.disabled = isLoading;
     submitBtn.querySelector('.btn-label').hidden = isLoading;
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
+  }
+
+  await window.Auth.ready();
+
+  // Catch the user coming back from a Google redirect sign-in.
+  try {
+    const redirectUser = await window.Auth.handleRedirectResult();
+    if (redirectUser) {
+      window.location.href = '/app.html';
+      throw new Error('redirecting'); // stop further execution on this page
+    }
+  } catch (err) {
+    if (err.message !== 'redirecting') {
+      showError(window.Auth.friendlyAuthError(err));
+    }
+  }
+
+  // Already signed in (normal visit, not a fresh redirect)? Skip to the app.
+  if (window.Auth.getCurrentUser()) {
+    window.location.href = '/app.html';
   }
 
   form.addEventListener('submit', async (e) => {
@@ -101,11 +115,9 @@
     errorEl.hidden = true;
     try {
       await window.Auth.signInWithGoogle();
-      window.location.href = '/app.html';
+      // No further code runs here — the page navigates away to Google.
     } catch (err) {
-      if (err.code !== 'auth/popup-closed-by-user') {
-        showError(window.Auth.friendlyAuthError(err));
-      }
+      showError(window.Auth.friendlyAuthError(err));
     }
   });
 </script>
