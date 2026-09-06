@@ -5,12 +5,18 @@
 // model name. The Worker decides all of that.
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const HISTORY_KEY = 'cognita:conversations';
+
+const QUALITY_META = {
+  standard: { label: 'Standard', icon: 'ph-lightning' },
+  advanced: { label: 'Advanced', icon: 'ph-brain' },
+  thorough: { label: 'Thorough', icon: 'ph-magnifying-glass' },
+};
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string }
-// Parallel to `conversation`, holds UI-only extras per assistant message
-// (thinking text, sources, how long it took) — never sent back to the Worker.
 let conversationMeta = [];
+let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
 
@@ -35,8 +41,10 @@ const THINKING_WORDS = [
   await refreshUsage();
   await refreshAccount();
 
+  renderSidebarHistory();
+  updateConversationTitle();
   wireComposer();
-  wireQualitySelector();
+  wireQualityPicker();
   wireSidebar();
   wireAccountMenu();
   wireVisualModal();
@@ -61,7 +69,7 @@ async function refreshAccount() {
     document.getElementById('accountPlan').textContent = data.planName;
     document.getElementById('accountPlan').classList.remove('skeleton');
     document.getElementById('accountEmail').classList.remove('skeleton');
-    
+
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
       upgradeLink.hidden = false;
@@ -78,9 +86,10 @@ async function refreshUsage() {
     const data = await res.json();
 
     const { used, limit } = data.usage.messages;
-    document.getElementById('usageMessages').textContent = used + ' / ' + limit;
-    document.getElementById('usageMessages').classList.remove('skeleton');
-    
+    const usageEl = document.getElementById('usageMessages');
+    usageEl.textContent = used + ' / ' + limit;
+    usageEl.classList.remove('skeleton');
+
     const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
     const fill = document.getElementById('usageMessagesBar');
     fill.style.width = pct + '%';
@@ -89,6 +98,141 @@ async function refreshUsage() {
   } catch (e) {
     console.error('[app] Could not load usage:', e.message);
   }
+}
+
+/* ════════════════════════════════════════════════════════
+   CONVERSATION TITLE (live, shown in the topbar)
+════════════════════════════════════════════════════════ */
+
+function deriveTitle(messages) {
+  const firstUser = messages.find((m) => m.role === 'user');
+  if (!firstUser) return 'New chat';
+  const text = firstUser.content.trim().replace(/\s+/g, ' ');
+  return text.length > 60 ? text.slice(0, 60) + '…' : text;
+}
+
+function updateConversationTitle() {
+  const titleEl = document.getElementById('conversationTitle');
+  titleEl.textContent = deriveTitle(conversation);
+}
+
+/* ════════════════════════════════════════════════════════
+   CHAT HISTORY (persisted client-side in localStorage)
+════════════════════════════════════════════════════════ */
+
+function loadAllConversations() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.error('[app] Could not read chat history:', e.message);
+    return [];
+  }
+}
+
+function saveAllConversations(list) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('[app] Could not persist chat history:', e.message);
+  }
+}
+
+function makeConversationId() {
+  return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+}
+
+// Called after every completed exchange so the sidebar and title always
+// reflect what's on screen. Creates a new saved entry on first message,
+// updates the existing one afterward.
+function persistCurrentConversation() {
+  if (conversation.length === 0) return;
+
+  if (!currentConversationId) {
+    currentConversationId = makeConversationId();
+  }
+
+  const all = loadAllConversations();
+  const existingIndex = all.findIndex((c) => c.id === currentConversationId);
+  const entry = {
+    id: currentConversationId,
+    title: deriveTitle(conversation),
+    messages: conversation,
+    meta: conversationMeta,
+    quality: currentQuality,
+    updatedAt: Date.now(),
+  };
+
+  if (existingIndex >= 0) {
+    all[existingIndex] = entry;
+  } else {
+    all.unshift(entry);
+  }
+
+  saveAllConversations(all);
+  renderSidebarHistory();
+}
+
+function renderSidebarHistory() {
+  const nav = document.getElementById('sidebarHistory');
+  const all = loadAllConversations().sort((a, b) => b.updatedAt - a.updatedAt);
+
+  if (all.length === 0) {
+    nav.innerHTML = '<div class="sidebar-history-empty">Your chats will appear here</div>';
+    return;
+  }
+
+  nav.innerHTML = all.map((c) => (
+    '<button class="sidebar-history-item' + (c.id === currentConversationId ? ' is-active' : '') + '" data-id="' + c.id + '">' +
+      '<span>' + escapeHtml(c.title) + '</span>' +
+      '<span class="history-delete-btn" data-delete-id="' + c.id + '" title="Delete chat"><i class="ph ph-x"></i></span>' +
+    '</button>'
+  )).join('');
+
+  nav.querySelectorAll('.sidebar-history-item').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('[data-delete-id]')) return;
+      loadConversation(btn.dataset.id);
+    });
+  });
+
+  nav.querySelectorAll('[data-delete-id]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteConversation(btn.dataset.deleteId);
+    });
+  });
+}
+
+function loadConversation(id) {
+  const all = loadAllConversations();
+  const entry = all.find((c) => c.id === id);
+  if (!entry) return;
+
+  currentConversationId = entry.id;
+  conversation = entry.messages;
+  conversationMeta = entry.meta || [];
+  if (entry.quality) setQuality(entry.quality);
+  renderConversation();
+  updateConversationTitle();
+  renderSidebarHistory();
+  closeMobileSidebar();
+}
+
+function deleteConversation(id) {
+  const all = loadAllConversations().filter((c) => c.id !== id);
+  saveAllConversations(all);
+
+  if (id === currentConversationId) {
+    currentConversationId = null;
+    conversation = [];
+    conversationMeta = [];
+    renderConversation();
+    updateConversationTitle();
+  }
+
+  renderSidebarHistory();
 }
 
 /* ════════════════════════════════════════════════════════
@@ -108,18 +252,22 @@ function wireSidebar() {
     scrim.classList.add('is-visible');
   });
 
-  scrim.addEventListener('click', () => {
-    sidebar.classList.remove('is-open');
-    scrim.classList.remove('is-visible');
-  });
+  scrim.addEventListener('click', closeMobileSidebar);
 
   document.getElementById('newChatBtn').addEventListener('click', () => {
+    currentConversationId = null;
     conversation = [];
     conversationMeta = [];
     renderConversation();
-    sidebar.classList.remove('is-open');
-    scrim.classList.remove('is-visible');
+    updateConversationTitle();
+    renderSidebarHistory();
+    closeMobileSidebar();
   });
+}
+
+function closeMobileSidebar() {
+  document.getElementById('appSidebar').classList.remove('is-open');
+  document.getElementById('sidebarScrim').classList.remove('is-visible');
 }
 
 function wireAccountMenu() {
@@ -140,19 +288,45 @@ function wireAccountMenu() {
 }
 
 /* ════════════════════════════════════════════════════════
-   QUALITY SELECTOR
-   Frontend vocabulary is ONLY 'standard' | 'advanced' | 'thorough'.
-   It has no way to name a model or provider — the Worker maps this
-   hint to an actual tier and clamps it to the user's plan.
+   QUALITY PICKER — lives in the composer now, not the topbar
 ════════════════════════════════════════════════════════ */
 
-function wireQualitySelector() {
-  const options = document.querySelectorAll('.quality-option');
-  options.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      options.forEach((b) => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      currentQuality = btn.dataset.quality;
+function setQuality(quality) {
+  currentQuality = quality;
+  const meta = QUALITY_META[quality] || QUALITY_META.standard;
+
+  document.getElementById('qualityPickerLabel').textContent = meta.label;
+  const iconEl = document.getElementById('qualityPickerIcon');
+  iconEl.className = 'ph ' + meta.icon;
+
+  document.querySelectorAll('.quality-picker-option').forEach((opt) => {
+    opt.classList.toggle('is-active', opt.dataset.quality === quality);
+  });
+}
+
+function wireQualityPicker() {
+  const trigger = document.getElementById('qualityPickerTrigger');
+  const menu = document.getElementById('qualityPickerMenu');
+  const options = document.querySelectorAll('.quality-picker-option');
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !menu.hidden;
+    menu.hidden = isOpen;
+    trigger.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  document.addEventListener('click', () => {
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  });
+
+  options.forEach((opt) => {
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setQuality(opt.dataset.quality);
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
     });
   });
 }
@@ -203,6 +377,7 @@ async function sendMessage(text) {
 
   conversation.push({ role: 'user', content: text });
   renderConversation();
+  updateConversationTitle(); // title updates live, as soon as the first message lands
 
   const thinkingId = appendThinkingIndicator();
   const startedAt = performance.now();
@@ -236,6 +411,7 @@ async function sendMessage(text) {
     };
     renderConversation();
     refreshUsage();
+    persistCurrentConversation();
   } catch (e) {
     removeThinkingIndicator(thinkingId);
     appendSystemNotice('Could not reach Cognita. Please check your connection.', 'error');
@@ -326,12 +502,10 @@ function wireMessageActionButtons() {
   document.querySelectorAll('[data-action="regenerate"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.index, 10);
-      // Regenerate: drop this assistant message and everything after it,
-      // then resend the last user message that preceded it.
       const priorUserMsg = [...conversation.slice(0, idx)].reverse().find((m) => m.role === 'user');
       if (!priorUserMsg) return;
-      conversation = conversation.slice(0, idx - 1);
-      conversationMeta = conversationMeta.slice(0, idx - 1);
+      conversation = conversation.slice(0, idx);
+      conversationMeta = conversationMeta.slice(0, idx);
       renderConversation();
       await sendMessage(priorUserMsg.content);
     });
@@ -403,32 +577,21 @@ function scrollToBottom() {
   conv.scrollTop = conv.scrollHeight;
 }
 
-/* ── Markdown-lite renderer ──
-   Escapes HTML first, then applies a controlled set of transforms:
-   bold/italic, citation markers, code fences, inline code, tables, lists,
-   paragraphs. Not a full markdown parser — Cognita's system prompt asks
-   for plain prose, so this only needs to handle the formatting patterns
-   models commonly produce, safely.
-   `sources`, if given, turns [1], [2] style citations into links. */
+/* ── Markdown-lite renderer ── */
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
 
-  // ── Code fences (```...```) stashed before other processing so their
-  //    contents are never touched by bold/table/list/citation transforms. ──
   const codeBlocks = [];
   raw = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
     codeBlocks.push(code.replace(/\n$/, ''));
     return '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00';
   });
 
-  // ── Inline code ──
   raw = raw.replace(/`([^`\n]+)`/g, '<code>$1</code>');
 
-  // ── Bold / italic ──
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
   raw = raw.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
 
-  // ── Citation markers ([1], [2]...) — only when sources were provided ──
   if (sources && sources.length) {
     raw = raw.replace(/\[(\d+)\]/g, (whole, n) => {
       const i = parseInt(n, 10) - 1;
@@ -438,7 +601,6 @@ function renderMarkdownLite(text, sources) {
     });
   }
 
-  // ── Tables (markdown pipe syntax) ──
   raw = raw.replace(/((?:^\|.+\|\s*$\n?)+)/gm, (block) => {
     const lines = block.trim().split('\n').filter(Boolean);
     if (lines.length < 2) return block;
@@ -457,21 +619,18 @@ function renderMarkdownLite(text, sources) {
     return '<div class="md-table-wrap"><table class="md-table">' + thead + tbody + '</table></div>';
   });
 
-  // ── Unordered lists ──
   raw = raw.replace(/^[ \t]*[-*•][ \t]+(.+)$/gm, '\x00ULI\x00$1');
   raw = raw.replace(/(?:\x00ULI\x00.+(?:\n|$))+/g, (block) => {
     const items = block.split('\x00ULI\x00').filter((s) => s.trim());
     return '<ul>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ul>';
   });
 
-  // ── Ordered lists ──
   raw = raw.replace(/^[ \t]*\d+\.[ \t]+(.+)$/gm, '\x00OLI\x00$1');
   raw = raw.replace(/(?:\x00OLI\x00.+(?:\n|$))+/g, (block) => {
     const items = block.split('\x00OLI\x00').filter((s) => s.trim());
     return '<ol>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ol>';
   });
 
-  // ── Paragraphs (anything not already a block-level element) ──
   const blocks = raw.split(/\n\s*\n/);
   raw = blocks.map((block) => {
     const trimmed = block.trim();
@@ -481,7 +640,6 @@ function renderMarkdownLite(text, sources) {
     return '<p>' + trimmed.replace(/\n/g, '<br>') + '</p>';
   }).join('');
 
-  // ── Restore code blocks ──
   raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => '<pre><code>' + codeBlocks[parseInt(i, 10)] + '</code></pre>');
 
   return raw;
@@ -567,19 +725,17 @@ function setModalLoading(isLoading) {
 function insertVisualIntoConversation(data, promptText) {
   let contentHtml;
   if (data.type === 'svg') {
-    contentHtml = data.content; // raw SVG, safe — generated server-side from a controlled prompt template
+    contentHtml = data.content;
   } else {
     contentHtml = '<img src="data:image/jpeg;base64,' + data.content + '" alt="' + escapeHtml(promptText) + '" style="border-radius:12px;max-width:100%;">';
   }
 
   conversation.push({ role: 'user', content: 'Generate a visual: ' + promptText });
-  conversation.push({ role: 'assistant', content: '__VISUAL__' }); // marker; rendered specially below
+  conversation.push({ role: 'assistant', content: '__VISUAL__' });
 
   renderConversation();
+  updateConversationTitle();
 
-  // Replace the placeholder assistant message's content with the actual
-  // visual markup — done as a DOM patch since visuals aren't plain text
-  // that belongs in the conversation[] array sent back to the Worker.
   const list = document.getElementById('messageList');
   const lastMsg = list.lastElementChild;
   if (lastMsg) {
@@ -587,11 +743,11 @@ function insertVisualIntoConversation(data, promptText) {
     if (contentEl) contentEl.innerHTML = contentHtml;
   }
 
-  // Don't actually send "__VISUAL__" back to the Worker on next message —
-  // strip placeholder markers from what gets sent as history.
   conversation = conversation.map((m) =>
     m.content === '__VISUAL__' ? { ...m, content: '[Generated a visual for: ' + promptText + ']' } : m
   );
+
+  persistCurrentConversation();
 }
 
 /* ════════════════════════════════════════════════════════
