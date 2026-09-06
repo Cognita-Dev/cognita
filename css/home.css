@@ -43,16 +43,36 @@ main { overflow-x: hidden; }
 }
 .hero-cta-primary:hover { background: var(--accent-hover); }
 
+.hero {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-7);
+  text-align: center;
+  position: relative;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  width: 800px; height: 420px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, var(--bg-subtle), transparent);
+  opacity: 0.6;
+  z-index: -1;
+  pointer-events: none;
+}
+
 .hero-cta-secondary {
   padding: var(--space-3) var(--space-6);
-  background: var(--bg-subtle);
+  background: transparent;
+  border: 1px solid var(--border-strong);
   color: var(--text-1);
   border-radius: var(--radius-full);
   font-weight: 500;
   font-size: var(--text-base);
-  transition: background var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-.hero-cta-secondary:hover { background: var(--border); }
+.hero-cta-secondary:hover { background: var(--bg-subtle); border-color: var(--text-3); }
 
 .hero-note {
   font-size: var(--text-xs);
