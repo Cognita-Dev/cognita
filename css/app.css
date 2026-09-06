@@ -781,3 +781,91 @@
 
   .suggestion-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Thinking indicator (cycling word + live timer) ── */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  color: var(--text-3, #888);
+  font-size: 14px;
+}
+.thinking-word {
+  animation: cognita-pulse 1.6s ease-in-out infinite;
+}
+.thinking-timer {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+@keyframes cognita-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* ── Thought process (collapsible) ── */
+.thought-block {
+  margin-bottom: 10px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 10px;
+  padding: 4px 12px;
+}
+.thought-block summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-3, #888);
+  padding: 6px 0;
+  list-style: none;
+}
+.thought-block summary::-webkit-details-marker { display: none; }
+.thought-block summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+.thought-block[open] summary::before {
+  transform: rotate(90deg);
+}
+.thought-content {
+  font-size: 13.5px;
+  color: var(--text-2, #aaa);
+  line-height: 1.5;
+  padding-bottom: 8px;
+}
+
+/* ── Citation markers ── */
+.citation-marker {
+  color: var(--accent, #6ea8fe);
+  text-decoration: none;
+  font-size: 0.85em;
+  vertical-align: super;
+}
+.citation-marker:hover {
+  text-decoration: underline;
+}
+
+/* ── Sources list ── */
+.message-sources {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #2a2a2a);
+}
+.message-sources-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-3, #888);
+  margin-bottom: 4px;
+}
+.message-sources-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.message-sources-list a {
+  color: var(--text-2, #aaa);
+}
+.message-sources-list a:hover {
+  color: var(--accent, #6ea8fe);
+}
