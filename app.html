@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 </head>
 <body class="app-page">
 
@@ -117,6 +119,8 @@
     <div class="composer-wrap">
 
       <div class="composer" id="composer">
+        <div class="composer-attachments" id="composerAttachments" hidden></div>
+
         <textarea
           id="composerInput"
           class="composer-input"
@@ -127,11 +131,14 @@
 
         <div class="composer-tools-row">
           <div class="composer-tools-left">
-            <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach file">
+            <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach a text or CSV file">
               <i class="ph ph-paperclip"></i>
             </button>
-            <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
+            <button class="composer-tool-btn" id="imageAttachBtn" aria-label="Attach image" title="Image understanding is available on premium plans">
               <i class="ph ph-image"></i>
+            </button>
+            <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
+              <i class="ph ph-flow-arrow"></i>
             </button>
           </div>
 
@@ -178,7 +185,8 @@
       </div>
 
       <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
-      <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt,.csv,image/*">
+      <input type="file" id="fileInput" hidden accept=".txt,.csv,text/plain,text/csv">
+      <input type="file" id="imageInput" hidden accept="image/png,image/jpeg,image/webp,image/gif">
     </div>
 
   </main>
