@@ -1,18 +1,23 @@
 {
   "name": "cognita",
   "main": "worker.js",
-  "compatibility_date": "2025-01-01",
+  "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Workers AI binding — used for Flux image generation and as a
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+
+  // Workers AI binding, used for Flux image generation and as a
   // last-resort text fallback provider.
   "ai": {
     "binding": "AI"
   },
 
-  // KV namespace for server-side daily usage counters. Create this via:
-  //   wrangler kv:namespace create COGNITA_USAGE
-  // then paste the returned id below.
+  // KV namespace for server-side daily usage counters.
   "kv_namespaces": [
     {
       "binding": "COGNITA_USAGE",
@@ -21,7 +26,7 @@
   ],
 
   "vars": {
-  "FIREBASE_PROJECT_ID": "cognita-b94eb",
-  "APP_ORIGIN": "https://cognitai.vercel.app"
-}
+    "FIREBASE_PROJECT_ID": "cognita-b94eb",
+    "APP_ORIGIN": "https://cognitai.vercel.app"
+  }
 }
