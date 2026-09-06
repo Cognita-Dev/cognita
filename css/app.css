@@ -338,6 +338,7 @@
 .conversation {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--space-6) var(--space-5);
 }
 
@@ -403,6 +404,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  min-width: 0;
 }
 
 /* ── Message alignment — user right, assistant left ── */
@@ -410,6 +412,7 @@
   display: flex;
   gap: var(--space-2);
   max-width: 88%;
+  min-width: 0;
   animation: fadeInUp var(--duration-base) var(--ease);
 }
 
@@ -449,6 +452,10 @@
   font-size: var(--text-base);
   line-height: 1.6;
   color: var(--text-1);
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .message.is-user .message-content {
   background: var(--bg-subtle);
@@ -457,6 +464,19 @@
   display: inline-block;
   text-align: left;
 }
+
+.message-content h1, .message-content h2, .message-content h3,
+.message-content h4, .message-content h5, .message-content h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: var(--space-4) 0 var(--space-2);
+}
+.message-content h1 { font-size: 1.4em; }
+.message-content h2 { font-size: 1.25em; }
+.message-content h3 { font-size: 1.1em; }
+.message-content h4, .message-content h5, .message-content h6 { font-size: 1em; }
+.message-content h1:first-child, .message-content h2:first-child,
+.message-content h3:first-child, .message-content h4:first-child { margin-top: 0; }
 
 .message-content p { margin-bottom: var(--space-3); }
 .message-content p:last-child { margin-bottom: 0; }
@@ -467,19 +487,62 @@
   padding: 2px 6px;
   border-radius: 5px;
   font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+/* ── Code blocks — horizontally scrollable, never stretch the page,
+     with a persistent copy button top-right ── */
+.code-block-wrap {
+  position: relative;
+  max-width: 100%;
+  margin: var(--space-3) 0;
 }
 .message-content pre {
   background: var(--text-1);
   color: #f5f5f7;
   padding: var(--space-4);
+  padding-top: 34px;
   border-radius: var(--radius-md);
   overflow-x: auto;
-  margin: var(--space-3) 0;
+  margin: 0;
   text-align: left;
+  white-space: pre;
+  max-width: 100%;
 }
-.message-content pre code { background: none; padding: 0; color: inherit; }
+.message-content pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  white-space: pre;
+  overflow-wrap: normal;
+}
 
-.md-table-wrap { overflow-x: auto; margin: var(--space-3) 0; }
+.code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #d0d0d5;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  z-index: 1;
+}
+.code-copy-btn:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.code-copy-btn.is-copied { color: #7ee0a8; }
+
+/* ── KaTeX math ── */
+.katex-target { overflow-x: auto; max-width: 100%; }
+div.katex-target { display: block; margin: var(--space-3) 0; text-align: center; }
+.katex-display { margin: 0; }
+
+.md-table-wrap { overflow-x: auto; margin: var(--space-3) 0; max-width: 100%; }
 .md-table { border-collapse: collapse; width: 100%; font-size: var(--text-sm); }
 .md-table th, .md-table td {
   border: 1px solid var(--border);
@@ -490,9 +553,25 @@
 
 .citation-marker { color: var(--accent); font-weight: 600; font-size: 0.85em; }
 
+/* ── Message images (attached by the user) ── */
+.message-image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  max-width: 100%;
+}
+.message-image {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+}
+
 /* ── Thought block — small, unobtrusive, not a card ── */
 .thought-block {
   margin-bottom: var(--space-2);
+  max-width: 100%;
 }
 .thought-block summary {
   display: inline-flex;
@@ -521,6 +600,7 @@
   font-size: var(--text-xs);
   color: var(--text-3);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .message-sources {
@@ -601,6 +681,39 @@
 }
 .composer:focus-within { border-color: var(--text-3); }
 
+/* ── Staged attachments (before sending) ── */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 var(--space-1) var(--space-2);
+}
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  max-width: 220px;
+}
+.attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-chip button { color: var(--text-4); flex-shrink: 0; }
+.attachment-chip button:hover { color: var(--danger); }
+.attachment-chip-image img {
+  width: 20px; height: 20px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
 .composer-input {
   width: 100%;
   border: none;
@@ -637,9 +750,29 @@
   border-radius: var(--radius-sm);
   color: var(--text-3);
   flex-shrink: 0;
+  position: relative;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .composer-tool-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+
+/* Premium-gated image attach button gets a small lock badge instead of
+   just silently doing nothing when clicked. */
+.composer-tool-btn.is-locked { color: var(--text-4); }
+.composer-tool-btn.is-locked::after {
+  content: '\f3c4'; /* phosphor lock glyph fallback, purely decorative */
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
+  font-size: 8px;
+  line-height: 10px;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-4);
+  border: 1px solid var(--border);
+}
 
 /* ── Quality picker ── */
 .quality-picker {
@@ -734,6 +867,24 @@
   font-style: italic;
   color: var(--text-4);
   margin-top: var(--space-2);
+}
+
+/* ── Toast ── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-1);
+  color: var(--bg-base);
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  z-index: 2000;
+  max-width: 90vw;
+  text-align: center;
 }
 
 /* ── Modal ── */
