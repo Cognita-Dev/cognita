@@ -6,19 +6,22 @@
 // Worker independently re-verifies it, so nothing here is a security
 // boundary on its own. This module exists for UX, not enforcement.
 //
-// Google sign-in uses POPUP (not redirect). Redirect requires Firebase
-// Hosting to serve the auth handler page (__/auth/handler). Because this
-// app is hosted on Vercel, that handler page is unreachable, which is
-// why you were seeing a blank screen. Popup opens Google directly in a
-// new tab/window and works reliably on desktop and mobile Safari.
-// If a popup is blocked, we surface a clear message so the user can
-// allow it or fall back to email/password.
+// Google sign-in uses REDIRECT, not popup. Popup relies on a hidden
+// iframe + cross-origin storage access between your app's domain and
+// *.firebaseapp.com to relay the result back. Browsers that block
+// third-party storage access (Safari ITP, Chrome's third-party cookie
+// deprecation, Brave, incognito mode, etc.) silently break that relay,
+// which is exactly what caused the blank screen at __/auth/handler.
+// Redirect uses a normal top-level navigation instead, so it isn't
+// affected by third-party storage blocking. The __/auth/handler page
+// is served by Google on *.firebaseapp.com regardless of whether you
+// use Firebase Hosting for your own app — that is not a requirement
+// for redirect to work.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signInWithEmailAndPassword,
@@ -78,29 +81,26 @@ async function getIdToken(forceRefresh = false) {
 }
 
 /**
- * Starts Google sign-in via popup. Returns the signed-in user.
- * Throws a clear message if the browser blocks the popup.
+ * Starts Google sign-in via a full-page redirect. The browser navigates
+ * away immediately — there is nothing to await or return here. The
+ * calling page will be reloaded once Google redirects back, at which
+ * point call Auth.consumeRedirectResult() to catch any error from the
+ * attempt (onAuthStateChanged will fire separately on success).
  */
 async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
-  try {
-    const result = await signInWithPopup(auth, provider);
-    return result.user;
-  } catch (err) {
-    if (err.code === 'auth/popup-blocked') {
-      throw new Error(
-        'Google sign-in was blocked by your browser. Please allow popups for this site, or use email/password instead.'
-      );
-    }
-    throw err;
-  }
+  await signInWithRedirect(auth, provider);
 }
 
 /**
- * Legacy helper for redirect-based flows. Still exported in case any
- * other page needs it, but the login/signup pages no longer use redirect.
+ * Call this once, early, on any page that has a "Continue with Google"
+ * button (login.html, signup.html). Picks up the result of a redirect
+ * sign-in attempt that just completed. Returns the signed-in user on
+ * success, or null if this page load wasn't a return from a redirect.
+ * Throws a Firebase auth error object on failure — pass it through
+ * friendlyAuthError() to show the user something readable.
  */
-async function handleRedirectResult() {
+async function consumeRedirectResult() {
   const result = await getRedirectResult(auth);
   return result?.user || null;
 }
@@ -191,7 +191,7 @@ const Auth = {
   getCurrentUser,
   getIdToken,
   signInWithGoogle,
-  handleRedirectResult,
+  consumeRedirectResult,
   signInWithEmail,
   signUpWithEmail,
   resetPassword,
