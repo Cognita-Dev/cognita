@@ -13,12 +13,18 @@ const QUALITY_META = {
   thorough: { label: 'Thorough' },
 };
 
+// Short phrases only — long sentences don't fit well as a placeholder.
 const PLACEHOLDERS = [
   'Message Cognita',
-  'Ask me anything…',
-  'Draft, plan, or explain something',
-  'What can Cognita help with today?',
+  'Ask anything',
+  'Draft, plan, explain',
+  "What's on your mind?",
 ];
+
+const TYPE_SPEED_MS = 45;     // per character while typing
+const DELETE_SPEED_MS = 25;   // per character while deleting
+const HOLD_AFTER_TYPE_MS = 1400; // pause once a phrase is fully typed
+const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string }
@@ -28,8 +34,9 @@ let isSending = false;
 let activeThinkingTimers = {};
 
 let placeholderIndex = 0;
-let placeholderRotationInterval = null;
-let placeholderResumeTimeout = null;
+let placeholderTimeoutId = null;
+let placeholderResumeTimeoutId = null;
+let placeholderRunning = false;
 
 const THINKING_WORDS = [
   'Thinking',
@@ -60,7 +67,7 @@ const THINKING_WORDS = [
   wireAccountMenu();
   wireVisualModal();
   wireSuggestionCards();
-  startPlaceholderRotation();
+  startPlaceholderTypewriter();
 })();
 
 /* ════════════════════════════════════════════════════════
@@ -304,15 +311,13 @@ function wireAccountMenu() {
 }
 
 /* ════════════════════════════════════════════════════════
-   QUALITY PICKER — lives above the composer, not inside the text field
+   QUALITY PICKER
 ════════════════════════════════════════════════════════ */
 
 function setQuality(quality) {
   currentQuality = quality;
   const meta = QUALITY_META[quality] || QUALITY_META.standard;
 
-  // The trigger icon stays fixed (sliders) regardless of quality — only
-  // the label changes. No more "search icon" appearing for Thorough.
   document.getElementById('qualityPickerLabel').textContent = meta.label;
 
   document.querySelectorAll('.quality-picker-option').forEach((opt) => {
@@ -348,38 +353,66 @@ function wireQualityPicker() {
 }
 
 /* ════════════════════════════════════════════════════════
-   COMPOSER PLACEHOLDER ROTATION
+   COMPOSER PLACEHOLDER — TYPEWRITER EFFECT
 ════════════════════════════════════════════════════════ */
 
-function startPlaceholderRotation() {
-  stopPlaceholderRotation();
-  placeholderRotationInterval = setInterval(() => {
-    const input = document.getElementById('composerInput');
-    if (!input || input.value) return; // don't rotate while user has typed something
-    placeholderIndex = (placeholderIndex + 1) % PLACEHOLDERS.length;
-    input.placeholder = PLACEHOLDERS[placeholderIndex];
-  }, 3500);
+function startPlaceholderTypewriter() {
+  if (placeholderRunning) return;
+  placeholderRunning = true;
+  typeCurrentPlaceholder(0);
 }
 
-function stopPlaceholderRotation() {
-  if (placeholderRotationInterval) {
-    clearInterval(placeholderRotationInterval);
-    placeholderRotationInterval = null;
+function stopPlaceholderTypewriter() {
+  placeholderRunning = false;
+  if (placeholderTimeoutId) {
+    clearTimeout(placeholderTimeoutId);
+    placeholderTimeoutId = null;
   }
 }
 
-// Called on any composer activity: pause rotation immediately, and
+function typeCurrentPlaceholder(charIndex) {
+  if (!placeholderRunning) return;
+  const input = document.getElementById('composerInput');
+  if (!input || input.value) { placeholderRunning = false; return; }
+
+  const phrase = PLACEHOLDERS[placeholderIndex];
+  input.placeholder = phrase.slice(0, charIndex);
+
+  if (charIndex < phrase.length) {
+    placeholderTimeoutId = setTimeout(() => typeCurrentPlaceholder(charIndex + 1), TYPE_SPEED_MS);
+  } else {
+    placeholderTimeoutId = setTimeout(() => deleteCurrentPlaceholder(phrase.length), HOLD_AFTER_TYPE_MS);
+  }
+}
+
+function deleteCurrentPlaceholder(charIndex) {
+  if (!placeholderRunning) return;
+  const input = document.getElementById('composerInput');
+  if (!input || input.value) { placeholderRunning = false; return; }
+
+  const phrase = PLACEHOLDERS[placeholderIndex];
+  input.placeholder = phrase.slice(0, charIndex);
+
+  if (charIndex > 0) {
+    placeholderTimeoutId = setTimeout(() => deleteCurrentPlaceholder(charIndex - 1), DELETE_SPEED_MS);
+  } else {
+    placeholderIndex = (placeholderIndex + 1) % PLACEHOLDERS.length;
+    placeholderTimeoutId = setTimeout(() => typeCurrentPlaceholder(0), 300);
+  }
+}
+
+// Called on any composer activity: pause the effect immediately, and
 // schedule it to resume a few seconds after the user goes quiet again.
 function notifyComposerActivity() {
-  stopPlaceholderRotation();
-  if (placeholderResumeTimeout) clearTimeout(placeholderResumeTimeout);
+  stopPlaceholderTypewriter();
+  if (placeholderResumeTimeoutId) clearTimeout(placeholderResumeTimeoutId);
 
-  placeholderResumeTimeout = setTimeout(() => {
+  placeholderResumeTimeoutId = setTimeout(() => {
     const input = document.getElementById('composerInput');
     if (input && !input.value) {
-      startPlaceholderRotation();
+      startPlaceholderTypewriter();
     }
-  }, 4000);
+  }, RESUME_AFTER_IDLE_MS);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -437,9 +470,9 @@ function wireComposer() {
 }
 
 function wireSuggestionCards() {
-  document.querySelectorAll('.suggestion-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      sendMessage(card.dataset.prompt);
+  document.querySelectorAll('.suggestion-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      sendMessage(row.dataset.prompt);
     });
   });
 }
@@ -599,10 +632,13 @@ function appendThinkingIndicator() {
   el.id = id;
   el.innerHTML =
     '<div class="message-avatar"><img src="/assets/cognita.png" alt="" style="width:16px;height:16px;"></div>' +
-    '<div class="message-body"><div class="thinking-indicator">' +
-      '<span class="thinking-word" id="' + id + '-word">' + THINKING_WORDS[0] + '</span>' +
-      '<span class="thinking-timer" id="' + id + '-timer">0.0s</span>' +
-    '</div></div>';
+    '<div class="message-body">' +
+      '<div class="thinking-indicator">' +
+        '<span class="thinking-dot"></span>' +
+        '<span class="thinking-word" id="' + id + '-word">' + THINKING_WORDS[0] + '</span>' +
+        '<span class="thinking-timer" id="' + id + '-timer">0.0s</span>' +
+      '</div>' +
+    '</div>';
   document.getElementById('emptyState').hidden = true;
   list.hidden = false;
   list.appendChild(el);
