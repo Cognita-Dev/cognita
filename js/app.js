@@ -315,16 +315,77 @@ function scrollToBottom() {
   conv.scrollTop = conv.scrollHeight;
 }
 
-/* ── Minimal, safe markdown-lite renderer (bold, line breaks, paragraphs) ──
-   Deliberately conservative: escapes HTML first, then applies a small set
-   of transforms. This is not a full markdown parser — Cognita's system
-   prompt asks the model for plain prose, so this only needs to handle
-   basic formatting gracefully, not arbitrary markdown. */
+/* ── Markdown-lite renderer ──
+   Escapes HTML first, then applies a controlled set of transforms:
+   bold/italic, code fences, inline code, tables, lists, paragraphs.
+   Not a full markdown parser — Cognita's system prompt asks for plain
+   prose, so this only needs to handle the formatting patterns models
+   commonly produce, safely. */
 function renderMarkdownLite(text) {
-  const escaped = escapeHtml(text);
-  const withBold = escaped.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
-  const paragraphs = withBold.split(/\n\s*\n/).map((p) => '<p>' + p.replace(/\n/g, '<br>') + '</p>');
-  return paragraphs.join('');
+  let raw = escapeHtml(text);
+
+  // ── Code fences (```...```) stashed before other processing so their
+  //    contents are never touched by bold/table/list transforms. ──
+  const codeBlocks = [];
+  raw = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
+    codeBlocks.push(code.replace(/\n$/, ''));
+    return '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00';
+  });
+
+  // ── Inline code ──
+  raw = raw.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // ── Bold / italic ──
+  raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+  raw = raw.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+
+  // ── Tables (markdown pipe syntax) ──
+  raw = raw.replace(/((?:^\|.+\|\s*$\n?)+)/gm, (block) => {
+    const lines = block.trim().split('\n').filter(Boolean);
+    if (lines.length < 2) return block;
+
+    const parseCells = (line) => line.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+    const isSeparator = /^[\|\s\-:]+$/.test(lines[1]);
+    const headerCells = parseCells(lines[0]);
+    const bodyLines = isSeparator ? lines.slice(2) : lines.slice(1);
+    if (bodyLines.length === 0) return block;
+
+    const thead = '<thead><tr>' + headerCells.map((c) => '<th>' + c + '</th>').join('') + '</tr></thead>';
+    const tbody = '<tbody>' + bodyLines.map((line) =>
+      '<tr>' + parseCells(line).map((c) => '<td>' + c + '</td>').join('') + '</tr>'
+    ).join('') + '</tbody>';
+
+    return '<div class="md-table-wrap"><table class="md-table">' + thead + tbody + '</table></div>';
+  });
+
+  // ── Unordered lists ──
+  raw = raw.replace(/^[ \t]*[-*•][ \t]+(.+)$/gm, '\x00ULI\x00$1');
+  raw = raw.replace(/(?:\x00ULI\x00.+(?:\n|$))+/g, (block) => {
+    const items = block.split('\x00ULI\x00').filter((s) => s.trim());
+    return '<ul>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ul>';
+  });
+
+  // ── Ordered lists ──
+  raw = raw.replace(/^[ \t]*\d+\.[ \t]+(.+)$/gm, '\x00OLI\x00$1');
+  raw = raw.replace(/(?:\x00OLI\x00.+(?:\n|$))+/g, (block) => {
+    const items = block.split('\x00OLI\x00').filter((s) => s.trim());
+    return '<ol>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ol>';
+  });
+
+  // ── Paragraphs (anything not already a block-level element) ──
+  const blocks = raw.split(/\n\s*\n/);
+  raw = blocks.map((block) => {
+    const trimmed = block.trim();
+    if (!trimmed) return '';
+    if (/^<(ul|ol|table|div|pre)/.test(trimmed)) return trimmed;
+    if (/^\x00CODEBLOCK\d+\x00$/.test(trimmed)) return trimmed;
+    return '<p>' + trimmed.replace(/\n/g, '<br>') + '</p>';
+  }).join('');
+
+  // ── Restore code blocks ──
+  raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => '<pre><code>' + codeBlocks[parseInt(i, 10)] + '</code></pre>');
+
+  return raw;
 }
 
 function escapeHtml(str) {
