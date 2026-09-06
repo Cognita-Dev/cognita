@@ -24,12 +24,12 @@ import {
 // rules (server-side, see firestore.rules) and the Worker's independent
 // token verification (see auth-middleware.js) — never from hiding this.
 const firebaseConfig = {
-  apiKey: 'YOUR_FIREBASE_API_KEY',
-  authDomain: 'YOUR_FIREBASE_AUTH_DOMAIN',
-  projectId: 'YOUR_FIREBASE_PROJECT_ID',
-  storageBucket: 'YOUR_FIREBASE_STORAGE_BUCKET',
-  messagingSenderId: 'YOUR_FIREBASE_MESSAGING_SENDER_ID',
-  appId: 'YOUR_FIREBASE_APP_ID',
+  apiKey: 'AIzaSyB2K_ST2Crl-u-DoWsN8QoIN2rpBOA2XOs',
+  authDomain: 'cognita-b94eb.firebaseapp.com',
+  projectId: 'cognita-b94eb',
+  storageBucket: 'cognita-b94eb.firebasestorage.app',
+  messagingSenderId: '994240602309',
+  appId: '1:994240602309:web:b21738d56b47f215f9d0ac',
 };
 
 const app = initializeApp(firebaseConfig);
