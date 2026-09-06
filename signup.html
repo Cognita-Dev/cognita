@@ -57,8 +57,9 @@
   </div>
 </div>
 
-<script type="module" src="/js/auth.js"></script>
 <script type="module">
+  import { Auth } from '/js/auth.js';
+
   const form = document.getElementById('signupForm');
   const errorEl = document.getElementById('authError');
   const submitBtn = document.getElementById('submitBtn');
@@ -75,51 +76,44 @@
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
 
-  await window.Auth.ready();
-
-  // Catch the user coming back from a Google redirect sign-in.
   try {
-    const redirectUser = await window.Auth.handleRedirectResult();
-    if (redirectUser) {
+    await Auth.ready();
+
+    // Already signed in? Skip to the app.
+    if (Auth.getCurrentUser()) {
       window.location.href = '/app.html';
-      throw new Error('redirecting'); // stop further execution on this page
     }
-  } catch (err) {
-    if (err.message !== 'redirecting') {
-      showError(window.Auth.friendlyAuthError(err));
-    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      setLoading(true);
+      try {
+        await Auth.signUpWithEmail(
+          document.getElementById('email').value.trim(),
+          document.getElementById('password').value
+        );
+        window.location.href = '/app.html';
+      } catch (err) {
+        showError(Auth.friendlyAuthError(err));
+        setLoading(false);
+      }
+    });
+
+    googleBtn.addEventListener('click', async () => {
+      errorEl.hidden = true;
+      try {
+        await Auth.signInWithGoogle();
+        // Popup succeeded — user is now signed in. Go to the app.
+        window.location.href = '/app.html';
+      } catch (err) {
+        showError(Auth.friendlyAuthError(err));
+      }
+    });
+  } catch (initErr) {
+    console.error('Auth initialization failed:', initErr);
+    showError('Unable to load authentication. Please refresh the page.');
   }
-
-  // Already signed in (normal visit, not a fresh redirect)? Skip to the app.
-  if (window.Auth.getCurrentUser()) {
-    window.location.href = '/app.html';
-  }
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    errorEl.hidden = true;
-    setLoading(true);
-    try {
-      await window.Auth.signUpWithEmail(
-        document.getElementById('email').value.trim(),
-        document.getElementById('password').value
-      );
-      window.location.href = '/app.html';
-    } catch (err) {
-      showError(window.Auth.friendlyAuthError(err));
-      setLoading(false);
-    }
-  });
-
-  googleBtn.addEventListener('click', async () => {
-    errorEl.hidden = true;
-    try {
-      await window.Auth.signInWithGoogle();
-      // No further code runs here — the page navigates away to Google.
-    } catch (err) {
-      showError(window.Auth.friendlyAuthError(err));
-    }
-  });
 </script>
 
 </body>
