@@ -1,14 +1,27 @@
 // chat-endpoint.js
 // POST /api/chat
-// The ONLY thing the frontend knows about this endpoint: send a Bearer
-// token, a conversation history, and (optionally) a requested "quality"
-// hint ('standard' | 'thorough') — never a provider or model name.
+// The frontend sends a Bearer token, a conversation history, an optional
+// "quality" hint ('standard' | 'advanced' | 'thorough'), and — for premium
+// plans only — an optional "images" array of { base64, mimeType }. It
+// never sends a provider or model name; that's resolved entirely here.
+//
+// Image understanding uses Cloudflare Workers AI's free vision model
+// (@cf/meta/llama-3.2-11b-vision-instruct). It's gated to plans with
+// features.visionEnabled and metered by a separate daily quota, so it
+// never touches the paid Groq/OpenRouter usage this app otherwise relies
+// on for text.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
-import { getPlan, resolveChatTier, MODEL_TIERS } from './entitlements.js';
-import { callWithFallback } from './providers.js';
+import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL } from './entitlements.js';
+import { callWithFallback, callVisionModel } from './providers.js';
+
+const MAX_IMAGES_PER_REQUEST = 4;
+// Workers AI free tier caps request payload size; keep a conservative
+// per-image ceiling so one huge photo can't blow the daily neuron budget
+// or the request body limit on its own.
+const MAX_IMAGE_BASE64_CHARS = 6_000_000; // ~4.5MB decoded
 
 // Built fresh per-request so "today" is always accurate.
 function _systemPrompt() {
@@ -65,6 +78,26 @@ function _extractThinking(text) {
   return { thinking, reply };
 }
 
+function _validateImages(images) {
+  if (!Array.isArray(images)) return { ok: false, error: 'images must be an array.' };
+  if (images.length === 0) return { ok: true, images: [] };
+  if (images.length > MAX_IMAGES_PER_REQUEST) {
+    return { ok: false, error: 'You can attach up to ' + MAX_IMAGES_PER_REQUEST + ' images per message.' };
+  }
+  for (const img of images) {
+    if (!img || typeof img.base64 !== 'string' || typeof img.mimeType !== 'string') {
+      return { ok: false, error: 'Malformed image attachment.' };
+    }
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(img.mimeType)) {
+      return { ok: false, error: 'Unsupported image type: ' + img.mimeType };
+    }
+    if (img.base64.length > MAX_IMAGE_BASE64_CHARS) {
+      return { ok: false, error: 'One of the attached images is too large.' };
+    }
+  }
+  return { ok: true, images };
+}
+
 export async function handleChatRequest(request, env) {
   // 1) Authenticate — independent of anything in the request body.
   let identity;
@@ -108,23 +141,53 @@ export async function handleChatRequest(request, env) {
     );
   }
 
-  // 5) Resolve requested "quality" to a tier the user's plan actually permits.
+  // 5) Handle image attachments, if any — premium-gated, separately metered.
+  const hasImages = Array.isArray(body.images) && body.images.length > 0;
+  let images = [];
+
+  if (hasImages) {
+    if (!plan.features.visionEnabled) {
+      return _jsonError(
+        'Image understanding is available on premium plans. Upgrade to attach images.',
+        403
+      );
+    }
+
+    const validated = _validateImages(body.images);
+    if (!validated.ok) {
+      return _jsonError(validated.error, 400);
+    }
+    images = validated.images;
+
+    const visionQuota = await checkAndIncrement(identity.uid, 'vision', plan.limits.visionPerDay, env);
+    if (!visionQuota.allowed) {
+      return _jsonError(
+        'You have reached your daily image-understanding limit for the ' + plan.name + ' plan (' +
+        visionQuota.limit + ' per day). It resets at midnight UTC.',
+        429
+      );
+    }
+  }
+
+  // 6) Resolve requested "quality" to a tier the user's plan actually permits.
   //    resolveChatTier NEVER lets this exceed what the plan allows —
   //    a Free user asking for 'thorough' silently gets 'fast' instead.
+  //    Images override quality entirely: the only free model in this stack
+  //    that can see images is the Workers AI vision model, so any request
+  //    with images always routes there regardless of the quality hint.
   let actualTier = resolveChatTier(account.planId, _tierForQualityHint(body.quality));
 
-  // If they asked for a richer tier than 'fast', that spends from the
-  // advanced-model daily allowance (0 for Free). Once that allowance is
-  // used up for today, actually fall back to 'fast' rather than letting
-  // them keep using the richer tier for free.
-  if (actualTier !== 'fast') {
+  if (!hasImages && actualTier !== 'fast') {
+    // Richer text tiers spend from the advanced-model daily allowance
+    // (0 for Free). Once used up for today, fall back to 'fast' rather
+    // than letting them keep using the richer tier for free.
     const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
     if (!advQuota.allowed) {
       actualTier = 'fast';
     }
   }
 
-  // 6) Trim history to what the plan allows, and prepend the system prompt.
+  // 7) Trim history to what the plan allows, and prepend the system prompt.
   const trimmedHistory = history
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .slice(-plan.limits.maxContextMessages)
@@ -132,21 +195,23 @@ export async function handleChatRequest(request, env) {
 
   const messages = [{ role: 'system', content: _systemPrompt() }, ...trimmedHistory];
 
-  // 7) Call the model tier with built-in fallback — provider details never
-  //    leave this function. Cognita answers from its own knowledge, with
-  //    an explicit instruction on how to handle anything that might be
-  //    out of date.
-  const tierConfig = MODEL_TIERS[actualTier];
-
+  // 8) Call the model — vision path if images were attached, otherwise the
+  //    normal tiered text path with built-in fallback. Provider details
+  //    never leave this function.
   let result;
   try {
-    result = await callWithFallback(tierConfig, messages, env);
+    if (hasImages) {
+      result = await callVisionModel(VISION_MODEL, messages, images, env);
+    } else {
+      const tierConfig = MODEL_TIERS[actualTier];
+      result = await callWithFallback(tierConfig, messages, env);
+    }
   } catch (e) {
-    console.error('[chat] all providers failed:', e.message);
+    console.error('[chat] model call failed:', e.message);
     return _jsonError('Cognita is temporarily unavailable. Please try again shortly.', 503);
   }
 
-  // 8) Split out the thought process, whichever form the model returned it in.
+  // 9) Split out the thought process, whichever form the model returned it in.
   let thinking = result.reasoning || null;
   let reply = result.text || '';
   if (!thinking) {
