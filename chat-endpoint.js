@@ -103,16 +103,16 @@ export async function handleChatRequest(request, env) {
   // 5) Resolve requested "quality" to a tier the user's plan actually permits.
   //    resolveChatTier NEVER lets this exceed what the plan allows —
   //    a Free user asking for 'thorough' silently gets 'fast' instead.
-  const requestedTier = _tierForQualityHint(body.quality);
-  const actualTier = resolveChatTier(account.planId, requestedTier);
+  let actualTier = resolveChatTier(account.planId, _tierForQualityHint(body.quality));
 
-  // If they asked for a richer tier than 'fast' and got downgraded, that
-  // also spends from the advanced-model daily allowance (0 for Free).
+  // If they asked for a richer tier than 'fast', that spends from the
+  // advanced-model daily allowance (0 for Free). Once that allowance is
+  // used up for today, actually fall back to 'fast' rather than letting
+  // them keep using the richer tier for free.
   if (actualTier !== 'fast') {
     const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
     if (!advQuota.allowed) {
-      // Fall back silently to 'fast' rather than failing the whole request —
-      // better UX than an error when the cheaper tier can still help.
+      actualTier = 'fast';
     }
   }
 
