@@ -26,8 +26,14 @@ const DELETE_SPEED_MS = 25;   // per character while deleting
 const HOLD_AFTER_TYPE_MS = 1400; // pause once a phrase is fully typed
 const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 
+// Image types we'll try to send to the vision model. Anything else (pdf,
+// docx, etc.) is flagged to the user rather than silently dropped.
+const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp|gif)$/i;
+const TEXT_FILE_RE = /\.(txt|csv)$/i;
+const TEXT_MIME_TYPES = ['text/plain', 'text/csv'];
+
 let currentQuality = 'standard';
-let conversation = []; // { role: 'user'|'assistant', content: string }
+let conversation = []; // { role: 'user'|'assistant', content: string, images?: string[] }
 let conversationMeta = [];
 let currentConversationId = null;
 let isSending = false;
@@ -37,6 +43,10 @@ let placeholderIndex = 0;
 let placeholderTimeoutId = null;
 let placeholderResumeTimeoutId = null;
 let placeholderRunning = false;
+
+// Attachments staged in the composer before the message is sent.
+// { name, kind: 'image'|'text'|'unsupported', dataUrl?, base64?, mimeType?, text? }
+let pendingAttachments = [];
 
 const THINKING_WORDS = [
   'Thinking',
@@ -74,6 +84,9 @@ const THINKING_WORDS = [
    ACCOUNT / USAGE DISPLAY
 ════════════════════════════════════════════════════════ */
 
+let currentAccountPlanId = null;
+let currentAccountFeatures = null;
+
 function renderAccountInfo(user) {
   const email = user.email || 'Signed in';
   document.getElementById('accountEmail').textContent = email;
@@ -89,13 +102,31 @@ async function refreshAccount() {
     document.getElementById('accountPlan').classList.remove('skeleton');
     document.getElementById('accountEmail').classList.remove('skeleton');
 
+    currentAccountPlanId = data.planId;
+    currentAccountFeatures = data.features || null;
+
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
       upgradeLink.hidden = false;
     }
+
+    // Vision (image attachment) is premium-gated. Reflect that on the
+    // attach button so free users get a clear affordance instead of a
+    // dead click.
+    updateImageAttachAvailability();
   } catch (e) {
     console.error('[app] Could not load account:', e.message);
   }
+}
+
+function updateImageAttachAvailability() {
+  const imageAttachBtn = document.getElementById('imageAttachBtn');
+  if (!imageAttachBtn) return;
+  const enabled = !!(currentAccountFeatures && currentAccountFeatures.visionEnabled);
+  imageAttachBtn.classList.toggle('is-locked', !enabled);
+  imageAttachBtn.title = enabled
+    ? 'Attach an image'
+    : 'Image understanding is available on premium plans';
 }
 
 async function refreshUsage() {
@@ -126,8 +157,8 @@ async function refreshUsage() {
 function deriveTitle(messages) {
   const firstUser = messages.find((m) => m.role === 'user');
   if (!firstUser) return 'New chat';
-  const text = firstUser.content.trim().replace(/\s+/g, ' ');
-  return text.length > 60 ? text.slice(0, 60) + '…' : text;
+  const text = (firstUser.content || (firstUser.images && firstUser.images.length ? 'Image' : '')).trim().replace(/\s+/g, ' ');
+  return text.length > 60 ? text.slice(0, 60) + '…' : (text || 'New chat');
 }
 
 function updateConversationTitle() {
@@ -416,19 +447,25 @@ function notifyComposerActivity() {
 }
 
 /* ════════════════════════════════════════════════════════
-   COMPOSER + SENDING MESSAGES
+   COMPOSER + ATTACHMENTS + SENDING MESSAGES
 ════════════════════════════════════════════════════════ */
 
 function wireComposer() {
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
-  const attachBtn = document.getElementById('attachBtn');
+  const attachBtn = document.getElementById('attachBtn');       // text/csv files
+  const imageAttachBtn = document.getElementById('imageAttachBtn'); // images (premium)
   const fileInput = document.getElementById('fileInput');
+  const imageInput = document.getElementById('imageInput');
+
+  function refreshSendEnabled() {
+    sendBtn.disabled = (!input.value.trim() && pendingAttachments.length === 0) || isSending;
+  }
 
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-    sendBtn.disabled = !input.value.trim() || isSending;
+    refreshSendEnabled();
     notifyComposerActivity();
   });
 
@@ -442,30 +479,130 @@ function wireComposer() {
   });
 
   sendBtn.addEventListener('click', () => {
-    const text = input.value.trim();
-    if (text) sendMessage(text);
+    sendMessage(input.value.trim());
   });
 
-  // File picker: clicking the paperclip opens the OS file dialog, and the
-  // chosen file's name is inserted into the message as a reference.
+  // Document/text attach button.
   attachBtn.addEventListener('click', () => {
     fileInput.click();
   });
 
-  fileInput.addEventListener('change', (e) => {
+  fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
+    e.target.value = '';
     if (!file) return;
 
-    const note = '[Attached file: ' + file.name + ']';
-    input.value = input.value ? input.value + '\n' + note : note;
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-    sendBtn.disabled = !input.value.trim() || isSending;
-    input.focus();
-    notifyComposerActivity();
+    const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
 
-    // Reset so selecting the same file twice in a row still fires 'change'
+    if (isTextLike) {
+      try {
+        const text = await file.text();
+        pendingAttachments.push({ name: file.name, kind: 'text', text });
+      } catch (err) {
+        console.error('[app] Could not read file:', err.message);
+        showToast('Could not read that file.');
+        return;
+      }
+    } else if (IMAGE_MIME_RE.test(file.type)) {
+      // Images picked from the generic paperclip are routed the same way
+      // as the dedicated image button, so gating still applies.
+      await handleImageFile(file);
+      refreshSendEnabled();
+      renderComposerAttachments();
+      return;
+    } else {
+      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+    }
+
+    renderComposerAttachments();
+    refreshSendEnabled();
+    input.focus();
+  });
+
+  // Dedicated image attach button — premium-gated.
+  imageAttachBtn.addEventListener('click', () => {
+    if (!currentAccountFeatures || !currentAccountFeatures.visionEnabled) {
+      showToast('Image understanding is available on premium plans. Upgrade to attach images.');
+      return;
+    }
+    imageInput.click();
+  });
+
+  imageInput.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
     e.target.value = '';
+    if (!file) return;
+    await handleImageFile(file);
+    renderComposerAttachments();
+    refreshSendEnabled();
+    input.focus();
+  });
+}
+
+async function handleImageFile(file) {
+  if (!IMAGE_MIME_RE.test(file.type)) {
+    pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+    return;
+  }
+  if (!currentAccountFeatures || !currentAccountFeatures.visionEnabled) {
+    showToast('Image understanding is available on premium plans.');
+    return;
+  }
+
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+    const base64 = dataUrl.split(',')[1];
+    pendingAttachments.push({
+      name: file.name,
+      kind: 'image',
+      dataUrl,
+      base64,
+      mimeType: file.type,
+    });
+  } catch (err) {
+    console.error('[app] Could not read image:', err.message);
+    showToast('Could not read that image.');
+  }
+}
+
+function renderComposerAttachments() {
+  const wrap = document.getElementById('composerAttachments');
+  if (pendingAttachments.length === 0) {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    return;
+  }
+
+  wrap.hidden = false;
+  wrap.innerHTML = pendingAttachments.map((att, i) => {
+    if (att.kind === 'image') {
+      return '<span class="attachment-chip attachment-chip-image">' +
+        '<img src="' + att.dataUrl + '" alt="">' +
+        '<span class="attachment-chip-name">' + escapeHtml(att.name) + '</span>' +
+        '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
+      '</span>';
+    }
+    const icon = att.kind === 'unsupported' ? 'warning' : 'file-text';
+    const suffix = att.kind === 'unsupported' ? ' (not readable yet)' : '';
+    return '<span class="attachment-chip">' +
+      '<i class="ph ph-' + icon + '"></i>' +
+      escapeHtml(att.name) + suffix +
+      '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
+    '</span>';
+  }).join('');
+
+  wrap.querySelectorAll('[data-remove-attachment]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pendingAttachments.splice(parseInt(btn.dataset.removeAttachment, 10), 1);
+      renderComposerAttachments();
+      const input = document.getElementById('composerInput');
+      document.getElementById('sendBtn').disabled = !input.value.trim() && pendingAttachments.length === 0;
+    });
   });
 }
 
@@ -478,7 +615,7 @@ function wireSuggestionCards() {
 }
 
 async function sendMessage(text) {
-  if (isSending || !text) return;
+  if (isSending || (!text && pendingAttachments.length === 0)) return;
   isSending = true;
 
   const input = document.getElementById('composerInput');
@@ -487,21 +624,49 @@ async function sendMessage(text) {
   document.getElementById('sendBtn').disabled = true;
   notifyComposerActivity();
 
-  conversation.push({ role: 'user', content: text });
+  const imageAttachments = pendingAttachments.filter((a) => a.kind === 'image');
+  const textAttachments = pendingAttachments.filter((a) => a.kind === 'text');
+  const unsupportedAttachments = pendingAttachments.filter((a) => a.kind === 'unsupported');
+
+  let fullText = text || '';
+  if (textAttachments.length > 0) {
+    fullText += textAttachments.map((a) =>
+      '\n\n--- Content of attached file "' + a.name + '" ---\n' + a.text
+    ).join('');
+  }
+  if (unsupportedAttachments.length > 0) {
+    fullText += unsupportedAttachments.map((a) =>
+      '\n\n[The user attached "' + a.name + '" but this file type cannot be read yet — let them know.]'
+    ).join('');
+  }
+  fullText = fullText.trim();
+
+  const outgoingImages = imageAttachments.map((a) => ({ base64: a.base64, mimeType: a.mimeType }));
+  const displayImages = imageAttachments.map((a) => a.dataUrl);
+
+  pendingAttachments = [];
+  renderComposerAttachments();
+
+  const userMessage = { role: 'user', content: fullText };
+  if (displayImages.length > 0) userMessage.images = displayImages;
+  conversation.push(userMessage);
   renderConversation();
-  updateConversationTitle(); // title updates live, as soon as the first message lands
+  updateConversationTitle();
 
   const thinkingId = appendThinkingIndicator();
   const startedAt = performance.now();
 
   try {
+    const payload = {
+      messages: conversation.map((m) => ({ role: m.role, content: m.content })),
+      quality: currentQuality,
+    };
+    if (outgoingImages.length > 0) payload.images = outgoingImages;
+
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: conversation,
-        quality: currentQuality,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();
@@ -553,12 +718,21 @@ function renderConversation() {
   list.innerHTML = conversation.map(renderMessage).join('');
   scrollToBottom();
   wireMessageActionButtons();
+  wireCodeCopyButtons(list);
+  renderMathInElement(list);
 }
 
 function renderMessage(msg, index) {
   const isUser = msg.role === 'user';
   const avatarContent = isUser ? 'Y' : '<img src="/assets/cognita.png" alt="" style="width:16px;height:16px;">';
   const meta = conversationMeta[index] || {};
+
+  let imagesHtml = '';
+  if (isUser && msg.images && msg.images.length) {
+    imagesHtml = '<div class="message-image-grid">' +
+      msg.images.map((src) => '<img src="' + src + '" alt="" class="message-image">').join('') +
+    '</div>';
+  }
 
   let thoughtHtml = '';
   if (!isUser && meta.thinking) {
@@ -589,7 +763,8 @@ function renderMessage(msg, index) {
       '<div class="message-avatar">' + avatarContent + '</div>' +
       '<div class="message-body">' +
         thoughtHtml +
-        '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' +
+        imagesHtml +
+        (msg.content ? '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' : '') +
         sourcesHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
@@ -621,6 +796,36 @@ function wireMessageActionButtons() {
       renderConversation();
       await sendMessage(priorUserMsg.content);
     });
+  });
+}
+
+function wireCodeCopyButtons(container) {
+  container.querySelectorAll('.code-copy-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (!target) return;
+      navigator.clipboard.writeText(target.textContent).then(() => {
+        btn.classList.add('is-copied');
+        btn.innerHTML = '<i class="ph ph-check"></i> Copied';
+        setTimeout(() => {
+          btn.classList.remove('is-copied');
+          btn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+        }, 1800);
+      });
+    });
+  });
+}
+
+function renderMathInElement(container) {
+  if (!window.katex) return; // KaTeX script hasn't loaded yet
+  container.querySelectorAll('.katex-target').forEach((el) => {
+    const expr = el.textContent;
+    const display = el.dataset.display === 'true';
+    try {
+      window.katex.render(expr, el, { throwOnError: false, displayMode: display });
+    } catch (e) {
+      console.error('[app] KaTeX render failed:', e.message);
+    }
   });
 }
 
@@ -692,17 +897,44 @@ function scrollToBottom() {
   conv.scrollTop = conv.scrollHeight;
 }
 
-/* ── Markdown-lite renderer ── */
+/* ── Markdown-lite + LaTeX renderer ── */
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
 
+  // Protect LaTeX before anything else touches the string.
+  const mathBlocks = [];
+  raw = raw.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
+    mathBlocks.push({ expr, display: true });
+    return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
+  });
+  raw = raw.replace(/\\\[([\s\S]+?)\\\]/g, (_, expr) => {
+    mathBlocks.push({ expr, display: true });
+    return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
+  });
+  raw = raw.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_, expr) => {
+    mathBlocks.push({ expr, display: false });
+    return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
+  });
+  raw = raw.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => {
+    mathBlocks.push({ expr, display: false });
+    return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
+  });
+
   const codeBlocks = [];
-  raw = raw.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) => {
-    codeBlocks.push(code.replace(/\n$/, ''));
+  raw = raw.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push({ lang: lang || '', code: code.replace(/\n$/, '') });
     return '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00';
   });
 
   raw = raw.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Headings — must run before bold/italic so "#" lines aren't eaten.
+  raw = raw.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
+  raw = raw.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
+  raw = raw.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  raw = raw.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  raw = raw.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  raw = raw.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
   raw = raw.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
@@ -750,12 +982,28 @@ function renderMarkdownLite(text, sources) {
   raw = blocks.map((block) => {
     const trimmed = block.trim();
     if (!trimmed) return '';
-    if (/^<(ul|ol|table|div|pre)/.test(trimmed)) return trimmed;
+    if (/^<(ul|ol|table|div|pre|h[1-6])/.test(trimmed)) return trimmed;
     if (/^\x00CODEBLOCK\d+\x00$/.test(trimmed)) return trimmed;
+    if (/^\x00MATH\d+\x00$/.test(trimmed)) return trimmed;
     return '<p>' + trimmed.replace(/\n/g, '<br>') + '</p>';
   }).join('');
 
-  raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => '<pre><code>' + codeBlocks[parseInt(i, 10)] + '</code></pre>');
+  raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => {
+    const block = codeBlocks[parseInt(i, 10)];
+    const id = 'code-' + Math.random().toString(36).slice(2, 9);
+    return '<div class="code-block-wrap">' +
+      '<button class="code-copy-btn" data-copy-target="' + id + '"><i class="ph ph-copy"></i> Copy</button>' +
+      '<pre><code id="' + id + '">' + block.code + '</code></pre>' +
+    '</div>';
+  });
+
+  raw = raw.replace(/\x00MATH(\d+)\x00/g, (_, i) => {
+    const m = mathBlocks[parseInt(i, 10)];
+    const id = 'math-' + Math.random().toString(36).slice(2, 9);
+    const tag = m.display ? 'div' : 'span';
+    return '<' + tag + ' class="katex-target" id="' + id + '" data-display="' + m.display + '">' +
+      escapeHtml(m.expr) + '</' + tag + '>';
+  });
 
   return raw;
 }
