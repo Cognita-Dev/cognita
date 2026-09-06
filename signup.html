@@ -10,23 +10,18 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body class="auth-page">
-
 <div class="auth-shell">
   <a href="/index.html" class="auth-logo">
     <img src="/assets/cognita.png" alt="Cognita">
   </a>
-
   <div class="auth-card">
     <h1 class="auth-title">Create your account</h1>
     <p class="auth-subtitle">Start thinking, writing, and building with Cognita</p>
-
     <button id="googleBtn" class="auth-btn auth-btn--google" type="button">
       <i class="ph ph-google-logo"></i>
       Continue with Google
     </button>
-
     <div class="auth-divider"><span>or</span></div>
-
     <form id="signupForm" class="auth-form" novalidate>
       <label class="auth-field">
         <span>Email</span>
@@ -37,53 +32,50 @@
         <input type="password" id="password" autocomplete="new-password" minlength="6" required>
       </label>
       <p class="auth-hint">At least 6 characters.</p>
-
       <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
         <span class="btn-label">Create account</span>
         <span class="btn-spinner" hidden></span>
       </button>
     </form>
-
     <p id="authError" class="auth-error" hidden></p>
-
     <p class="auth-switch">
       Already have an account? <a href="/login.html">Sign in</a>
     </p>
-
     <p class="auth-legal">
       By continuing, you agree to Cognita's
       <a href="/terms.html">Terms</a> and <a href="/privacy.html">Privacy Policy</a>.
     </p>
   </div>
 </div>
-
 <script type="module">
   import { Auth } from '/js/auth.js';
-
   const form = document.getElementById('signupForm');
   const errorEl = document.getElementById('authError');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
-
   function showError(msg) {
     errorEl.textContent = msg;
     errorEl.hidden = false;
   }
-
   function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
     submitBtn.querySelector('.btn-label').hidden = isLoading;
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
-
   try {
-    await Auth.ready();
+    // Check whether this page load is the browser returning from a
+    // Google redirect sign-in, before the "already signed in" check.
+    try {
+      await Auth.consumeRedirectResult();
+    } catch (redirectErr) {
+      showError(Auth.friendlyAuthError(redirectErr));
+    }
 
+    await Auth.ready();
     // Already signed in? Skip to the app.
     if (Auth.getCurrentUser()) {
       window.location.href = '/app.html';
     }
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
@@ -99,13 +91,11 @@
         setLoading(false);
       }
     });
-
     googleBtn.addEventListener('click', async () => {
       errorEl.hidden = true;
       try {
+        // This navigates the browser away — nothing after this line runs.
         await Auth.signInWithGoogle();
-        // Popup succeeded — user is now signed in. Go to the app.
-        window.location.href = '/app.html';
       } catch (err) {
         showError(Auth.friendlyAuthError(err));
       }
@@ -115,6 +105,5 @@
     showError('Unable to load authentication. Please refresh the page.');
   }
 </script>
-
 </body>
 </html>
