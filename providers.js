@@ -77,6 +77,71 @@ async function _callWorkersAI(messages, model, env) {
 }
 
 /**
+ * Calls Cloudflare Workers AI's vision-capable model with one or more
+ * images attached to the final user turn. This is the only model in the
+ * stack that accepts images, and it's free (Workers AI free tier neurons),
+ * which is why the image-understanding feature can be premium-gated on
+ * usage without adding a paid API cost per request.
+ *
+ * @param {string} model - the Workers AI vision model id, e.g.
+ *   '@cf/meta/llama-3.2-11b-vision-instruct' (see entitlements.js)
+ * @param {array} messages - plain role/content chat history, system prompt
+ *   included, exactly as built in chat-endpoint.js
+ * @param {array} images - [{ base64, mimeType }], already validated by the
+ *   caller (size, count, mime type)
+ * @param {object} env - Worker env bindings
+ */
+export async function callVisionModel(model, messages, images, env) {
+  if (!env.AI) throw new Error('workersai_not_bound');
+
+  // Workers AI's Llama 3.2 Vision binding takes a single "image" input
+  // (raw bytes as a number array) alongside a text prompt — it does not
+  // take a full multi-turn messages array the way the text models do.
+  // So: fold the conversation history into one prompt string, and pass
+  // through only the first image (the model is single-image per call).
+  // If more than one image was attached, note the rest so the reply can
+  // acknowledge them rather than silently ignoring them.
+  const systemMsg = messages.find((m) => m.role === 'system');
+  const conversational = messages.filter((m) => m.role !== 'system');
+
+  const historyText = conversational
+    .slice(0, -1)
+    .map((m) => (m.role === 'user' ? 'User: ' : 'Assistant: ') + m.content)
+    .join('\n');
+
+  const lastUserMsg = conversational[conversational.length - 1];
+  let prompt = (systemMsg ? systemMsg.content + '\n\n' : '') +
+    (historyText ? historyText + '\n' : '') +
+    'User: ' + (lastUserMsg ? lastUserMsg.content : '');
+
+  if (images.length > 1) {
+    prompt += '\n\n[Note: the user attached ' + images.length + ' images. ' +
+      'Only the first could be processed — mention that the rest were not reviewed if it matters to your answer.]';
+  }
+
+  const primaryImage = images[0];
+  const binaryString = atob(primaryImage.base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const res = await env.AI.run(model, {
+    prompt,
+    image: Array.from(bytes),
+    max_tokens: 1024,
+  });
+
+  const text = typeof res?.description === 'string'
+    ? res.description.trim()
+    : (typeof res?.response === 'string' ? res.response.trim() : '');
+
+  if (!text) throw new Error('workersai_vision_empty');
+
+  return { text, finishReason: 'stop', reasoning: null };
+}
+
+/**
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
