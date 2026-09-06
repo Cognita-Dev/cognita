@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/auth.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="auth-page">
 <div class="auth-shell">
@@ -60,18 +61,8 @@
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
   try {
-    // Check whether this page load is the browser returning from a
-    // Google redirect sign-in. Must happen before the "already signed
-    // in" check below, so a failed attempt shows an error instead of
-    // silently falling through.
-    try {
-      await Auth.consumeRedirectResult();
-    } catch (redirectErr) {
-      showError(Auth.friendlyAuthError(redirectErr));
-    }
-
     await Auth.ready();
-    // Already signed in (normal visit, or redirect just succeeded)?
+    // Already signed in (normal visit)? Skip to the app.
     if (Auth.getCurrentUser()) {
       window.location.href = '/app.html';
     }
@@ -93,8 +84,8 @@
     googleBtn.addEventListener('click', async () => {
       errorEl.hidden = true;
       try {
-        // This navigates the browser away — nothing after this line runs.
         await Auth.signInWithGoogle();
+        window.location.href = '/app.html';
       } catch (err) {
         showError(Auth.friendlyAuthError(err));
       }
