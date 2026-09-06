@@ -5,12 +5,18 @@
 // Auth.getIdToken() and sends it as a Bearer token to the Worker — the
 // Worker independently re-verifies it, so nothing here is a security
 // boundary on its own. This module exists for UX, not enforcement.
+//
+// Google sign-in uses REDIRECT (not popup) because signInWithPopup is
+// unreliable on mobile browsers — popups often render blank or get
+// blocked. Redirect-based sign-in navigates the whole page to Google and
+// back, which works reliably everywhere.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -67,10 +73,27 @@ async function getIdToken(forceRefresh = false) {
   }
 }
 
+/**
+ * Starts Google sign-in via full-page redirect. Execution does not
+ * continue past this call in any meaningful way — the browser navigates
+ * to Google, then back to this same page. The signed-in user is picked
+ * up by handleRedirectResult() below, which must be called on page load.
+ */
 async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
-  const result = await signInWithPopup(auth, provider);
-  return result.user;
+  await signInWithRedirect(auth, provider);
+}
+
+/**
+ * Call this once, on every page that offers Google sign-in, right after
+ * Auth.ready(). Catches the user coming back from Google after a
+ * redirect. Returns the user if a redirect sign-in just completed, or
+ * null if this page load wasn't the result of one (e.g. a normal visit).
+ * Throws if the redirect sign-in itself failed.
+ */
+async function handleRedirectResult() {
+  const result = await getRedirectResult(auth);
+  return result?.user || null;
 }
 
 async function signInWithEmail(email, password) {
@@ -142,6 +165,7 @@ function friendlyAuthError(error) {
     'auth/popup-closed-by-user': 'Sign-in was cancelled.',
     'auth/network-request-failed': 'Network error. Please check your connection.',
     'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
+    'auth/account-exists-with-different-credential': 'An account already exists with this email using a different sign-in method.',
   };
   return map[code] || 'Something went wrong. Please try again.';
 }
@@ -151,6 +175,7 @@ window.Auth = {
   getCurrentUser,
   getIdToken,
   signInWithGoogle,
+  handleRedirectResult,
   signInWithEmail,
   signUpWithEmail,
   resetPassword,
