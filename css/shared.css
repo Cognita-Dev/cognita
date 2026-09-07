@@ -1,9 +1,8 @@
 /* css/shared.css
-   Design tokens + resets. Calm, editorial, Apple-adjacent: warm
-   near-white surfaces, one restrained sage accent, quiet depth.
+   Design tokens + resets.
 */
 
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
   /* ── Color — Light ── */
@@ -31,23 +30,21 @@
   --danger-subtle: #f7ece9;
 
   /* ── Type ──
-     Fraunces: the display/headline face — a warm, slightly literary
-     serif with real personality (this is the single biggest lever for
-     "premium" — swap it in on every h1/h2/h3 and the whole site reads
-     differently).
-     Inter: body copy, nav, buttons, UI chrome — stays a clean sans so
-     paragraphs remain easy to scan. */
+     Inter carries almost everything — body, nav, UI, even headings.
+     Instrument Serif Italic is reserved for single-word accents inside
+     a headline (wrap that word in <em>), never a whole heading. This
+     is a deliberate restraint: one flourish, not a font swap. */
   --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-accent: "Instrument Serif", Georgia, serif;
 
   --text-xs:   0.75rem;
   --text-sm:   0.875rem;
   --text-base: 1rem;
   --text-lg:   1.0625rem;
-  --text-xl:   1.25rem;
-  --text-2xl:  1.625rem;
-  --text-3xl:  2.125rem;
-  --text-4xl:  2.875rem;
+  --text-xl:   1.2rem;
+  --text-2xl:  1.5rem;
+  --text-3xl:  1.875rem;
+  --text-4xl:  2.375rem;
 
   /* ── Spacing ── */
   --space-1: 4px;
@@ -59,13 +56,13 @@
   --space-7: 48px;
   --space-8: 72px;
 
-  /* ── Radius — restrained, not "everything is a pill" ── */
+  /* ── Radius ── */
   --radius-sm: 8px;
   --radius-md: 13px;
   --radius-lg: 20px;
   --radius-full: 999px;
 
-  /* ── Shadow — very low opacity, large blur, minimal offset ── */
+  /* ── Shadow ── */
   --shadow-sm: 0 1px 2px rgba(23, 23, 23, 0.04);
   --shadow-md: 0 8px 24px rgba(23, 23, 23, 0.07);
   --shadow-lg: 0 20px 56px rgba(23, 23, 23, 0.12);
@@ -131,13 +128,19 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; border: none; background: none; }
 h1, h2, h3, h4, p { margin: 0; }
 
-/* Headings default to the display serif everywhere on the site.
-   Anything that needs to stay sans (nav labels, buttons, small UI
-   text) already sets its own font-family lower in the cascade via
-   marketing.css / home.css, so this is a safe global default. */
 h1, h2, h3, h4 {
-  font-family: var(--font-display);
-  letter-spacing: -0.01em;
+  font-family: var(--font);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Accent word inside a heading — the ONLY place the serif appears.
+   Usage: <h1>Start with a <em>thought</em>.</h1> */
+h1 em, h2 em, h3 em {
+  font-family: var(--font-accent);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 ::selection {
@@ -145,7 +148,6 @@ h1, h2, h3, h4 {
   color: var(--text-1);
 }
 
-/* Visible, quiet focus ring — not a default browser blue glow */
 :focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 2px;
@@ -208,7 +210,6 @@ h1, h2, h3, h4 {
   border: 0;
 }
 
-/* ── Skeleton loading — used anywhere content is fetched async ── */
 .skeleton {
   position: relative;
   background: var(--bg-subtle);
