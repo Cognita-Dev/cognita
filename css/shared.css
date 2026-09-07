@@ -3,6 +3,8 @@
    near-white surfaces, one restrained sage accent, quiet depth.
 */
 
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
   /* ── Color — Light ── */
   --bg-base:      #f7f7f5;
@@ -28,9 +30,15 @@
   --danger:   #b3423a;
   --danger-subtle: #f7ece9;
 
-  /* ── Type ── */
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-display: var(--font);
+  /* ── Type ──
+     Fraunces: the display/headline face — a warm, slightly literary
+     serif with real personality (this is the single biggest lever for
+     "premium" — swap it in on every h1/h2/h3 and the whole site reads
+     differently).
+     Inter: body copy, nav, buttons, UI chrome — stays a clean sans so
+     paragraphs remain easy to scan. */
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
 
   --text-xs:   0.75rem;
   --text-sm:   0.875rem;
@@ -122,6 +130,15 @@ a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; border: none; background: none; }
 h1, h2, h3, h4, p { margin: 0; }
+
+/* Headings default to the display serif everywhere on the site.
+   Anything that needs to stay sans (nav labels, buttons, small UI
+   text) already sets its own font-family lower in the cascade via
+   marketing.css / home.css, so this is a safe global default. */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
 
 ::selection {
   background: var(--accent-subtle);
