@@ -33,7 +33,7 @@ const TEXT_FILE_RE = /\.(txt|csv)$/i;
 const TEXT_MIME_TYPES = ['text/plain', 'text/csv'];
 
 let currentQuality = 'standard';
-let conversation = []; // { role: 'user'|'assistant', content: string, images?: string[] }
+let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...] }
 let conversationMeta = [];
 let currentConversationId = null;
 let isSending = false;
@@ -47,6 +47,10 @@ let placeholderRunning = false;
 // Attachments staged in the composer before the message is sent.
 // { name, kind: 'image'|'text'|'unsupported', dataUrl?, base64?, mimeType?, text? }
 let pendingAttachments = [];
+
+let currentAccountPlanId = null;
+let currentAccountHasVision = false;
+let visualKind = 'diagram';
 
 const THINKING_WORDS = [
   'Thinking',
@@ -72,6 +76,7 @@ const THINKING_WORDS = [
   renderSidebarHistory();
   updateConversationTitle();
   wireComposer();
+  wireAttachMenu();
   wireQualityPicker();
   wireSidebar();
   wireAccountMenu();
@@ -83,9 +88,6 @@ const THINKING_WORDS = [
 /* ════════════════════════════════════════════════════════
    ACCOUNT / USAGE DISPLAY
 ════════════════════════════════════════════════════════ */
-
-let currentAccountPlanId = null;
-let currentAccountHasVision = false;
 
 function renderAccountInfo(user) {
   const email = user.email || 'Signed in';
@@ -112,9 +114,9 @@ async function refreshAccount() {
       upgradeLink.hidden = false;
     }
 
-    // Vision (image attachment) is gated by plan. Reflect that on the
-    // attach button so lower-plan users get a clear affordance instead of
-    // a dead click.
+    // Vision (image attachment / illustration generation) is gated by
+    // plan. Reflect that in the attach menu so lower-plan users get a
+    // clear affordance instead of a dead click.
     updateImageAttachAvailability();
   } catch (e) {
     console.error('[app] Could not load account:', e.message);
@@ -122,12 +124,12 @@ async function refreshAccount() {
 }
 
 function updateImageAttachAvailability() {
-  const imageAttachBtn = document.getElementById('imageAttachBtn');
-  if (!imageAttachBtn) return;
-  imageAttachBtn.classList.toggle('is-locked', !currentAccountHasVision);
-  imageAttachBtn.title = currentAccountHasVision
-    ? 'Attach an image'
-    : 'Image understanding is available on Cognita Plus and above';
+  const illustrationItem = document.getElementById('attachIllustrationItem');
+  if (!illustrationItem) return;
+  illustrationItem.classList.toggle('is-locked', !currentAccountHasVision);
+  illustrationItem.title = currentAccountHasVision
+    ? 'Generate a realistic illustration'
+    : 'Realistic illustrations are available on Cognita Plus and above';
 }
 
 async function refreshUsage() {
@@ -158,7 +160,8 @@ async function refreshUsage() {
 function deriveTitle(messages) {
   const firstUser = messages.find((m) => m.role === 'user');
   if (!firstUser) return 'New chat';
-  const text = (firstUser.content || (firstUser.images && firstUser.images.length ? 'Image' : '')).trim().replace(/\s+/g, ' ');
+  const hasImage = !!(firstUser.attachments && firstUser.attachments.some((a) => a.kind === 'image'));
+  const text = (firstUser.content || (hasImage ? 'Image' : '')).trim().replace(/\s+/g, ' ');
   return text.length > 60 ? text.slice(0, 60) + '…' : (text || 'New chat');
 }
 
@@ -448,16 +451,56 @@ function notifyComposerActivity() {
 }
 
 /* ════════════════════════════════════════════════════════
+   "+" ATTACH MENU
+════════════════════════════════════════════════════════ */
+
+function wireAttachMenu() {
+  const trigger = document.getElementById('attachMenuTrigger');
+  const menu = document.getElementById('attachMenuList');
+  const filesItem = document.getElementById('attachFilesItem');
+  const diagramItem = document.getElementById('attachDiagramItem');
+  const illustrationItem = document.getElementById('attachIllustrationItem');
+  const fileInput = document.getElementById('fileInput');
+
+  function closeMenu() {
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !menu.hidden;
+    menu.hidden = isOpen;
+    trigger.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  document.addEventListener('click', closeMenu);
+  menu.addEventListener('click', (e) => e.stopPropagation());
+
+  filesItem.addEventListener('click', () => {
+    closeMenu();
+    fileInput.click();
+  });
+
+  diagramItem.addEventListener('click', () => {
+    closeMenu();
+    openVisualModal('diagram');
+  });
+
+  illustrationItem.addEventListener('click', () => {
+    closeMenu();
+    openVisualModal('illustration');
+  });
+}
+
+/* ════════════════════════════════════════════════════════
    COMPOSER + ATTACHMENTS + SENDING MESSAGES
 ════════════════════════════════════════════════════════ */
 
 function wireComposer() {
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
-  const attachBtn = document.getElementById('attachBtn');       // text/csv files
-  const imageAttachBtn = document.getElementById('imageAttachBtn'); // images (plan-gated)
   const fileInput = document.getElementById('fileInput');
-  const imageInput = document.getElementById('imageInput');
 
   function refreshSendEnabled() {
     sendBtn.disabled = (!input.value.trim() && pendingAttachments.length === 0) || isSending;
@@ -483,19 +526,20 @@ function wireComposer() {
     sendMessage(input.value.trim());
   });
 
-  // Document/text attach button.
-  attachBtn.addEventListener('click', () => {
-    fileInput.click();
-  });
-
+  // Single picker handles both images and text/csv files — routed by
+  // mime type/extension once a file is chosen. Sending is handled
+  // separately (see sendMessage) so nothing gets rendered as raw text.
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
 
+    const isImage = IMAGE_MIME_RE.test(file.type);
     const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
 
-    if (isTextLike) {
+    if (isImage) {
+      await handleImageFile(file);
+    } else if (isTextLike) {
       try {
         const text = await file.text();
         pendingAttachments.push({ name: file.name, kind: 'text', text });
@@ -504,36 +548,10 @@ function wireComposer() {
         showToast('Could not read that file.');
         return;
       }
-    } else if (IMAGE_MIME_RE.test(file.type)) {
-      // Images picked from the generic paperclip are routed the same way
-      // as the dedicated image button, so gating still applies.
-      await handleImageFile(file);
-      refreshSendEnabled();
-      renderComposerAttachments();
-      return;
     } else {
       pendingAttachments.push({ name: file.name, kind: 'unsupported' });
     }
 
-    renderComposerAttachments();
-    refreshSendEnabled();
-    input.focus();
-  });
-
-  // Dedicated image attach button — gated by plan.
-  imageAttachBtn.addEventListener('click', () => {
-    if (!currentAccountHasVision) {
-      showToast('Image understanding is available on Cognita Plus and above. Upgrade to attach images.');
-      return;
-    }
-    imageInput.click();
-  });
-
-  imageInput.addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    await handleImageFile(file);
     renderComposerAttachments();
     refreshSendEnabled();
     input.focus();
@@ -592,7 +610,7 @@ function renderComposerAttachments() {
     const suffix = att.kind === 'unsupported' ? ' (not readable yet)' : '';
     return '<span class="attachment-chip">' +
       '<i class="ph ph-' + icon + '"></i>' +
-      escapeHtml(att.name) + suffix +
+      '<span class="attachment-chip-name">' + escapeHtml(att.name) + suffix + '</span>' +
       '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
     '</span>';
   }).join('');
@@ -615,6 +633,31 @@ function wireSuggestionCards() {
   });
 }
 
+// Builds the text actually sent to the API for a given conversation
+// message: the user's typed text plus any attached file content/notes.
+// This is kept separate from what's rendered on screen, so a big CSV or
+// text file never dumps its raw content into the visible chat bubble —
+// only the typed text and a small attachment chip show up there.
+function buildEffectiveContent(msg) {
+  let text = msg.content || '';
+  if (msg.attachments && msg.attachments.length) {
+    const fileAtts = msg.attachments.filter((a) => a.kind === 'file');
+    const unsupportedAtts = msg.attachments.filter((a) => a.kind === 'unsupported');
+
+    if (fileAtts.length) {
+      text += fileAtts.map((a) =>
+        '\n\n--- Content of attached file "' + a.name + '" ---\n' + a.text
+      ).join('');
+    }
+    if (unsupportedAtts.length) {
+      text += unsupportedAtts.map((a) =>
+        '\n\n[The user attached "' + a.name + '" but this file type cannot be read yet — let them know.]'
+      ).join('');
+    }
+  }
+  return text.trim();
+}
+
 async function sendMessage(text) {
   if (isSending || (!text && pendingAttachments.length === 0)) return;
   isSending = true;
@@ -625,31 +668,25 @@ async function sendMessage(text) {
   document.getElementById('sendBtn').disabled = true;
   notifyComposerActivity();
 
-  const imageAttachments = pendingAttachments.filter((a) => a.kind === 'image');
-  const textAttachments = pendingAttachments.filter((a) => a.kind === 'text');
-  const unsupportedAttachments = pendingAttachments.filter((a) => a.kind === 'unsupported');
+  // Attachments kept for display (thumbnails/chips) — never the raw
+  // base64 string or full file text is put into the visible message.
+  const attachmentsForMessage = pendingAttachments.map((a) => {
+    if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
+    if (a.kind === 'text') return { kind: 'file', name: a.name, text: a.text };
+    return { kind: 'unsupported', name: a.name };
+  });
 
-  let fullText = text || '';
-  if (textAttachments.length > 0) {
-    fullText += textAttachments.map((a) =>
-      '\n\n--- Content of attached file "' + a.name + '" ---\n' + a.text
-    ).join('');
-  }
-  if (unsupportedAttachments.length > 0) {
-    fullText += unsupportedAttachments.map((a) =>
-      '\n\n[The user attached "' + a.name + '" but this file type cannot be read yet — let them know.]'
-    ).join('');
-  }
-  fullText = fullText.trim();
-
-  const outgoingImages = imageAttachments.map((a) => ({ base64: a.base64, mimeType: a.mimeType }));
-  const displayImages = imageAttachments.map((a) => a.dataUrl);
+  // What actually goes to the vision model — base64 + mime only, never
+  // rendered as text anywhere.
+  const outgoingImages = pendingAttachments
+    .filter((a) => a.kind === 'image')
+    .map((a) => ({ base64: a.base64, mimeType: a.mimeType }));
 
   pendingAttachments = [];
   renderComposerAttachments();
 
-  const userMessage = { role: 'user', content: fullText };
-  if (displayImages.length > 0) userMessage.images = displayImages;
+  const userMessage = { role: 'user', content: text || '' };
+  if (attachmentsForMessage.length > 0) userMessage.attachments = attachmentsForMessage;
   conversation.push(userMessage);
   renderConversation();
   updateConversationTitle();
@@ -659,7 +696,7 @@ async function sendMessage(text) {
 
   try {
     const payload = {
-      messages: conversation.map((m) => ({ role: m.role, content: m.content })),
+      messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
       quality: currentQuality,
     };
     if (outgoingImages.length > 0) payload.images = outgoingImages;
@@ -728,11 +765,34 @@ function renderMessage(msg, index) {
   const avatarContent = isUser ? 'Y' : '<img src="/assets/cognita.png" alt="" style="width:16px;height:16px;">';
   const meta = conversationMeta[index] || {};
 
-  let imagesHtml = '';
-  if (isUser && msg.images && msg.images.length) {
-    imagesHtml = '<div class="message-image-grid">' +
-      msg.images.map((src) => '<img src="' + src + '" alt="" class="message-image">').join('') +
-    '</div>';
+  // Attachments render as thumbnails/chips only — never as raw base64
+  // strings or a full file text dump in the visible bubble.
+  let attachmentsHtml = '';
+  if (isUser && msg.attachments && msg.attachments.length) {
+    const imageAtts = msg.attachments.filter((a) => a.kind === 'image');
+    const otherAtts = msg.attachments.filter((a) => a.kind !== 'image');
+
+    let imagesHtml = '';
+    if (imageAtts.length) {
+      imagesHtml = '<div class="message-image-grid">' +
+        imageAtts.map((a) => '<img src="' + a.dataUrl + '" alt="' + escapeHtml(a.name) + '" class="message-image">').join('') +
+      '</div>';
+    }
+
+    let chipsHtml = '';
+    if (otherAtts.length) {
+      chipsHtml = '<div class="message-attachments">' +
+        otherAtts.map((a) => {
+          const icon = a.kind === 'unsupported' ? 'warning' : 'file-text';
+          return '<span class="attachment-chip attachment-chip-static">' +
+            '<i class="ph ph-' + icon + '"></i>' +
+            '<span class="attachment-chip-name">' + escapeHtml(a.name) + '</span>' +
+          '</span>';
+        }).join('') +
+      '</div>';
+    }
+
+    attachmentsHtml = imagesHtml + chipsHtml;
   }
 
   let thoughtHtml = '';
@@ -764,7 +824,7 @@ function renderMessage(msg, index) {
       '<div class="message-avatar">' + avatarContent + '</div>' +
       '<div class="message-body">' +
         thoughtHtml +
-        imagesHtml +
+        attachmentsHtml +
         (msg.content ? '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' : '') +
         sourcesHtml +
         (isUser ? '' :
@@ -1021,27 +1081,40 @@ function escapeHtml(str) {
    VISUAL GENERATION MODAL
 ════════════════════════════════════════════════════════ */
 
-let visualKind = 'diagram';
+function openVisualModal(presetKind) {
+  if (presetKind === 'illustration' && !currentAccountHasVision) {
+    showToast('Realistic illustrations are available on Cognita Plus and above. Upgrade to generate one.');
+    return;
+  }
+
+  const modal = document.getElementById('visualModal');
+  const promptInput = document.getElementById('visualPromptInput');
+  const typeOptions = document.querySelectorAll('.visual-type-option');
+
+  visualKind = presetKind || 'diagram';
+  typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.kind === visualKind));
+
+  modal.hidden = false;
+  promptInput.value = '';
+  promptInput.focus();
+}
 
 function wireVisualModal() {
   const modal = document.getElementById('visualModal');
-  const openBtn = document.getElementById('visualBtn');
   const closeBtn = document.getElementById('visualModalClose');
   const submitBtn = document.getElementById('visualSubmitBtn');
   const promptInput = document.getElementById('visualPromptInput');
   const typeOptions = document.querySelectorAll('.visual-type-option');
-
-  openBtn.addEventListener('click', () => {
-    modal.hidden = false;
-    promptInput.value = '';
-    promptInput.focus();
-  });
 
   closeBtn.addEventListener('click', () => { modal.hidden = true; });
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
 
   typeOptions.forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (btn.dataset.kind === 'illustration' && !currentAccountHasVision) {
+        showToast('Realistic illustrations are available on Cognita Plus and above.');
+        return;
+      }
       typeOptions.forEach((b) => b.classList.remove('is-active'));
       btn.classList.add('is-active');
       visualKind = btn.dataset.kind;
