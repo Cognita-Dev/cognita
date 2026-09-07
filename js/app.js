@@ -27,10 +27,20 @@ const HOLD_AFTER_TYPE_MS = 1400; // pause once a phrase is fully typed
 const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 
 // Image types we'll try to send to the vision model. Anything else (pdf,
-// docx, etc.) is flagged to the user rather than silently dropped.
+// docx, etc.) is either extracted client-side (see below) or flagged to
+// the user rather than silently dropped.
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp|gif)$/i;
 const TEXT_FILE_RE = /\.(txt|csv)$/i;
 const TEXT_MIME_TYPES = ['text/plain', 'text/csv'];
+const PDF_FILE_RE = /\.pdf$/i;
+const PDF_MIME = 'application/pdf';
+const DOCX_FILE_RE = /\.docx$/i;
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const DOC_FILE_RE = /\.doc$/i; // legacy .doc — mammoth can't read this, flagged unsupported
+
+// Guard against sending enormous extracted text to the model — trim and
+// note that it was trimmed rather than silently truncating.
+const MAX_EXTRACTED_CHARS = 40000;
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...] }
@@ -50,7 +60,9 @@ let pendingAttachments = [];
 
 let currentAccountPlanId = null;
 let currentAccountHasVision = false;
+let currentAccountHasDocExport = false;
 let visualKind = 'diagram';
+let documentDocType = 'letter';
 
 const THINKING_WORDS = [
   'Thinking',
@@ -81,6 +93,7 @@ const THINKING_WORDS = [
   wireSidebar();
   wireAccountMenu();
   wireVisualModal();
+  wireDocumentModal();
   wireSuggestionCards();
   startPlaceholderTypewriter();
 })();
@@ -105,9 +118,8 @@ async function refreshAccount() {
     document.getElementById('accountEmail').classList.remove('skeleton');
 
     currentAccountPlanId = data.planId;
-    // Expecting the account endpoint to mirror entitlements.js's shape:
-    // { planId, planName, models: { vision: true|false }, ... }
     currentAccountHasVision = !!(data.models && data.models.vision);
+    currentAccountHasDocExport = !!(data.features && data.features.documentExport);
 
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
@@ -125,11 +137,12 @@ async function refreshAccount() {
 
 function updateImageAttachAvailability() {
   const illustrationItem = document.getElementById('attachIllustrationItem');
-  if (!illustrationItem) return;
-  illustrationItem.classList.toggle('is-locked', !currentAccountHasVision);
-  illustrationItem.title = currentAccountHasVision
-    ? 'Generate a realistic illustration'
-    : 'Realistic illustrations are available on Cognita Plus and above';
+  if (illustrationItem) {
+    illustrationItem.classList.toggle('is-locked', !currentAccountHasVision);
+    illustrationItem.title = currentAccountHasVision
+      ? 'Generate a realistic illustration'
+      : 'Realistic illustrations are available on Cognita Plus and above';
+  }
 }
 
 async function refreshUsage() {
@@ -460,6 +473,7 @@ function wireAttachMenu() {
   const filesItem = document.getElementById('attachFilesItem');
   const diagramItem = document.getElementById('attachDiagramItem');
   const illustrationItem = document.getElementById('attachIllustrationItem');
+  const documentItem = document.getElementById('attachDocumentItem');
   const fileInput = document.getElementById('fileInput');
 
   function closeMenu() {
@@ -490,6 +504,11 @@ function wireAttachMenu() {
   illustrationItem.addEventListener('click', () => {
     closeMenu();
     openVisualModal('illustration');
+  });
+
+  documentItem.addEventListener('click', () => {
+    closeMenu();
+    openDocumentModal();
   });
 }
 
@@ -526,36 +545,118 @@ function wireComposer() {
     sendMessage(input.value.trim());
   });
 
-  // Single picker handles both images and text/csv files — routed by
-  // mime type/extension once a file is chosen. Sending is handled
-  // separately (see sendMessage) so nothing gets rendered as raw text.
+  // Single picker handles images, plain text/csv, PDFs, and Word docs —
+  // routed by mime type/extension once a file is chosen.
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
 
-    const isImage = IMAGE_MIME_RE.test(file.type);
-    const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
-
-    if (isImage) {
-      await handleImageFile(file);
-    } else if (isTextLike) {
-      try {
-        const text = await file.text();
-        pendingAttachments.push({ name: file.name, kind: 'text', text });
-      } catch (err) {
-        console.error('[app] Could not read file:', err.message);
-        showToast('Could not read that file.');
-        return;
-      }
-    } else {
-      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-    }
-
+    await handlePickedFile(file);
     renderComposerAttachments();
     refreshSendEnabled();
     input.focus();
   });
+}
+
+async function handlePickedFile(file) {
+  const isImage = IMAGE_MIME_RE.test(file.type);
+  const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
+  const isPdf = file.type === PDF_MIME || PDF_FILE_RE.test(file.name);
+  const isDocx = file.type === DOCX_MIME || DOCX_FILE_RE.test(file.name);
+  const isLegacyDoc = DOC_FILE_RE.test(file.name) && !isDocx;
+
+  if (isImage) {
+    await handleImageFile(file);
+    return;
+  }
+
+  if (isTextLike) {
+    try {
+      const text = await file.text();
+      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
+    } catch (err) {
+      console.error('[app] Could not read file:', err.message);
+      showToast('Could not read that file.');
+    }
+    return;
+  }
+
+  if (isPdf) {
+    if (!window.pdfjsLib) {
+      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+      showToast('PDF reading is still loading — try again in a moment.');
+      return;
+    }
+    try {
+      const text = await extractPdfText(file);
+      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
+    } catch (err) {
+      console.error('[app] Could not read PDF:', err.message);
+      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+      showToast('Could not extract text from that PDF.');
+    }
+    return;
+  }
+
+  if (isDocx) {
+    if (!window.mammoth) {
+      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+      showToast('Word document reading is still loading — try again in a moment.');
+      return;
+    }
+    try {
+      const text = await extractDocxText(file);
+      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
+    } catch (err) {
+      console.error('[app] Could not read Word document:', err.message);
+      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+      showToast('Could not extract text from that document.');
+    }
+    return;
+  }
+
+  if (isLegacyDoc) {
+    // Legacy binary .doc isn't readable by mammoth (which only handles
+    // .docx). Flag it rather than pretending to read it.
+    pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+    showToast('Old .doc files aren\'t supported yet — please use .docx.');
+    return;
+  }
+
+  // pptx, xlsx, and anything else not yet wired for extraction.
+  pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+}
+
+function _capText(text) {
+  if (text.length <= MAX_EXTRACTED_CHARS) return text;
+  return text.slice(0, MAX_EXTRACTED_CHARS) + '\n\n[Content truncated — file was longer than could be included.]';
+}
+
+async function extractPdfText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  const maxPages = Math.min(pdf.numPages, 30); // guard against huge scans
+  for (let i = 1; i <= maxPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map((item) => item.str).join(' ') + '\n\n';
+  }
+  if (pdf.numPages > maxPages) {
+    text += '[Only the first ' + maxPages + ' of ' + pdf.numPages + ' pages were read.]';
+  }
+  return text.trim();
+}
+
+async function extractDocxText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await window.mammoth.extractRawText({ arrayBuffer });
+  return (result.value || '').trim();
 }
 
 async function handleImageFile(file) {
@@ -635,9 +736,9 @@ function wireSuggestionCards() {
 
 // Builds the text actually sent to the API for a given conversation
 // message: the user's typed text plus any attached file content/notes.
-// This is kept separate from what's rendered on screen, so a big CSV or
-// text file never dumps its raw content into the visible chat bubble —
-// only the typed text and a small attachment chip show up there.
+// This is kept separate from what's rendered on screen, so a big PDF,
+// DOCX, or text file never dumps its raw content into the visible chat
+// bubble — only the typed text and a small attachment chip show up there.
 function buildEffectiveContent(msg) {
   let text = msg.content || '';
   if (msg.attachments && msg.attachments.length) {
@@ -1078,7 +1179,7 @@ function escapeHtml(str) {
 }
 
 /* ════════════════════════════════════════════════════════
-   VISUAL GENERATION MODAL
+   VISUAL GENERATION MODAL (diagram / illustration)
 ════════════════════════════════════════════════════════ */
 
 function openVisualModal(presetKind) {
@@ -1089,7 +1190,7 @@ function openVisualModal(presetKind) {
 
   const modal = document.getElementById('visualModal');
   const promptInput = document.getElementById('visualPromptInput');
-  const typeOptions = document.querySelectorAll('.visual-type-option');
+  const typeOptions = document.querySelectorAll('#visualModal .visual-type-option');
 
   visualKind = presetKind || 'diagram';
   typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.kind === visualKind));
@@ -1104,7 +1205,7 @@ function wireVisualModal() {
   const closeBtn = document.getElementById('visualModalClose');
   const submitBtn = document.getElementById('visualSubmitBtn');
   const promptInput = document.getElementById('visualPromptInput');
-  const typeOptions = document.querySelectorAll('.visual-type-option');
+  const typeOptions = document.querySelectorAll('#visualModal .visual-type-option');
 
   closeBtn.addEventListener('click', () => { modal.hidden = true; });
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
@@ -1125,7 +1226,7 @@ function wireVisualModal() {
     const prompt = promptInput.value.trim();
     if (!prompt) return;
 
-    setModalLoading(true);
+    setModalLoading(submitBtn, true);
 
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/image', {
@@ -1135,7 +1236,7 @@ function wireVisualModal() {
       });
 
       const data = await res.json();
-      setModalLoading(false);
+      setModalLoading(submitBtn, false);
 
       if (!res.ok) {
         showToast(data.error || 'Could not generate the visual.');
@@ -1145,15 +1246,14 @@ function wireVisualModal() {
       modal.hidden = true;
       insertVisualIntoConversation(data, prompt);
     } catch (e) {
-      setModalLoading(false);
+      setModalLoading(submitBtn, false);
       showToast('Could not reach Cognita. Please try again.');
       console.error('[app] visual request failed:', e.message);
     }
   });
 }
 
-function setModalLoading(isLoading) {
-  const btn = document.getElementById('visualSubmitBtn');
+function setModalLoading(btn, isLoading) {
   btn.disabled = isLoading;
   btn.querySelector('.btn-label').hidden = isLoading;
   btn.querySelector('.btn-spinner').hidden = !isLoading;
@@ -1183,6 +1283,112 @@ function insertVisualIntoConversation(data, promptText) {
   conversation = conversation.map((m) =>
     m.content === '__VISUAL__' ? { ...m, content: '[Generated a visual for: ' + promptText + ']' } : m
   );
+
+  persistCurrentConversation();
+}
+
+/* ════════════════════════════════════════════════════════
+   DOCUMENT GENERATION MODAL (letter / report / essay / memo)
+════════════════════════════════════════════════════════ */
+
+function openDocumentModal() {
+  const modal = document.getElementById('documentModal');
+  const topicInput = document.getElementById('documentTopicInput');
+  const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
+
+  documentDocType = 'letter';
+  typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.doctype === documentDocType));
+
+  modal.hidden = false;
+  topicInput.value = '';
+  topicInput.focus();
+}
+
+function wireDocumentModal() {
+  const modal = document.getElementById('documentModal');
+  const closeBtn = document.getElementById('documentModalClose');
+  const submitBtn = document.getElementById('documentSubmitBtn');
+  const topicInput = document.getElementById('documentTopicInput');
+  const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
+
+  closeBtn.addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+
+  typeOptions.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      typeOptions.forEach((b) => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      documentDocType = btn.dataset.doctype;
+    });
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const topic = topicInput.value.trim();
+    if (!topic) return;
+
+    setModalLoading(submitBtn, true);
+
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic, docType: documentDocType }),
+      });
+
+      const data = await res.json();
+      setModalLoading(submitBtn, false);
+
+      if (!res.ok) {
+        showToast(data.error || 'Could not generate the document.');
+        return;
+      }
+
+      modal.hidden = true;
+      insertDocumentIntoConversation(data, topic, documentDocType);
+    } catch (e) {
+      setModalLoading(submitBtn, false);
+      showToast('Could not reach Cognita. Please try again.');
+      console.error('[app] document request failed:', e.message);
+    }
+  });
+}
+
+function insertDocumentIntoConversation(data, topicText, docType) {
+  conversation.push({ role: 'user', content: 'Create a ' + docType + ' about: ' + topicText });
+
+  if (data.format === 'docx') {
+    // Decode the base64 .docx and trigger a real browser download rather
+    // than dumping the file's binary content anywhere in the chat.
+    const byteChars = atob(data.content);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([new Uint8Array(byteNumbers)], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    const url = URL.createObjectURL(blob);
+
+    conversation.push({ role: 'assistant', content: '[Generated a ' + docType + ' document: ' + data.filename + ']' });
+    renderConversation();
+    updateConversationTitle();
+
+    const list = document.getElementById('messageList');
+    const lastMsg = list.lastElementChild;
+    if (lastMsg) {
+      const contentEl = lastMsg.querySelector('.message-content');
+      if (contentEl) {
+        contentEl.innerHTML =
+          '<a class="document-download-chip" href="' + url + '" download="' + escapeHtml(data.filename) + '">' +
+            '<i class="ph ph-file-arrow-down"></i>' +
+            '<span>' + escapeHtml(data.filename) + '</span>' +
+          '</a>';
+      }
+    }
+  } else {
+    // Free plan: plain text only, shown directly as the reply.
+    conversation.push({ role: 'assistant', content: data.content });
+    renderConversation();
+    updateConversationTitle();
+  }
 
   persistCurrentConversation();
 }
