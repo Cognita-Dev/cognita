@@ -90,7 +90,7 @@ main { overflow-x: hidden; }
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 460px;
+  height: 460px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -607,7 +607,7 @@ main { overflow-x: hidden; }
 }
 
 @media (max-width: 620px) {
-  .hero-preview-window { min-height: 480px; }
+  .hero-preview-window { height: 480px; }
 }
 
 @media (max-width: 380px) {
@@ -912,11 +912,12 @@ main { overflow-x: hidden; }
    cleanly. Options stay at matching scale; the picked option is only
    distinguished by colour/weight, never a larger font-size. ── */
 .story-visual--think {
-  height: auto;
-  min-height: 240px;
+  height: 240px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   padding: var(--space-6) 0;
+  box-sizing: border-box;
 }
 
 .tv-list {
@@ -1134,7 +1135,7 @@ main { overflow-x: hidden; }
 @media (max-width: 780px) {
   .story-row, .story-row--reverse { grid-template-columns: 1fr; direction: ltr; }
   .story-visual { height: 200px; }
-  .story-visual--think { height: auto; min-height: 200px; }
+  .story-visual--think { height: 220px; }
   .story-copy p { max-width: none; }
   .ev-ring { width: 130px; height: 130px; }
   .ev-orbit-item { --radius: 64px; }
