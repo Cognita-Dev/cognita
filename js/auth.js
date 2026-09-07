@@ -44,25 +44,40 @@ let _readyResolvers = [];
 let _isReady = false;
 
 // ── Persistence, with a fallback chain for private/incognito browsing ──
-// Firebase's default persistence relies on IndexedDB. Safari and Chrome
-// private/incognito modes often restrict, wipe, or throw on IndexedDB
-// access, which can prevent onAuthStateChanged from ever firing — leaving
-// any code that awaits it (like requireAuthOrRedirect below) hanging
-// forever with no error. We explicitly try localStorage-based persistence
-// first, fall back to sessionStorage, then finally to a pure in-memory
-// session (works but won't survive a page reload) rather than letting
-// the whole auth layer silently wedge.
+// Firebase's default persistence relies on IndexedDB. In private/incognito
+// mode, indexedDB.open() is often not broken — just very slow (a known
+// WebKit/Chromium quirk; it can take many seconds instead of the usual
+// near-instant resolve). If we simply `await setPersistence(...)`, we sit
+// there blocked on that slow call for as long as it takes, which is why
+// things "start working if you wait a bit." To avoid making users wait,
+// we race each persistence attempt against a short timeout and fall
+// through to the next option (eventually a fast, always-available
+// in-memory session) rather than blocking on a slow one.
+function _withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 async function _initPersistence() {
-  const attempts = [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence];
-  for (const persistence of attempts) {
+  const attempts = [
+    { mode: browserLocalPersistence, timeoutMs: 1500 },
+    { mode: browserSessionPersistence, timeoutMs: 1500 },
+    { mode: inMemoryPersistence, timeoutMs: 1500 },
+  ];
+  for (const { mode, timeoutMs } of attempts) {
     try {
-      await setPersistence(auth, persistence);
+      await _withTimeout(setPersistence(auth, mode), timeoutMs);
       return;
     } catch (e) {
-      console.warn('[Auth] Persistence mode failed, trying next:', e.message);
+      console.warn('[Auth] Persistence mode failed or timed out, trying next:', e.message);
     }
   }
-  console.error('[Auth] All persistence modes failed — continuing without persistence.');
+  console.error('[Auth] All persistence modes failed or timed out — continuing without persistence.');
 }
 
 // Wire up onAuthStateChanged only after we've attempted persistence setup,
