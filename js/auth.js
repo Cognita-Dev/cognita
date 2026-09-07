@@ -1,26 +1,4 @@
 // js/auth.js
-// Wraps Firebase Authentication (Google sign-in + email/password).
-// This is the ONLY frontend file that talks to Firebase Auth directly.
-// Every other page gets the current user's ID token through
-// Auth.getIdToken() and sends it as a Bearer token to the Worker — the
-// Worker independently re-verifies it, so nothing here is a security
-// boundary on its own. This module exists for UX, not enforcement.
-//
-// Google sign-in uses Google Identity Services (GIS) directly, NOT
-// Firebase's signInWithPopup/signInWithRedirect. Both of those rely on
-// a hidden cross-origin iframe that relays auth state through
-// *.firebaseapp.com using third-party storage access. Safari 16.1+
-// blocks that access by default (unconditionally, not tied to any
-// special privacy setting), so the iframe handshake silently fails and
-// the flow gets stuck blank at __/auth/handler before ever reaching
-// Google's consent screen. This is documented directly by Firebase:
-// https://firebase.google.com/docs/auth/web/redirect-best-practices
-// GIS renders its own popup/prompt against accounts.google.com and
-// hands back a Google ID token directly to our own callback — no
-// firebaseapp.com iframe involved. We then exchange that ID token for
-// a Firebase credential with signInWithCredential(). This works
-// regardless of Firebase Hosting, third-party storage settings, or
-// browser (desktop and mobile Safari included).
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
