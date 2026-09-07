@@ -85,7 +85,7 @@ const THINKING_WORDS = [
 ════════════════════════════════════════════════════════ */
 
 let currentAccountPlanId = null;
-let currentAccountFeatures = null;
+let currentAccountHasVision = false;
 
 function renderAccountInfo(user) {
   const email = user.email || 'Signed in';
@@ -103,16 +103,18 @@ async function refreshAccount() {
     document.getElementById('accountEmail').classList.remove('skeleton');
 
     currentAccountPlanId = data.planId;
-    currentAccountFeatures = data.features || null;
+    // Expecting the account endpoint to mirror entitlements.js's shape:
+    // { planId, planName, models: { vision: true|false }, ... }
+    currentAccountHasVision = !!(data.models && data.models.vision);
 
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
       upgradeLink.hidden = false;
     }
 
-    // Vision (image attachment) is premium-gated. Reflect that on the
-    // attach button so free users get a clear affordance instead of a
-    // dead click.
+    // Vision (image attachment) is gated by plan. Reflect that on the
+    // attach button so lower-plan users get a clear affordance instead of
+    // a dead click.
     updateImageAttachAvailability();
   } catch (e) {
     console.error('[app] Could not load account:', e.message);
@@ -122,11 +124,10 @@ async function refreshAccount() {
 function updateImageAttachAvailability() {
   const imageAttachBtn = document.getElementById('imageAttachBtn');
   if (!imageAttachBtn) return;
-  const enabled = !!(currentAccountFeatures && currentAccountFeatures.visionEnabled);
-  imageAttachBtn.classList.toggle('is-locked', !enabled);
-  imageAttachBtn.title = enabled
+  imageAttachBtn.classList.toggle('is-locked', !currentAccountHasVision);
+  imageAttachBtn.title = currentAccountHasVision
     ? 'Attach an image'
-    : 'Image understanding is available on premium plans';
+    : 'Image understanding is available on Cognita Plus and above';
 }
 
 async function refreshUsage() {
@@ -454,7 +455,7 @@ function wireComposer() {
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
   const attachBtn = document.getElementById('attachBtn');       // text/csv files
-  const imageAttachBtn = document.getElementById('imageAttachBtn'); // images (premium)
+  const imageAttachBtn = document.getElementById('imageAttachBtn'); // images (plan-gated)
   const fileInput = document.getElementById('fileInput');
   const imageInput = document.getElementById('imageInput');
 
@@ -519,10 +520,10 @@ function wireComposer() {
     input.focus();
   });
 
-  // Dedicated image attach button — premium-gated.
+  // Dedicated image attach button — gated by plan.
   imageAttachBtn.addEventListener('click', () => {
-    if (!currentAccountFeatures || !currentAccountFeatures.visionEnabled) {
-      showToast('Image understanding is available on premium plans. Upgrade to attach images.');
+    if (!currentAccountHasVision) {
+      showToast('Image understanding is available on Cognita Plus and above. Upgrade to attach images.');
       return;
     }
     imageInput.click();
@@ -544,8 +545,8 @@ async function handleImageFile(file) {
     pendingAttachments.push({ name: file.name, kind: 'unsupported' });
     return;
   }
-  if (!currentAccountFeatures || !currentAccountFeatures.visionEnabled) {
-    showToast('Image understanding is available on premium plans.');
+  if (!currentAccountHasVision) {
+    showToast('Image understanding is available on Cognita Plus and above.');
     return;
   }
 
