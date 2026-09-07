@@ -4,6 +4,13 @@
 // or a price. Frontend pages fetch this via /api/plans; the Worker imports
 // it directly for enforcement.
 
+// Workers AI's free vision-capable model, used for image understanding.
+// It's on the Workers AI free tier (10,000 neurons/day), so it never
+// touches the paid Groq/OpenRouter usage the rest of this app relies on —
+// it's gated by plan (models.vision) and metered separately
+// (limits.visionPerDay) below.
+export const VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
+
 export const PLANS = {
   free: {
     id: 'free',
@@ -19,6 +26,7 @@ export const PLANS = {
       fileUploadsPerDay: 5,
       maxFileSizeMB: 5,
       maxContextMessages: 8,       // how much conversation history is sent
+      visionPerDay: 0,             // no image-understanding on Starter
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -30,7 +38,6 @@ export const PLANS = {
       longContext: false,
     },
   },
-
   plus: {
     id: 'plus',
     name: 'Cognita Plus',
@@ -45,6 +52,7 @@ export const PLANS = {
       fileUploadsPerDay: 40,
       maxFileSizeMB: 20,
       maxContextMessages: 24,
+      visionPerDay: 15,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -56,7 +64,6 @@ export const PLANS = {
       longContext: true,
     },
   },
-
   studio: {
     id: 'studio',
     name: 'Cognita Studio',
@@ -71,6 +78,7 @@ export const PLANS = {
       fileUploadsPerDay: 150,
       maxFileSizeMB: 50,
       maxContextMessages: 60,
+      visionPerDay: 60,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -132,4 +140,9 @@ export function resolveChatTier(planId, requestedTier) {
   if (allowed.includes(requestedTier)) return requestedTier;
   // fall back to the richest tier the plan actually has
   return allowed[allowed.length - 1];
+}
+
+// Can this plan attach images to a chat message?
+export function planHasVision(planId) {
+  return !!getPlan(planId).models.vision;
 }
