@@ -325,14 +325,17 @@ main { overflow-x: hidden; }
 }
 
 /* The actual typing surface — its own bordered container so it reads
-   clearly as "the input", distinct from the attachment strip above it. */
+   clearly as "the input", distinct from the attachment strip above it.
+   z-index raised above .hero-composer-attachments (z-index: 1) so the
+   whole input area — including the quality dropdown menu that lives
+   inside it — stacks ABOVE the attachment chip strip, not below it. */
 .hero-composer-inputwrap {
   position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-base);
   padding: var(--space-3) var(--space-3) var(--space-2);
-  z-index: 0;
+  z-index: 2;
 }
 
 .hero-composer-field {
@@ -523,6 +526,19 @@ main { overflow-x: hidden; }
   flex-shrink: 0;
 }
 .hero-file-check i { opacity: 0; font-size: 9px; color: #fff; }
+/* .hero-file-item span (above) matches EVERY span inside the item,
+   including this checkmark circle, and — because it's a class+element
+   selector — it's more specific than plain .hero-file-check, so it was
+   winning: overriding the circle's fixed 14x14 size with flex:1 and
+   stretching it into a wide pill that painted over the filename. This
+   rule targets the checkmark specifically (two classes = higher
+   specificity than .hero-file-item span) so it keeps its own fixed
+   size no matter what the generic span rule says. */
+.hero-file-item .hero-file-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
 .hero-file-item.is-selected {
   border-color: var(--accent);
   background: var(--accent-subtle);
@@ -684,7 +700,8 @@ main { overflow-x: hidden; }
 }
 
 /* ── Understand: read the document, then surface what was pulled out
-   of it — the visual now demonstrates extraction, not just "reading". ── */
+   of it. Runs on a loop — draws in, holds, clears, and redraws — driven
+   entirely by JS toggling .is-active on/off (see wireStoryVisuals). ── */
 .uv-doc {
   position: absolute;
   top: 26px; left: 50%;
@@ -852,7 +869,11 @@ main { overflow-x: hidden; }
 
 /* Independent tumble, applied on a nested element so it stacks with,
    rather than fights, the counter-rotation that keeps orbit position
-   stable. Different duration per card = organic, non-repeating drift. */
+   stable. Different duration per card = organic, non-repeating drift.
+   All three cards now share --tumble-dir: -1 (set inline in the HTML),
+   matching the direction that was already reading correctly on the
+   "Pricing shift" card — with the counter-rotation the other direction
+   was partially cancelling itself out and looked closer to static. */
 .ev-orbit-node-inner {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-elevated);
@@ -883,9 +904,13 @@ main { overflow-x: hidden; }
   to   { transform: rotate(calc(360deg * var(--tumble-dir, 1))); }
 }
 
-/* ── Think: options resolve one at a time, all at matching scale —
-   the picked option is distinguished by colour and weight only, never
-   by a larger font-size, so visual hierarchy stays proportionate. ── */
+/* ── Think: three different scenarios cycle automatically, each option
+   resolving one at a time. Visibility is now controlled directly by JS
+   adding/removing .is-shown / .is-resolved / .is-picked on each option
+   (built fresh per scenario), rather than by static nth-child delays —
+   that's what makes it possible to swap in new scenario text and replay
+   cleanly. Options stay at matching scale; the picked option is only
+   distinguished by colour/weight, never a larger font-size. ── */
 .story-visual--think {
   height: auto;
   min-height: 240px;
@@ -914,20 +939,19 @@ main { overflow-x: hidden; }
   color: var(--text-3);
   opacity: 0;
   transform: translateY(10px);
-  transition: opacity 650ms var(--ease), transform 650ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
+  transition: opacity 450ms var(--ease), transform 450ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
 }
-.tv-option--picked { font-weight: 600; }
-.tv-option--picked .tv-text i { color: var(--accent); flex-shrink: 0; font-size: 1em; vertical-align: -0.05em; }
-.story-visual[data-anim="think"].is-active .tv-option {
+.tv-option.is-shown {
   opacity: 1;
   transform: translateY(0);
-  transition-delay: calc(var(--d) * 950ms + 300ms);
 }
-.story-visual[data-anim="think"].is-active .tv-option--picked {
+.tv-option.is-picked {
+  font-weight: 600;
   border-color: var(--accent);
   color: var(--text-1);
   background: var(--accent-subtle);
 }
+.tv-option.is-picked .tv-text i { color: var(--accent); flex-shrink: 0; font-size: 1em; vertical-align: -0.05em; }
 
 .tv-loader {
   display: inline-flex;
@@ -960,20 +984,19 @@ main { overflow-x: hidden; }
   transition: opacity 350ms var(--ease);
 }
 
-.story-visual[data-anim="think"].is-active .tv-option .tv-loader {
+.tv-option.is-resolved .tv-loader {
   opacity: 0;
   width: 0;
   margin-right: 0;
-  transition-delay: calc(var(--d) * 950ms + 1550ms);
 }
-.story-visual[data-anim="think"].is-active .tv-option .tv-text {
+.tv-option.is-resolved .tv-text {
   opacity: 1;
-  transition-delay: calc(var(--d) * 950ms + 1550ms);
 }
 
 /* ── Create: notes converge toward the document, then it assembles
-   with a small confident "pop" and confirms with a check — motion
-   that reads as compiling scattered material into one finished thing. ── */
+   with a small confident "pop" and confirms with a check. A short
+   while later a hand reaches in, takes the finished document, and
+   carries it off — then the whole visual clears and replays. ── */
 .cv-notes {
   position: absolute;
   left: 16%; top: 50%;
@@ -1044,6 +1067,43 @@ main { overflow-x: hidden; }
   transition-delay: 2500ms;
 }
 
+/* Hand: hidden and off to the right by default. .is-grabbing (added by
+   JS a couple of seconds after the document finishes assembling) plays
+   a short keyframe animation that brings it in, holds briefly over the
+   document (the "grab"), then carries both the hand and the document
+   off together while fading out — after which JS resets everything for
+   the next loop. */
+.cv-hand {
+  position: absolute;
+  right: 16%; top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--text-1);
+  opacity: 0;
+  transform: translate(60px, -50%);
+  pointer-events: none;
+  z-index: 3;
+}
+.story-visual[data-anim="create"].is-grabbing .cv-hand {
+  animation: cv-hand-grab 1300ms ease-in-out forwards;
+}
+@keyframes cv-hand-grab {
+  0%   { opacity: 0; transform: translate(60px, -50%); }
+  22%  { opacity: 1; transform: translate(6px, -50%); }
+  55%  { opacity: 1; transform: translate(6px, -50%); }
+  100% { opacity: 0; transform: translate(190px, -50%); }
+}
+.story-visual[data-anim="create"].is-grabbing .cv-doc {
+  animation: cv-doc-taken 1300ms ease-in-out forwards;
+}
+@keyframes cv-doc-taken {
+  0%   { opacity: 1; transform: translateY(-50%) scale(1); }
+  55%  { opacity: 1; transform: translateY(-50%) scale(1); }
+  100% { opacity: 0; transform: translateY(-50%) translateX(190px) scale(0.85); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .story-row { opacity: 1; transform: none; }
   .uv-line::after, .uv-doc-header i { opacity: 0.28 !important; transform: scaleX(1) !important; animation: none !important; }
@@ -1051,6 +1111,7 @@ main { overflow-x: hidden; }
   .cv-note { opacity: 1 !important; transform: none !important; animation: none !important; }
   .cv-doc { opacity: 1 !important; transform: translateY(-50%) scale(1) !important; transition: none !important; }
   .cv-doc-check { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .cv-hand { display: none !important; }
 
   .ev-center { opacity: 1 !important; transition: none !important; }
   .ev-orbit-item {
