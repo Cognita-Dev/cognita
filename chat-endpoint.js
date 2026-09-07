@@ -1,27 +1,28 @@
 // chat-endpoint.js
 // POST /api/chat
 // The frontend sends a Bearer token, a conversation history, an optional
-// "quality" hint ('standard' | 'advanced' | 'thorough'), and — for premium
-// plans only — an optional "images" array of { base64, mimeType }. It
-// never sends a provider or model name; that's resolved entirely here.
+// "quality" hint ('standard' | 'advanced' | 'thorough'), and — for plans
+// with vision access only — an optional "images" array of
+// { base64, mimeType }. It never sends a provider or model name; that's
+// resolved entirely here.
 //
 // Image understanding uses Cloudflare Workers AI's free vision model
-// (@cf/meta/llama-3.2-11b-vision-instruct). It's gated to plans with
-// features.visionEnabled and metered by a separate daily quota, so it
-// never touches the paid Groq/OpenRouter usage this app otherwise relies
-// on for text.
+// (VISION_MODEL, from entitlements.js). It's gated by plan.models.vision
+// and metered by its own daily quota (plan.limits.visionPerDay), so it
+// never touches the paid Groq/OpenRouter usage this app relies on for text.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
-import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL } from './entitlements.js';
+import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision } from './entitlements.js';
 import { callWithFallback, callVisionModel } from './providers.js';
 
 const MAX_IMAGES_PER_REQUEST = 4;
 // Workers AI free tier caps request payload size; keep a conservative
 // per-image ceiling so one huge photo can't blow the daily neuron budget
-// or the request body limit on its own.
-const MAX_IMAGE_BASE64_CHARS = 6_000_000; // ~4.5MB decoded
+// or the request body limit on its own. Also respect the plan's own
+// maxFileSizeMB where it's smaller.
+const HARD_MAX_IMAGE_BASE64_CHARS = 8_000_000; // ~6MB decoded, absolute ceiling
 
 // Built fresh per-request so "today" is always accurate.
 function _systemPrompt() {
@@ -78,12 +79,18 @@ function _extractThinking(text) {
   return { thinking, reply };
 }
 
-function _validateImages(images) {
+function _validateImages(images, plan) {
   if (!Array.isArray(images)) return { ok: false, error: 'images must be an array.' };
   if (images.length === 0) return { ok: true, images: [] };
   if (images.length > MAX_IMAGES_PER_REQUEST) {
     return { ok: false, error: 'You can attach up to ' + MAX_IMAGES_PER_REQUEST + ' images per message.' };
   }
+
+  const maxCharsForPlan = Math.min(
+    HARD_MAX_IMAGE_BASE64_CHARS,
+    Math.floor((plan.limits.maxFileSizeMB || 5) * 1024 * 1024 * 1.37) // base64 overhead
+  );
+
   for (const img of images) {
     if (!img || typeof img.base64 !== 'string' || typeof img.mimeType !== 'string') {
       return { ok: false, error: 'Malformed image attachment.' };
@@ -91,8 +98,8 @@ function _validateImages(images) {
     if (!/^image\/(png|jpe?g|webp|gif)$/i.test(img.mimeType)) {
       return { ok: false, error: 'Unsupported image type: ' + img.mimeType };
     }
-    if (img.base64.length > MAX_IMAGE_BASE64_CHARS) {
-      return { ok: false, error: 'One of the attached images is too large.' };
+    if (img.base64.length > maxCharsForPlan) {
+      return { ok: false, error: 'One of the attached images exceeds your plan\'s ' + plan.limits.maxFileSizeMB + 'MB file size limit.' };
     }
   }
   return { ok: true, images };
@@ -141,19 +148,20 @@ export async function handleChatRequest(request, env) {
     );
   }
 
-  // 5) Handle image attachments, if any — premium-gated, separately metered.
+  // 5) Handle image attachments, if any — gated by plan.models.vision,
+  //    separately metered via plan.limits.visionPerDay.
   const hasImages = Array.isArray(body.images) && body.images.length > 0;
   let images = [];
 
   if (hasImages) {
-    if (!plan.features.visionEnabled) {
+    if (!planHasVision(account.planId)) {
       return _jsonError(
-        'Image understanding is available on premium plans. Upgrade to attach images.',
+        'Image understanding is available on ' + getPlan('plus').name + ' and above. Upgrade to attach images.',
         403
       );
     }
 
-    const validated = _validateImages(body.images);
+    const validated = _validateImages(body.images, plan);
     if (!validated.ok) {
       return _jsonError(validated.error, 400);
     }
@@ -171,7 +179,7 @@ export async function handleChatRequest(request, env) {
 
   // 6) Resolve requested "quality" to a tier the user's plan actually permits.
   //    resolveChatTier NEVER lets this exceed what the plan allows —
-  //    a Free user asking for 'thorough' silently gets 'fast' instead.
+  //    a Starter user asking for 'thorough' silently gets 'fast' instead.
   //    Images override quality entirely: the only free model in this stack
   //    that can see images is the Workers AI vision model, so any request
   //    with images always routes there regardless of the quality hint.
@@ -179,7 +187,7 @@ export async function handleChatRequest(request, env) {
 
   if (!hasImages && actualTier !== 'fast') {
     // Richer text tiers spend from the advanced-model daily allowance
-    // (0 for Free). Once used up for today, fall back to 'fast' rather
+    // (0 for Starter). Once used up for today, fall back to 'fast' rather
     // than letting them keep using the richer tier for free.
     const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
     if (!advQuota.allowed) {
