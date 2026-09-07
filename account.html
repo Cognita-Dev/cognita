@@ -20,45 +20,52 @@
 <main class="account-shell">
   <h1 class="account-page-title">Account</h1>
 
-  <section class="account-section">
-    <div class="account-section-header">
-      <div>
-        <h2>Plan</h2>
-        <p class="account-section-sub" id="planStatusLine">Loading…</p>
+  <!-- ── Plan ── -->
+  <div class="settings-group-label">Plan</div>
+  <div class="settings-group">
+    <div class="settings-row">
+      <div class="settings-row-text">
+        <span class="settings-row-label" id="planStatusLine">Loading…</span>
       </div>
-      <a href="/pricing.html" class="account-upgrade-btn" id="planActionBtn">View plans</a>
+      <a href="/pricing.html" class="settings-row-cta" id="planActionBtn">
+        View plans <i class="ph ph-caret-right"></i>
+      </a>
     </div>
-    <button class="danger-btn" id="cancelPlanBtn" hidden style="margin-top: var(--space-3);">
-      <i class="ph ph-x-circle"></i> Cancel subscription
+    <button class="settings-row settings-row--button settings-row--danger" id="cancelPlanBtn" hidden>
+      <span class="settings-row-text">
+        <span class="settings-row-label">Cancel subscription</span>
+      </span>
+      <i class="ph ph-caret-right"></i>
     </button>
-  </section>
+  </div>
 
-  <section class="account-section">
-    <h2>Today's usage</h2>
-    <div class="usage-detail-grid" id="usageDetailGrid">
-      <div class="usage-detail-card skeleton" style="height:88px;"></div>
-      <div class="usage-detail-card skeleton" style="height:88px;"></div>
-      <div class="usage-detail-card skeleton" style="height:88px;"></div>
-      <div class="usage-detail-card skeleton" style="height:88px;"></div>
+  <!-- ── Usage ── -->
+  <div class="settings-group-label">Today's usage</div>
+  <div class="settings-group" id="usageDetailGrid">
+    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row skeleton" style="height:52px;"></div>
+  </div>
+  <p class="settings-footnote">Usage resets daily at midnight UTC.</p>
+
+  <!-- ── Account details ── -->
+  <div class="settings-group-label">Account details</div>
+  <div class="settings-group">
+    <div class="settings-row">
+      <span class="settings-row-label">Email</span>
+      <span class="settings-row-value" id="detailEmail">—</span>
     </div>
-    <p class="usage-reset-note">Usage resets daily at midnight UTC.</p>
-  </section>
+  </div>
 
-  <section class="account-section">
-    <h2>Account details</h2>
-    <div class="detail-row">
-      <span>Email</span>
-      <span id="detailEmail">—</span>
-    </div>
-  </section>
-
-  <section class="account-section account-section--danger">
-    <h2>Sign out</h2>
-    <p class="account-section-sub">You'll need to sign in again to use Cognita.</p>
-    <button class="danger-btn" id="signOutBtn">
-      <i class="ph ph-sign-out"></i> Sign out
+  <!-- ── Sign out ── -->
+  <div class="settings-group-label">Session</div>
+  <div class="settings-group">
+    <button class="settings-row settings-row--button settings-row--danger" id="signOutBtn">
+      <span class="settings-row-label"><i class="ph ph-sign-out"></i> Sign out</span>
     </button>
-  </section>
+  </div>
+  <p class="settings-footnote">You'll need to sign in again to use Cognita.</p>
 </main>
 
 <script type="module" src="/js/auth.js"></script>
@@ -70,17 +77,32 @@
 
   document.getElementById('detailEmail').textContent = user.email || '—';
 
-  function usageCard(label, icon, used, limit) {
+  const USAGE_ICONS = {
+    messages: 'ph-chat-circle',
+    advancedModel: 'ph-brain',
+    imageGen: 'ph-image',
+    documentGen: 'ph-file-text',
+  };
+  const USAGE_LABELS = {
+    messages: 'Messages',
+    advancedModel: 'Advanced model',
+    imageGen: 'Images',
+    documentGen: 'Documents',
+  };
+
+  function usageRow(key, used, limit) {
     const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
     const barClass = pct >= 100 ? 'is-at-limit' : pct >= 70 ? 'is-near-limit' : '';
     return (
-      '<div class="usage-detail-card">' +
-        '<div class="usage-detail-top">' +
-          '<i class="ph ' + icon + '"></i>' +
-          '<span>' + label + '</span>' +
+      '<div class="settings-row settings-row--usage">' +
+        '<i class="ph ' + USAGE_ICONS[key] + '"></i>' +
+        '<div class="settings-row-usage-text">' +
+          '<div class="settings-row-usage-top">' +
+            '<span class="settings-row-label">' + USAGE_LABELS[key] + '</span>' +
+            '<span class="settings-row-usage-count">' + used + ' <span>/ ' + limit + '</span></span>' +
+          '</div>' +
+          '<div class="usage-bar"><div class="usage-bar-fill ' + barClass + '" style="width:' + pct + '%;"></div></div>' +
         '</div>' +
-        '<div class="usage-detail-count">' + used + ' <span>/ ' + limit + '</span></div>' +
-        '<div class="usage-bar"><div class="usage-bar-fill ' + barClass + '" style="width:' + pct + '%;"></div></div>' +
       '</div>'
     );
   }
@@ -110,14 +132,14 @@
       const cancelBtn = document.getElementById('cancelPlanBtn');
 
       if (data.planId !== 'free' && data.status === 'active') {
-        actionBtn.textContent = 'Change plan';
+        actionBtn.innerHTML = 'Change plan <i class="ph ph-caret-right"></i>';
         cancelBtn.hidden = false;
       } else if (data.status === 'cancelled') {
         cancelBtn.hidden = true;
-        actionBtn.textContent = 'Resubscribe';
+        actionBtn.innerHTML = 'Resubscribe <i class="ph ph-caret-right"></i>';
       } else {
         cancelBtn.hidden = true;
-        actionBtn.textContent = 'View plans';
+        actionBtn.innerHTML = 'View plans <i class="ph ph-caret-right"></i>';
       }
     } catch (e) {
       document.getElementById('planStatusLine').textContent = 'Could not load plan details.';
@@ -133,13 +155,13 @@
 
       const u = data.usage;
       document.getElementById('usageDetailGrid').innerHTML =
-        usageCard('Messages', 'ph-chat-circle', u.messages.used, u.messages.limit) +
-        usageCard('Advanced model', 'ph-brain', u.advancedModel.used, u.advancedModel.limit) +
-        usageCard('Images', 'ph-image', u.imageGen.used, u.imageGen.limit) +
-        usageCard('Documents', 'ph-file-text', u.documentGen.used, u.documentGen.limit);
+        usageRow('messages', u.messages.used, u.messages.limit) +
+        usageRow('advancedModel', u.advancedModel.used, u.advancedModel.limit) +
+        usageRow('imageGen', u.imageGen.used, u.imageGen.limit) +
+        usageRow('documentGen', u.documentGen.used, u.documentGen.limit);
     } catch (e) {
       document.getElementById('usageDetailGrid').innerHTML =
-        '<p style="color:var(--text-3);">Could not load usage details.</p>';
+        '<p style="color:var(--text-3); padding: var(--space-4);">Could not load usage details.</p>';
       console.error('[account] ' + e.message);
     }
   }
@@ -157,7 +179,7 @@
 
     const btn = document.getElementById('cancelPlanBtn');
     btn.disabled = true;
-    btn.textContent = 'Cancelling…';
+    btn.innerHTML = '<span class="settings-row-label">Cancelling…</span>';
 
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/subscription/cancel', { method: 'POST' });
@@ -169,7 +191,7 @@
     } catch (e) {
       alert('Something went wrong: ' + e.message);
       btn.disabled = false;
-      btn.innerHTML = '<i class="ph ph-x-circle"></i> Cancel subscription';
+      btn.innerHTML = '<span class="settings-row-label">Cancel subscription</span><i class="ph ph-caret-right"></i>';
     }
   });
 
