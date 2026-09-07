@@ -245,7 +245,7 @@ function classifyAuthError(error) {
     'auth/invalid-credential': { field: 'password', message: 'Incorrect email or password.' },
     'auth/invalid-login-credentials': { field: 'password', message: 'Incorrect email or password.' },
     'auth/email-already-in-use': { field: 'email', message: 'An account already exists with that email.' },
-    'auth/weak-password': { field: 'password', message: 'Use at least 6 characters.' },
+    'auth/weak-password': { field: 'password', message: 'Please choose a stronger password.' },
     'auth/popup-closed-by-user': { field: 'google', message: 'Sign-in was cancelled.' },
     'auth/popup-blocked': { field: 'google', message: 'Popup blocked. Please allow popups for this site.' },
     'auth/cancelled-popup-request': { field: 'google', message: 'Sign-in was cancelled.' },
@@ -270,6 +270,46 @@ function classifyAuthError(error) {
   return { field: 'general', message: 'Something went wrong. Please try again.' };
 }
 
+// ── Client-side input validation ──
+// This is UX help, not a security boundary: it just gives people instant
+// feedback instead of a round trip to Firebase. The real enforcement is
+// server-side — Firebase Auth's own account rules, plus auth-middleware.js
+// independently re-verifying every token on every request.
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email) {
+  return EMAIL_RE.test(String(email || '').trim());
+}
+
+/**
+ * Evaluates password strength against fixed requirements:
+ * 6+ characters, at least one lowercase letter, one uppercase letter,
+ * one number. Special characters are optional but count toward score.
+ * Returns { score (0-5), percent, level ('weak'|'fair'|'strong'),
+ * checks: { length, lower, upper, number, special }, valid (bool) }.
+ */
+function evaluatePasswordStrength(password) {
+  const pwd = String(password || '');
+  const checks = {
+    length: pwd.length >= 6,
+    lower: /[a-z]/.test(pwd),
+    upper: /[A-Z]/.test(pwd),
+    number: /[0-9]/.test(pwd),
+    special: /[^A-Za-z0-9]/.test(pwd),
+  };
+
+  const requiredMet = checks.length && checks.lower && checks.upper && checks.number;
+  const score = Object.values(checks).filter(Boolean).length; // 0-5
+  const percent = Math.min(100, (score / 5) * 100);
+
+  let level = 'weak';
+  if (requiredMet && checks.special) level = 'strong';
+  else if (requiredMet) level = 'fair';
+
+  return { score, percent, level, checks, valid: requiredMet };
+}
+
 const Auth = {
   ready,
   getCurrentUser,
@@ -282,6 +322,8 @@ const Auth = {
   authedFetch,
   requireAuthOrRedirect,
   classifyAuthError,
+  isValidEmail,
+  evaluatePasswordStrength,
 };
 
 // Keep the global for any legacy code, but pages should import directly.
