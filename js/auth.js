@@ -98,7 +98,9 @@ function _waitForGis(timeoutMs = 8000) {
         return;
       }
       if (Date.now() - start > timeoutMs) {
-        reject(new Error('Could not load Google sign-in. Please refresh and try again.'));
+        const e = new Error('Could not load Google sign-in. Please refresh and try again.');
+        e.authField = 'google';
+        reject(e);
         return;
       }
       setTimeout(check, 100);
@@ -114,6 +116,10 @@ function _waitForGis(timeoutMs = 8000) {
  * display/cooldown restrictions or FedCM quirks on Safari. It still
  * never touches firebaseapp.com's iframe. We get back an access token,
  * which Firebase accepts directly to build a credential.
+ *
+ * Every error thrown from this function is tagged with authField='google'
+ * so the caller always knows to render it under the Google button —
+ * these errors never carry a Firebase auth/... code of their own.
  */
 async function signInWithGoogle() {
   await _waitForGis();
@@ -126,29 +132,38 @@ async function signInWithGoogle() {
         if (response?.access_token) {
           resolve(response.access_token);
         } else {
-          reject(new Error('Google sign-in did not return an access token.'));
+          const e = new Error('Google sign-in did not return an access token.');
+          e.authField = 'google';
+          reject(e);
         }
       },
       error_callback: (err) => {
+        let e;
         if (err?.type === 'popup_closed') {
-          reject(new Error('Sign-in was cancelled.'));
+          e = new Error('Sign-in was cancelled.');
         } else if (err?.type === 'popup_failed_to_open') {
-          reject(
-            new Error(
-              'Sign-in popup was blocked by your browser. Please allow popups for this site.'
-            )
-          );
+          e = new Error('Popup blocked. Please allow popups for this site.');
         } else {
-          reject(new Error('Google sign-in failed. Please try again.'));
+          e = new Error('Google sign-in failed. Please try again.');
         }
+        e.authField = 'google';
+        reject(e);
       },
     });
     tokenClient.requestAccessToken();
   });
 
   const credential = GoogleAuthProvider.credential(null, accessToken);
-  const result = await signInWithCredential(auth, credential);
-  return result.user;
+  try {
+    const result = await signInWithCredential(auth, credential);
+    return result.user;
+  } catch (err) {
+    // Firebase-side failure of an otherwise successful Google auth
+    // (e.g. account-exists-with-different-credential) still belongs
+    // under the Google button, not the email/password fields.
+    if (!err.authField) err.authField = 'google';
+    throw err;
+  }
 }
 
 async function signInWithEmail(email, password) {
@@ -209,27 +224,50 @@ async function requireAuthOrRedirect() {
   return user;
 }
 
-function friendlyAuthError(error) {
+/**
+ * Turns ANY auth error — Firebase-coded or our own — into a
+ * { field, message } pair that's always safe to show a user directly.
+ * field is one of: 'email', 'password', 'google', 'general'.
+ * There is no path through here that can surface a raw Firebase code
+ * or error.message unless we've explicitly decided it's already
+ * human-readable (i.e. it came from our own code with authField set).
+ */
+function classifyAuthError(error) {
   const code = error?.code || '';
-  const message = error?.message || '';
-  const map = {
-    'auth/invalid-email': "That email address doesn't look right.",
-    'auth/user-not-found': 'No account found with that email.',
-    'auth/wrong-password': 'Incorrect password.',
-    'auth/invalid-credential': 'Incorrect email or password.',
-    'auth/email-already-in-use': 'An account already exists with that email.',
-    'auth/weak-password': 'Please choose a password with at least 6 characters.',
-    'auth/popup-closed-by-user': 'Sign-in was cancelled.',
-    'auth/popup-blocked':
-      'Sign-in was blocked by your browser. Please allow popups for this site.',
-    'auth/network-request-failed':
-      'Network error. Please check your connection.',
-    'auth/too-many-requests':
-      'Too many attempts. Please wait a moment and try again.',
-    'auth/account-exists-with-different-credential':
-      'An account already exists with this email using a different sign-in method.',
+
+  const codeMap = {
+    'auth/invalid-email': { field: 'email', message: 'Enter a valid email address.' },
+    'auth/missing-email': { field: 'email', message: 'Enter your email.' },
+    'auth/user-not-found': { field: 'email', message: 'No account found with that email.' },
+    'auth/user-disabled': { field: 'email', message: 'This account has been disabled.' },
+    'auth/wrong-password': { field: 'password', message: 'Incorrect password.' },
+    'auth/missing-password': { field: 'password', message: 'Enter your password.' },
+    'auth/invalid-credential': { field: 'password', message: 'Incorrect email or password.' },
+    'auth/invalid-login-credentials': { field: 'password', message: 'Incorrect email or password.' },
+    'auth/email-already-in-use': { field: 'email', message: 'An account already exists with that email.' },
+    'auth/weak-password': { field: 'password', message: 'Use at least 6 characters.' },
+    'auth/popup-closed-by-user': { field: 'google', message: 'Sign-in was cancelled.' },
+    'auth/popup-blocked': { field: 'google', message: 'Popup blocked. Please allow popups for this site.' },
+    'auth/cancelled-popup-request': { field: 'google', message: 'Sign-in was cancelled.' },
+    'auth/network-request-failed': { field: 'general', message: 'Network error. Check your connection and try again.' },
+    'auth/too-many-requests': { field: 'general', message: 'Too many attempts. Please wait a moment and try again.' },
+    'auth/account-exists-with-different-credential': {
+      field: 'google',
+      message: 'An account already exists with this email using a different sign-in method.',
+    },
   };
-  return map[code] || message || 'Something went wrong. Please try again.';
+
+  if (codeMap[code]) return codeMap[code];
+
+  // Our own thrown errors (Google flow, "Not signed in.", forgot-password
+  // guard, etc.) already carry a safe message and, where relevant, a
+  // pre-set field.
+  if (error?.authField) {
+    return { field: error.authField, message: error.message || 'Something went wrong. Please try again.' };
+  }
+
+  // Unknown/unmapped — never leak the raw code or message.
+  return { field: 'general', message: 'Something went wrong. Please try again.' };
 }
 
 const Auth = {
@@ -243,7 +281,7 @@ const Auth = {
   logOut,
   authedFetch,
   requireAuthOrRedirect,
-  friendlyAuthError,
+  classifyAuthError,
 };
 
 // Keep the global for any legacy code, but pages should import directly.
