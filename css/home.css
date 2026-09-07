@@ -89,7 +89,7 @@ main { overflow-x: hidden; }
   margin-bottom: var(--space-8);
 }
 
-/* ── Hero stage — scattered chips settle into a preview window ── */
+/* ── Hero stage ── */
 .hero-stage {
   position: relative;
   max-width: 560px;
@@ -168,24 +168,38 @@ main { overflow-x: hidden; }
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  max-width: 88%;
+  max-width: 90%;
   line-height: 1.5;
 }
 .hero-preview-msg.is-user { align-self: flex-end; background: var(--text-1); color: var(--bg-base); }
 .hero-preview-msg.is-assistant { align-self: flex-start; background: var(--bg-subtle); color: var(--text-2); min-height: 1.5em; }
 
+/* Reveal by clip-path, not width+nowrap — works regardless of exact
+   text length or how many lines it wraps to, so nothing gets cut off. */
 .hero-preview-typing {
   display: inline-block;
-  overflow: hidden;
-  white-space: nowrap;
-  width: 0;
-  border-right: 2px solid var(--accent-2);
+  clip-path: inset(0 100% 0 0);
 }
 .hero-stage.is-typed .hero-preview-typing {
-  animation: typing 2000ms steps(56, end) 1 forwards, blink-caret 700ms step-end infinite;
+  animation: reveal-text 1500ms var(--ease) forwards;
 }
-@keyframes typing { from { width: 0; } to { width: 100%; } }
-@keyframes blink-caret { 50% { border-color: transparent; } }
+@keyframes reveal-text { to { clip-path: inset(0 0 0 0); } }
+
+.type-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.9em;
+  margin-left: 2px;
+  background: var(--accent-2);
+  vertical-align: text-bottom;
+  opacity: 0;
+}
+.hero-stage.is-typed .type-caret {
+  opacity: 1;
+  animation: caret-blink 700ms step-end infinite;
+  animation-delay: 1500ms;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
 
 .hero-preview-doc {
   display: flex;
@@ -207,18 +221,19 @@ main { overflow-x: hidden; }
 .hero-stage.is-doc .hero-preview-doc { opacity: 1; transform: translateY(0); }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-preview-typing { width: auto; animation: none; border-right: none; white-space: normal; }
+  .hero-preview-typing { clip-path: none; }
+  .type-caret { display: none; }
   .hero-scatter { display: none; }
   .hero-preview-window { opacity: 1; transform: none; }
   .hero-preview-doc { opacity: 1; transform: none; }
 }
 
 @media (max-width: 620px) {
-  .hero-stage { height: 300px; }
+  .hero-stage { height: 320px; }
 }
 
 /* ═══════════════════════════════════════════════
-   SECTION LABELS (shared across sections below)
+   SECTION LABELS
 ═══════════════════════════════════════════════ */
 
 .section-eyebrow {
@@ -250,17 +265,13 @@ main { overflow-x: hidden; }
 }
 
 /* ═══════════════════════════════════════════════
-   PRODUCT STORY — four rows, each a different
-   animated concept, revealed on scroll
+   PRODUCT STORY
 ═══════════════════════════════════════════════ */
 
 .story {
-  max-width: 1040px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
 }
 
 .story-row {
@@ -268,10 +279,14 @@ main { overflow-x: hidden; }
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-7);
+  padding-bottom: var(--space-8);
+  margin-bottom: var(--space-8);
+  border-bottom: 1px solid var(--border);
   opacity: 0;
   transform: translateY(28px);
   transition: opacity 700ms var(--ease), transform 700ms var(--ease);
 }
+.story-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .story-row.is-revealed { opacity: 1; transform: translateY(0); }
 .story-row--reverse { direction: rtl; }
 .story-row--reverse > * { direction: ltr; }
@@ -301,7 +316,9 @@ main { overflow-x: hidden; }
   overflow: hidden;
 }
 
-/* ── Understand: document lines get highlighted in sequence ── */
+/* ── Understand: sequential reading-focus sweep ──
+   Each line lights up in accent color as if being read, then
+   settles into a muted "already read" state, one after another. */
 .uv-doc {
   position: absolute;
   top: 50%; left: 50%;
@@ -309,62 +326,47 @@ main { overflow-x: hidden; }
   width: 68%;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 .uv-line {
+  position: relative;
   height: 10px;
   border-radius: var(--radius-full);
   background: var(--border-strong);
   width: 100%;
+  overflow: hidden;
 }
 .uv-line--title { width: 55%; height: 14px; }
 .uv-line--short { width: 70%; }
-.uv-highlight {
+
+.uv-line::after {
+  content: '';
   position: absolute;
-  left: 16%;
-  width: 68%;
-  height: 10px;
-  border-radius: var(--radius-full);
-  background: var(--accent-subtle);
-  border: 1px solid var(--accent-2);
+  inset: 0;
+  background: var(--accent);
+  border-radius: inherit;
+  transform: scaleX(0);
+  transform-origin: left;
   opacity: 0;
 }
-.uv-highlight[style*="--d:0"] { top: 38%; }
-.uv-highlight[style*="--d:1"] { top: 53%; }
-.uv-highlight[style*="--d:2"] { top: 68%; }
-.story-visual[data-anim="understand"].is-active .uv-highlight {
-  animation: uv-sweep 600ms var(--ease) forwards;
-  animation-delay: calc(var(--d) * 350ms + 300ms);
+.story-visual[data-anim="understand"].is-active .uv-line::after {
+  animation: uv-focus-sweep 1000ms ease forwards;
 }
-@keyframes uv-sweep {
-  0% { opacity: 0; transform: scaleX(0.4); transform-origin: left; }
-  100% { opacity: 1; transform: scaleX(1); }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(1)::after { animation-delay: 250ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(2)::after { animation-delay: 950ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(3)::after { animation-delay: 1650ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(4)::after { animation-delay: 2350ms; }
+
+@keyframes uv-focus-sweep {
+  0%   { opacity: 0;    transform: scaleX(0); }
+  35%  { opacity: 1;    transform: scaleX(1); }
+  65%  { opacity: 1;    transform: scaleX(1); }
+  100% { opacity: 0.28; transform: scaleX(1); }
 }
 
-/* ── Explore: nodes connect with drawn lines ── */
-.ev-node {
-  position: absolute;
-  top: 50%; left: 50%;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-2);
-  white-space: nowrap;
-  box-shadow: var(--shadow-sm);
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.85);
-  transition: opacity 500ms var(--ease), transform 500ms var(--ease);
-}
-.ev-node--main { font-weight: 600; color: var(--text-1); border-color: var(--accent-2); z-index: 2; }
-.story-visual[data-anim="explore"].is-active .ev-node--main { opacity: 1; transform: translate(-50%, -50%) scale(1); transition-delay: 100ms; }
-.story-visual[data-anim="explore"].is-active .ev-node:not(.ev-node--main) {
-  opacity: 1;
-  transform: translate(calc(-50% + var(--ex)), calc(-50% + var(--ey))) scale(1);
-  transition-delay: 500ms;
-}
+/* ── Explore: nodes + lines share the same 0-100 coordinate
+   system (SVG viewBox and CSS custom-property positions), so
+   they line up exactly regardless of container size. ── */
 .ev-lines {
   position: absolute;
   inset: 0;
@@ -383,6 +385,31 @@ main { overflow-x: hidden; }
 }
 @keyframes ev-draw { to { stroke-dashoffset: 0; } }
 
+.ev-node {
+  position: absolute;
+  left: var(--nx);
+  top: var(--ny);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.85);
+  transition: opacity 500ms var(--ease), transform 500ms var(--ease);
+}
+.ev-node--main { font-weight: 600; color: var(--text-1); border-color: var(--accent-2); z-index: 2; }
+.story-visual[data-anim="explore"].is-active .ev-node--main {
+  opacity: 1; transform: translate(-50%, -50%) scale(1); transition-delay: 100ms;
+}
+.story-visual[data-anim="explore"].is-active .ev-node:not(.ev-node--main) {
+  opacity: 1; transform: translate(-50%, -50%) scale(1); transition-delay: 500ms;
+}
+
 /* ── Think: options appear, one gets picked ── */
 .tv-option {
   position: absolute;
@@ -396,7 +423,7 @@ main { overflow-x: hidden; }
   font-size: var(--text-xs);
   color: var(--text-3);
   opacity: 0;
-  transition: opacity 450ms var(--ease), transform 450ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease);
+  transition: opacity 450ms var(--ease), transform 450ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
 }
 .tv-option[style*="--d:0"] { top: 22%; }
 .tv-option[style*="--d:1"] { top: 47%; }
@@ -470,9 +497,10 @@ main { overflow-x: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .story-row { opacity: 1; transform: none; }
-  .uv-highlight, .ev-node, .ev-lines line, .tv-option, .cv-notes, .cv-arrow, .cv-doc { opacity: 1 !important; animation: none !important; transition: none !important; }
-  .ev-node:not(.ev-node--main) { transform: translate(calc(-50% + var(--ex)), calc(-50% + var(--ey))) scale(1); }
+  .uv-line::after, .ev-node, .ev-lines line, .tv-option, .cv-notes, .cv-arrow, .cv-doc { opacity: 1 !important; animation: none !important; transition: none !important; }
+  .uv-line::after { transform: scaleX(1); opacity: 0.28 !important; }
   .ev-lines line { stroke-dashoffset: 0; }
+  .ev-node { transform: translate(-50%, -50%) scale(1); }
   .tv-option { transform: translateX(-50%); }
   .cv-arrow { transform: translate(-50%, -50%) scale(1); }
   .cv-doc { transform: translateY(-50%) scale(1); }
@@ -485,7 +513,7 @@ main { overflow-x: hidden; }
 }
 
 /* ═══════════════════════════════════════════════
-   CAPABILITIES
+   CAPABILITIES — scale-in stagger, not translateY
 ═══════════════════════════════════════════════ */
 
 .capabilities {
@@ -507,11 +535,17 @@ main { overflow-x: hidden; }
 .capability-card {
   background: var(--bg-elevated);
   padding: var(--space-6) var(--space-5);
-  transition: background var(--duration-fast) var(--ease), opacity 550ms var(--ease), transform 550ms var(--ease);
+  transition: background var(--duration-fast) var(--ease), opacity 480ms var(--ease), transform 480ms var(--ease);
   opacity: 0;
-  transform: translateY(16px);
+  transform: scale(0.96);
 }
-.capability-card.is-revealed { opacity: 1; transform: translateY(0); }
+.capability-card.is-revealed { opacity: 1; transform: scale(1); }
+.capability-card:nth-child(1) { transition-delay: 0ms; }
+.capability-card:nth-child(2) { transition-delay: 60ms; }
+.capability-card:nth-child(3) { transition-delay: 120ms; }
+.capability-card:nth-child(4) { transition-delay: 60ms; }
+.capability-card:nth-child(5) { transition-delay: 120ms; }
+.capability-card:nth-child(6) { transition-delay: 180ms; }
 .capability-card:hover { background: var(--bg-base); }
 
 .capability-card i {
@@ -524,7 +558,7 @@ main { overflow-x: hidden; }
 .capability-card p { font-size: var(--text-sm); color: var(--text-3); line-height: 1.6; }
 
 /* ═══════════════════════════════════════════════
-   USE CASES
+   USE CASES — alternating slide-in
 ═══════════════════════════════════════════════ */
 
 .use-cases {
@@ -537,10 +571,11 @@ main { overflow-x: hidden; }
   padding: var(--space-7) 0;
   border-bottom: 1px solid var(--border);
   opacity: 0;
-  transform: translateY(16px);
+  transform: translateX(-24px);
   transition: opacity 550ms var(--ease), transform 550ms var(--ease);
 }
-.use-case-row.is-revealed { opacity: 1; transform: translateY(0); }
+.use-case-row:nth-child(even) { transform: translateX(24px); }
+.use-case-row.is-revealed { opacity: 1; transform: translateX(0); }
 .use-case-row:last-child { border-bottom: none; }
 
 .use-case-tag {
@@ -563,7 +598,7 @@ main { overflow-x: hidden; }
 .use-case-row p { font-size: var(--text-base); color: var(--text-2); line-height: 1.6; max-width: 560px; }
 
 /* ═══════════════════════════════════════════════
-   TRUST
+   TRUST — clip-path wipe reveal
 ═══════════════════════════════════════════════ */
 
 .trust {
@@ -582,10 +617,14 @@ main { overflow-x: hidden; }
   text-align: left;
   padding: var(--space-4) 0;
   opacity: 0;
-  transform: translateY(14px);
-  transition: opacity 500ms var(--ease), transform 500ms var(--ease);
+  clip-path: inset(0 100% 0 0);
+  transition: opacity 450ms var(--ease), clip-path 600ms var(--ease);
 }
-.trust-item.is-revealed { opacity: 1; transform: translateY(0); }
+.trust-item:nth-child(1) { transition-delay: 0ms; }
+.trust-item:nth-child(2) { transition-delay: 90ms; }
+.trust-item:nth-child(3) { transition-delay: 180ms; }
+.trust-item:nth-child(4) { transition-delay: 270ms; }
+.trust-item.is-revealed { opacity: 1; clip-path: inset(0 0 0 0); }
 .trust-item i { font-size: 1.1rem; color: var(--accent); margin-bottom: var(--space-3); display: block; }
 .trust-item p { font-size: var(--text-sm); color: var(--text-3); line-height: 1.6; }
 
@@ -612,21 +651,52 @@ main { overflow-x: hidden; }
 }
 .pricing-teaser-cta:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
 
+/* Final CTA — a normal elevated panel with a soft accent glow behind
+   it, NOT an inverted color block. Inverting text-1/bg-base for the
+   whole panel is what made this look like a stray bright card sitting
+   on a dark page in dark mode; this reads correctly in both themes. */
 .final-cta {
-  background: var(--text-1);
-  color: var(--bg-base);
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-1);
   padding: var(--space-8) var(--space-5);
   text-align: center;
-  margin: var(--space-6) var(--space-5) var(--space-8);
+  margin: var(--space-7) var(--space-5) var(--space-8);
   border-radius: var(--radius-lg);
   max-width: 1040px;
   margin-left: auto;
   margin-right: auto;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
 }
-.final-cta h2 { font-size: var(--text-2xl); font-weight: 600; letter-spacing: -0.01em; margin-bottom: var(--space-2); }
-.final-cta p { color: rgba(247,247,245,0.6); margin-bottom: var(--space-5); }
-.final-cta .hero-cta-primary { display: inline-block; background: var(--bg-base); color: var(--text-1); }
-.final-cta .hero-cta-primary:hover { opacity: 0.9; }
+.final-cta::before {
+  content: '';
+  position: absolute;
+  top: -50%; left: 50%;
+  width: 640px; height: 340px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, var(--accent-subtle), transparent 70%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.final-cta h2 {
+  position: relative;
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+  margin-bottom: var(--space-2);
+}
+.final-cta p {
+  position: relative;
+  color: var(--text-3);
+  margin-bottom: var(--space-5);
+}
+.final-cta .hero-cta-primary {
+  position: relative;
+  display: inline-block;
+}
 
 @media (max-width: 860px) {
   .capability-grid { grid-template-columns: 1fr 1fr; }
