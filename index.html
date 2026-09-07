@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cognita — An assistant that finishes the job</title>
-<meta name="description" content="Cognita helps you write, research, prepare documents, and think through problems — with real document export, not just chat.">
+<title>Cognita — From a thought to something useful</title>
+<meta name="description" content="Cognita helps you work through ideas, documents, research, and everyday tasks — and turns the work into something you can actually use.">
 <link rel="icon" href="/assets/cognita.png">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
@@ -12,7 +12,6 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body>
-
 <header class="site-header">
   <a href="/index.html" class="site-logo">
     <img src="/assets/cognita.png" alt="Cognita">
@@ -24,233 +23,205 @@
     <a href="/signup.html" class="site-nav-cta">Get started</a>
   </nav>
 </header>
-
 <main>
-
   <!-- ── Hero ── -->
   <section class="hero">
     <span class="hero-eyebrow">Cognita</span>
-    <h1 class="hero-title">An assistant that finishes the job, not just the conversation.</h1>
+    <h1 class="hero-title">Start with a thought. Leave with something useful.</h1>
     <p class="hero-subtitle">
-      Cognita writes, researches, and prepares real documents — Word files, presentations, spreadsheets —
-      instead of chat replies you have to reformat yourself.
+      Bring Cognita a question, a pile of notes, a document, or a half-formed idea.
+      Work through it together, then turn the result into something you can actually use.
     </p>
     <div class="hero-actions">
       <a href="/signup.html" class="hero-cta-primary">Start for free</a>
       <a href="/pricing.html" class="hero-cta-secondary">See pricing</a>
     </div>
-    <p class="hero-note">No credit card required to start.</p>
-
-    <div class="hero-stage" id="heroStage" aria-hidden="true">
-      <div class="hero-scatter" id="heroScatter">
-        <span class="scatter-chip" style="--x:-120px; --y:-38px; --r:-9deg;">Q3 churn numbers</span>
-        <span class="scatter-chip" style="--x:96px; --y:-58px; --r:6deg;">competitor pricing.pdf</span>
-        <span class="scatter-chip" style="--x:-90px; --y:44px; --r:5deg;">onboarding notes</span>
-        <span class="scatter-chip" style="--x:130px; --y:30px; --r:-4deg;">support tickets, last 30d</span>
-        <span class="scatter-chip" style="--x:0px; --y:-90px; --r:2deg;">renewal risk flags</span>
+    <p class="hero-note">No credit card required.</p>
+<div class="hero-stage" id="heroStage" aria-hidden="true">
+  <div class="hero-scatter" id="heroScatter">
+    <span class="scatter-chip" style="--x:-120px; --y:-38px; --r:-9deg;">Q3 churn numbers</span>
+    <span class="scatter-chip" style="--x:96px; --y:-58px; --r:6deg;">competitor pricing.pdf</span>
+    <span class="scatter-chip" style="--x:-90px; --y:44px; --r:5deg;">onboarding notes</span>
+    <span class="scatter-chip" style="--x:130px; --y:30px; --r:-4deg;">support tickets, last 30d</span>
+    <span class="scatter-chip" style="--x:0px; --y:-90px; --r:2deg;">renewal risk flags</span>
+  </div>
+  <div class="hero-preview-window" id="heroWindow">
+    <div class="hero-preview-dots"><span></span><span></span><span></span></div>
+    <div class="hero-preview-body">
+      <div class="hero-preview-msg is-user">Pull this into a client-ready retention brief</div>
+      <div class="hero-preview-msg is-assistant">
+        <span class="hero-preview-typing">Pulling out the important bits — findings, risks, and next steps…<span class="type-caret" aria-hidden="true"></span></span>
       </div>
-
-      <div class="hero-preview-window" id="heroWindow">
-        <div class="hero-preview-dots"><span></span><span></span><span></span></div>
-        <div class="hero-preview-body">
-          <div class="hero-preview-msg is-user">Pull this into a client-ready retention brief</div>
-          <div class="hero-preview-msg is-assistant">
-            <span class="hero-preview-typing">Structuring the brief — findings, risk, and next steps…<span class="type-caret" aria-hidden="true"></span></span>
-          </div>
-          <div class="hero-preview-doc" id="heroDoc">
-            <i class="ph ph-file-doc"></i>
-            <span>Q3-retention-brief.docx</span>
-          </div>
-        </div>
+      <div class="hero-preview-doc" id="heroDoc">
+        <i class="ph ph-file-doc"></i>
+        <span>Q3-retention-brief.docx</span>
       </div>
     </div>
+  </div>
+</div>
   </section>
-
   <!-- ── Product story ── -->
   <section class="story" id="story">
-
-    <article class="story-row" data-story="understand">
-      <div class="story-copy">
-        <span class="section-eyebrow">Understand</span>
-        <h2>Make sense of what you already have</h2>
-        <p>Drop in messy notes, a PDF, a spreadsheet, a transcript. Cognita reads it directly and reasons from
-        the actual content, not a guess at what the file probably says.</p>
-      </div>
-      <div class="story-visual" data-anim="understand">
-        <div class="uv-doc">
-          <div class="uv-line uv-line--title"></div>
-          <div class="uv-line"></div>
-          <div class="uv-line"></div>
-          <div class="uv-line uv-line--short"></div>
-        </div>
-      </div>
-    </article>
-
-    <article class="story-row story-row--reverse" data-story="explore">
-      <div class="story-copy">
-        <span class="section-eyebrow">Explore</span>
-        <h2>Keep the thread as the conversation grows</h2>
-        <p>Ask about one thing, then pull in another. Cognita keeps what came before connected instead of
-        treating every new angle like a fresh start.</p>
-      </div>
-      <div class="story-visual" data-anim="explore">
-        <svg class="ev-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <line x1="50" y1="60" x2="50" y2="22" />
-          <line x1="50" y1="60" x2="20" y2="84" />
-          <line x1="50" y1="60" x2="80" y2="84" />
-        </svg>
-        <div class="ev-node ev-node--main" style="--nx:50%; --ny:60%;">Retention risk</div>
-        <div class="ev-node" style="--nx:50%; --ny:22%;">Support volume</div>
-        <div class="ev-node" style="--nx:20%; --ny:84%;">Pricing shift</div>
-        <div class="ev-node" style="--nx:80%; --ny:84%;">Onboarding gap</div>
-      </div>
-    </article>
-
-    <article class="story-row" data-story="think">
-      <div class="story-copy">
-        <span class="section-eyebrow">Think</span>
-        <h2>Get more than the first plausible answer</h2>
-        <p>On harder questions, Cognita weighs more than one angle before settling on a response — and will
-        tell you when an assumption looks shaky rather than agreeing by default.</p>
-      </div>
-      <div class="story-visual" data-anim="think">
-        <div class="tv-option" style="--d:0">Raise prices 8% across the board</div>
-        <div class="tv-option" style="--d:1">Grandfather existing customers, raise for new</div>
-        <div class="tv-option tv-option--picked" style="--d:2">
-          <i class="ph ph-check-circle"></i> Segment by usage, raise only top tier
-        </div>
-      </div>
-    </article>
-
-    <article class="story-row story-row--reverse" data-story="create">
-      <div class="story-copy">
-        <span class="section-eyebrow">Create</span>
-        <h2>Leave with something you can actually send</h2>
-        <p>A real .docx, not a wall of chat text to reformat. What you asked for shows up ready to download,
-        share, or hand to a client.</p>
-      </div>
-      <div class="story-visual" data-anim="create">
-        <div class="cv-notes">
-          <span>notes</span><span>notes</span><span>notes</span>
-        </div>
-        <i class="ph ph-arrow-right cv-arrow"></i>
-        <div class="cv-doc">
-          <i class="ph ph-file-doc"></i>
-          <span>brief.docx</span>
-        </div>
-      </div>
-    </article>
-
+<article class="story-row" data-story="understand">
+  <div class="story-copy">
+    <span class="section-eyebrow">Understand</span>
+    <h2>Give it the messy stuff.</h2>
+    <p>Notes from a meeting. A long PDF. A spreadsheet full of numbers. A transcript you haven't had time to read. Put it in. Cognita works from what's actually there, so you can get to the useful part faster.</p>
+  </div>
+  <div class="story-visual" data-anim="understand">
+    <div class="uv-doc">
+      <div class="uv-line uv-line--title"></div>
+      <div class="uv-line"></div>
+      <div class="uv-line"></div>
+      <div class="uv-line uv-line--short"></div>
+    </div>
+  </div>
+</article>
+<article class="story-row story-row--reverse" data-story="explore">
+  <div class="story-copy">
+    <span class="section-eyebrow">Explore</span>
+    <h2>Follow the idea wherever it goes.</h2>
+    <p>Real work rarely stays on one question. You notice something, ask another question, find a connection, then change your mind. Cognita keeps that thread intact as you go.</p>
+  </div>
+  <div class="story-visual" data-anim="explore">
+    <svg class="ev-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="50" y1="60" x2="50" y2="22" />
+      <line x1="50" y1="60" x2="20" y2="84" />
+      <line x1="50" y1="60" x2="80" y2="84" />
+    </svg>
+    <div class="ev-node ev-node--main" style="--nx:50%; --ny:60%;">Retention risk</div>
+    <div class="ev-node" style="--nx:50%; --ny:22%;">Support volume</div>
+    <div class="ev-node" style="--nx:20%; --ny:84%;">Pricing shift</div>
+    <div class="ev-node" style="--nx:80%; --ny:84%;">Onboarding gap</div>
+  </div>
+</article>
+<article class="story-row" data-story="think">
+  <div class="story-copy">
+    <span class="section-eyebrow">Think</span>
+    <h2>Don't settle for the first answer.</h2>
+    <p>When there's a real decision to make, the obvious answer isn't always the right one. Cognita can lay out the alternatives, point out the tradeoffs, and challenge the assumptions behind them.</p>
+  </div>
+  <div class="story-visual" data-anim="think">
+    <div class="tv-option" style="--d:0">Raise prices 8% across the board</div>
+    <div class="tv-option" style="--d:1">Grandfather existing customers, raise for new</div>
+    <div class="tv-option tv-option--picked" style="--d:2">
+      <i class="ph ph-check-circle"></i> Segment by usage, raise only top tier
+    </div>
+  </div>
+</article>
+<article class="story-row story-row--reverse" data-story="create">
+  <div class="story-copy">
+    <span class="section-eyebrow">Create</span>
+    <h2>And when you're done, take the work with you.</h2>
+    <p>Turn the conversation into a proper document. A report, a letter, a brief, a proposal — whatever you need. Download it as a real Word file and get on with your day.</p>
+  </div>
+  <div class="story-visual" data-anim="create">
+    <div class="cv-notes">
+      <span>notes</span><span>notes</span><span>notes</span>
+    </div>
+    <i class="ph ph-arrow-right cv-arrow"></i>
+    <div class="cv-doc">
+      <i class="ph ph-file-doc"></i>
+      <span>brief.docx</span>
+    </div>
+  </div>
+</article>
   </section>
-
   <!-- ── Capabilities ── -->
   <section class="capabilities">
-    <span class="section-eyebrow">What it does</span>
-    <h2 class="section-title">One assistant, the whole workload</h2>
-    <p class="section-subtitle">Built for the actual shape of professional and academic work, not just answering questions.</p>
-
-    <div class="capability-grid">
-      <div class="capability-card">
-        <i class="ph ph-file-doc"></i>
-        <h3>Real documents</h3>
-        <p>Ask for a report, letter, or memo and get an actual downloadable Word file, not text you have to copy and reformat.</p>
-      </div>
-      <div class="capability-card">
-        <i class="ph ph-flow-arrow"></i>
-        <h3>Diagrams and visuals</h3>
-        <p>Generate clean diagrams for concepts and processes, or realistic illustrations, directly inside the conversation.</p>
-      </div>
-      <div class="capability-card">
-        <i class="ph ph-magnifying-glass"></i>
-        <h3>Research and analysis</h3>
-        <p>Work through a problem from multiple angles, compare options, and get a considered answer, not just the first plausible one.</p>
-      </div>
-      <div class="capability-card">
-        <i class="ph ph-pencil-simple-line"></i>
-        <h3>Writing that matches the room</h3>
-        <p>A business proposal sounds like a business proposal. An academic explanation sounds academic. Cognita adjusts tone to the task.</p>
-      </div>
-      <div class="capability-card">
-        <i class="ph ph-brain"></i>
-        <h3>Thinks before it answers</h3>
-        <p>Cognita will tell you when an assumption seems off rather than agreeing by default, useful when the stakes are real.</p>
-      </div>
-      <div class="capability-card">
-        <i class="ph ph-lock-simple"></i>
-        <h3>Built to protect your work</h3>
-        <p>Conversations aren't used to train models. Every request is authenticated and processed server-side.</p>
-      </div>
-    </div>
+    <span class="section-eyebrow">What you can do</span>
+    <h2 class="section-title">More useful than a chat box.</h2>
+    <p class="section-subtitle">Cognita is built for the work that usually happens before, between, and after the meetings.</p>
+<div class="capability-grid">
+  <div class="capability-card">
+    <i class="ph ph-file-doc"></i>
+    <h3>Make the document</h3>
+    <p>Need a report, proposal, memo, letter, or brief? Ask for it and get a proper Word document you can open, edit, and send.</p>
+  </div>
+  <div class="capability-card">
+    <i class="ph ph-flow-arrow"></i>
+    <h3>Show, don't just explain</h3>
+    <p>Turn complicated ideas and processes into diagrams and visuals when a picture will make the point faster.</p>
+  </div>
+  <div class="capability-card">
+    <i class="ph ph-magnifying-glass"></i>
+    <h3>Dig into a question</h3>
+    <p>Compare options, examine the details, find the gaps in an argument, and work through a problem before making a call.</p>
+  </div>
+  <div class="capability-card">
+    <i class="ph ph-pencil-simple-line"></i>
+    <h3>Write for the person reading it</h3>
+    <p>A note to your team shouldn't sound like a thesis. A research paper shouldn't sound like an advert. Cognita adjusts to what you're writing and who it's for.</p>
+  </div>
+  <div class="capability-card">
+    <i class="ph ph-brain"></i>
+    <h3>Push back when it matters</h3>
+    <p>You don't need another yes-man. Cognita can question an assumption, flag a weak point, or show you another way of looking at the problem.</p>
+  </div>
+  <div class="capability-card">
+    <i class="ph ph-lock-simple"></i>
+    <h3>Your work stays yours</h3>
+    <p>Your conversations aren't used to train AI models. Requests are authenticated and processed securely on the server.</p>
+  </div>
+</div>
   </section>
-
   <!-- ── Use cases ── -->
   <section class="use-cases">
-    <span class="section-eyebrow">In practice</span>
-    <h2 class="section-title">Built for how people actually work</h2>
-
-    <div class="use-case-row">
-      <span class="use-case-tag">For professionals</span>
-      <h3>Turn a rough idea into a document a client can open</h3>
-      <p>Describe what you need — a proposal, a report, a follow-up letter — and Cognita produces a properly
-      structured draft, ready to export and send, not a wall of chat text to clean up yourself.</p>
-    </div>
-
-    <div class="use-case-row">
-      <span class="use-case-tag">For students and researchers</span>
-      <h3>Understand a concept, not just get an answer</h3>
-      <p>Cognita explains reasoning step by step and can illustrate ideas with diagrams, so you leave the
-      conversation actually understanding the material — useful for exam prep, essays, and coursework alike.</p>
-    </div>
-
-    <div class="use-case-row">
-      <span class="use-case-tag">For teams and founders</span>
-      <h3>Think through a decision from more than one angle</h3>
-      <p>Ask Cognita to lay out the tradeoffs on a pricing decision, a hire, or a market to enter, and get a
-      structured comparison instead of a single confident-sounding guess.</p>
-    </div>
+    <span class="section-eyebrow">Where it fits</span>
+    <h2 class="section-title">Whatever you're working on.</h2>
+<div class="use-case-row">
+  <span class="use-case-tag">For professionals</span>
+  <h3>You've got the idea. Now make it presentable.</h3>
+  <p>Maybe you've got a few notes and a deadline. Maybe you've just finished a client call. Give Cognita the context and ask for the proposal, report, follow-up, or brief you need. Then edit it, download it, and send it.</p>
+</div>
+<div class="use-case-row">
+  <span class="use-case-tag">For students and researchers</span>
+  <h3>Go beyond memorising the answer.</h3>
+  <p>Bring in the material you're studying and ask the questions that come up as you work through it. Get an explanation, test your understanding, explore an idea, or turn your notes into something easier to study.</p>
+</div>
+<div class="use-case-row">
+  <span class="use-case-tag">For teams and founders</span>
+  <h3>When the decision isn't as simple as it looks.</h3>
+  <p>Pricing, hiring, positioning, entering a new market — the hard part is often seeing the whole picture. Use Cognita to put the options side by side, surface the tradeoffs, and pressure-test the decision before you make it.</p>
+</div>
   </section>
-
   <!-- ── Trust ── -->
   <section class="trust">
-    <span class="section-eyebrow">How it's built</span>
-    <h2 class="section-title">Straightforward about how it works</h2>
+    <span class="section-eyebrow">The important stuff</span>
+    <h2 class="section-title">A few things you should know.</h2>
     <div class="trust-grid">
       <div class="trust-item">
         <i class="ph ph-shield-check"></i>
-        <p>Every request is authenticated and verified on our servers, not just checked by your browser.</p>
+        <p>Every request is authenticated and checked on our servers. Your browser isn't trusted to make those decisions for us.</p>
       </div>
       <div class="trust-item">
         <i class="ph ph-database"></i>
-        <p>We don't use your conversations to train AI models, ours or anyone else's.</p>
+        <p>We don't use your conversations to train AI models — neither our own nor someone else's.</p>
       </div>
       <div class="trust-item">
         <i class="ph ph-credit-card"></i>
-        <p>Payments are handled by Paystack. We never see or store your full card details.</p>
+        <p>Payments go through Paystack. We don't see or store your full card details.</p>
       </div>
       <div class="trust-item">
         <i class="ph ph-arrows-counter-clockwise"></i>
-        <p>Cancel a paid plan anytime from your account, no calls, no retention flow.</p>
+        <p>If you decide to stop paying, you can cancel from your account. No phone call. No awkward conversation.</p>
       </div>
     </div>
   </section>
-
   <!-- ── Pricing teaser ── -->
   <section class="pricing-teaser">
     <span class="section-eyebrow">Pricing</span>
-    <h2 class="section-title">Straightforward pricing</h2>
-    <p class="section-subtitle">Start free. Upgrade only when Cognita earns a place in how you work.</p>
+    <h2 class="section-title">Try it first. Decide later.</h2>
+    <p class="section-subtitle">Start with the free plan. If Cognita becomes part of your routine, upgrade when you need more.</p>
     <a href="/pricing.html" class="pricing-teaser-cta">See plans and pricing</a>
   </section>
-
   <!-- ── Final CTA ── -->
   <section class="final-cta">
-    <h2>Give your thinking somewhere to go.</h2>
-    <p>No setup, no credit card. See what it produces on something real.</p>
+    <h2>Bring us something you're working on.</h2>
+    <p>Start free. No setup and no credit card. Give Cognita a real problem and see where it takes you.</p>
     <a href="/signup.html" class="hero-cta-primary">Create your free account</a>
   </section>
-
 </main>
-
 <footer class="site-footer">
   <p>&copy; <span id="year"></span> Cognita. All rights reserved.</p>
   <div class="site-footer-links">
@@ -258,39 +229,30 @@
     <a href="/privacy.html">Privacy</a>
   </div>
 </footer>
-
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
-
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
   /* ── Hero stage: scatter → assemble → type → doc appears, looping ── */
   (function runHeroStage() {
     const stage = document.getElementById('heroStage');
     if (!stage) return;
-
     if (reduceMotion) {
       stage.classList.add('is-settled', 'is-typed', 'is-doc');
       return;
     }
-
     function playOnce() {
       stage.classList.remove('is-settled', 'is-typed', 'is-doc');
       stage.classList.add('is-scattered');
-
       setTimeout(() => {
         stage.classList.remove('is-scattered');
         stage.classList.add('is-settled');
       }, 1400);
-
       setTimeout(() => stage.classList.add('is-typed'), 2200);
       setTimeout(() => stage.classList.add('is-doc'), 4600);
     }
-
     playOnce();
     setInterval(playOnce, 8200);
   })();
-
   /* ── Scroll-reveal for grid/list sections (staggered via CSS nth-child delay) ── */
   (function wireReveals() {
     const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row, .trust-item');
@@ -298,7 +260,6 @@
       targets.forEach((el) => el.classList.add('is-revealed'));
       return;
     }
-
     const io = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
@@ -307,10 +268,8 @@
         }
       });
     }, { threshold: 0.25, rootMargin: '0px 0px -8% 0px' });
-
     targets.forEach((el) => io.observe(el));
   })();
-
   /* ── Per-story visual triggers ── */
   (function wireStoryVisuals() {
     const rows = document.querySelectorAll('.story-row');
@@ -318,7 +277,6 @@
       document.querySelectorAll('.story-visual').forEach((el) => el.classList.add('is-active'));
       return;
     }
-
     const io = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
@@ -328,10 +286,8 @@
         }
       });
     }, { threshold: 0.4 });
-
     rows.forEach((row) => io.observe(row));
   })();
 </script>
-
 </body>
 </html>
