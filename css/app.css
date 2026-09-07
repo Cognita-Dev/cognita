@@ -576,6 +576,23 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   max-width: 100%;
 }
 
+/* ── Generated document download chip ── */
+.document-download-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: var(--space-2);
+}
+.document-download-chip i { color: var(--accent); font-size: 1.1rem; }
+.document-download-chip:hover { background: var(--border); }
+
 /* ── Thought block — small, unobtrusive, not a card ── */
 .thought-block {
   margin-bottom: var(--space-2);
@@ -993,9 +1010,10 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 }
 .modal-field textarea:focus { border-color: var(--text-3); background: var(--bg-elevated); }
 
-.visual-type-toggle { display: flex; gap: var(--space-2); }
+.visual-type-toggle { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .visual-type-option {
   flex: 1;
+  min-width: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
