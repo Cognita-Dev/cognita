@@ -183,7 +183,7 @@
   <div class="story-visual" data-anim="explore">
     <div class="ev-ring" aria-hidden="true"></div>
     <div class="ev-center">Retention risk</div>
-    <div class="ev-orbit-item" style="--offset:0deg; --tumble-dur:34s; --tumble-dir:1;">
+    <div class="ev-orbit-item" style="--offset:0deg; --tumble-dur:34s; --tumble-dir:-1;">
       <div class="ev-orbit-line"></div>
       <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Support volume</div></div>
     </div>
@@ -191,7 +191,7 @@
       <div class="ev-orbit-line"></div>
       <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Pricing shift</div></div>
     </div>
-    <div class="ev-orbit-item" style="--offset:240deg; --tumble-dur:27s; --tumble-dir:1;">
+    <div class="ev-orbit-item" style="--offset:240deg; --tumble-dur:27s; --tumble-dir:-1;">
       <div class="ev-orbit-line"></div>
       <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Onboarding gap</div></div>
     </div>
@@ -204,16 +204,16 @@
     <p>When there's a real decision to make, the obvious answer isn't always the right one. Cognita can lay out the alternatives, point out the tradeoffs, and challenge the assumptions behind them.</p>
   </div>
   <div class="story-visual story-visual--think" data-anim="think">
-    <div class="tv-list">
-      <div class="tv-option" style="--d:0">
+    <div class="tv-list" id="tvList">
+      <div class="tv-option">
         <span class="tv-loader"><span></span><span></span><span></span></span>
         <span class="tv-text">Offer a blanket discount to everyone</span>
       </div>
-      <div class="tv-option" style="--d:1">
+      <div class="tv-option">
         <span class="tv-loader"><span></span><span></span><span></span></span>
         <span class="tv-text">Wait and see if churn levels out</span>
       </div>
-      <div class="tv-option tv-option--picked" style="--d:2">
+      <div class="tv-option is-picked">
         <span class="tv-loader"><span></span><span></span><span></span></span>
         <span class="tv-text"><i class="ph ph-check-circle"></i>Reach out to at-risk accounts directly</span>
       </div>
@@ -236,6 +236,9 @@
       <i class="ph ph-file-doc"></i>
       <span>brief.docx</span>
       <i class="ph ph-check-circle cv-doc-check"></i>
+    </div>
+    <div class="cv-hand" aria-hidden="true">
+      <i class="ph ph-hand-grabbing"></i>
     </div>
   </div>
 </article>
@@ -576,7 +579,9 @@
       userRow.classList.add('is-visible');
       await wait(550);
 
-      // Assistant thinks (separate status row), then reveals timing, then replies.
+      // Assistant thinks (separate status row), then reveals timing, then
+      // replies. The "Thought for Xs" line now stays put — it no longer
+      // gets hidden again, so it stays visible above the reply bubble.
       assistantRow.classList.add('is-visible');
       thinkingStatus.classList.add('is-visible');
       thinking.classList.add('is-visible');
@@ -587,8 +592,6 @@
       thoughtFor.textContent = 'Thought for ' + elapsedSeconds + 's';
       thoughtFor.classList.add('is-visible');
       await wait(650);
-      thinkingStatus.classList.remove('is-visible');
-      await wait(200);
 
       assistantBubble.classList.add('is-visible');
       replyCaret.classList.add('is-active');
@@ -634,18 +637,126 @@
     targets.forEach((el) => io.observe(el));
   })();
 
-  /* ── Per-story visual triggers ── */
+  /* ── Per-story visual triggers ──
+     Each story visual now runs its own repeating loop once it scrolls
+     into view, instead of animating once and sitting static forever:
+     - "understand": draws in, holds ~7s, clears, redraws.
+     - "think": cycles through three different decision scenarios,
+       ~5s each, looping back to the first after the third.
+     - "create": assembles the document, waits ~2s, a hand takes it
+       away, then the whole thing clears and redraws.
+     - "explore": unchanged — the orbit/tumble animation is already a
+       continuous CSS loop once switched on. */
   (function wireStoryVisuals() {
     const rows = document.querySelectorAll('.story-row');
+    const allVisuals = document.querySelectorAll('.story-visual');
+
     if (reduceMotion || !('IntersectionObserver' in window)) {
-      document.querySelectorAll('.story-visual').forEach((el) => el.classList.add('is-active'));
+      allVisuals.forEach((el) => el.classList.add('is-active'));
       return;
     }
+
+    function forceReflow(el) { void el.offsetWidth; }
+
+    async function runUnderstandLoop(visual) {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        visual.classList.add('is-active');
+        await wait(3700);  // time for the lines + tags to finish drawing in
+        await wait(7000);  // hold fully drawn for ~7s
+        visual.classList.remove('is-active');
+        forceReflow(visual);
+        await wait(500);   // brief pause before the next draw-in
+      }
+    }
+
+    const thinkScenarios = [
+      [
+        { text: 'Offer a blanket discount to everyone', picked: false },
+        { text: 'Wait and see if churn levels out', picked: false },
+        { text: 'Reach out to at-risk accounts directly', picked: true },
+      ],
+      [
+        { text: 'Hire a generalist to cover multiple roles', picked: false },
+        { text: 'Delay hiring until next quarter', picked: false },
+        { text: 'Hire a specialist for the biggest gap', picked: true },
+      ],
+      [
+        { text: 'Raise prices across the board', picked: false },
+        { text: 'Keep prices exactly the same', picked: false },
+        { text: 'Introduce a mid-tier plan instead', picked: true },
+      ],
+    ];
+
+    async function runThinkLoop(visual) {
+      const list = visual.querySelector('.tv-list');
+      if (!list) return;
+      let idx = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const scenario = thinkScenarios[idx % thinkScenarios.length];
+        list.innerHTML = '';
+        const optionEls = scenario.map(() => {
+          const row = document.createElement('div');
+          row.className = 'tv-option';
+          row.innerHTML =
+            '<span class="tv-loader"><span></span><span></span><span></span></span>' +
+            '<span class="tv-text"></span>';
+          list.appendChild(row);
+          return row;
+        });
+
+        for (let i = 0; i < optionEls.length; i += 1) {
+          const el = optionEls[i];
+          const data = scenario[i];
+          await wait(i === 0 ? 300 : 650);
+          el.classList.add('is-shown');
+          await wait(900);
+          const textEl = el.querySelector('.tv-text');
+          textEl.innerHTML = data.picked
+            ? '<i class="ph ph-check-circle"></i>' + data.text
+            : data.text;
+          el.classList.add('is-resolved');
+          if (data.picked) el.classList.add('is-picked');
+        }
+
+        await wait(5000); // hold the resolved scenario on screen
+        optionEls.forEach((el) => el.classList.remove('is-shown'));
+        await wait(500);  // let the fade-out finish before the next scenario
+        idx += 1;
+      }
+    }
+
+    async function runCreateLoop(visual) {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        visual.classList.add('is-active');
+        await wait(2900); // notes converge, doc assembles, check confirms
+        await wait(2000); // finished document sits for ~2s
+        visual.classList.add('is-grabbing');
+        await wait(1300); // hand arrives, grabs, carries the doc off
+        visual.classList.remove('is-active', 'is-grabbing');
+        forceReflow(visual);
+        await wait(600);
+      }
+    }
+
     const io = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           const visual = entry.target.querySelector('.story-visual');
-          if (visual) visual.classList.add('is-active');
+          if (visual) {
+            const anim = visual.dataset.anim;
+            if (anim === 'understand') {
+              runUnderstandLoop(visual);
+            } else if (anim === 'think') {
+              runThinkLoop(visual);
+            } else if (anim === 'create') {
+              runCreateLoop(visual);
+            } else {
+              visual.classList.add('is-active');
+            }
+          }
           io.unobserve(entry.target);
         }
       });
