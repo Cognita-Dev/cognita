@@ -553,7 +553,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 
 .citation-marker { color: var(--accent); font-weight: 600; font-size: 0.85em; }
 
-/* ── Message images (attached by the user) ── */
+/* ── Message attachments (images + files attached by the user) ── */
 .message-image-grid {
   display: flex;
   flex-wrap: wrap;
@@ -566,6 +566,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   max-height: 220px;
   border-radius: var(--radius-md);
   object-fit: cover;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+  max-width: 100%;
 }
 
 /* ── Thought block — small, unobtrusive, not a card ── */
@@ -713,6 +721,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   border-radius: 4px;
   flex-shrink: 0;
 }
+.attachment-chip-static { cursor: default; }
 
 .composer-input {
   width: 100%;
@@ -755,21 +764,60 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 }
 .composer-tool-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
 
-/* Premium-gated image attach button gets a small lock badge instead of
-   just silently doing nothing when clicked. */
-.composer-tool-btn.is-locked { color: var(--text-4); }
-.composer-tool-btn.is-locked::after {
+/* ── "+" attach menu ── */
+.attach-menu { position: relative; flex-shrink: 0; }
+
+.attach-menu-list {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 240px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-1);
+  z-index: 60;
+}
+
+.attach-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: left;
+  position: relative;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.attach-menu-item:hover { background: var(--bg-subtle); color: var(--text-1); }
+.attach-menu-item i:first-child {
+  font-size: 1rem;
+  color: var(--text-3);
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+/* Locked (plan-gated) menu item gets a small lock badge rather than
+   silently doing nothing when clicked. */
+.attach-menu-item.is-locked { color: var(--text-4); }
+.attach-menu-item.is-locked::after {
   content: '\f3c4'; /* phosphor lock glyph fallback, purely decorative */
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 10px;
-  height: 10px;
-  font-size: 8px;
-  line-height: 10px;
+  top: 6px;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+  line-height: 14px;
   text-align: center;
   border-radius: 50%;
-  background: var(--bg-elevated);
+  background: var(--bg-subtle);
   color: var(--text-4);
   border: 1px solid var(--border);
 }
@@ -1031,5 +1079,15 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
     top: auto;
     transform: translateY(calc(-100% - 68px));
     width: auto;
+  }
+
+  .attach-menu-list {
+    position: fixed;
+    left: var(--space-4);
+    right: auto;
+    bottom: auto;
+    top: auto;
+    transform: translateY(calc(-100% - 68px));
+    width: 240px;
   }
 }
