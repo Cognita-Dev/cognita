@@ -46,26 +46,30 @@
 
         <div class="hero-preview-body" id="heroBody">
           <div class="hero-msg-row is-user" id="heroUserRow">
-            <div class="hero-preview-msg is-user">
-              <div class="hero-msg-attachments" id="heroMsgAttachments"></div>
-              <span id="heroUserText"></span>
+            <div class="hero-user-col">
+              <div class="hero-msg-attachments-outside" id="heroMsgAttachments"></div>
+              <div class="hero-preview-msg is-user" id="heroUserBubble">
+                <span id="heroUserText"></span>
+              </div>
             </div>
           </div>
 
           <div class="hero-msg-row is-assistant" id="heroAssistantRow">
-            <div class="hero-preview-msg is-assistant">
-              <span class="hero-thinking" id="heroThinking" aria-hidden="true">
+            <div class="hero-assistant-col">
+              <div class="hero-thinking-status" id="heroThinking" aria-hidden="true">
                 <span class="hero-thinking-dots">
                   <span class="hero-thinking-dot"></span>
                   <span class="hero-thinking-dot"></span>
                   <span class="hero-thinking-dot"></span>
                 </span>
                 <span class="hero-thinking-label" id="heroThinkingLabel">Planning…</span>
-              </span>
-              <span class="type-text" id="heroReplyText"></span><span class="type-caret" id="heroReplyCaret"></span>
-              <div class="hero-preview-doc" id="heroDoc">
-                <i class="ph ph-file-doc" id="heroDocIcon"></i>
-                <span id="heroDocLabel">Q3-retention-brief.docx</span>
+              </div>
+              <div class="hero-preview-msg is-assistant is-pending" id="heroAssistantBubble">
+                <span class="type-text" id="heroReplyText"></span><span class="type-caret" id="heroReplyCaret"></span>
+                <div class="hero-preview-doc" id="heroDoc">
+                  <i class="ph ph-file-doc" id="heroDocIcon"></i>
+                  <span id="heroDocLabel">Q3-retention-brief.docx</span>
+                </div>
               </div>
             </div>
           </div>
@@ -73,21 +77,31 @@
 
         <div class="hero-composer" id="heroComposer">
           <div class="hero-composer-attachments" id="heroComposerAttachments"></div>
-          <div class="hero-composer-field" id="heroComposerField">
-            <span id="heroComposerText"></span><span class="type-caret" id="heroComposerCaret"></span>
-          </div>
-          <div class="hero-composer-toolbar">
-            <button class="hero-composer-attach" id="heroAttachBtn" type="button" tabindex="-1">
-              <i class="ph ph-plus"></i>
-            </button>
-            <div class="hero-quality-picker" id="heroQualityPicker">
-              <span class="hero-quality-option" data-quality="standard">Standard</span>
-              <span class="hero-quality-option" data-quality="advanced">Advanced</span>
-              <span class="hero-quality-option" data-quality="thorough">Thorough</span>
+          <div class="hero-composer-box">
+            <div class="hero-composer-field" id="heroComposerField">
+              <span id="heroComposerText"></span><span class="type-caret" id="heroComposerCaret"></span>
             </div>
-            <button class="hero-composer-send" id="heroSendBtn" type="button" tabindex="-1">
-              <i class="ph ph-arrow-up"></i>
-            </button>
+            <div class="hero-composer-toolbar">
+              <button class="hero-composer-attach" id="heroAttachBtn" type="button" tabindex="-1">
+                <i class="ph ph-plus"></i>
+              </button>
+
+              <div class="hero-quality-picker" id="heroQualityPicker">
+                <button class="hero-quality-trigger" id="heroQualityTrigger" type="button" tabindex="-1">
+                  <span id="heroQualitySelectedLabel">Standard</span>
+                  <i class="ph ph-caret-down"></i>
+                </button>
+                <div class="hero-quality-menu" id="heroQualityMenu">
+                  <span class="hero-quality-menu-option is-selected" data-quality="standard">Standard</span>
+                  <span class="hero-quality-menu-option" data-quality="advanced">Advanced</span>
+                  <span class="hero-quality-menu-option" data-quality="thorough">Thorough</span>
+                </div>
+              </div>
+
+              <button class="hero-composer-send" id="heroSendBtn" type="button" tabindex="-1">
+                <i class="ph ph-arrow-up"></i>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -96,22 +110,22 @@
           <div class="hero-file-modal-grid" id="heroFileGrid">
             <div class="hero-file-item" data-name="Q3-churn-numbers.xlsx">
               <i class="ph ph-file-xls"></i>
-              <span>Q3-churn-numbers.xlsx</span>
+              <span class="hero-file-name">Q3-churn-numbers.xlsx</span>
               <span class="hero-file-check"><i class="ph ph-check"></i></span>
             </div>
             <div class="hero-file-item" data-name="support-tickets.csv">
               <i class="ph ph-file-csv"></i>
-              <span>support-tickets.csv</span>
+              <span class="hero-file-name">support-tickets.csv</span>
               <span class="hero-file-check"><i class="ph ph-check"></i></span>
             </div>
             <div class="hero-file-item" data-name="onboarding-notes.docx">
               <i class="ph ph-file-doc"></i>
-              <span>onboarding-notes.docx</span>
+              <span class="hero-file-name">onboarding-notes.docx</span>
               <span class="hero-file-check"><i class="ph ph-check"></i></span>
             </div>
             <div class="hero-file-item" data-name="competitor-pricing.pdf">
               <i class="ph ph-file-pdf"></i>
-              <span>competitor-pricing.pdf</span>
+              <span class="hero-file-name">competitor-pricing.pdf</span>
               <span class="hero-file-check"><i class="ph ph-check"></i></span>
             </div>
           </div>
@@ -134,9 +148,15 @@
   <div class="story-copy">
     <span class="section-eyebrow">Understand</span>
     <h2>Give it the messy stuff.</h2>
-    <p>Notes from a meeting. A long PDF. A spreadsheet full of numbers. A transcript you haven't had time to read. Put it in. Cognita works from what's actually there, so you can get to the useful part faster.</p>
+    <p>Notes from a meeting. A long PDF. A spreadsheet full of numbers. A transcript you haven't had time to read. Put it in. Cognita pulls it all together and works from what's actually there, so you can get to the useful part faster.</p>
   </div>
   <div class="story-visual" data-anim="understand">
+    <div class="uv-sources">
+      <span class="uv-source" style="--sx:-72px; --sy:-46px;"><i class="ph ph-file-pdf"></i></span>
+      <span class="uv-source" style="--sx:72px; --sy:-46px;"><i class="ph ph-table"></i></span>
+      <span class="uv-source" style="--sx:-72px; --sy:46px;"><i class="ph ph-microphone"></i></span>
+      <span class="uv-source" style="--sx:72px; --sy:46px;"><i class="ph ph-note-pencil"></i></span>
+    </div>
     <div class="uv-doc">
       <div class="uv-line uv-line--title"></div>
       <div class="uv-line"></div>
@@ -156,15 +176,15 @@
     <div class="ev-center">Retention risk</div>
     <div class="ev-orbit-item" style="--offset:0deg;">
       <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node">Support volume</div>
+      <div class="ev-orbit-node"><span class="ev-orbit-node-inner">Support volume</span></div>
     </div>
     <div class="ev-orbit-item" style="--offset:120deg;">
       <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node">Pricing shift</div>
+      <div class="ev-orbit-node"><span class="ev-orbit-node-inner">Pricing shift</span></div>
     </div>
     <div class="ev-orbit-item" style="--offset:240deg;">
       <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node">Onboarding gap</div>
+      <div class="ev-orbit-node"><span class="ev-orbit-node-inner">Onboarding gap</span></div>
     </div>
   </div>
 </article>
@@ -186,7 +206,7 @@
       </div>
       <div class="tv-option tv-option--picked" style="--d:2">
         <span class="tv-loader"><span></span><span></span><span></span></span>
-        <span class="tv-text"><i class="ph ph-check-circle"></i> Reach out to at-risk accounts directly</span>
+        <span class="tv-text"><i class="ph ph-check-circle"></i> Reach out to at-risk accounts</span>
       </div>
     </div>
   </div>
@@ -198,13 +218,17 @@
     <p>Turn the conversation into a proper document. A report, a letter, a brief, a proposal — whatever you need. Download it as a real Word file and get on with your day.</p>
   </div>
   <div class="story-visual" data-anim="create">
-    <div class="cv-notes">
-      <span>notes</span><span>notes</span><span>notes</span>
+    <div class="cv-stack">
+      <span class="cv-note" style="--r1:-10deg; --tx1:-34px; --ty1:-14px;">Meeting notes</span>
+      <span class="cv-note" style="--r1:6deg; --tx1:30px; --ty1:-6px;">Call transcript</span>
+      <span class="cv-note" style="--r1:-4deg; --tx1:-4px; --ty1:20px;">Research links</span>
     </div>
+    <span class="cv-compiling" aria-hidden="true"><span></span><span></span><span></span></span>
     <i class="ph ph-arrow-right cv-arrow"></i>
     <div class="cv-doc">
       <i class="ph ph-file-doc"></i>
       <span>brief.docx</span>
+      <i class="ph ph-check-circle cv-doc-check"></i>
     </div>
   </div>
 </article>
@@ -332,22 +356,24 @@
     });
   }
 
-  /* ── Hero stage: a fully simulated conversation.
-     The cursor performs every action a real user would take: opening
-     the file picker, selecting files, choosing a quality, and hitting
-     send. Typing is done by "the user" (composer) and "the assistant"
-     (reply) directly — nothing is retyped once it lands in the chat,
-     the same way a real chat interface works. ── */
+  /* ── Hero stage: a fully simulated conversation. The cursor performs
+     every user action (opening the file picker, selecting files,
+     opening the quality accordion, picking a level, hitting send).
+     Attachments render outside the message/input boxes, the thinking
+     status lives above the assistant bubble, and nothing is ever
+     retyped once it lands in the chat. ── */
   (function runHeroStage() {
     const stage = document.getElementById('heroStage');
     const win = document.getElementById('heroWindow');
     const cursor = document.getElementById('heroCursor');
 
     const userRow = document.getElementById('heroUserRow');
+    const userBubble = document.getElementById('heroUserBubble');
     const userText = document.getElementById('heroUserText');
     const msgAttachments = document.getElementById('heroMsgAttachments');
 
     const assistantRow = document.getElementById('heroAssistantRow');
+    const assistantBubble = document.getElementById('heroAssistantBubble');
     const thinking = document.getElementById('heroThinking');
     const thinkingLabel = document.getElementById('heroThinkingLabel');
     const replyText = document.getElementById('heroReplyText');
@@ -361,8 +387,14 @@
     const composerCaret = document.getElementById('heroComposerCaret');
     const attachBtn = document.getElementById('heroAttachBtn');
     const sendBtn = document.getElementById('heroSendBtn');
-    const qualityOptions = Array.from(document.querySelectorAll('.hero-quality-option'));
-    const qualityAdvanced = qualityOptions.find((o) => o.dataset.quality === 'advanced');
+
+    const qualityPicker = document.getElementById('heroQualityPicker');
+    const qualityTrigger = document.getElementById('heroQualityTrigger');
+    const qualitySelectedLabel = document.getElementById('heroQualitySelectedLabel');
+    const qualityMenu = document.getElementById('heroQualityMenu');
+    const qualityMenuOptions = Array.from(document.querySelectorAll('.hero-quality-menu-option'));
+    const qualityStandard = qualityMenuOptions.find((o) => o.dataset.quality === 'standard');
+    const qualityAdvanced = qualityMenuOptions.find((o) => o.dataset.quality === 'advanced');
 
     const fileModal = document.getElementById('heroFileModal');
     const fileModalAdd = document.getElementById('heroFileModalAdd');
@@ -388,34 +420,52 @@
     if (reduceMotion) {
       stage.classList.add('is-ready');
       FILES.forEach((f) => msgAttachments.appendChild(makeChip(f.name, f.icon)));
+      userBubble.classList.add('has-attachments');
       userText.textContent = USER_MSG;
       userRow.classList.add('is-visible');
       assistantRow.classList.add('is-visible');
+      assistantBubble.classList.remove('is-pending');
+      thinking.classList.add('is-visible', 'is-done');
+      thinkingLabel.textContent = 'Thought for 2.1s';
       replyText.textContent = REPLY_MSG;
       docLabel.textContent = 'Downloaded';
       docIcon.className = 'ph ph-check-circle';
       doc.classList.add('is-visible', 'is-downloaded');
+      qualitySelectedLabel.textContent = 'Advanced';
+      qualityStandard.classList.remove('is-selected');
       qualityAdvanced.classList.add('is-selected');
       return;
     }
 
     function resetVisual() {
       userRow.classList.remove('is-visible');
-      assistantRow.classList.remove('is-visible');
+      userBubble.classList.remove('has-attachments');
       userText.textContent = '';
       msgAttachments.innerHTML = '';
-      thinking.classList.remove('is-visible');
+
+      assistantRow.classList.remove('is-visible');
+      assistantBubble.classList.add('is-pending');
+      thinking.classList.remove('is-visible', 'is-done');
+      thinkingLabel.textContent = 'Planning…';
       replyText.textContent = '';
       replyCaret.classList.remove('is-active');
+
       doc.classList.remove('is-visible', 'is-downloaded', 'is-pulsing');
       docIcon.className = 'ph ph-file-doc';
       docLabel.textContent = DOC_NAME;
+
       composerAttachments.innerHTML = '';
       composerText.textContent = '';
       composerCaret.classList.remove('is-active');
-      qualityOptions.forEach((o) => o.classList.remove('is-selected'));
+
+      qualityPicker.classList.remove('is-open');
+      qualitySelectedLabel.textContent = 'Standard';
+      qualityMenuOptions.forEach((o) => o.classList.remove('is-selected'));
+      qualityStandard.classList.add('is-selected');
+
       fileItems.forEach((f) => f.classList.remove('is-selected'));
       fileModal.classList.remove('is-open');
+
       cursor.classList.remove('is-visible', 'is-clicking');
       cursor.style.transition = 'none';
     }
@@ -480,7 +530,7 @@
       file2.classList.add('is-selected');
       await wait(450);
 
-      // Confirm and close the picker.
+      // Confirm and close the picker — files land above the input box.
       await clickAt(fileModalAdd);
       fileModal.classList.remove('is-open');
       FILES.forEach((f) => composerAttachments.appendChild(makeChip(f.name, f.icon)));
@@ -494,33 +544,47 @@
       composerCaret.classList.remove('is-active');
       await wait(500);
 
-      // Choose a quality level.
+      // Open the quality accordion, then pick Advanced.
       showCursorFromOutside();
-      cursor.style.left = '50%';
+      cursor.style.left = '78%';
       cursor.style.top = '95%';
       cursor.classList.add('is-visible');
+      await clickAt(qualityTrigger);
+      qualityPicker.classList.add('is-open');
+      await wait(500);
       await clickAt(qualityAdvanced);
+      qualityStandard.classList.remove('is-selected');
       qualityAdvanced.classList.add('is-selected');
-      await wait(450);
+      qualitySelectedLabel.textContent = 'Advanced';
+      await wait(200);
+      qualityPicker.classList.remove('is-open');
+      await wait(350);
 
       // Send.
       await clickAt(sendBtn, 'is-active');
       cursor.classList.remove('is-visible');
 
-      // Message lands in the conversation exactly as composed — no retyping.
+      // Message lands in the conversation exactly as composed.
       FILES.forEach((f) => msgAttachments.appendChild(makeChip(f.name, f.icon)));
+      userBubble.classList.add('has-attachments');
       userText.textContent = USER_MSG;
       composerText.textContent = '';
       composerAttachments.innerHTML = '';
       userRow.classList.add('is-visible');
       await wait(550);
 
-      // Assistant thinks, then replies.
+      // Assistant thinks — status shown above the bubble, not inside it.
       assistantRow.classList.add('is-visible');
       thinking.classList.add('is-visible');
+      const thinkStart = Date.now();
       await cycleThinking(['Planning…', 'Rounding up…', 'Presenting response…'], 750);
-      thinking.classList.remove('is-visible');
+      const thinkElapsed = ((Date.now() - thinkStart) / 1000).toFixed(1);
+      thinking.classList.add('is-done');
+      thinkingLabel.textContent = 'Thought for ' + thinkElapsed + 's';
+      await wait(300);
 
+      // Reply types inside the (now revealed) bubble.
+      assistantBubble.classList.remove('is-pending');
       replyCaret.classList.add('is-active');
       await typeText(replyText, REPLY_MSG, 34);
       replyCaret.classList.remove('is-active');
@@ -538,7 +602,7 @@
       await wait(650);
       cursor.classList.remove('is-visible');
 
-      await wait(2000);
+      await wait(2200);
       playOnce();
     }
 
@@ -583,16 +647,19 @@
     rows.forEach((row) => io.observe(row));
   })();
 
-  /* ── Trust section: chained typewriter ── */
+  /* ── Trust section: chained typewriter. Each item stays hidden
+     (no reserved space) until its turn, then reveals and grows its
+     own paragraph height as text streams in. ── */
   (function wireTrustTypewriter() {
     const items = document.querySelectorAll('.trust-item');
     if (!items.length) return;
     const grid = items[0].closest('.trust-grid');
     const paras = Array.from(items).map((it) => it.querySelector('p'));
     const originals = paras.map((p) => p.textContent);
+    paras.forEach((p) => { p.textContent = ''; });
 
     if (reduceMotion || !('IntersectionObserver' in window)) {
-      items.forEach((el) => el.classList.add('is-revealed'));
+      items.forEach((el, i) => { el.classList.add('is-revealed'); paras[i].textContent = originals[i]; });
       return;
     }
 
