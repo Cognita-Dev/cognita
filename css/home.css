@@ -183,18 +183,19 @@ main { overflow-x: hidden; }
   font-size: var(--text-sm);
   max-width: 90%;
   line-height: 1.5;
+  min-height: 1.5em;
 }
 .hero-preview-msg.is-user { align-self: flex-end; background: var(--text-1); color: var(--bg-base); }
-.hero-preview-msg.is-assistant { align-self: flex-start; background: var(--bg-subtle); color: var(--text-2); min-height: 1.5em; }
+.hero-preview-msg.is-assistant { align-self: flex-start; background: var(--bg-subtle); color: var(--text-2); }
 
-/* Thinking indicator — shown before the reply starts typing */
+/* Thinking indicator — shown between the question and the reply */
 .hero-thinking {
   display: none;
   align-items: center;
   gap: 4px;
   height: 1.4em;
 }
-.hero-stage.is-thinking .hero-thinking { display: inline-flex; }
+.hero-thinking.is-visible { display: inline-flex; }
 .hero-thinking-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
@@ -208,17 +209,9 @@ main { overflow-x: hidden; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
-/* Reveal by clip-path, not width+nowrap — works regardless of exact
-   text length or how many lines it wraps to, so nothing gets cut off. */
-.hero-preview-typing {
-  display: none;
-  clip-path: inset(0 100% 0 0);
-}
-.hero-stage.is-typed .hero-preview-typing {
-  display: inline-block;
-  animation: reveal-text 1500ms var(--ease) forwards;
-}
-@keyframes reveal-text { to { clip-path: inset(0 0 0 0); } }
+/* Real, JS-driven typewriter text (character-by-character), not a
+   clip-path reveal — the caret only blinks while actively typing. */
+.type-text { white-space: pre-wrap; }
 
 .type-caret {
   display: inline-block;
@@ -229,10 +222,9 @@ main { overflow-x: hidden; }
   vertical-align: text-bottom;
   opacity: 0;
 }
-.hero-stage.is-typed .type-caret {
+.type-caret.is-active {
   opacity: 1;
   animation: caret-blink 700ms step-end infinite;
-  animation-delay: 1500ms;
 }
 @keyframes caret-blink { 50% { opacity: 0; } }
 
@@ -250,18 +242,63 @@ main { overflow-x: hidden; }
   color: var(--text-1);
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity 450ms var(--ease), transform 450ms var(--ease);
+  transition: opacity 450ms var(--ease), transform 450ms var(--ease), background 300ms var(--ease), border-color 300ms var(--ease);
 }
 .hero-preview-doc i { color: var(--accent); }
 .hero-stage.is-doc .hero-preview-doc { opacity: 1; transform: translateY(0); }
+.hero-preview-doc.is-downloaded {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+.hero-preview-doc.is-pulsing { animation: hero-doc-pulse 420ms var(--ease); }
+@keyframes hero-doc-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* Cursor that arrives from outside the card and "clicks" the file */
+.hero-cursor {
+  position: absolute;
+  left: 0; top: 0;
+  width: 22px; height: 22px;
+  pointer-events: none;
+  opacity: 0;
+  transition: left 900ms var(--ease), top 900ms var(--ease), opacity 250ms var(--ease);
+  z-index: 5;
+}
+.hero-cursor.is-visible { opacity: 1; }
+.hero-cursor svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(23, 23, 23, 0.25)); }
+.hero-cursor.is-clicking svg { animation: hero-cursor-tap 300ms var(--ease); }
+@keyframes hero-cursor-tap {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.82); }
+  100% { transform: scale(1); }
+}
+.hero-cursor-ring {
+  position: absolute;
+  left: 20%; top: 15%;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  transform: translate(-50%, -50%) scale(0.3);
+  opacity: 0;
+}
+.hero-cursor.is-clicking .hero-cursor-ring {
+  animation: hero-cursor-pulse 550ms ease-out;
+}
+@keyframes hero-cursor-pulse {
+  0%   { transform: translate(-50%, -50%) scale(0.3); opacity: 0.8; }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .hero-thinking { display: none !important; }
-  .hero-preview-typing { display: inline-block; clip-path: none; }
-  .type-caret { display: none; }
+  .type-caret { display: none !important; }
   .hero-scatter { display: none; }
   .hero-preview-window { opacity: 1; transform: none; }
   .hero-preview-doc { opacity: 1; transform: none; }
+  .hero-cursor { display: none !important; }
 }
 
 @media (max-width: 620px) {
@@ -497,34 +534,42 @@ main { overflow-x: hidden; }
   to   { transform: translate(-50%, -50%) rotate(-360deg); }
 }
 
-/* ── Think: options appear, then resolve one at a time ──
-   Each option first shows a small bouncing-dot loader; once its own
-   turn comes up (staggered by --d), the loader fades out and the real
-   answer fades in — so the three read as being produced in sequence
-   rather than all arriving at once. */
+/* ── Think: options resolve one at a time, laid out with a normal flex
+   column (not fixed top:% positions) so wrapped lines push the next
+   option down instead of overlapping or getting clipped by the card. ── */
+.story-visual--think {
+  height: auto;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  padding: var(--space-6) 0;
+}
+
+.tv-list {
+  width: 78%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 .tv-option {
-  position: absolute;
-  left: 50%;
-  width: 76%;
-  transform: translateX(-50%) translateY(10px);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   color: var(--text-3);
   opacity: 0;
-  transition: opacity 450ms var(--ease), transform 450ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
+  transform: translateY(10px);
+  transition: opacity 550ms var(--ease), transform 550ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
 }
-.tv-option[style*="--d:0"] { top: 22%; }
-.tv-option[style*="--d:1"] { top: 47%; }
-.tv-option[style*="--d:2"] { top: 72%; }
 .tv-option--picked { font-weight: 600; }
 .tv-option--picked i { color: var(--accent); flex-shrink: 0; }
 .story-visual[data-anim="think"].is-active .tv-option {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
-  transition-delay: calc(var(--d) * 280ms + 200ms);
+  transform: translateY(0);
+  transition-delay: calc(var(--d) * 450ms + 250ms);
 }
 .story-visual[data-anim="think"].is-active .tv-option--picked {
   border-color: var(--accent);
@@ -537,7 +582,7 @@ main { overflow-x: hidden; }
   align-items: center;
   gap: 3px;
   opacity: 1;
-  transition: opacity 200ms var(--ease);
+  transition: opacity 250ms var(--ease);
 }
 .tv-loader span {
   width: 4px; height: 4px;
@@ -555,17 +600,17 @@ main { overflow-x: hidden; }
 
 .tv-text {
   opacity: 0;
-  transition: opacity 300ms var(--ease);
+  transition: opacity 350ms var(--ease);
 }
 .tv-option--picked .tv-text { display: inline-flex; align-items: center; gap: 6px; }
 
 .story-visual[data-anim="think"].is-active .tv-option .tv-loader {
   opacity: 0;
-  transition-delay: calc(var(--d) * 280ms + 650ms);
+  transition-delay: calc(var(--d) * 450ms + 950ms);
 }
 .story-visual[data-anim="think"].is-active .tv-option .tv-text {
   opacity: 1;
-  transition-delay: calc(var(--d) * 280ms + 650ms);
+  transition-delay: calc(var(--d) * 450ms + 950ms);
 }
 
 /* ── Create: notes transform into a doc chip ── */
@@ -641,7 +686,7 @@ main { overflow-x: hidden; }
     transform: translate(-50%, -50%) rotate(calc(-1 * var(--offset))) !important;
   }
 
-  .tv-option { transform: translateX(-50%); opacity: 1 !important; transition: none !important; }
+  .tv-option { transform: none; opacity: 1 !important; transition: none !important; }
   .tv-loader { display: none !important; }
   .tv-text { opacity: 1 !important; transition: none !important; }
 }
@@ -649,6 +694,7 @@ main { overflow-x: hidden; }
 @media (max-width: 780px) {
   .story-row, .story-row--reverse { grid-template-columns: 1fr; direction: ltr; }
   .story-visual { height: 180px; }
+  .story-visual--think { height: auto; min-height: 200px; }
   .story-copy p { max-width: none; }
   .ev-ring { width: 130px; height: 130px; }
   .ev-orbit-item { --radius: 64px; }
@@ -740,72 +786,7 @@ main { overflow-x: hidden; }
 .use-case-row p { font-size: var(--text-base); color: var(--text-2); line-height: 1.6; max-width: 560px; }
 
 /* ═══════════════════════════════════════════════
-   GESTURE DEMO — tilts and glares toward the pointer
-═══════════════════════════════════════════════ */
-
-.gesture-demo {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-5);
-  text-align: center;
-}
-
-.gesture-card {
-  position: relative;
-  max-width: 420px;
-  height: 220px;
-  margin: var(--space-6) auto 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  perspective: 800px;
-  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
-  transition: transform 500ms var(--ease), box-shadow 300ms var(--ease);
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-}
-.gesture-card.is-active {
-  transition: transform 60ms linear, box-shadow 300ms var(--ease);
-  box-shadow: var(--shadow-lg);
-  cursor: grabbing;
-}
-
-.gesture-card-glare {
-  position: absolute;
-  inset: -20%;
-  pointer-events: none;
-  background: radial-gradient(circle at var(--gx, 50%) var(--gy, 50%), rgba(255, 255, 255, 0.35), transparent 55%);
-  opacity: 0;
-  transition: opacity 300ms var(--ease);
-}
-.gesture-card.is-active .gesture-card-glare { opacity: 1; }
-@media (prefers-color-scheme: dark) {
-  .gesture-card-glare {
-    background: radial-gradient(circle at var(--gx, 50%) var(--gy, 50%), rgba(255, 255, 255, 0.08), transparent 55%);
-  }
-}
-
-.gesture-card-inner {
-  position: relative;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-}
-.gesture-card-inner i { font-size: 1.8rem; color: var(--accent); }
-.gesture-card-inner p { font-size: var(--text-base); color: var(--text-2); font-weight: 500; }
-
-@media (prefers-reduced-motion: reduce) {
-  .gesture-card { transform: none !important; transition: none !important; }
-  .gesture-card-glare { display: none !important; }
-}
-
-/* ═══════════════════════════════════════════════
-   TRUST — sequential typewriter reveal
+   TRUST — sequential typewriter reveal, one item after another
 ═══════════════════════════════════════════════ */
 
 .trust {
