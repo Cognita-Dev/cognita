@@ -2,7 +2,6 @@
    Shared header, footer, and nav used across public-facing pages:
    index.html, pricing.html, terms.html, privacy.html.
 */
-
 .site-header {
   display: flex;
   align-items: center;
@@ -11,52 +10,53 @@
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  background: var(--bg-base);
+  background: rgba(247, 247, 245, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   z-index: 100;
 }
-
+@media (prefers-color-scheme: dark) {
+  .site-header { background: rgba(13, 14, 14, 0.75); }
+}
 .site-logo {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 700;
+  font-weight: 600;
   font-size: var(--text-lg);
+  color: var(--text-1);
+  letter-spacing: -0.01em;
 }
-
 .site-logo img {
-  height: 24px;
+  height: 22px;
   width: auto;
+  border-radius: 5px;
 }
-
 .site-nav {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-6);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
 }
-
 .site-nav a.is-active {
   color: var(--text-1);
 }
-
 .site-nav a:hover {
   color: var(--text-1);
 }
-
 .site-nav-cta {
   padding: var(--space-2) var(--space-4);
   background: var(--text-1);
   color: var(--bg-base);
   border-radius: var(--radius-md);
+  font-weight: 600;
   transition: opacity var(--duration-fast) var(--ease);
 }
-
 .site-nav-cta:hover {
-  opacity: 0.85;
+  opacity: 0.82;
 }
-
 .site-footer {
   display: flex;
   align-items: center;
@@ -68,17 +68,15 @@
   max-width: 1100px;
   margin: 0 auto;
 }
-
 .site-footer-links {
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
-
 .site-footer-links a:hover {
   color: var(--text-1);
 }
-
 @media (max-width: 640px) {
-  .site-nav { gap: var(--space-3); }
+  .site-nav { gap: var(--space-4); }
+  .site-nav a:not(.site-nav-cta) { display: none; }
   .site-footer { flex-direction: column; gap: var(--space-3); text-align: center; }
 }
