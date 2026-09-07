@@ -61,6 +61,8 @@
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
   const forgotBtn = document.getElementById('forgotBtn');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
 
   const errorEls = {
     email: document.getElementById('emailError'),
@@ -85,6 +87,11 @@
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
 
+  emailInput.addEventListener('input', () => {
+    emailInput.classList.remove('is-invalid');
+    errorEls.email.textContent = '';
+  });
+
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
@@ -93,12 +100,21 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearErrors();
+
+      const email = emailInput.value.trim();
+      if (!Auth.isValidEmail(email)) {
+        emailInput.classList.add('is-invalid');
+        errorEls.email.textContent = 'Enter a valid email address.';
+        return;
+      }
+      if (!passwordInput.value) {
+        errorEls.password.textContent = 'Enter your password.';
+        return;
+      }
+
       setLoading(true);
       try {
-        await Auth.signInWithEmail(
-          document.getElementById('email').value.trim(),
-          document.getElementById('password').value
-        );
+        await Auth.signInWithEmail(email, passwordInput.value);
         window.location.href = '/app.html';
       } catch (err) {
         showError(err);
@@ -116,9 +132,14 @@
     });
     forgotBtn.addEventListener('click', async () => {
       clearErrors();
-      const email = document.getElementById('email').value.trim();
+      const email = emailInput.value.trim();
       if (!email) {
         errorEls.email.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
+        return;
+      }
+      if (!Auth.isValidEmail(email)) {
+        emailInput.classList.add('is-invalid');
+        errorEls.email.textContent = 'Enter a valid email address.';
         return;
       }
       try {
