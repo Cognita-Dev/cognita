@@ -1059,7 +1059,11 @@ function scrollToBottom() {
   conv.scrollTop = conv.scrollHeight;
 }
 
-/* ── Markdown-lite + LaTeX renderer ── */
+/* ── Markdown-lite + LaTeX renderer ──
+   NOTE: rewritten to avoid regex lookbehind assertions ((?<!...)),
+   which some browser engines fail to *parse* — a SyntaxError there
+   would previously break this whole module and silently disable
+   every click handler in the app. */
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
 
@@ -1073,9 +1077,11 @@ function renderMarkdownLite(text, sources) {
     mathBlocks.push({ expr, display: true });
     return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
-  raw = raw.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_, expr) => {
+  // Inline math: $expr$ — avoid lookbehind by capturing the preceding
+  // character (or start-of-string) instead of asserting on it.
+  raw = raw.replace(/(^|[^$])\$([^$\n]+?)\$(?!\$)/g, (_, pre, expr) => {
     mathBlocks.push({ expr, display: false });
-    return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
+    return pre + '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
   raw = raw.replace(/\\\(([\s\S]+?)\\\)/g, (_, expr) => {
     mathBlocks.push({ expr, display: false });
@@ -1099,7 +1105,9 @@ function renderMarkdownLite(text, sources) {
   raw = raw.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
-  raw = raw.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+  // Italic: *text* — again, capture the preceding character instead of
+  // using a lookbehind, so this doesn't fail to parse anywhere.
+  raw = raw.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, (_, pre, content) => pre + '<em>' + content + '</em>');
 
   if (sources && sources.length) {
     raw = raw.replace(/\[(\d+)\]/g, (whole, n) => {
