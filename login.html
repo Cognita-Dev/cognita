@@ -28,11 +28,13 @@
       </svg>
       Continue with Google
     </button>
+    <p id="googleError" class="field-error" aria-live="polite"></p>
     <div class="auth-divider"><span>or</span></div>
     <form id="loginForm" class="auth-form" novalidate>
       <label class="auth-field">
         <span>Email</span>
         <input type="email" id="email" autocomplete="email" required>
+        <p id="emailError" class="field-error" aria-live="polite"></p>
       </label>
       <label class="auth-field">
         <div class="auth-field-row">
@@ -40,13 +42,14 @@
           <button type="button" id="forgotBtn" class="auth-link-btn">Forgot password?</button>
         </div>
         <input type="password" id="password" autocomplete="current-password" required>
+        <p id="passwordError" class="field-error" aria-live="polite"></p>
       </label>
       <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
         <span class="btn-label">Sign in</span>
         <span class="btn-spinner" hidden></span>
       </button>
+      <p id="generalError" class="auth-btn-error" aria-live="polite"></p>
     </form>
-    <p id="authError" class="auth-error" hidden></p>
   </div>
   <p class="auth-switch">
     Don't have an account? <a href="/signup.html">Create one</a>
@@ -55,19 +58,33 @@
 <script type="module">
   import { Auth } from '/js/auth.js';
   const form = document.getElementById('loginForm');
-  const errorEl = document.getElementById('authError');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
   const forgotBtn = document.getElementById('forgotBtn');
-  function showError(msg) {
-    errorEl.textContent = msg;
-    errorEl.hidden = false;
+
+  const errorEls = {
+    email: document.getElementById('emailError'),
+    password: document.getElementById('passwordError'),
+    google: document.getElementById('googleError'),
+    general: document.getElementById('generalError'),
+  };
+
+  function clearErrors() {
+    Object.values(errorEls).forEach((el) => { el.textContent = ''; });
   }
+
+  function showError(error) {
+    clearErrors();
+    const { field, message } = Auth.classifyAuthError(error);
+    (errorEls[field] || errorEls.general).textContent = message;
+  }
+
   function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
     submitBtn.querySelector('.btn-label').hidden = isLoading;
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
+
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
@@ -75,7 +92,7 @@
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      errorEl.hidden = true;
+      clearErrors();
       setLoading(true);
       try {
         await Auth.signInWithEmail(
@@ -84,36 +101,37 @@
         );
         window.location.href = '/app.html';
       } catch (err) {
-        showError(Auth.friendlyAuthError(err));
+        showError(err);
         setLoading(false);
       }
     });
     googleBtn.addEventListener('click', async () => {
-      errorEl.hidden = true;
+      clearErrors();
       try {
         await Auth.signInWithGoogle();
         window.location.href = '/app.html';
       } catch (err) {
-        showError(Auth.friendlyAuthError(err));
+        showError(err);
       }
     });
     forgotBtn.addEventListener('click', async () => {
+      clearErrors();
       const email = document.getElementById('email').value.trim();
       if (!email) {
-        showError('Enter your email above first, then click "Forgot password?" again.');
+        errorEls.email.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
         return;
       }
       try {
         await Auth.resetPassword(email);
-        errorEl.hidden = true;
-        alert('Password reset email sent to ' + email + '.');
+        errorEls.general.style.color = 'var(--accent)';
+        errorEls.general.textContent = 'Password reset email sent to ' + email + '.';
       } catch (err) {
-        showError(Auth.friendlyAuthError(err));
+        showError(err);
       }
     });
   } catch (initErr) {
     console.error('Auth initialization failed:', initErr);
-    showError('Unable to load authentication. Please refresh the page.');
+    errorEls.general.textContent = 'Unable to load authentication. Please refresh the page.';
   }
 </script>
 </body>
