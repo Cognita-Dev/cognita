@@ -27,7 +27,8 @@
 
 <main>
 
-  <!-- ── Hero ── -->
+  <!-- ── Hero — animated: loose notes organize themselves into a
+       structured answer, staged with IntersectionObserver + CSS ── -->
   <section class="hero">
     <span class="hero-eyebrow">Cognita</span>
     <h1 class="hero-title">An assistant that finishes the job, not just the conversation.</h1>
@@ -41,17 +42,112 @@
     </div>
     <p class="hero-note">No credit card required to start.</p>
 
-    <div class="hero-preview" aria-hidden="true">
-      <div class="hero-preview-window">
+    <div class="hero-stage" id="heroStage" aria-hidden="true">
+      <!-- Stage 1: scattered notes -->
+      <div class="hero-scatter" id="heroScatter">
+        <span class="scatter-chip" style="--x:-120px; --y:-38px; --r:-9deg;">Q3 churn numbers</span>
+        <span class="scatter-chip" style="--x:96px; --y:-58px; --r:6deg;">competitor pricing.pdf</span>
+        <span class="scatter-chip" style="--x:-90px; --y:44px; --r:5deg;">onboarding notes</span>
+        <span class="scatter-chip" style="--x:130px; --y:30px; --r:-4deg;">support tickets, last 30d</span>
+        <span class="scatter-chip" style="--x:0px; --y:-90px; --r:2deg;">renewal risk flags</span>
+      </div>
+
+      <!-- Stage 2: the assembled window -->
+      <div class="hero-preview-window" id="heroWindow">
         <div class="hero-preview-dots"><span></span><span></span><span></span></div>
         <div class="hero-preview-body">
-          <div class="hero-preview-msg is-user">Draft a client-ready proposal for a 6-week brand refresh</div>
-          <div class="hero-preview-msg is-assistant">
-            <span class="hero-preview-typing">Preparing a structured proposal — scope, timeline, and pricing…</span>
+          <div class="hero-preview-msg is-user">Pull this into a client-ready retention brief</div>
+          <div class="hero-preview-msg is-assistant" id="heroAssistantMsg">
+            <span class="hero-preview-typing" id="heroTyping">Structuring the brief — findings, risk, and next steps…</span>
+          </div>
+          <div class="hero-preview-doc" id="heroDoc">
+            <i class="ph ph-file-doc"></i>
+            <span>Q3-retention-brief.docx</span>
           </div>
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- ── Product story — four sections, each its own animation,
+       revealed on scroll ── -->
+  <section class="story" id="story">
+
+    <article class="story-row" data-story="understand">
+      <div class="story-copy">
+        <span class="section-eyebrow">Understand</span>
+        <h2>Make sense of what you already have</h2>
+        <p>Drop in messy notes, a PDF, a spreadsheet, a transcript. Cognita reads it directly and reasons from
+        the actual content, not a guess at what the file probably says.</p>
+      </div>
+      <div class="story-visual" data-anim="understand">
+        <div class="uv-doc">
+          <div class="uv-line uv-line--title"></div>
+          <div class="uv-line"></div>
+          <div class="uv-line"></div>
+          <div class="uv-line uv-line--short"></div>
+        </div>
+        <div class="uv-highlight" style="--d:0"></div>
+        <div class="uv-highlight" style="--d:1"></div>
+        <div class="uv-highlight" style="--d:2"></div>
+      </div>
+    </article>
+
+    <article class="story-row story-row--reverse" data-story="explore">
+      <div class="story-copy">
+        <span class="section-eyebrow">Explore</span>
+        <h2>Follow a thread without losing the thread</h2>
+        <p>Ask a follow-up, change direction, come back to something from ten messages ago. Context carries
+        forward naturally instead of resetting every time you turn a corner.</p>
+      </div>
+      <div class="story-visual" data-anim="explore">
+        <div class="ev-node ev-node--main">Retention risk</div>
+        <div class="ev-node" style="--ex:-86px; --ey:52px;">Pricing shift</div>
+        <div class="ev-node" style="--ex:88px; --ey:-46px;">Support volume</div>
+        <div class="ev-node" style="--ex:92px; --ey:56px;">Onboarding gap</div>
+        <svg class="ev-lines" viewBox="0 0 260 180" aria-hidden="true">
+          <line x1="130" y1="90" x2="44" y2="142" />
+          <line x1="130" y1="90" x2="218" y2="44" />
+          <line x1="130" y1="90" x2="222" y2="146" />
+        </svg>
+      </div>
+    </article>
+
+    <article class="story-row" data-story="think">
+      <div class="story-copy">
+        <span class="section-eyebrow">Think</span>
+        <h2>Get more than the first plausible answer</h2>
+        <p>On harder questions, Cognita weighs more than one angle before settling on a response — and will
+        tell you when an assumption looks shaky rather than agreeing by default.</p>
+      </div>
+      <div class="story-visual" data-anim="think">
+        <div class="tv-option" style="--d:0">Raise prices 8% across the board</div>
+        <div class="tv-option" style="--d:1">Grandfather existing customers, raise for new</div>
+        <div class="tv-option tv-option--picked" style="--d:2">
+          <i class="ph ph-check-circle"></i> Segment by usage, raise only top tier
+        </div>
+      </div>
+    </article>
+
+    <article class="story-row story-row--reverse" data-story="create">
+      <div class="story-copy">
+        <span class="section-eyebrow">Create</span>
+        <h2>Leave with something you can actually send</h2>
+        <p>A real .docx, not a wall of chat text to reformat. What you asked for shows up ready to download,
+        share, or hand to a client.</p>
+      </div>
+      <div class="story-visual" data-anim="create">
+        <div class="cv-notes">
+          <span>notes</span><span>notes</span><span>notes</span>
+        </div>
+        <i class="ph ph-arrow-right cv-arrow"></i>
+        <div class="cv-doc">
+          <i class="ph ph-file-doc"></i>
+          <span>brief.docx</span>
+        </div>
+      </div>
+    </article>
+
   </section>
 
   <!-- ── Capabilities ── -->
@@ -172,6 +268,79 @@
 
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── Hero stage: scatter → assemble → type → doc appears, looping ── */
+  (function runHeroStage() {
+    const stage = document.getElementById('heroStage');
+    if (!stage) return;
+
+    if (reduceMotion) {
+      stage.classList.add('is-settled');
+      return;
+    }
+
+    function playOnce() {
+      stage.classList.remove('is-settled', 'is-typed', 'is-doc');
+      stage.classList.add('is-scattered');
+
+      setTimeout(() => {
+        stage.classList.remove('is-scattered');
+        stage.classList.add('is-settled');
+      }, 1400);
+
+      setTimeout(() => stage.classList.add('is-typed'), 2200);
+      setTimeout(() => stage.classList.add('is-doc'), 4600);
+    }
+
+    playOnce();
+    setInterval(playOnce, 7600);
+  })();
+
+  /* ── Scroll-reveal for story rows and grid sections ── */
+  (function wireReveals() {
+    const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row, .trust-item');
+    if (reduceMotion || !('IntersectionObserver' in window)) {
+      targets.forEach((el) => el.classList.add('is-revealed'));
+      return;
+    }
+
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-revealed');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.25, rootMargin: '0px 0px -8% 0px' });
+
+    targets.forEach((el) => io.observe(el));
+  })();
+
+  /* ── Per-story visual triggers — each story-visual gets its own
+       "is-active" class once its row is revealed, so the CSS
+       animation for that concept (organize / connect / weigh /
+       transform) plays exactly once, on arrival ── */
+  (function wireStoryVisuals() {
+    const rows = document.querySelectorAll('.story-row');
+    if (reduceMotion || !('IntersectionObserver' in window)) {
+      document.querySelectorAll('.story-visual').forEach((el) => el.classList.add('is-active'));
+      return;
+    }
+
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const visual = entry.target.querySelector('.story-visual');
+          if (visual) visual.classList.add('is-active');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.4 });
+
+    rows.forEach((row) => io.observe(row));
+  })();
 </script>
 
 </body>
