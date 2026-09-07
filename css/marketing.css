@@ -227,6 +227,7 @@ body.nav-open { overflow: hidden; }
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: -0.04em;
+  padding-right: 0.04em; 
   line-height: 0.72;
   color: var(--text-1);
   font-size: clamp(5.5rem, 19vw, 13rem);
