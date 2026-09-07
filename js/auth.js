@@ -10,6 +10,10 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  inMemoryPersistence,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 // Firebase web config is NOT a secret — it's meant to be public and is
@@ -39,14 +43,72 @@ let _currentUser = null;
 let _readyResolvers = [];
 let _isReady = false;
 
-onAuthStateChanged(auth, (user) => {
-  _currentUser = user;
-  _isReady = true;
-  _readyResolvers.forEach((resolve) => resolve(user));
-  _readyResolvers = [];
+// ── Persistence, with a fallback chain for private/incognito browsing ──
+// Firebase's default persistence relies on IndexedDB. Safari and Chrome
+// private/incognito modes often restrict, wipe, or throw on IndexedDB
+// access, which can prevent onAuthStateChanged from ever firing — leaving
+// any code that awaits it (like requireAuthOrRedirect below) hanging
+// forever with no error. We explicitly try localStorage-based persistence
+// first, fall back to sessionStorage, then finally to a pure in-memory
+// session (works but won't survive a page reload) rather than letting
+// the whole auth layer silently wedge.
+async function _initPersistence() {
+  const attempts = [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence];
+  for (const persistence of attempts) {
+    try {
+      await setPersistence(auth, persistence);
+      return;
+    } catch (e) {
+      console.warn('[Auth] Persistence mode failed, trying next:', e.message);
+    }
+  }
+  console.error('[Auth] All persistence modes failed — continuing without persistence.');
+}
+
+// Wire up onAuthStateChanged only after we've attempted persistence setup,
+// so we're not racing Firebase's own internal IndexedDB calls.
+const _authReadyPromise = _initPersistence().finally(() => {
+  onAuthStateChanged(
+    auth,
+    (user) => {
+      _currentUser = user;
+      _isReady = true;
+      _readyResolvers.forEach((resolve) => resolve(user));
+      _readyResolvers = [];
+    },
+    (error) => {
+      // onAuthStateChanged's error callback — fires if Firebase's internal
+      // listener setup itself fails (rare, but possible under restrictive
+      // storage). Without this, such a failure would leave ready() hanging
+      // forever with no user and no signal of a problem.
+      console.error('[Auth] onAuthStateChanged error:', error.message);
+      _currentUser = null;
+      _isReady = true;
+      _readyResolvers.forEach((resolve) => resolve(null));
+      _readyResolvers = [];
+    }
+  );
 });
 
-/** Resolves once Firebase has determined the initial auth state. */
+// Absolute safety net: even if something above never calls back at all
+// (an edge case some browsers' storage lockdowns can still produce),
+// ready() will resolve as "signed out" after 5s rather than hang the
+// entire app forever. A real signed-in user will almost always resolve
+// in well under 5s once persistence + listener are wired.
+const _READY_TIMEOUT_MS = 5000;
+let _timeoutFired = false;
+setTimeout(() => {
+  if (!_isReady) {
+    _timeoutFired = true;
+    _isReady = true;
+    console.error('[Auth] Auth state did not settle within timeout — treating as signed out.');
+    _readyResolvers.forEach((resolve) => resolve(null));
+    _readyResolvers = [];
+  }
+}, _READY_TIMEOUT_MS);
+
+/** Resolves once Firebase has determined the initial auth state (or the
+ *  safety-net timeout above has fired). Never hangs indefinitely. */
 function ready() {
   if (_isReady) return Promise.resolve(_currentUser);
   return new Promise((resolve) => _readyResolvers.push(resolve));
