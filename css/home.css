@@ -1363,12 +1363,15 @@ main { overflow-x: hidden; }
   .hero-actions { flex-direction: column; }
 }
 
-/* ── Display font pass — Fraunces on the marketing headlines ── */
-.hero-title,
-.section-title,
-.story-copy h2,
-.use-case-row h3,
-.final-cta h2 {
-  font-family: var(--font-display);
+/* ── Typography — smaller, tighter, one italic accent ── */
+.hero-title {
+  font-size: clamp(1.9rem, 3.6vw, 2.75rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.14;
 }
-.hero-title { font-weight: 600; }
+.hero-subtitle { font-size: var(--text-base); }
+.section-title { font-size: var(--text-2xl); }
+.story-copy h2 { font-size: var(--text-xl); }
+.use-case-row h3 { font-size: var(--text-lg); }
+.final-cta h2 { font-size: var(--text-2xl); }
