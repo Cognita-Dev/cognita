@@ -157,16 +157,23 @@
 .auth-form .auth-btn--primary {
   margin-top: var(--space-2);
 }
-.auth-error {
-  margin-top: var(--space-4);
-  padding: var(--space-3);
-  background: var(--danger-subtle);
+.field-error {
+  margin-top: var(--space-1);
+  font-size: 0.75rem;
   color: var(--danger);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
+  line-height: 1.4;
+  animation: fadeIn var(--duration-base) var(--ease);
+}
+.field-error:empty { display: none; }
+.auth-btn-error {
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+  color: var(--danger);
+  line-height: 1.4;
   text-align: center;
   animation: fadeIn var(--duration-base) var(--ease);
 }
+.auth-btn-error:empty { display: none; }
 .auth-switch {
   margin-top: var(--space-6);
   text-align: center;
