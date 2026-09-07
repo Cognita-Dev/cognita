@@ -10,6 +10,10 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<!-- Client-side text extraction for attached PDF and DOCX files, so their
+     content can be sent to the model instead of being marked unreadable. -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
 <body class="app-page">
 
@@ -132,7 +136,7 @@
         <div class="composer-tools-row">
           <div class="composer-tools-left">
             <div class="attach-menu" id="attachMenu">
-              <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual">
+              <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual or document">
                 <i class="ph ph-plus"></i>
               </button>
               <div class="attach-menu-list" id="attachMenuList" hidden>
@@ -147,6 +151,10 @@
                 <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
                   <i class="ph ph-image-square"></i>
                   <span>Create an illustration</span>
+                </button>
+                <button class="attach-menu-item" id="attachDocumentItem" type="button">
+                  <i class="ph ph-file-doc"></i>
+                  <span>Create a document</span>
                 </button>
               </div>
             </div>
@@ -195,13 +203,13 @@
       </div>
 
       <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
-      <input type="file" id="fileInput" hidden accept=".txt,.csv,text/plain,text/csv,image/png,image/jpeg,image/webp,image/gif">
+      <input type="file" id="fileInput" hidden accept=".txt,.csv,.pdf,.doc,.docx,text/plain,text/csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif">
     </div>
 
   </main>
 </div>
 
-<!-- ── Visual generation modal ── -->
+<!-- ── Visual generation modal (diagram / illustration) ── -->
 <div class="modal-overlay" id="visualModal" hidden>
   <div class="modal-box">
     <div class="modal-header">
@@ -224,6 +232,34 @@
         </button>
       </div>
       <button class="modal-submit-btn" id="visualSubmitBtn">
+        <span class="btn-label">Generate</span>
+        <span class="btn-spinner" hidden></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Document generation modal (letter / report / essay / memo) ── -->
+<div class="modal-overlay" id="documentModal" hidden>
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Create a document</h2>
+      <button class="modal-close-btn" id="documentModalClose" aria-label="Close">
+        <i class="ph ph-x"></i>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label class="modal-field">
+        <span>What's it about?</span>
+        <textarea id="documentTopicInput" rows="3" placeholder="e.g. a resignation letter for a marketing role, a report on Q3 sales performance"></textarea>
+      </label>
+      <div class="visual-type-toggle" id="documentTypeToggle">
+        <button class="visual-type-option is-active" data-doctype="letter">Letter</button>
+        <button class="visual-type-option" data-doctype="report">Report</button>
+        <button class="visual-type-option" data-doctype="essay">Essay</button>
+        <button class="visual-type-option" data-doctype="memo">Memo</button>
+      </div>
+      <button class="modal-submit-btn" id="documentSubmitBtn">
         <span class="btn-label">Generate</span>
         <span class="btn-spinner" hidden></span>
       </button>
