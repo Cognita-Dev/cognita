@@ -26,7 +26,6 @@
 <main>
   <!-- ── Hero ── -->
   <section class="hero">
-    <span class="hero-eyebrow">Cognita</span>
     <h1 class="hero-title">Start with a thought. Leave with something useful.</h1>
     <p class="hero-subtitle">
       Bring Cognita a question, a pile of notes, a document, or a half-formed idea.
@@ -37,45 +36,98 @@
       <a href="/pricing.html" class="hero-cta-secondary">See pricing</a>
     </div>
     <p class="hero-note">No credit card required.</p>
-<div class="hero-stage" id="heroStage" aria-hidden="true">
-  <div class="hero-scatter" id="heroScatter">
-    <span class="scatter-chip" style="--x:-120px; --y:-38px; --r:-9deg;">Q3 churn numbers</span>
-    <span class="scatter-chip" style="--x:96px; --y:-58px; --r:6deg;">competitor pricing.pdf</span>
-    <span class="scatter-chip" style="--x:-90px; --y:44px; --r:5deg;">onboarding notes</span>
-    <span class="scatter-chip" style="--x:130px; --y:30px; --r:-4deg;">support tickets, last 30d</span>
-    <span class="scatter-chip" style="--x:0px; --y:-90px; --r:2deg;">renewal risk flags</span>
-  </div>
-  <div class="hero-preview-window" id="heroWindow">
-    <div class="hero-preview-header">
-      <span class="hero-preview-avatar" aria-hidden="true"></span>
-      <span class="hero-preview-name">Cognita AI</span>
-    </div>
-    <div class="hero-preview-body">
-      <div class="hero-preview-msg is-user">
-        <span class="type-text" id="heroUserText"></span><span class="type-caret" id="heroUserCaret"></span>
+
+    <div class="hero-stage" id="heroStage" aria-hidden="true">
+      <div class="hero-preview-window" id="heroWindow">
+        <div class="hero-preview-header">
+          <span class="hero-preview-avatar" aria-hidden="true"></span>
+          <span class="hero-preview-name">Cognita AI</span>
+        </div>
+
+        <div class="hero-preview-body" id="heroBody">
+          <div class="hero-msg-row is-user" id="heroUserRow">
+            <div class="hero-preview-msg is-user">
+              <div class="hero-msg-attachments" id="heroMsgAttachments"></div>
+              <span id="heroUserText"></span>
+            </div>
+          </div>
+
+          <div class="hero-msg-row is-assistant" id="heroAssistantRow">
+            <div class="hero-preview-msg is-assistant">
+              <span class="hero-thinking" id="heroThinking" aria-hidden="true">
+                <span class="hero-thinking-dots">
+                  <span class="hero-thinking-dot"></span>
+                  <span class="hero-thinking-dot"></span>
+                  <span class="hero-thinking-dot"></span>
+                </span>
+                <span class="hero-thinking-label" id="heroThinkingLabel">Planning…</span>
+              </span>
+              <span class="type-text" id="heroReplyText"></span><span class="type-caret" id="heroReplyCaret"></span>
+              <div class="hero-preview-doc" id="heroDoc">
+                <i class="ph ph-file-doc" id="heroDocIcon"></i>
+                <span id="heroDocLabel">Q3-retention-brief.docx</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-composer" id="heroComposer">
+          <div class="hero-composer-attachments" id="heroComposerAttachments"></div>
+          <div class="hero-composer-field" id="heroComposerField">
+            <span id="heroComposerText"></span><span class="type-caret" id="heroComposerCaret"></span>
+          </div>
+          <div class="hero-composer-toolbar">
+            <button class="hero-composer-attach" id="heroAttachBtn" type="button" tabindex="-1">
+              <i class="ph ph-plus"></i>
+            </button>
+            <div class="hero-quality-picker" id="heroQualityPicker">
+              <span class="hero-quality-option" data-quality="standard">Standard</span>
+              <span class="hero-quality-option" data-quality="advanced">Advanced</span>
+              <span class="hero-quality-option" data-quality="thorough">Thorough</span>
+            </div>
+            <button class="hero-composer-send" id="heroSendBtn" type="button" tabindex="-1">
+              <i class="ph ph-arrow-up"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="hero-file-modal" id="heroFileModal">
+          <div class="hero-file-modal-title">Add files to your message</div>
+          <div class="hero-file-modal-grid" id="heroFileGrid">
+            <div class="hero-file-item" data-name="Q3-churn-numbers.xlsx">
+              <i class="ph ph-file-xls"></i>
+              <span>Q3-churn-numbers.xlsx</span>
+              <span class="hero-file-check"><i class="ph ph-check"></i></span>
+            </div>
+            <div class="hero-file-item" data-name="support-tickets.csv">
+              <i class="ph ph-file-csv"></i>
+              <span>support-tickets.csv</span>
+              <span class="hero-file-check"><i class="ph ph-check"></i></span>
+            </div>
+            <div class="hero-file-item" data-name="onboarding-notes.docx">
+              <i class="ph ph-file-doc"></i>
+              <span>onboarding-notes.docx</span>
+              <span class="hero-file-check"><i class="ph ph-check"></i></span>
+            </div>
+            <div class="hero-file-item" data-name="competitor-pricing.pdf">
+              <i class="ph ph-file-pdf"></i>
+              <span>competitor-pricing.pdf</span>
+              <span class="hero-file-check"><i class="ph ph-check"></i></span>
+            </div>
+          </div>
+          <div class="hero-file-modal-add" id="heroFileModalAdd">Add files</div>
+        </div>
+
+        <div class="hero-cursor" id="heroCursor" aria-hidden="true">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 2L4 20L9 15.5L12.5 22L15 20.5L11.5 14L18 14L4 2Z" fill="var(--text-1)" stroke="var(--bg-elevated)" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          <span class="hero-cursor-ring"></span>
+        </div>
       </div>
-      <div class="hero-preview-msg is-assistant">
-        <span class="hero-thinking" id="heroThinking" aria-hidden="true">
-          <span class="hero-thinking-dot"></span>
-          <span class="hero-thinking-dot"></span>
-          <span class="hero-thinking-dot"></span>
-        </span>
-        <span class="type-text" id="heroReplyText"></span><span class="type-caret" id="heroReplyCaret"></span>
-      </div>
-      <div class="hero-preview-doc" id="heroDoc">
-        <i class="ph ph-file-doc" id="heroDocIcon"></i>
-        <span id="heroDocLabel">Q3-retention-brief.docx</span>
-      </div>
     </div>
-    <div class="hero-cursor" id="heroCursor" aria-hidden="true">
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M4 2L4 20L9 15.5L12.5 22L15 20.5L11.5 14L18 14L4 2Z" fill="var(--text-1)" stroke="var(--bg-elevated)" stroke-width="1.2" stroke-linejoin="round"/>
-      </svg>
-      <span class="hero-cursor-ring"></span>
-    </div>
-  </div>
-</div>
   </section>
+
   <!-- ── Product story ── -->
   <section class="story" id="story">
 <article class="story-row" data-story="understand">
@@ -126,15 +178,15 @@
     <div class="tv-list">
       <div class="tv-option" style="--d:0">
         <span class="tv-loader"><span></span><span></span><span></span></span>
-        <span class="tv-text">Raise prices 8% across the board</span>
+        <span class="tv-text">Offer a blanket discount to everyone</span>
       </div>
       <div class="tv-option" style="--d:1">
         <span class="tv-loader"><span></span><span></span><span></span></span>
-        <span class="tv-text">Grandfather existing customers, raise for new</span>
+        <span class="tv-text">Wait and see if churn levels out</span>
       </div>
       <div class="tv-option tv-option--picked" style="--d:2">
         <span class="tv-loader"><span></span><span></span><span></span></span>
-        <span class="tv-text"><i class="ph ph-check-circle"></i> Segment by usage, raise only top tier</span>
+        <span class="tv-text"><i class="ph ph-check-circle"></i> Reach out to at-risk accounts directly</span>
       </div>
     </div>
   </div>
@@ -263,143 +315,238 @@
   document.getElementById('year').textContent = new Date().getFullYear();
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  /* Generic character-by-character typewriter. Calls onDone once finished. */
-  function typeText(el, text, speed, onDone) {
-    el.textContent = '';
-    let i = 0;
-    const id = setInterval(() => {
-      el.textContent += text.charAt(i);
-      i += 1;
-      if (i >= text.length) {
-        clearInterval(id);
-        if (onDone) onDone();
-      }
-    }, speed);
-    return id;
+  function wait(ms) { return new Promise((res) => setTimeout(res, ms)); }
+
+  function typeText(el, text, speed) {
+    return new Promise((resolve) => {
+      el.textContent = '';
+      let i = 0;
+      const id = setInterval(() => {
+        el.textContent += text.charAt(i);
+        i += 1;
+        if (i >= text.length) {
+          clearInterval(id);
+          resolve();
+        }
+      }, speed);
+    });
   }
 
-  /* ── Hero stage: scatter → assemble → type the question → think →
-     type the reply → doc appears → cursor arrives and downloads it,
-     then the whole thing resets and loops. Fully JS-driven so pacing
-     is exact and nothing overlaps. ── */
+  /* ── Hero stage: a fully simulated conversation.
+     The cursor performs every action a real user would take: opening
+     the file picker, selecting files, choosing a quality, and hitting
+     send. Typing is done by "the user" (composer) and "the assistant"
+     (reply) directly — nothing is retyped once it lands in the chat,
+     the same way a real chat interface works. ── */
   (function runHeroStage() {
     const stage = document.getElementById('heroStage');
-    const window_ = document.getElementById('heroWindow');
+    const win = document.getElementById('heroWindow');
+    const cursor = document.getElementById('heroCursor');
+
+    const userRow = document.getElementById('heroUserRow');
     const userText = document.getElementById('heroUserText');
-    const userCaret = document.getElementById('heroUserCaret');
+    const msgAttachments = document.getElementById('heroMsgAttachments');
+
+    const assistantRow = document.getElementById('heroAssistantRow');
     const thinking = document.getElementById('heroThinking');
+    const thinkingLabel = document.getElementById('heroThinkingLabel');
     const replyText = document.getElementById('heroReplyText');
     const replyCaret = document.getElementById('heroReplyCaret');
     const doc = document.getElementById('heroDoc');
     const docIcon = document.getElementById('heroDocIcon');
     const docLabel = document.getElementById('heroDocLabel');
-    const cursor = document.getElementById('heroCursor');
-    if (!stage || !window_ || !userText || !replyText || !doc || !cursor) return;
+
+    const composerAttachments = document.getElementById('heroComposerAttachments');
+    const composerText = document.getElementById('heroComposerText');
+    const composerCaret = document.getElementById('heroComposerCaret');
+    const attachBtn = document.getElementById('heroAttachBtn');
+    const sendBtn = document.getElementById('heroSendBtn');
+    const qualityOptions = Array.from(document.querySelectorAll('.hero-quality-option'));
+    const qualityAdvanced = qualityOptions.find((o) => o.dataset.quality === 'advanced');
+
+    const fileModal = document.getElementById('heroFileModal');
+    const fileModalAdd = document.getElementById('heroFileModalAdd');
+    const fileItems = Array.from(document.querySelectorAll('.hero-file-item'));
+
+    if (!stage || !win || !cursor) return;
 
     const USER_MSG = 'Pull this into a client-ready retention brief';
     const REPLY_MSG = "Three risk signals stand out — pricing, onboarding, and support volume. Here's the brief.";
     const DOC_NAME = 'Q3-retention-brief.docx';
+    const FILES = [
+      { name: 'Q3-churn-numbers.xlsx', icon: 'ph-file-xls' },
+      { name: 'support-tickets.csv', icon: 'ph-file-csv' },
+    ];
+
+    function makeChip(name, icon) {
+      const chip = document.createElement('span');
+      chip.className = 'hero-attachment-chip';
+      chip.innerHTML = '<i class="ph ' + icon + '"></i><span>' + name + '</span>';
+      return chip;
+    }
 
     if (reduceMotion) {
-      stage.classList.add('is-settled', 'is-doc');
+      stage.classList.add('is-ready');
+      FILES.forEach((f) => msgAttachments.appendChild(makeChip(f.name, f.icon)));
       userText.textContent = USER_MSG;
+      userRow.classList.add('is-visible');
+      assistantRow.classList.add('is-visible');
       replyText.textContent = REPLY_MSG;
-      docLabel.textContent = DOC_NAME;
+      docLabel.textContent = 'Downloaded';
       docIcon.className = 'ph ph-check-circle';
-      doc.classList.add('is-downloaded');
+      doc.classList.add('is-visible', 'is-downloaded');
+      qualityAdvanced.classList.add('is-selected');
       return;
     }
 
-    let timers = [];
-    let typingId = null;
-    function after(ms, fn) { const t = setTimeout(fn, ms); timers.push(t); return t; }
-    function clearAll() {
-      timers.forEach(clearTimeout);
-      timers = [];
-      if (typingId) clearInterval(typingId);
-    }
-
     function resetVisual() {
-      stage.classList.remove('is-settled', 'is-doc', 'is-scattered');
-      thinking.classList.remove('is-visible');
+      userRow.classList.remove('is-visible');
+      assistantRow.classList.remove('is-visible');
       userText.textContent = '';
+      msgAttachments.innerHTML = '';
+      thinking.classList.remove('is-visible');
       replyText.textContent = '';
-      userCaret.classList.remove('is-active');
       replyCaret.classList.remove('is-active');
-      docLabel.textContent = DOC_NAME;
+      doc.classList.remove('is-visible', 'is-downloaded', 'is-pulsing');
       docIcon.className = 'ph ph-file-doc';
-      doc.classList.remove('is-downloaded', 'is-pulsing');
+      docLabel.textContent = DOC_NAME;
+      composerAttachments.innerHTML = '';
+      composerText.textContent = '';
+      composerCaret.classList.remove('is-active');
+      qualityOptions.forEach((o) => o.classList.remove('is-selected'));
+      fileItems.forEach((f) => f.classList.remove('is-selected'));
+      fileModal.classList.remove('is-open');
       cursor.classList.remove('is-visible', 'is-clicking');
       cursor.style.transition = 'none';
     }
 
-    function runDownload() {
-      const winRect = window_.getBoundingClientRect();
-      const docRect = doc.getBoundingClientRect();
-      const targetX = docRect.left - winRect.left + docRect.width / 2;
-      const targetY = docRect.top - winRect.top + docRect.height / 2;
+    function moveCursorTo(targetEl) {
+      const winRect = win.getBoundingClientRect();
+      const tRect = targetEl.getBoundingClientRect();
+      const x = tRect.left - winRect.left + tRect.width / 2;
+      const y = tRect.top - winRect.top + tRect.height / 2;
+      cursor.style.left = x + 'px';
+      cursor.style.top = y + 'px';
+    }
 
-      // Start just outside the card, bottom-right, then animate in.
+    async function clickAt(targetEl, activeClass) {
+      cursor.style.transition = '';
+      moveCursorTo(targetEl);
+      await wait(900);
+      cursor.classList.add('is-clicking');
+      if (activeClass) targetEl.classList.add(activeClass);
+      await wait(280);
+      cursor.classList.remove('is-clicking');
+      if (activeClass) {
+        await wait(180);
+        targetEl.classList.remove(activeClass);
+      }
+    }
+
+    function showCursorFromOutside() {
+      const winRect = win.getBoundingClientRect();
       cursor.style.transition = 'none';
       cursor.style.left = (winRect.width + 26) + 'px';
       cursor.style.top = (winRect.height + 26) + 'px';
       cursor.classList.add('is-visible');
-      void cursor.offsetWidth; // force reflow so the next change transitions
-
-      after(30, () => {
-        cursor.style.transition = '';
-        cursor.style.left = targetX + 'px';
-        cursor.style.top = targetY + 'px';
-      });
-
-      after(950, () => {
-        cursor.classList.add('is-clicking');
-        doc.classList.add('is-pulsing', 'is-downloaded');
-        docIcon.className = 'ph ph-check-circle';
-        docLabel.textContent = 'Downloaded';
-        after(500, () => cursor.classList.remove('is-clicking'));
-      });
-
-      after(1900, () => cursor.classList.remove('is-visible'));
-      after(3400, playOnce);
+      void cursor.offsetWidth;
+      cursor.style.transition = '';
     }
 
-    function playOnce() {
-      clearAll();
+    async function cycleThinking(words, dwell) {
+      for (const w of words) {
+        thinkingLabel.textContent = w;
+        await wait(dwell);
+      }
+    }
+
+    async function playOnce() {
       resetVisual();
-      stage.classList.add('is-scattered');
+      await wait(500);
 
-      after(1400, () => {
-        stage.classList.remove('is-scattered');
-        stage.classList.add('is-settled');
-      });
+      // Open the file picker.
+      showCursorFromOutside();
+      await clickAt(attachBtn, 'is-active');
+      fileModal.classList.add('is-open');
+      await wait(550);
 
-      after(2000, () => {
-        userCaret.classList.add('is-active');
-        typingId = typeText(userText, USER_MSG, 36, () => {
-          userCaret.classList.remove('is-active');
-          after(350, () => {
-            thinking.classList.add('is-visible');
-            after(1500, () => {
-              thinking.classList.remove('is-visible');
-              replyCaret.classList.add('is-active');
-              typingId = typeText(replyText, REPLY_MSG, 32, () => {
-                replyCaret.classList.remove('is-active');
-                after(450, () => {
-                  stage.classList.add('is-doc');
-                  after(750, runDownload);
-                });
-              });
-            });
-          });
-        });
-      });
+      // Select two files.
+      const file1 = fileItems[0];
+      const file2 = fileItems[1];
+      await clickAt(file1);
+      file1.classList.add('is-selected');
+      await wait(350);
+      await clickAt(file2);
+      file2.classList.add('is-selected');
+      await wait(450);
+
+      // Confirm and close the picker.
+      await clickAt(fileModalAdd);
+      fileModal.classList.remove('is-open');
+      FILES.forEach((f) => composerAttachments.appendChild(makeChip(f.name, f.icon)));
+      await wait(400);
+      cursor.classList.remove('is-visible');
+
+      // Type the prompt.
+      await wait(350);
+      composerCaret.classList.add('is-active');
+      await typeText(composerText, USER_MSG, 42);
+      composerCaret.classList.remove('is-active');
+      await wait(500);
+
+      // Choose a quality level.
+      showCursorFromOutside();
+      cursor.style.left = '50%';
+      cursor.style.top = '95%';
+      cursor.classList.add('is-visible');
+      await clickAt(qualityAdvanced);
+      qualityAdvanced.classList.add('is-selected');
+      await wait(450);
+
+      // Send.
+      await clickAt(sendBtn, 'is-active');
+      cursor.classList.remove('is-visible');
+
+      // Message lands in the conversation exactly as composed — no retyping.
+      FILES.forEach((f) => msgAttachments.appendChild(makeChip(f.name, f.icon)));
+      userText.textContent = USER_MSG;
+      composerText.textContent = '';
+      composerAttachments.innerHTML = '';
+      userRow.classList.add('is-visible');
+      await wait(550);
+
+      // Assistant thinks, then replies.
+      assistantRow.classList.add('is-visible');
+      thinking.classList.add('is-visible');
+      await cycleThinking(['Planning…', 'Rounding up…', 'Presenting response…'], 750);
+      thinking.classList.remove('is-visible');
+
+      replyCaret.classList.add('is-active');
+      await typeText(replyText, REPLY_MSG, 34);
+      replyCaret.classList.remove('is-active');
+      await wait(500);
+
+      doc.classList.add('is-visible');
+      await wait(800);
+
+      // Download the file.
+      showCursorFromOutside();
+      await clickAt(doc);
+      doc.classList.add('is-downloaded', 'is-pulsing');
+      docIcon.className = 'ph ph-check-circle';
+      docLabel.textContent = 'Downloaded';
+      await wait(650);
+      cursor.classList.remove('is-visible');
+
+      await wait(2000);
+      playOnce();
     }
 
-    playOnce();
+    requestAnimationFrame(() => stage.classList.add('is-ready'));
+    setTimeout(playOnce, 700);
   })();
 
-  /* ── Scroll-reveal for grid/list sections (staggered via CSS nth-child delay) ── */
+  /* ── Scroll-reveal for grid/list sections ── */
   (function wireReveals() {
     const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row');
     if (reduceMotion || !('IntersectionObserver' in window)) {
@@ -436,8 +583,7 @@
     rows.forEach((row) => io.observe(row));
   })();
 
-  /* ── Trust section: each item's typewriter waits for the previous one
-     to fully finish before it starts — a real chain, not a fixed delay. ── */
+  /* ── Trust section: chained typewriter ── */
   (function wireTrustTypewriter() {
     const items = document.querySelectorAll('.trust-item');
     if (!items.length) return;
@@ -454,7 +600,7 @@
       if (index >= items.length) return;
       items[index].classList.add('is-revealed');
       paras[index].classList.add('is-typing');
-      typeText(paras[index], originals[index], 32, () => {
+      typeText(paras[index], originals[index], 32).then(() => {
         paras[index].classList.remove('is-typing');
         setTimeout(() => typeOne(index + 1), 350);
       });
