@@ -8,6 +8,7 @@
 <link rel="icon" href="/assets/cognita.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
 <link rel="stylesheet" href="/css/home.css">
@@ -19,16 +20,30 @@
     <img src="/assets/cognita.png" alt="Cognita">
     <span>Cognita</span>
   </a>
-  <nav class="site-nav">
+  <nav class="site-nav-inline">
     <a href="/pricing.html">Pricing</a>
     <a href="/login.html">Sign in</a>
-    <a href="/signup.html" class="site-nav-cta">Get started</a>
   </nav>
+  <a href="/signup.html" class="site-nav-cta">Get started</a>
+  <button class="site-menu-btn" id="navMenuBtn" aria-label="Open menu" aria-expanded="false">
+    <span class="site-menu-btn-lines"><span></span><span></span><span></span></span>
+  </button>
 </header>
+
+<div class="site-nav-overlay" id="navOverlay">
+  <nav class="site-nav-overlay-links">
+    <a href="/pricing.html">Pricing</a>
+    <a href="/login.html">Sign in</a>
+  </nav>
+  <a href="/signup.html" class="site-nav-overlay-cta">Get started</a>
+</div>
+
 <main>
+  <div class="page-top-spacer"></div>
   <!-- ── Hero ── -->
   <section class="hero">
-    <h1 class="hero-title">Start with a <em>thought</em>. Leave with something useful.</h1>    <p class="hero-subtitle">
+    <h1 class="hero-title">Start with a <em>thought</em>. Leave with something useful.</h1>
+    <p class="hero-subtitle">
       Bring Cognita a question, a pile of notes, a document, or a half-formed idea.
       Work through it together, then turn the result into something you can actually use.
     </p>
@@ -359,6 +374,18 @@
   <span class="site-footer-mark" aria-hidden="true">COGNITA</span>
 </footer>
 <script>
+  const navMenuBtn = document.getElementById('navMenuBtn');
+  const navOverlay = document.getElementById('navOverlay');
+  navMenuBtn.addEventListener('click', () => {
+    const isOpen = document.body.classList.toggle('nav-open');
+    navMenuBtn.setAttribute('aria-expanded', String(isOpen));
+  });
+  navOverlay.querySelectorAll('a').forEach((a) => {
+    a.addEventListener('click', () => {
+      document.body.classList.remove('nav-open');
+      navMenuBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
   const header = document.querySelector('.site-header');
   window.addEventListener('scroll', () => {
     header.classList.toggle('is-scrolled', window.scrollY > 8);
@@ -648,16 +675,7 @@
     targets.forEach((el) => io.observe(el));
   })();
 
-  /* ── Per-story visual triggers ──
-     Each story visual now runs its own repeating loop once it scrolls
-     into view, instead of animating once and sitting static forever:
-     - "understand": draws in, holds ~7s, clears, redraws.
-     - "think": cycles through three different decision scenarios,
-       ~5s each, looping back to the first after the third.
-     - "create": assembles the document, waits ~2s, a hand takes it
-       away, then the whole thing clears and redraws.
-     - "explore": unchanged — the orbit/tumble animation is already a
-       continuous CSS loop once switched on. */
+  /* ── Per-story visual triggers ── */
   (function wireStoryVisuals() {
     const rows = document.querySelectorAll('.story-row');
     const allVisuals = document.querySelectorAll('.story-visual');
@@ -673,11 +691,11 @@
       // eslint-disable-next-line no-constant-condition
       while (true) {
         visual.classList.add('is-active');
-        await wait(3700);  // time for the lines + tags to finish drawing in
-        await wait(7000);  // hold fully drawn for ~7s
+        await wait(3700);
+        await wait(7000);
         visual.classList.remove('is-active');
         forceReflow(visual);
-        await wait(500);   // brief pause before the next draw-in
+        await wait(500);
       }
     }
 
@@ -731,9 +749,9 @@
           if (data.picked) el.classList.add('is-picked');
         }
 
-        await wait(5000); // hold the resolved scenario on screen
+        await wait(5000);
         optionEls.forEach((el) => el.classList.remove('is-shown'));
-        await wait(500);  // let the fade-out finish before the next scenario
+        await wait(500);
         idx += 1;
       }
     }
@@ -742,10 +760,10 @@
       // eslint-disable-next-line no-constant-condition
       while (true) {
         visual.classList.add('is-active');
-        await wait(2900); // notes converge, doc assembles, check confirms
-        await wait(2000); // finished document sits for ~2s
+        await wait(2900);
+        await wait(2000);
         visual.classList.add('is-grabbing');
-        await wait(1300); // hand arrives, grabs, carries the doc off
+        await wait(1300);
         visual.classList.remove('is-active', 'is-grabbing');
         forceReflow(visual);
         await wait(600);
@@ -775,12 +793,7 @@
     rows.forEach((row) => io.observe(row));
   })();
 
-  /* ── Trust section: progressive-space typewriter.
-     Each item's content sits inside a height:0/overflow:hidden wrapper.
-     We measure the full text's rendered height first, animate the wrapper
-     to that height, then type into it — so the layout only ever grows to
-     fit content that has actually arrived, never reserving blank space
-     for content that hasn't. ── */
+  /* ── Trust section: progressive-space typewriter. ── */
   (function wireTrustTypewriter() {
     const items = document.querySelectorAll('.trust-item');
     if (!items.length) return;
@@ -806,7 +819,6 @@
 
       item.classList.add('is-revealed');
 
-      // Measure the full text height at current width without showing it.
       p.textContent = originals[index];
       const targetHeight = inner.scrollHeight;
       p.textContent = '';
