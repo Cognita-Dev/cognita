@@ -39,10 +39,21 @@
       <label class="auth-field">
         <span>Password</span>
         <input type="password" id="password" autocomplete="new-password" minlength="6" required>
-        <p class="auth-hint">At least 6 characters.</p>
+        <div class="strength-meter">
+          <div class="strength-track">
+            <div class="strength-fill" id="strengthFill"></div>
+          </div>
+          <ul class="strength-checklist" id="strengthChecklist">
+            <li data-check="length">6+ characters</li>
+            <li data-check="lower">One lowercase letter</li>
+            <li data-check="upper">One uppercase letter</li>
+            <li data-check="number">One number</li>
+            <li data-check="special">One special character (optional)</li>
+          </ul>
+        </div>
         <p id="passwordError" class="field-error" aria-live="polite"></p>
       </label>
-      <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
+      <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn" disabled>
         <span class="btn-label">Create account</span>
         <span class="btn-spinner" hidden></span>
       </button>
@@ -62,6 +73,10 @@
   const form = document.getElementById('signupForm');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const strengthFill = document.getElementById('strengthFill');
+  const strengthChecklist = document.getElementById('strengthChecklist');
 
   const errorEls = {
     email: document.getElementById('emailError'),
@@ -86,6 +101,39 @@
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
 
+  let emailValid = false;
+  let passwordValid = false;
+
+  function updateSubmitState() {
+    submitBtn.disabled = !(emailValid && passwordValid);
+  }
+
+  emailInput.addEventListener('input', () => {
+    const value = emailInput.value.trim();
+    emailValid = value === '' ? false : Auth.isValidEmail(value);
+    emailInput.classList.toggle('is-invalid', value !== '' && !emailValid);
+    errorEls.email.textContent = value !== '' && !emailValid ? 'Enter a valid email address.' : '';
+    updateSubmitState();
+  });
+
+  passwordInput.addEventListener('input', () => {
+    const result = Auth.evaluatePasswordStrength(passwordInput.value);
+    passwordValid = result.valid;
+
+    strengthFill.style.width = result.percent + '%';
+    strengthFill.style.background =
+      result.level === 'strong' ? 'var(--success)' :
+      result.level === 'fair' ? 'var(--warning)' :
+      'var(--danger)';
+
+    strengthChecklist.querySelectorAll('li').forEach((li) => {
+      const key = li.getAttribute('data-check');
+      li.classList.toggle('met', !!result.checks[key]);
+    });
+
+    updateSubmitState();
+  });
+
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
@@ -94,12 +142,19 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearErrors();
+
+      if (!emailValid) {
+        errorEls.email.textContent = 'Enter a valid email address.';
+        return;
+      }
+      if (!passwordValid) {
+        errorEls.password.textContent = 'Password does not meet the requirements above.';
+        return;
+      }
+
       setLoading(true);
       try {
-        await Auth.signUpWithEmail(
-          document.getElementById('email').value.trim(),
-          document.getElementById('password').value
-        );
+        await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value);
         window.location.href = '/app.html';
       } catch (err) {
         showError(err);
