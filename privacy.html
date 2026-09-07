@@ -163,13 +163,23 @@
 </main>
 
 <footer class="site-footer">
-  <p>&copy; <span id="year"></span> Cognita. All rights reserved.</p>
-  <div class="site-footer-links">
-    <a href="/terms.html">Terms</a>
-    <a href="/privacy.html">Privacy</a>
+  <div class="site-footer-row">
+    <p>&copy; <span id="year"></span> Cognita. All rights reserved.</p>
+    <div class="site-footer-links">
+      <a href="/terms.html">Terms</a>
+      <a href="/privacy.html">Privacy</a>
+      <a href="/pricing.html">Pricing</a>
+    </div>
   </div>
+  <span class="site-footer-mark" aria-hidden="true">COGNITA</span>
 </footer>
 
+<script>
+  const header = document.querySelector('.site-header');
+  window.addEventListener('scroll', () => {
+    header.classList.toggle('is-scrolled', window.scrollY > 8);
+  }, { passive: true });
+</script>
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
   document.getElementById('lastUpdated').textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
