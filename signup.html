@@ -28,23 +28,26 @@
       </svg>
       Continue with Google
     </button>
+    <p id="googleError" class="field-error" aria-live="polite"></p>
     <div class="auth-divider"><span>or</span></div>
     <form id="signupForm" class="auth-form" novalidate>
       <label class="auth-field">
         <span>Email</span>
         <input type="email" id="email" autocomplete="email" required>
+        <p id="emailError" class="field-error" aria-live="polite"></p>
       </label>
       <label class="auth-field">
         <span>Password</span>
         <input type="password" id="password" autocomplete="new-password" minlength="6" required>
         <p class="auth-hint">At least 6 characters.</p>
+        <p id="passwordError" class="field-error" aria-live="polite"></p>
       </label>
       <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
         <span class="btn-label">Create account</span>
         <span class="btn-spinner" hidden></span>
       </button>
+      <p id="generalError" class="auth-btn-error" aria-live="polite"></p>
     </form>
-    <p id="authError" class="auth-error" hidden></p>
   </div>
   <p class="auth-switch">
     Already have an account? <a href="/login.html">Sign in</a>
@@ -57,18 +60,32 @@
 <script type="module">
   import { Auth } from '/js/auth.js';
   const form = document.getElementById('signupForm');
-  const errorEl = document.getElementById('authError');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
-  function showError(msg) {
-    errorEl.textContent = msg;
-    errorEl.hidden = false;
+
+  const errorEls = {
+    email: document.getElementById('emailError'),
+    password: document.getElementById('passwordError'),
+    google: document.getElementById('googleError'),
+    general: document.getElementById('generalError'),
+  };
+
+  function clearErrors() {
+    Object.values(errorEls).forEach((el) => { el.textContent = ''; });
   }
+
+  function showError(error) {
+    clearErrors();
+    const { field, message } = Auth.classifyAuthError(error);
+    (errorEls[field] || errorEls.general).textContent = message;
+  }
+
   function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
     submitBtn.querySelector('.btn-label').hidden = isLoading;
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
+
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
@@ -76,7 +93,7 @@
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      errorEl.hidden = true;
+      clearErrors();
       setLoading(true);
       try {
         await Auth.signUpWithEmail(
@@ -85,22 +102,22 @@
         );
         window.location.href = '/app.html';
       } catch (err) {
-        showError(Auth.friendlyAuthError(err));
+        showError(err);
         setLoading(false);
       }
     });
     googleBtn.addEventListener('click', async () => {
-      errorEl.hidden = true;
+      clearErrors();
       try {
         await Auth.signInWithGoogle();
         window.location.href = '/app.html';
       } catch (err) {
-        showError(Auth.friendlyAuthError(err));
+        showError(err);
       }
     });
   } catch (initErr) {
     console.error('Auth initialization failed:', initErr);
-    showError('Unable to load authentication. Please refresh the page.');
+    errorEls.general.textContent = 'Unable to load authentication. Please refresh the page.';
   }
 </script>
 </body>
