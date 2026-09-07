@@ -1363,15 +1363,35 @@ main { overflow-x: hidden; }
   .hero-actions { flex-direction: column; }
 }
 
-/* ── Typography — smaller, tighter, one italic accent ── */
+/* ── Typography consistency pass — one size/weight/color per role.
+   Primary = bold, --text-1. Cascaded/sub = regular, --text-3, same
+   size as whatever it sits under. No more per-section variation. ── */
 .hero-title {
   font-size: clamp(1.9rem, 3.6vw, 2.75rem);
   font-weight: 700;
-  letter-spacing: -0.025em;
   line-height: 1.14;
+  color: var(--text-1);
 }
-.hero-subtitle { font-size: var(--text-base); }
-.section-title { font-size: var(--text-2xl); }
-.story-copy h2 { font-size: var(--text-xl); }
-.use-case-row h3 { font-size: var(--text-lg); }
-.final-cta h2 { font-size: var(--text-2xl); }
+.hero-subtitle {
+  font-size: var(--text-base);
+  font-weight: 400;
+  color: var(--text-3);
+}
+.section-title { font-size: var(--text-2xl); font-weight: 700; color: var(--text-1); }
+.section-subtitle { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
+.section-eyebrow { font-weight: 600; color: var(--accent); }
+
+.story-copy h2 { font-size: var(--text-xl); font-weight: 700; color: var(--text-1); }
+.story-copy p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
+
+.capability-card h3 { font-size: var(--text-base); font-weight: 700; color: var(--text-1); }
+.capability-card p { font-size: var(--text-sm); font-weight: 400; color: var(--text-3); }
+
+.use-case-row h3 { font-size: var(--text-lg); font-weight: 700; color: var(--text-1); }
+.use-case-row p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
+.use-case-tag { font-weight: 600; color: var(--accent); }
+
+.trust-item p { font-size: var(--text-sm); font-weight: 400; color: var(--text-3); }
+
+.final-cta h2 { font-size: var(--text-2xl); font-weight: 700; color: var(--text-1); }
+.final-cta p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
