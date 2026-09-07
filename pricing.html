@@ -7,6 +7,7 @@
 <link rel="icon" href="/assets/cognita.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
 <link rel="stylesheet" href="/css/pricing.css">
@@ -19,14 +20,26 @@
     <img src="/assets/cognita.png" alt="Cognita">
     <span>Cognita</span>
   </a>
-  <nav class="site-nav">
+  <nav class="site-nav-inline">
     <a href="/pricing.html" class="is-active">Pricing</a>
     <a href="/login.html">Sign in</a>
-    <a href="/signup.html" class="site-nav-cta">Get started</a>
   </nav>
+  <a href="/signup.html" class="site-nav-cta">Get started</a>
+  <button class="site-menu-btn" id="navMenuBtn" aria-label="Open menu" aria-expanded="false">
+    <span class="site-menu-btn-lines"><span></span><span></span><span></span></span>
+  </button>
 </header>
 
+<div class="site-nav-overlay" id="navOverlay">
+  <nav class="site-nav-overlay-links">
+    <a href="/pricing.html">Pricing</a>
+    <a href="/login.html">Sign in</a>
+  </nav>
+  <a href="/signup.html" class="site-nav-overlay-cta">Get started</a>
+</div>
+
 <main class="pricing-shell">
+  <div class="page-top-spacer"></div>
   <div class="pricing-intro">
     <h1>Simple pricing, real value</h1>
     <p>Start free. Upgrade when Cognita becomes part of how you work.</p>
@@ -79,6 +92,18 @@
 
 <script type="module" src="/js/auth.js"></script>
 <script>
+  const navMenuBtn = document.getElementById('navMenuBtn');
+  const navOverlay = document.getElementById('navOverlay');
+  navMenuBtn.addEventListener('click', () => {
+    const isOpen = document.body.classList.toggle('nav-open');
+    navMenuBtn.setAttribute('aria-expanded', String(isOpen));
+  });
+  navOverlay.querySelectorAll('a').forEach((a) => {
+    a.addEventListener('click', () => {
+      document.body.classList.remove('nav-open');
+      navMenuBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
   const header = document.querySelector('.site-header');
   window.addEventListener('scroll', () => {
     header.classList.toggle('is-scrolled', window.scrollY > 8);
