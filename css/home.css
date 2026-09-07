@@ -90,7 +90,7 @@ main { overflow-x: hidden; }
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 420px;
+  min-height: 470px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -133,13 +133,15 @@ main { overflow-x: hidden; }
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-4);
   padding: var(--space-4);
+  min-width: 0;
 }
 
-/* Message rows — present in the DOM, revealed as the conversation happens */
+/* ── Message rows ── */
 .hero-msg-row {
   display: flex;
+  min-width: 0;
   opacity: 0;
   transform: translateY(8px);
   transition: opacity 400ms var(--ease), transform 400ms var(--ease);
@@ -148,33 +150,53 @@ main { overflow-x: hidden; }
 .hero-msg-row.is-assistant { justify-content: flex-start; }
 .hero-msg-row.is-visible { opacity: 1; transform: translateY(0); }
 
+.hero-user-col,
+.hero-assistant-col {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+  min-width: 0;
+}
+.hero-user-col { align-items: flex-end; }
+.hero-assistant-col { align-items: flex-start; }
+
 .hero-preview-msg {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  max-width: 88%;
   line-height: 1.5;
+  transition: padding-top 200ms var(--ease);
 }
 .hero-preview-msg.is-user { background: var(--text-1); color: var(--bg-base); }
 .hero-preview-msg.is-assistant { background: var(--bg-subtle); color: var(--text-2); }
+.hero-preview-msg.is-assistant.is-pending { display: none; }
+.hero-preview-msg.has-attachments { padding-top: 20px; }
 
-.hero-msg-attachments {
+/* Attachments rendered OUTSIDE the message bubble, slightly clipped
+   into its top edge — like a real chat client's file previews. */
+.hero-msg-attachments-outside {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: var(--space-2);
   justify-content: flex-end;
+  margin-bottom: -10px;
+  position: relative;
+  z-index: 2;
 }
+.hero-msg-attachments-outside:empty { display: none; margin-bottom: 0; }
 
-/* Thinking indicator — dots plus an alternating status word */
-.hero-thinking {
+/* ── Thinking status — lives above the assistant bubble, never inside it ── */
+.hero-thinking-status {
   display: none;
   align-items: center;
   gap: var(--space-2);
   height: 1.4em;
+  padding-left: 2px;
+  margin-bottom: 2px;
 }
-.hero-thinking.is-visible { display: inline-flex; }
+.hero-thinking-status.is-visible { display: inline-flex; }
 .hero-thinking-dots { display: inline-flex; gap: 4px; }
+.hero-thinking-status.is-done .hero-thinking-dots { display: none; }
 .hero-thinking-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
@@ -243,18 +265,22 @@ main { overflow-x: hidden; }
 /* ── Composer ── */
 .hero-composer {
   flex-shrink: 0;
+  position: relative;
   border-top: 1px solid var(--border);
   padding: var(--space-3) var(--space-4);
   background: var(--bg-elevated);
 }
 
+/* Attachments live OUTSIDE the input box, clipped into its top edge */
 .hero-composer-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: var(--space-2);
+  margin: 0 2px -10px;
+  position: relative;
+  z-index: 2;
 }
-.hero-composer-attachments:empty { display: none; }
+.hero-composer-attachments:empty { display: none; margin: 0; }
 
 .hero-attachment-chip {
   display: inline-flex;
@@ -267,6 +293,7 @@ main { overflow-x: hidden; }
   font-size: 11px;
   font-weight: 500;
   color: var(--text-2);
+  box-shadow: var(--shadow-sm);
   opacity: 0;
   transform: scale(0.9);
   animation: hero-chip-in 300ms var(--ease) forwards;
@@ -276,11 +303,23 @@ main { overflow-x: hidden; }
   to { opacity: 1; transform: scale(1); }
 }
 
+/* The distinct, bordered input box */
+.hero-composer-box {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-base);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  transition: padding-top 200ms var(--ease);
+}
+.hero-composer-attachments:not(:empty) + .hero-composer-box {
+  padding-top: 22px;
+}
+
 .hero-composer-field {
   min-height: 1.4em;
   font-size: var(--text-sm);
   color: var(--text-1);
-  padding-bottom: var(--space-3);
+  padding: 0 var(--space-1) var(--space-3);
 }
 .hero-composer-field:empty::before {
   content: 'Ask Cognita anything…';
@@ -303,30 +342,74 @@ main { overflow-x: hidden; }
   color: var(--text-2);
   font-size: 14px;
   flex-shrink: 0;
-  transition: background 200ms var(--ease), border-color 200ms var(--ease);
+  transition: background 200ms var(--ease), border-color 200ms var(--ease), transform 200ms var(--ease);
 }
-.hero-composer-attach.is-active { background: var(--accent-subtle); border-color: var(--accent-2); color: var(--accent); }
+.hero-composer-attach.is-active { background: var(--accent-subtle); border-color: var(--accent-2); color: var(--accent); transform: scale(0.9); }
 
+/* ── Quality picker: accordion/cascade. Collapsed = single pill
+   showing the current selection; opening reveals all options
+   stacked above it; picking one collapses it back down. ── */
 .hero-quality-picker {
-  display: flex;
-  gap: 4px;
+  position: relative;
   margin-left: auto;
-  padding: 3px;
-  background: var(--bg-subtle);
-  border-radius: var(--radius-full);
 }
-.hero-quality-option {
-  padding: 5px 10px;
+.hero-quality-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
   border-radius: var(--radius-full);
+  background: var(--bg-subtle);
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-3);
-  transition: background 200ms var(--ease), color 200ms var(--ease);
-}
-.hero-quality-option.is-selected {
-  background: var(--bg-elevated);
   color: var(--text-1);
-  box-shadow: var(--shadow-sm);
+  transition: background 200ms var(--ease);
+}
+.hero-quality-trigger i {
+  font-size: 9px;
+  color: var(--text-3);
+  transition: transform 220ms var(--ease);
+}
+.hero-quality-picker.is-open .hero-quality-trigger { background: var(--accent-subtle); }
+.hero-quality-picker.is-open .hero-quality-trigger i { transform: rotate(180deg); }
+
+.hero-quality-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 118px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  opacity: 0;
+  transform: translateY(6px) scale(0.94);
+  transform-origin: bottom right;
+  pointer-events: none;
+  transition: opacity 220ms var(--ease), transform 220ms var(--ease);
+  z-index: 5;
+}
+.hero-quality-picker.is-open .hero-quality-menu {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.hero-quality-menu-option {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: background 150ms var(--ease), color 150ms var(--ease);
+}
+.hero-quality-menu-option.is-selected {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .hero-composer-send {
@@ -343,17 +426,20 @@ main { overflow-x: hidden; }
 }
 .hero-composer-send.is-active { transform: scale(0.88); opacity: 0.85; }
 
-/* ── File picker modal ── */
+/* ── File picker modal — fully contained, never overflows the card ── */
 .hero-file-modal {
   position: absolute;
   left: var(--space-4); right: var(--space-4);
   bottom: 66px;
+  max-width: calc(100% - (var(--space-4) * 2));
+  box-sizing: border-box;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   padding: var(--space-4);
   z-index: 4;
+  overflow: hidden;
   opacity: 0;
   transform: translateY(8px) scale(0.98);
   pointer-events: none;
@@ -375,31 +461,38 @@ main { overflow-x: hidden; }
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+  min-width: 0;
 }
 .hero-file-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  gap: 6px;
+  min-width: 0;
+  padding: var(--space-2) var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
   color: var(--text-2);
   transition: border-color 200ms var(--ease), background 200ms var(--ease);
 }
-.hero-file-item i:first-child { color: var(--accent); font-size: 15px; flex-shrink: 0; }
-.hero-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hero-file-item i:first-child { color: var(--accent); font-size: 14px; flex-shrink: 0; }
+.hero-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hero-file-check {
-  margin-left: auto;
+  flex-shrink: 0;
   width: 14px; height: 14px;
   border-radius: 50%;
   border: 1px solid var(--border-strong);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
 }
 .hero-file-check i { opacity: 0; font-size: 9px; color: #fff; }
 .hero-file-item.is-selected {
@@ -459,16 +552,16 @@ main { overflow-x: hidden; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-thinking { display: none !important; }
+  .hero-thinking-status { display: none !important; }
   .type-caret { display: none !important; }
   .hero-preview-window { opacity: 1; transform: none; }
-  .hero-preview-doc { transition: none; }
   .hero-cursor { display: none !important; }
   .hero-file-modal { display: none !important; }
+  .hero-quality-menu { display: none !important; }
 }
 
 @media (max-width: 620px) {
-  .hero-preview-window { min-height: 440px; }
+  .hero-preview-window { min-height: 490px; }
 }
 
 /* ═══════════════════════════════════════════════
@@ -555,7 +648,41 @@ main { overflow-x: hidden; }
   overflow: hidden;
 }
 
-/* ── Understand: sequential reading-focus sweep ── */
+/* ── Understand: scattered source files fly in and merge into the
+   document, THEN the reading-focus sweep runs across its lines. This
+   reads as "messy inputs get pulled together" rather than a doc that
+   was just always sitting there. ── */
+.uv-sources { position: absolute; inset: 0; }
+.uv-source {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  color: var(--accent);
+  font-size: 14px;
+  opacity: 0;
+  transform: translate(-50%, -50%) translate(var(--sx), var(--sy)) scale(0.7);
+}
+.story-visual[data-anim="understand"].is-active .uv-source {
+  animation: uv-source-merge 1400ms var(--ease) forwards;
+}
+.story-visual[data-anim="understand"].is-active .uv-source:nth-child(1) { animation-delay: 150ms; }
+.story-visual[data-anim="understand"].is-active .uv-source:nth-child(2) { animation-delay: 380ms; }
+.story-visual[data-anim="understand"].is-active .uv-source:nth-child(3) { animation-delay: 610ms; }
+.story-visual[data-anim="understand"].is-active .uv-source:nth-child(4) { animation-delay: 840ms; }
+
+@keyframes uv-source-merge {
+  0%   { opacity: 0; transform: translate(-50%, -50%) translate(var(--sx), var(--sy)) scale(0.7); }
+  30%  { opacity: 1; transform: translate(-50%, -50%) translate(var(--sx), var(--sy)) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) translate(0, 0) scale(0.35); }
+}
+
 .uv-doc {
   position: absolute;
   top: 50%; left: 50%;
@@ -589,10 +716,10 @@ main { overflow-x: hidden; }
 .story-visual[data-anim="understand"].is-active .uv-line::after {
   animation: uv-focus-sweep 1000ms ease forwards;
 }
-.story-visual[data-anim="understand"].is-active .uv-line:nth-child(1)::after { animation-delay: 250ms; }
-.story-visual[data-anim="understand"].is-active .uv-line:nth-child(2)::after { animation-delay: 950ms; }
-.story-visual[data-anim="understand"].is-active .uv-line:nth-child(3)::after { animation-delay: 1650ms; }
-.story-visual[data-anim="understand"].is-active .uv-line:nth-child(4)::after { animation-delay: 2350ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(1)::after { animation-delay: 1900ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(2)::after { animation-delay: 2600ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(3)::after { animation-delay: 3300ms; }
+.story-visual[data-anim="understand"].is-active .uv-line:nth-child(4)::after { animation-delay: 4000ms; }
 
 @keyframes uv-focus-sweep {
   0%   { opacity: 0;    transform: scaleX(0); }
@@ -601,7 +728,11 @@ main { overflow-x: hidden; }
   100% { opacity: 0.28; transform: scaleX(1); }
 }
 
-/* ── Explore: nodes orbit the center node ── */
+/* ── Explore: nodes orbit the center node. Each node also tumbles
+   slowly through a full 360° on its own axis (a separate, longer,
+   independent animation on an inner span) so it periodically drifts
+   back through the upright/horizontal position as it travels — it
+   isn't locked rigidly level the entire time. ── */
 .ev-ring {
   position: absolute;
   left: 50%; top: 50%;
@@ -668,19 +799,32 @@ main { overflow-x: hidden; }
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-2);
-  white-space: nowrap;
   box-shadow: var(--shadow-sm);
   transform: translate(-50%, -50%) rotate(0deg);
   animation: ev-orbit-spin-reverse 22s linear infinite;
   animation-play-state: paused;
   animation-delay: calc(var(--offset) / 360deg * -22s);
+  overflow: hidden;
 }
 .story-visual[data-anim="explore"].is-active .ev-orbit-node {
   animation-play-state: running;
 }
+
+.ev-orbit-node-inner {
+  display: inline-block;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+  animation: ev-self-tumble 32s linear infinite;
+  animation-play-state: paused;
+}
+.story-visual[data-anim="explore"].is-active .ev-orbit-node-inner {
+  animation-play-state: running;
+}
+.ev-orbit-item:nth-child(1) .ev-orbit-node-inner { animation-duration: 30s; }
+.ev-orbit-item:nth-child(2) .ev-orbit-node-inner { animation-duration: 36s; }
+.ev-orbit-item:nth-child(3) .ev-orbit-node-inner { animation-duration: 42s; }
 
 @keyframes ev-orbit-spin {
   from { transform: rotate(var(--offset)); }
@@ -690,9 +834,13 @@ main { overflow-x: hidden; }
   from { transform: translate(-50%, -50%) rotate(0deg); }
   to   { transform: translate(-50%, -50%) rotate(-360deg); }
 }
+@keyframes ev-self-tumble {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 
-/* ── Think: options resolve one at a time — slowed down and re-themed
-   around the same retention-risk decision used elsewhere on the page. ── */
+/* ── Think: options resolve one at a time, slowed down, resized so
+   the picked option matches the height of the others. ── */
 .story-visual--think {
   height: auto;
   min-height: 240px;
@@ -702,7 +850,7 @@ main { overflow-x: hidden; }
 }
 
 .tv-list {
-  width: 78%;
+  width: 92%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -715,13 +863,14 @@ main { overflow-x: hidden; }
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
+  line-height: 1.4;
   color: var(--text-3);
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 650ms var(--ease), transform 650ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
 }
 .tv-option--picked { font-weight: 600; }
-.tv-option--picked i { color: var(--accent); flex-shrink: 0; }
+.tv-option--picked i { color: var(--accent); flex-shrink: 0; font-size: 1em; }
 .story-visual[data-anim="think"].is-active .tv-option {
   opacity: 1;
   transform: translateY(0);
@@ -758,7 +907,7 @@ main { overflow-x: hidden; }
   opacity: 0;
   transition: opacity 350ms var(--ease);
 }
-.tv-option--picked .tv-text { display: inline-flex; align-items: center; gap: 6px; }
+.tv-option--picked .tv-text { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 .story-visual[data-anim="think"].is-active .tv-option .tv-loader {
   opacity: 0;
@@ -769,28 +918,72 @@ main { overflow-x: hidden; }
   transition-delay: calc(var(--d) * 950ms + 1550ms);
 }
 
-/* ── Create: notes transform into a doc chip ── */
-.cv-notes {
+/* ── Create: scattered notes converge into a single stack, a brief
+   "compiling" pulse plays, then it resolves into the finished
+   document with a check mark drawing in. ── */
+.cv-stack {
   position: absolute;
-  left: 18%; top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  opacity: 0;
-  transition: opacity 500ms var(--ease);
+  left: 24%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 110px; height: 80px;
 }
-.cv-notes span {
-  width: 64px;
-  padding: 6px 0;
+.cv-note {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 76px;
+  padding: 7px 0;
   text-align: center;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--text-4);
+  opacity: 0;
+  transform: translate(-50%, -50%) translate(var(--tx1), var(--ty1)) rotate(var(--r1)) scale(0.8);
 }
-.cv-notes span:nth-child(2) { margin-left: 14px; }
+.story-visual[data-anim="create"].is-active .cv-note {
+  animation: cv-note-in 500ms var(--ease) forwards, cv-note-merge 550ms var(--ease) forwards;
+}
+.cv-note:nth-child(1) { animation-delay: 100ms, 750ms; }
+.cv-note:nth-child(2) { animation-delay: 250ms, 900ms; }
+.cv-note:nth-child(3) { animation-delay: 400ms, 1050ms; }
+
+@keyframes cv-note-in {
+  from { opacity: 0; transform: translate(-50%, -50%) translate(var(--tx1), var(--ty1)) rotate(var(--r1)) scale(0.8); }
+  to   { opacity: 1; transform: translate(-50%, -50%) translate(var(--tx1), var(--ty1)) rotate(var(--r1)) scale(1); }
+}
+@keyframes cv-note-merge {
+  from { opacity: 1; transform: translate(-50%, -50%) translate(var(--tx1), var(--ty1)) rotate(var(--r1)) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) translate(0, 0) rotate(0deg) scale(0.5); }
+}
+
+.cv-compiling {
+  position: absolute;
+  left: 24%; top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+}
+.cv-compiling span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text-4);
+  animation: tv-loader-bounce 900ms ease-in-out infinite;
+}
+.cv-compiling span:nth-child(2) { animation-delay: 120ms; }
+.cv-compiling span:nth-child(3) { animation-delay: 240ms; }
+.story-visual[data-anim="create"].is-active .cv-compiling {
+  animation: cv-compiling-fade 1400ms var(--ease) forwards;
+  animation-delay: 1150ms;
+}
+@keyframes cv-compiling-fade {
+  0%   { opacity: 0; }
+  20%  { opacity: 1; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .cv-arrow {
   position: absolute;
   left: 50%; top: 50%;
@@ -802,7 +995,7 @@ main { overflow-x: hidden; }
 }
 .cv-doc {
   position: absolute;
-  right: 16%; top: 50%;
+  right: 14%; top: 50%;
   transform: translateY(-50%) scale(0.85);
   display: flex;
   align-items: center;
@@ -818,17 +1011,26 @@ main { overflow-x: hidden; }
   opacity: 0;
   transition: opacity 500ms var(--ease), transform 500ms var(--ease);
 }
-.cv-doc i { color: var(--accent); }
-.story-visual[data-anim="create"].is-active .cv-notes { opacity: 1; transition-delay: 100ms; }
-.story-visual[data-anim="create"].is-active .cv-arrow { opacity: 1; transform: translate(-50%, -50%) scale(1); transition-delay: 500ms; }
-.story-visual[data-anim="create"].is-active .cv-doc { opacity: 1; transform: translateY(-50%) scale(1); transition-delay: 750ms; }
+.cv-doc i:first-child { color: var(--accent); }
+.cv-doc-check {
+  color: var(--accent) !important;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 300ms var(--ease), transform 300ms var(--ease);
+}
+.story-visual[data-anim="create"].is-active .cv-arrow { opacity: 1; transform: translate(-50%, -50%) scale(1); transition-delay: 2550ms; }
+.story-visual[data-anim="create"].is-active .cv-doc { opacity: 1; transform: translateY(-50%) scale(1); transition-delay: 2800ms; }
+.story-visual[data-anim="create"].is-active .cv-doc-check { opacity: 1; transform: scale(1); transition-delay: 3250ms; }
 
 @media (prefers-reduced-motion: reduce) {
   .story-row { opacity: 1; transform: none; }
-  .uv-line::after, .cv-notes, .cv-arrow, .cv-doc { opacity: 1 !important; animation: none !important; transition: none !important; }
-  .uv-line::after { transform: scaleX(1); opacity: 0.28 !important; }
+  .uv-source { display: none; }
+  .uv-line::after { transform: scaleX(1); opacity: 0.28 !important; transition: none !important; animation: none !important; }
+  .cv-note, .cv-compiling { display: none; }
+  .cv-arrow, .cv-doc, .cv-doc-check { opacity: 1 !important; animation: none !important; transition: none !important; }
   .cv-arrow { transform: translate(-50%, -50%) scale(1); }
   .cv-doc { transform: translateY(-50%) scale(1); }
+  .cv-doc-check { transform: scale(1); }
 
   .ev-center { opacity: 1 !important; transition: none !important; }
   .ev-orbit-item {
@@ -837,10 +1039,8 @@ main { overflow-x: hidden; }
     transition: none !important;
     transform: rotate(var(--offset)) !important;
   }
-  .ev-orbit-node {
-    animation: none !important;
-    transform: translate(-50%, -50%) rotate(calc(-1 * var(--offset))) !important;
-  }
+  .ev-orbit-node { animation: none !important; transform: translate(-50%, -50%) rotate(calc(-1 * var(--offset))) !important; }
+  .ev-orbit-node-inner { animation: none !important; transform: none !important; }
 
   .tv-option { transform: none; opacity: 1 !important; transition: none !important; }
   .tv-loader { display: none !important; }
@@ -849,7 +1049,7 @@ main { overflow-x: hidden; }
 
 @media (max-width: 780px) {
   .story-row, .story-row--reverse { grid-template-columns: 1fr; direction: ltr; }
-  .story-visual { height: 180px; }
+  .story-visual { height: 190px; }
   .story-visual--think { height: auto; min-height: 200px; }
   .story-copy p { max-width: none; }
   .ev-ring { width: 130px; height: 130px; }
@@ -942,7 +1142,8 @@ main { overflow-x: hidden; }
 .use-case-row p { font-size: var(--text-base); color: var(--text-2); line-height: 1.6; max-width: 560px; }
 
 /* ═══════════════════════════════════════════════
-   TRUST
+   TRUST — each item creates its own space as it arrives, instead of
+   reserving a blank paragraph box ahead of time.
 ═══════════════════════════════════════════════ */
 
 .trust {
@@ -955,6 +1156,7 @@ main { overflow-x: hidden; }
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--space-5);
+  align-items: start;
 }
 
 .trust-item {
@@ -966,7 +1168,7 @@ main { overflow-x: hidden; }
 }
 .trust-item.is-revealed { opacity: 1; transform: translateY(0); }
 .trust-item i { font-size: 1.1rem; color: var(--accent); margin-bottom: var(--space-3); display: block; }
-.trust-item p { font-size: var(--text-sm); color: var(--text-3); line-height: 1.6; min-height: 4.8em; }
+.trust-item p { font-size: var(--text-sm); color: var(--text-3); line-height: 1.6; }
 .trust-item p.is-typing::after {
   content: '';
   display: inline-block;
