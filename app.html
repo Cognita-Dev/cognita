@@ -131,15 +131,25 @@
 
         <div class="composer-tools-row">
           <div class="composer-tools-left">
-            <button class="composer-tool-btn" id="attachBtn" aria-label="Attach file" title="Attach a text or CSV file">
-              <i class="ph ph-paperclip"></i>
-            </button>
-            <button class="composer-tool-btn" id="imageAttachBtn" aria-label="Attach image" title="Image understanding is available on premium plans">
-              <i class="ph ph-image"></i>
-            </button>
-            <button class="composer-tool-btn" id="visualBtn" aria-label="Generate a visual" title="Generate a diagram or image">
-              <i class="ph ph-flow-arrow"></i>
-            </button>
+            <div class="attach-menu" id="attachMenu">
+              <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual">
+                <i class="ph ph-plus"></i>
+              </button>
+              <div class="attach-menu-list" id="attachMenuList" hidden>
+                <button class="attach-menu-item" id="attachFilesItem" type="button">
+                  <i class="ph ph-paperclip"></i>
+                  <span>Add photos & files</span>
+                </button>
+                <button class="attach-menu-item" id="attachDiagramItem" type="button" data-kind="diagram">
+                  <i class="ph ph-flow-arrow"></i>
+                  <span>Create a diagram</span>
+                </button>
+                <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
+                  <i class="ph ph-image-square"></i>
+                  <span>Create an illustration</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="composer-tools-right">
@@ -185,8 +195,7 @@
       </div>
 
       <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
-      <input type="file" id="fileInput" hidden accept=".txt,.csv,text/plain,text/csv">
-      <input type="file" id="imageInput" hidden accept="image/png,image/jpeg,image/webp,image/gif">
+      <input type="file" id="fileInput" hidden accept=".txt,.csv,text/plain,text/csv,image/png,image/jpeg,image/webp,image/gif">
     </div>
 
   </main>
