@@ -1362,3 +1362,13 @@ main { overflow-x: hidden; }
   .trust-grid { grid-template-columns: 1fr; }
   .hero-actions { flex-direction: column; }
 }
+
+/* ── Display font pass — Fraunces on the marketing headlines ── */
+.hero-title,
+.section-title,
+.story-copy h2,
+.use-case-row h3,
+.final-cta h2 {
+  font-family: var(--font-display);
+}
+.hero-title { font-weight: 600; }
