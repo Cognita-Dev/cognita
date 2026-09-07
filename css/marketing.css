@@ -1,98 +1,200 @@
 /* css/marketing.css
-   Shared header, footer, and nav used across public-facing pages.
+   Floating overlay-nav header + wordmark footer, shared across
+   index.html, pricing.html, terms.html, privacy.html.
 */
 
 /* ═══════════════════════════════════════════════
-   HEADER — bare wordmark left, one ghost trigger right.
-   No pill, no button chrome, no border by default — it only gets a
-   hairline once you scroll (via .is-scrolled, toggled in JS below).
+   HEADER — a compact floating bar, inset from every edge at every
+   width. Never flush to the top, never full-bleed on mobile. The
+   trigger opens a full-screen overlay menu rather than a dropdown.
 ═══════════════════════════════════════════════ */
 .site-header {
+  position: fixed;
+  top: var(--space-4);
+  left: var(--space-4);
+  right: var(--space-4);
+  max-width: 640px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-5) var(--space-6);
-  position: sticky;
-  top: 0;
-  background: var(--bg-base);
-  z-index: 100;
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--duration-base) var(--ease), background var(--duration-base) var(--ease);
-}
-.site-header.is-scrolled {
-  border-bottom-color: var(--border);
-  background: rgba(247, 247, 245, 0.86);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  padding: 10px 10px 10px 20px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  z-index: 300;
+  transition: box-shadow var(--duration-base) var(--ease), background var(--duration-base) var(--ease);
 }
 @media (prefers-color-scheme: dark) {
-  .site-header.is-scrolled { background: rgba(13, 14, 14, 0.8); }
+  .site-header { background: rgba(27, 29, 28, 0.65); }
 }
+.site-header.is-scrolled { box-shadow: var(--shadow-lg); }
+
+/* Page content needs top clearance since the header no longer sits
+   in normal flow. Add this class to the first element in <main>. */
+.page-top-spacer { height: 76px; }
 
 .site-logo {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-weight: 800;
-  font-size: var(--text-lg);
+  gap: 8px;
+  font-weight: 700;
+  font-size: var(--text-base);
   color: var(--text-1);
-  letter-spacing: -0.02em;
-  text-transform: lowercase;
+  letter-spacing: -0.01em;
 }
-.site-logo img {
-  height: 21px;
-  width: auto;
-  border-radius: 6px;
-}
+.site-logo img { height: 20px; width: auto; border-radius: 6px; }
 
-.site-nav {
+/* Desktop nav links — visible inline inside the floating bar */
+.site-nav-inline {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-5);
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text-3);
 }
-.site-nav a:not(.site-nav-cta) {
-  position: relative;
-}
-.site-nav a:not(.site-nav-cta)::after {
-  content: '';
-  position: absolute;
-  left: 0; right: 100%;
-  bottom: -4px;
-  height: 1px;
-  background: var(--text-1);
-  transition: right var(--duration-base) var(--ease);
-}
-.site-nav a.is-active,
-.site-nav a:not(.site-nav-cta):hover {
-  color: var(--text-1);
-}
-.site-nav a.is-active::after,
-.site-nav a:not(.site-nav-cta):hover::after {
-  right: 0;
-}
+.site-nav-inline a:hover,
+.site-nav-inline a.is-active { color: var(--text-1); }
+
 .site-nav-cta {
   padding: 9px 18px;
   background: var(--text-1);
   color: var(--bg-base);
   border-radius: var(--radius-full);
   font-weight: 600;
+  font-size: var(--text-sm);
+  flex-shrink: 0;
   transition: transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
 }
-.site-nav-cta:hover {
-  transform: translateY(-1px);
-  opacity: 0.88;
+.site-nav-cta:hover { transform: translateY(-1px); opacity: 0.88; }
+
+/* Menu trigger — the only thing shown on mobile besides the logo and
+   CTA. Morphs into an X when the overlay is open. */
+.site-menu-btn {
+  width: 36px; height: 36px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text-1);
+  flex-shrink: 0;
+  position: relative;
+}
+.site-menu-btn-lines {
+  position: relative;
+  width: 15px; height: 10px;
+}
+.site-menu-btn-lines span {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1.5px;
+  background: var(--text-1);
+  border-radius: 1px;
+  transition: transform var(--duration-base) var(--ease), opacity var(--duration-base) var(--ease), top var(--duration-base) var(--ease);
+}
+.site-menu-btn-lines span:nth-child(1) { top: 0; }
+.site-menu-btn-lines span:nth-child(2) { top: calc(50% - 0.75px); }
+.site-menu-btn-lines span:nth-child(3) { top: 100%; transform: translateY(-100%); }
+body.nav-open .site-menu-btn-lines span:nth-child(1) { top: 50%; transform: translateY(-50%) rotate(45deg); }
+body.nav-open .site-menu-btn-lines span:nth-child(2) { opacity: 0; }
+body.nav-open .site-menu-btn-lines span:nth-child(3) { top: 50%; transform: translateY(-50%) rotate(-45deg); }
+
+/* ═══════════════════════════════════════════════
+   OVERLAY — full-screen, luxurious: large centered links, staggered
+   fade-up entrance, blurred backdrop. Built mobile-first; on desktop
+   the inline nav is used instead and this overlay is only reachable
+   if you shrink the viewport, but the markup + logic stays universal.
+═══════════════════════════════════════════════ */
+.site-nav-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  background: var(--bg-base);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--duration-slow) var(--ease), visibility 0s linear var(--duration-slow);
+}
+body.nav-open .site-nav-overlay {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--duration-slow) var(--ease);
+}
+
+.site-nav-overlay-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+}
+.site-nav-overlay-links a {
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity var(--duration-base) var(--ease), transform var(--duration-base) var(--ease), color var(--duration-fast) var(--ease);
+}
+.site-nav-overlay-links a:hover { color: var(--accent); }
+body.nav-open .site-nav-overlay-links a {
+  opacity: 1;
+  transform: translateY(0);
+}
+body.nav-open .site-nav-overlay-links a:nth-child(1) { transition-delay: 80ms; }
+body.nav-open .site-nav-overlay-links a:nth-child(2) { transition-delay: 140ms; }
+body.nav-open .site-nav-overlay-links a:nth-child(3) { transition-delay: 200ms; }
+
+.site-nav-overlay-cta {
+  padding: 14px 30px;
+  background: var(--text-1);
+  color: var(--bg-base);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-size: var(--text-base);
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity var(--duration-base) var(--ease), transform var(--duration-base) var(--ease), opacity var(--duration-fast) linear;
+}
+body.nav-open .site-nav-overlay-cta {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 260ms;
+}
+
+body.nav-open { overflow: hidden; }
+
+/* Desktop: inline nav shown, overlay trigger + overlay itself hidden */
+@media (min-width: 761px) {
+  .site-menu-btn { display: none !important; }
+  .site-nav-overlay { display: none !important; }
+}
+
+/* Mobile / tablet: inline nav hidden, trigger + overlay take over.
+   Header shrinks its inset margins slightly and drops max-width. */
+@media (max-width: 760px) {
+  .site-header {
+    top: var(--space-3);
+    left: var(--space-3);
+    right: var(--space-3);
+    max-width: none;
+    padding: 8px 8px 8px 16px;
+  }
+  .site-nav-inline { display: none; }
+  .site-menu-btn { display: flex; }
+  .site-nav-cta { display: none; }
 }
 
 /* ═══════════════════════════════════════════════
-   FOOTER — the creative swing. A normal content row sits on top of
-   a huge, bold, edge-clipped wordmark. The wordmark is one giant line
-   of text sized past its own container so only its top portion is
-   ever visible before the container clips it off — nothing scrolls
-   or animates, it just sits there as a piece of oversized typography,
-   the same device as the swamii.me footer.
+   FOOTER — content row above a giant clipped wordmark.
 ═══════════════════════════════════════════════ */
 .site-footer {
   position: relative;
@@ -111,13 +213,11 @@
   padding-bottom: var(--space-6);
   font-size: var(--text-sm);
   color: var(--text-3);
+  font-weight: 400;
   position: relative;
   z-index: 1;
 }
-.site-footer-links {
-  display: flex;
-  gap: var(--space-5);
-}
+.site-footer-links { display: flex; gap: var(--space-5); }
 .site-footer-links a:hover { color: var(--text-1); }
 
 .site-footer-mark {
@@ -130,9 +230,6 @@
   line-height: 0.72;
   color: var(--text-1);
   font-size: clamp(5.5rem, 19vw, 13rem);
-  /* Pulled up so only the top half of the letterforms shows before
-     the footer's own bottom edge (padding-bottom: 0 above) cuts it —
-     the wordmark reads as bleeding off the page, not sitting on it. */
   margin-bottom: -0.18em;
   opacity: 0.08;
   user-select: none;
@@ -143,9 +240,6 @@
 }
 
 @media (max-width: 640px) {
-  .site-header { padding: var(--space-4) var(--space-5); }
-  .site-nav { gap: var(--space-4); }
-  .site-nav a:not(.site-nav-cta) { display: none; }
   .site-footer-row { flex-direction: column; gap: var(--space-3); text-align: center; }
   .site-footer-mark { font-size: clamp(3.5rem, 22vw, 7rem); }
 }
