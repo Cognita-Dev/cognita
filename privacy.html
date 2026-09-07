@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — Cognita</title>
 <link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
 <link rel="stylesheet" href="/css/legal.css">
@@ -16,14 +19,26 @@
     <img src="/assets/cognita.png" alt="Cognita">
     <span>Cognita</span>
   </a>
-  <nav class="site-nav">
+  <nav class="site-nav-inline">
     <a href="/pricing.html">Pricing</a>
     <a href="/login.html">Sign in</a>
-    <a href="/signup.html" class="site-nav-cta">Get started</a>
   </nav>
+  <a href="/signup.html" class="site-nav-cta">Get started</a>
+  <button class="site-menu-btn" id="navMenuBtn" aria-label="Open menu" aria-expanded="false">
+    <span class="site-menu-btn-lines"><span></span><span></span><span></span></span>
+  </button>
 </header>
 
+<div class="site-nav-overlay" id="navOverlay">
+  <nav class="site-nav-overlay-links">
+    <a href="/pricing.html">Pricing</a>
+    <a href="/login.html">Sign in</a>
+  </nav>
+  <a href="/signup.html" class="site-nav-overlay-cta">Get started</a>
+</div>
+
 <main class="legal-shell">
+  <div class="page-top-spacer"></div>
   <h1>Privacy Policy</h1>
   <p class="legal-updated">Last updated: <span id="lastUpdated"></span></p>
   <p class="legal-notice">
@@ -365,6 +380,18 @@
 </footer>
 
 <script>
+  const navMenuBtn = document.getElementById('navMenuBtn');
+  const navOverlay = document.getElementById('navOverlay');
+  navMenuBtn.addEventListener('click', () => {
+    const isOpen = document.body.classList.toggle('nav-open');
+    navMenuBtn.setAttribute('aria-expanded', String(isOpen));
+  });
+  navOverlay.querySelectorAll('a').forEach((a) => {
+    a.addEventListener('click', () => {
+      document.body.classList.remove('nav-open');
+      navMenuBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
   const header = document.querySelector('.site-header');
   window.addEventListener('scroll', () => {
     header.classList.toggle('is-scrolled', window.scrollY > 8);
