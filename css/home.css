@@ -25,16 +25,6 @@ main { overflow-x: hidden; }
   pointer-events: none;
 }
 
-.hero-eyebrow {
-  display: inline-block;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: var(--space-4);
-}
-
 .hero-title {
   font-size: clamp(2.2rem, 5vw, 3.6rem);
   font-weight: 600;
@@ -89,51 +79,18 @@ main { overflow-x: hidden; }
   margin-bottom: var(--space-8);
 }
 
-/* ── Hero stage ── */
+/* ── Hero stage: a real, simulated chat interface ── */
 .hero-stage {
   position: relative;
-  max-width: 560px;
-  height: 340px;
+  max-width: 480px;
   margin: 0 auto;
-}
-
-.hero-scatter {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 500ms var(--ease);
-}
-.hero-stage.is-scattered .hero-scatter { opacity: 1; }
-
-.scatter-chip {
-  position: absolute;
-  top: 50%; left: 50%;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-3);
-  box-shadow: var(--shadow-sm);
-  white-space: nowrap;
-  transform: translate(-50%, -50%) translate(0, 0) rotate(0deg) scale(0.9);
-  opacity: 0;
-  transition: transform 900ms var(--ease), opacity 500ms var(--ease);
-}
-.hero-stage.is-scattered .scatter-chip {
-  transform: translate(-50%, -50%) translate(var(--x), var(--y)) rotate(var(--r)) scale(1);
-  opacity: 1;
 }
 
 .hero-preview-window {
   position: relative;
-  max-width: 480px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -144,7 +101,7 @@ main { overflow-x: hidden; }
   transform: translateY(14px) scale(0.97);
   transition: opacity 700ms var(--ease), transform 700ms var(--ease);
 }
-.hero-stage.is-settled .hero-preview-window {
+.hero-stage.is-ready .hero-preview-window {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
@@ -155,6 +112,7 @@ main { overflow-x: hidden; }
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .hero-preview-avatar {
   width: 9px; height: 9px;
@@ -171,31 +129,52 @@ main { overflow-x: hidden; }
 }
 
 .hero-preview-body {
-  padding: var(--space-5);
+  flex: 1;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: var(--space-3);
+  padding: var(--space-4);
 }
+
+/* Message rows — present in the DOM, revealed as the conversation happens */
+.hero-msg-row {
+  display: flex;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 400ms var(--ease), transform 400ms var(--ease);
+}
+.hero-msg-row.is-user { justify-content: flex-end; }
+.hero-msg-row.is-assistant { justify-content: flex-start; }
+.hero-msg-row.is-visible { opacity: 1; transform: translateY(0); }
 
 .hero-preview-msg {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  max-width: 90%;
+  max-width: 88%;
   line-height: 1.5;
-  min-height: 1.5em;
 }
-.hero-preview-msg.is-user { align-self: flex-end; background: var(--text-1); color: var(--bg-base); }
-.hero-preview-msg.is-assistant { align-self: flex-start; background: var(--bg-subtle); color: var(--text-2); }
+.hero-preview-msg.is-user { background: var(--text-1); color: var(--bg-base); }
+.hero-preview-msg.is-assistant { background: var(--bg-subtle); color: var(--text-2); }
 
-/* Thinking indicator — shown between the question and the reply */
+.hero-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* Thinking indicator — dots plus an alternating status word */
 .hero-thinking {
   display: none;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   height: 1.4em;
 }
 .hero-thinking.is-visible { display: inline-flex; }
+.hero-thinking-dots { display: inline-flex; gap: 4px; }
 .hero-thinking-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
@@ -208,9 +187,12 @@ main { overflow-x: hidden; }
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
+.hero-thinking-label {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-weight: 500;
+}
 
-/* Real, JS-driven typewriter text (character-by-character), not a
-   clip-path reveal — the caret only blinks while actively typing. */
 .type-text { white-space: pre-wrap; }
 
 .type-caret {
@@ -232,7 +214,7 @@ main { overflow-x: hidden; }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  align-self: flex-start;
+  margin-top: var(--space-3);
   padding: var(--space-2) var(--space-3);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -240,12 +222,13 @@ main { overflow-x: hidden; }
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-1);
+  width: max-content;
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 450ms var(--ease), transform 450ms var(--ease), background 300ms var(--ease), border-color 300ms var(--ease);
 }
 .hero-preview-doc i { color: var(--accent); }
-.hero-stage.is-doc .hero-preview-doc { opacity: 1; transform: translateY(0); }
+.hero-preview-doc.is-visible { opacity: 1; transform: translateY(0); }
 .hero-preview-doc.is-downloaded {
   border-color: var(--accent);
   background: var(--accent-subtle);
@@ -257,7 +240,190 @@ main { overflow-x: hidden; }
   100% { transform: scale(1); }
 }
 
-/* Cursor that arrives from outside the card and "clicks" the file */
+/* ── Composer ── */
+.hero-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+}
+
+.hero-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+.hero-composer-attachments:empty { display: none; }
+
+.hero-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  opacity: 0;
+  transform: scale(0.9);
+  animation: hero-chip-in 300ms var(--ease) forwards;
+}
+.hero-attachment-chip i { color: var(--accent); font-size: 12px; }
+@keyframes hero-chip-in {
+  to { opacity: 1; transform: scale(1); }
+}
+
+.hero-composer-field {
+  min-height: 1.4em;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  padding-bottom: var(--space-3);
+}
+.hero-composer-field:empty::before {
+  content: 'Ask Cognita anything…';
+  color: var(--text-4);
+}
+
+.hero-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hero-composer-attach {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: background 200ms var(--ease), border-color 200ms var(--ease);
+}
+.hero-composer-attach.is-active { background: var(--accent-subtle); border-color: var(--accent-2); color: var(--accent); }
+
+.hero-quality-picker {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-full);
+}
+.hero-quality-option {
+  padding: 5px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  transition: background 200ms var(--ease), color 200ms var(--ease);
+}
+.hero-quality-option.is-selected {
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-composer-send {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--text-1);
+  color: var(--bg-base);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: transform 200ms var(--ease), opacity 200ms var(--ease);
+}
+.hero-composer-send.is-active { transform: scale(0.88); opacity: 0.85; }
+
+/* ── File picker modal ── */
+.hero-file-modal {
+  position: absolute;
+  left: var(--space-4); right: var(--space-4);
+  bottom: 66px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-4);
+  z-index: 4;
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 300ms var(--ease), transform 300ms var(--ease);
+}
+.hero-file-modal.is-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.hero-file-modal-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: var(--space-3);
+}
+.hero-file-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.hero-file-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: border-color 200ms var(--ease), background 200ms var(--ease);
+}
+.hero-file-item i:first-child { color: var(--accent); font-size: 15px; flex-shrink: 0; }
+.hero-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hero-file-check {
+  margin-left: auto;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.hero-file-check i { opacity: 0; font-size: 9px; color: #fff; }
+.hero-file-item.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+.hero-file-item.is-selected .hero-file-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.hero-file-item.is-selected .hero-file-check i { opacity: 1; }
+
+.hero-file-modal-add {
+  width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--text-1);
+  color: var(--bg-base);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Cursor that performs every user action */
 .hero-cursor {
   position: absolute;
   left: 0; top: 0;
@@ -265,7 +431,7 @@ main { overflow-x: hidden; }
   pointer-events: none;
   opacity: 0;
   transition: left 900ms var(--ease), top 900ms var(--ease), opacity 250ms var(--ease);
-  z-index: 5;
+  z-index: 6;
 }
 .hero-cursor.is-visible { opacity: 1; }
 .hero-cursor svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(23, 23, 23, 0.25)); }
@@ -295,14 +461,14 @@ main { overflow-x: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .hero-thinking { display: none !important; }
   .type-caret { display: none !important; }
-  .hero-scatter { display: none; }
   .hero-preview-window { opacity: 1; transform: none; }
-  .hero-preview-doc { opacity: 1; transform: none; }
+  .hero-preview-doc { transition: none; }
   .hero-cursor { display: none !important; }
+  .hero-file-modal { display: none !important; }
 }
 
 @media (max-width: 620px) {
-  .hero-stage { height: 320px; }
+  .hero-preview-window { min-height: 440px; }
 }
 
 /* ═══════════════════════════════════════════════
@@ -389,9 +555,7 @@ main { overflow-x: hidden; }
   overflow: hidden;
 }
 
-/* ── Understand: sequential reading-focus sweep ──
-   Each line lights up in accent color as if being read, then
-   settles into a muted "already read" state, one after another. */
+/* ── Understand: sequential reading-focus sweep ── */
 .uv-doc {
   position: absolute;
   top: 50%; left: 50%;
@@ -437,14 +601,7 @@ main { overflow-x: hidden; }
   100% { opacity: 0.28; transform: scaleX(1); }
 }
 
-/* ── Explore: nodes orbit the center node ──
-   Each .ev-orbit-item rotates a full 360° on a shared duration, staggered
-   by a negative animation-delay proportional to its --offset so the three
-   nodes stay evenly spaced (120° apart) forever. The line lives inside the
-   rotating wrapper (so it always points from center to node), while the
-   node label itself spins by the exact opposite amount over the exact same
-   duration/delay, which cancels the parent's rotation out — so the text
-   never turns upside down as it travels around the circle. */
+/* ── Explore: nodes orbit the center node ── */
 .ev-ring {
   position: absolute;
   left: 50%; top: 50%;
@@ -534,9 +691,8 @@ main { overflow-x: hidden; }
   to   { transform: translate(-50%, -50%) rotate(-360deg); }
 }
 
-/* ── Think: options resolve one at a time, laid out with a normal flex
-   column (not fixed top:% positions) so wrapped lines push the next
-   option down instead of overlapping or getting clipped by the card. ── */
+/* ── Think: options resolve one at a time — slowed down and re-themed
+   around the same retention-risk decision used elsewhere on the page. ── */
 .story-visual--think {
   height: auto;
   min-height: 240px;
@@ -562,14 +718,14 @@ main { overflow-x: hidden; }
   color: var(--text-3);
   opacity: 0;
   transform: translateY(10px);
-  transition: opacity 550ms var(--ease), transform 550ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
+  transition: opacity 650ms var(--ease), transform 650ms var(--ease), border-color 450ms var(--ease), color 450ms var(--ease), background 450ms var(--ease);
 }
 .tv-option--picked { font-weight: 600; }
 .tv-option--picked i { color: var(--accent); flex-shrink: 0; }
 .story-visual[data-anim="think"].is-active .tv-option {
   opacity: 1;
   transform: translateY(0);
-  transition-delay: calc(var(--d) * 450ms + 250ms);
+  transition-delay: calc(var(--d) * 950ms + 300ms);
 }
 .story-visual[data-anim="think"].is-active .tv-option--picked {
   border-color: var(--accent);
@@ -606,11 +762,11 @@ main { overflow-x: hidden; }
 
 .story-visual[data-anim="think"].is-active .tv-option .tv-loader {
   opacity: 0;
-  transition-delay: calc(var(--d) * 450ms + 950ms);
+  transition-delay: calc(var(--d) * 950ms + 1550ms);
 }
 .story-visual[data-anim="think"].is-active .tv-option .tv-text {
   opacity: 1;
-  transition-delay: calc(var(--d) * 450ms + 950ms);
+  transition-delay: calc(var(--d) * 950ms + 1550ms);
 }
 
 /* ── Create: notes transform into a doc chip ── */
@@ -701,7 +857,7 @@ main { overflow-x: hidden; }
 }
 
 /* ═══════════════════════════════════════════════
-   CAPABILITIES — scale-in stagger, not translateY
+   CAPABILITIES
 ═══════════════════════════════════════════════ */
 
 .capabilities {
@@ -746,7 +902,7 @@ main { overflow-x: hidden; }
 .capability-card p { font-size: var(--text-sm); color: var(--text-3); line-height: 1.6; }
 
 /* ═══════════════════════════════════════════════
-   USE CASES — alternating slide-in
+   USE CASES
 ═══════════════════════════════════════════════ */
 
 .use-cases {
@@ -786,7 +942,7 @@ main { overflow-x: hidden; }
 .use-case-row p { font-size: var(--text-base); color: var(--text-2); line-height: 1.6; max-width: 560px; }
 
 /* ═══════════════════════════════════════════════
-   TRUST — sequential typewriter reveal, one item after another
+   TRUST
 ═══════════════════════════════════════════════ */
 
 .trust {
@@ -849,10 +1005,6 @@ main { overflow-x: hidden; }
 }
 .pricing-teaser-cta:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
 
-/* Final CTA — a normal elevated panel with a soft accent glow behind
-   it, NOT an inverted color block. Inverting text-1/bg-base for the
-   whole panel is what made this look like a stray bright card sitting
-   on a dark page in dark mode; this reads correctly in both themes. */
 .final-cta {
   position: relative;
   background: var(--bg-elevated);
