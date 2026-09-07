@@ -46,11 +46,19 @@
     <span class="scatter-chip" style="--x:0px; --y:-90px; --r:2deg;">renewal risk flags</span>
   </div>
   <div class="hero-preview-window" id="heroWindow">
-    <div class="hero-preview-dots"><span></span><span></span><span></span></div>
+    <div class="hero-preview-header">
+      <span class="hero-preview-avatar" aria-hidden="true"></span>
+      <span class="hero-preview-name">Cognita AI</span>
+    </div>
     <div class="hero-preview-body">
       <div class="hero-preview-msg is-user">Pull this into a client-ready retention brief</div>
       <div class="hero-preview-msg is-assistant">
-        <span class="hero-preview-typing">Pulling out the important bits — findings, risks, and next steps…<span class="type-caret" aria-hidden="true"></span></span>
+        <span class="hero-thinking" aria-hidden="true">
+          <span class="hero-thinking-dot"></span>
+          <span class="hero-thinking-dot"></span>
+          <span class="hero-thinking-dot"></span>
+        </span>
+        <span class="hero-preview-typing">Three risk signals stand out — pricing, onboarding, and support volume. Here's the brief.<span class="type-caret" aria-hidden="true"></span></span>
       </div>
       <div class="hero-preview-doc" id="heroDoc">
         <i class="ph ph-file-doc"></i>
@@ -84,15 +92,20 @@
     <p>Real work rarely stays on one question. You notice something, ask another question, find a connection, then change your mind. Cognita keeps that thread intact as you go.</p>
   </div>
   <div class="story-visual" data-anim="explore">
-    <svg class="ev-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <line x1="50" y1="60" x2="50" y2="22" />
-      <line x1="50" y1="60" x2="20" y2="84" />
-      <line x1="50" y1="60" x2="80" y2="84" />
-    </svg>
-    <div class="ev-node ev-node--main" style="--nx:50%; --ny:60%;">Retention risk</div>
-    <div class="ev-node" style="--nx:50%; --ny:22%;">Support volume</div>
-    <div class="ev-node" style="--nx:20%; --ny:84%;">Pricing shift</div>
-    <div class="ev-node" style="--nx:80%; --ny:84%;">Onboarding gap</div>
+    <div class="ev-ring" aria-hidden="true"></div>
+    <div class="ev-center">Retention risk</div>
+    <div class="ev-orbit-item" style="--offset:0deg;">
+      <div class="ev-orbit-line"></div>
+      <div class="ev-orbit-node">Support volume</div>
+    </div>
+    <div class="ev-orbit-item" style="--offset:120deg;">
+      <div class="ev-orbit-line"></div>
+      <div class="ev-orbit-node">Pricing shift</div>
+    </div>
+    <div class="ev-orbit-item" style="--offset:240deg;">
+      <div class="ev-orbit-line"></div>
+      <div class="ev-orbit-node">Onboarding gap</div>
+    </div>
   </div>
 </article>
 <article class="story-row" data-story="think">
@@ -102,10 +115,17 @@
     <p>When there's a real decision to make, the obvious answer isn't always the right one. Cognita can lay out the alternatives, point out the tradeoffs, and challenge the assumptions behind them.</p>
   </div>
   <div class="story-visual" data-anim="think">
-    <div class="tv-option" style="--d:0">Raise prices 8% across the board</div>
-    <div class="tv-option" style="--d:1">Grandfather existing customers, raise for new</div>
+    <div class="tv-option" style="--d:0">
+      <span class="tv-loader"><span></span><span></span><span></span></span>
+      <span class="tv-text">Raise prices 8% across the board</span>
+    </div>
+    <div class="tv-option" style="--d:1">
+      <span class="tv-loader"><span></span><span></span><span></span></span>
+      <span class="tv-text">Grandfather existing customers, raise for new</span>
+    </div>
     <div class="tv-option tv-option--picked" style="--d:2">
-      <i class="ph ph-check-circle"></i> Segment by usage, raise only top tier
+      <span class="tv-loader"><span></span><span></span><span></span></span>
+      <span class="tv-text"><i class="ph ph-check-circle"></i> Segment by usage, raise only top tier</span>
     </div>
   </div>
 </article>
@@ -185,6 +205,19 @@
   <p>Pricing, hiring, positioning, entering a new market — the hard part is often seeing the whole picture. Use Cognita to put the options side by side, surface the tradeoffs, and pressure-test the decision before you make it.</p>
 </div>
   </section>
+  <!-- ── Gesture demo ── -->
+  <section class="gesture-demo">
+    <span class="section-eyebrow">Try it</span>
+    <h2 class="section-title">Move your cursor. Watch it respond.</h2>
+    <p class="section-subtitle">A small taste of how Cognita adapts to you in real time.</p>
+    <div class="gesture-card" id="gestureCard">
+      <div class="gesture-card-glare" id="gestureGlare"></div>
+      <div class="gesture-card-inner">
+        <i class="ph ph-cursor-click"></i>
+        <p>Tilt me. Nudge me. I'll follow.</p>
+      </div>
+    </div>
+  </section>
   <!-- ── Trust ── -->
   <section class="trust">
     <span class="section-eyebrow">The important stuff</span>
@@ -232,7 +265,7 @@
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  /* ── Hero stage: scatter → assemble → type → doc appears, looping ── */
+  /* ── Hero stage: scatter → assemble → think → type → doc appears, looping ── */
   (function runHeroStage() {
     const stage = document.getElementById('heroStage');
     if (!stage) return;
@@ -241,21 +274,24 @@
       return;
     }
     function playOnce() {
-      stage.classList.remove('is-settled', 'is-typed', 'is-doc');
+      stage.classList.remove('is-settled', 'is-thinking', 'is-typed', 'is-doc');
       stage.classList.add('is-scattered');
       setTimeout(() => {
         stage.classList.remove('is-scattered');
-        stage.classList.add('is-settled');
+        stage.classList.add('is-settled', 'is-thinking');
       }, 1400);
-      setTimeout(() => stage.classList.add('is-typed'), 2200);
-      setTimeout(() => stage.classList.add('is-doc'), 4600);
+      setTimeout(() => {
+        stage.classList.remove('is-thinking');
+        stage.classList.add('is-typed');
+      }, 2600);
+      setTimeout(() => stage.classList.add('is-doc'), 4800);
     }
     playOnce();
-    setInterval(playOnce, 8200);
+    setInterval(playOnce, 8400);
   })();
   /* ── Scroll-reveal for grid/list sections (staggered via CSS nth-child delay) ── */
   (function wireReveals() {
-    const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row, .trust-item');
+    const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row');
     if (reduceMotion || !('IntersectionObserver' in window)) {
       targets.forEach((el) => el.classList.add('is-revealed'));
       return;
@@ -287,6 +323,81 @@
       });
     }, { threshold: 0.4 });
     rows.forEach((row) => io.observe(row));
+  })();
+  /* ── Trust section: sequential typewriter, one item after another ── */
+  (function wireTrustTypewriter() {
+    const items = document.querySelectorAll('.trust-item');
+    if (!items.length) return;
+    const grid = items[0].closest('.trust-grid');
+    const paras = Array.from(items).map((it) => it.querySelector('p'));
+    const originals = paras.map((p) => p.textContent);
+
+    if (reduceMotion || !('IntersectionObserver' in window)) {
+      items.forEach((el) => el.classList.add('is-revealed'));
+      return;
+    }
+
+    function typeText(el, text, speed) {
+      el.textContent = '';
+      el.classList.add('is-typing');
+      let i = 0;
+      const id = setInterval(() => {
+        el.textContent += text.charAt(i);
+        i += 1;
+        if (i >= text.length) {
+          clearInterval(id);
+          el.classList.remove('is-typing');
+        }
+      }, speed);
+    }
+
+    let started = false;
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting && !started) {
+          started = true;
+          items.forEach((el, i) => {
+            setTimeout(() => {
+              el.classList.add('is-revealed');
+              typeText(paras[i], originals[i], 32);
+            }, i * 900);
+          });
+          io.disconnect();
+        }
+      });
+    }, { threshold: 0.3 });
+    io.observe(grid);
+  })();
+  /* ── Gesture card: 3D tilt + glare that follows the pointer ── */
+  (function wireGestureCard() {
+    const card = document.getElementById('gestureCard');
+    if (!card || reduceMotion) return;
+    const MAX_TILT = 10; // degrees
+
+    function update(clientX, clientY) {
+      const rect = card.getBoundingClientRect();
+      const px = (clientX - rect.left) / rect.width;
+      const py = (clientY - rect.top) / rect.height;
+      const rx = (0.5 - py) * MAX_TILT * 2;
+      const ry = (px - 0.5) * MAX_TILT * 2;
+      card.style.setProperty('--rx', rx.toFixed(2) + 'deg');
+      card.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+      card.style.setProperty('--gx', (px * 100).toFixed(1) + '%');
+      card.style.setProperty('--gy', (py * 100).toFixed(1) + '%');
+    }
+    function reset() {
+      card.classList.remove('is-active');
+      card.style.setProperty('--rx', '0deg');
+      card.style.setProperty('--ry', '0deg');
+    }
+    card.addEventListener('pointermove', (e) => {
+      card.classList.add('is-active');
+      update(e.clientX, e.clientY);
+    });
+    card.addEventListener('pointerdown', () => card.classList.add('is-active'));
+    card.addEventListener('pointerup', reset);
+    card.addEventListener('pointerleave', reset);
+    card.addEventListener('pointercancel', reset);
   })();
 </script>
 </body>
