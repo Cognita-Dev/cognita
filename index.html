@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
 <link rel="stylesheet" href="/css/home.css">
+<link rel="stylesheet" href="/css/pricing.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body>
@@ -21,7 +22,7 @@
     <span>Cognita</span>
   </a>
   <nav class="site-nav-inline">
-    <a href="/pricing.html">Pricing</a>
+    <a href="#pricing">Pricing</a>
     <a href="/login.html">Sign in</a>
   </nav>
   <a href="/signup.html" class="site-nav-cta">Get started</a>
@@ -32,7 +33,7 @@
 
 <div class="site-nav-overlay" id="navOverlay">
   <nav class="site-nav-overlay-links">
-    <a href="/pricing.html">Pricing</a>
+    <a href="#pricing">Pricing</a>
     <a href="/login.html">Sign in</a>
   </nav>
   <a href="/signup.html" class="site-nav-overlay-cta">Get started</a>
@@ -49,7 +50,7 @@
     </p>
     <div class="hero-actions">
       <a href="/signup.html" class="hero-cta-primary">Start for free</a>
-      <a href="/pricing.html" class="hero-cta-secondary">See pricing</a>
+      <a href="#pricing" class="hero-cta-secondary">See pricing</a>
     </div>
     <p class="hero-note">No credit card required.</p>
 
@@ -348,12 +349,17 @@
       </div>
     </div>
   </section>
-  <!-- ── Pricing teaser ── -->
-  <section class="pricing-teaser">
-    <span class="section-eyebrow">Pricing</span>
-    <h2 class="section-title">Try it first. Decide later.</h2>
-    <p class="section-subtitle">Start with the free plan. If Cognita becomes part of your routine, upgrade when you need more.</p>
-    <a href="/pricing.html" class="pricing-teaser-cta">See plans and pricing</a>
+  <!-- ── Pricing ── -->
+  <section class="pricing-shell" id="pricing">
+    <div class="pricing-intro">
+      <span class="section-eyebrow">Pricing</span>
+      <h1>Try it first. Decide later.</h1>
+      <p>Start with the free plan. If Cognita becomes part of your routine, upgrade when you need more.</p>
+    </div>
+    <div class="pricing-grid" id="pricingGrid">
+      <p class="pricing-note" style="color:var(--text-3);">Loading plans…</p>
+    </div>
+    <p class="pricing-note" style="color:var(--text-3);">Prices shown in Naira. Cancel anytime from your account.</p>
   </section>
   <!-- ── Final CTA ── -->
   <section class="final-cta">
@@ -368,7 +374,7 @@
     <div class="site-footer-links">
       <a href="/terms.html">Terms</a>
       <a href="/privacy.html">Privacy</a>
-      <a href="/pricing.html">Pricing</a>
+      <a href="#pricing">Pricing</a>
     </div>
   </div>
   <span class="site-footer-mark" aria-hidden="true">COGNITA</span>
@@ -558,13 +564,11 @@
       resetVisual();
       await wait(500);
 
-      // Open the file picker.
       showCursorFromOutside();
       await clickAt(attachBtn, 'is-active');
       fileModal.classList.add('is-open');
       await wait(550);
 
-      // Select two files.
       const file1 = fileItems[0];
       const file2 = fileItems[1];
       await clickAt(file1);
@@ -574,21 +578,18 @@
       file2.classList.add('is-selected');
       await wait(450);
 
-      // Confirm and close the picker.
       await clickAt(fileModalAdd);
       fileModal.classList.remove('is-open');
       FILES.forEach((f) => composerAttachments.appendChild(makeChip(f.name, f.icon)));
       await wait(400);
       cursor.classList.remove('is-visible');
 
-      // Type the prompt.
       await wait(350);
       composerCaret.classList.add('is-active');
       await typeText(composerText, USER_MSG, 42);
       composerCaret.classList.remove('is-active');
       await wait(500);
 
-      // Open the quality dropdown and pick "Advanced".
       showCursorFromOutside();
       cursor.style.left = '50%';
       cursor.style.top = '95%';
@@ -605,11 +606,9 @@
       qualityDropdown.classList.remove('is-open');
       await wait(450);
 
-      // Send.
       await clickAt(sendBtn, 'is-active');
       cursor.classList.remove('is-visible');
 
-      // Message lands in the conversation exactly as composed — no retyping.
       FILES.forEach((f) => msgAttachments.appendChild(makeChip(f.name, f.icon)));
       userText.textContent = USER_MSG;
       composerText.textContent = '';
@@ -617,9 +616,6 @@
       userRow.classList.add('is-visible');
       await wait(550);
 
-      // Assistant thinks (separate status row), then reveals timing, then
-      // replies. The "Thought for Xs" line now stays put — it no longer
-      // gets hidden again, so it stays visible above the reply bubble.
       assistantRow.classList.add('is-visible');
       thinkingStatus.classList.add('is-visible');
       thinking.classList.add('is-visible');
@@ -640,7 +636,6 @@
       doc.classList.add('is-visible');
       await wait(800);
 
-      // Download the file.
       showCursorFromOutside();
       await clickAt(doc);
       doc.classList.add('is-downloaded', 'is-pulsing');
@@ -849,5 +844,6 @@
     io.observe(grid);
   })();
 </script>
+<script type="module" src="/js/pricing-cards.js"></script>
 </body>
 </html>
