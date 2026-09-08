@@ -67,6 +67,18 @@
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
 
+  const params = new URLSearchParams(window.location.search);
+  const planId = params.get('plan');
+  const postAuthDestination = planId
+    ? '/payment.html?plan=' + encodeURIComponent(planId)
+    : '/app.html';
+
+  // Preserve the intended plan when bouncing to the signup page instead.
+  const signupLink = document.querySelector('.auth-switch a[href="/signup.html"]');
+  if (signupLink && planId) {
+    signupLink.href = '/signup.html?plan=' + encodeURIComponent(planId);
+  }
+
   const errorEls = {
     email: document.getElementById('emailError'),
     password: document.getElementById('passwordError'),
@@ -98,7 +110,7 @@
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
-      window.location.href = '/app.html';
+      window.location.href = postAuthDestination;
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -118,7 +130,7 @@
       setLoading(true);
       try {
         await Auth.signInWithEmail(email, passwordInput.value);
-        window.location.href = '/app.html';
+        window.location.href = postAuthDestination;
       } catch (err) {
         showError(err);
         setLoading(false);
@@ -128,7 +140,7 @@
       clearErrors();
       try {
         await Auth.signInWithGoogle();
-        window.location.href = '/app.html';
+        window.location.href = postAuthDestination;
       } catch (err) {
         showError(err);
       }
