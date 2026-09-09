@@ -23,6 +23,7 @@ export const PLANS = {
       advancedModelPerDay: 0,      // no access to higher-tier models
       imageGenPerDay: 2,
       documentGenPerDay: 3,
+      resourceGenPerDay: 3,
       fileUploadsPerDay: 5,
       maxFileSizeMB: 5,
       maxContextMessages: 8,       // how much conversation history is sent
@@ -49,6 +50,7 @@ export const PLANS = {
       advancedModelPerDay: 60,
       imageGenPerDay: 25,
       documentGenPerDay: 30,
+      resourceGenPerDay: 30,
       fileUploadsPerDay: 40,
       maxFileSizeMB: 20,
       maxContextMessages: 24,
@@ -75,6 +77,7 @@ export const PLANS = {
       advancedModelPerDay: 400,
       imageGenPerDay: 100,
       documentGenPerDay: 150,
+      resourceGenPerDay: 150,
       fileUploadsPerDay: 150,
       maxFileSizeMB: 50,
       maxContextMessages: 60,
