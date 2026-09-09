@@ -7,7 +7,7 @@ import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
 import { handleImageRequest } from './image-endpoint.js';
 import { handleDocumentRequest } from './document-endpoint.js';
-import { handleResourceGenerate, handleResourceDownload } from './resources-endpoint.js';
+import { handleResourceGenerate, handleResourceDownload, handleResourceList } from './resources-endpoint.js';
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
@@ -62,6 +62,10 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/resources/generate') {
       return handleResourceGenerate(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/resources/list') {
+      return handleResourceList(request, env);
     }
 
     if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/download$/.test(url.pathname)) {
