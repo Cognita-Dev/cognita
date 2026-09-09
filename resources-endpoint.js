@@ -10,7 +10,7 @@ import { resolveAccount } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
 import { getPlan, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
-import { fsSet, fsGet } from './firestore-rest.js';
+import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildSimpleDocx } from './docx-builder.js';
 import { b2UploadFile, b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
@@ -248,6 +248,30 @@ export async function handleResourceDownload(request, env, resourceId) {
   } catch (e) {
     console.error('[resources] download authorization failed:', e.message);
     return _jsonError('Could not prepare the download. Please try again.', 503);
+  }
+}
+
+/**
+ * GET /api/resources/list
+ * Returns the authenticated user's own resources, most recent first.
+ */
+export async function handleResourceList(request, env) {
+  let identity;
+  try {
+    identity = await requireAuth(request, env);
+  } catch (e) {
+    return _jsonError('Not authenticated: ' + e.message, 401);
+  }
+
+  try {
+    const resources = await fsQuery('resources', 'ownerId', identity.uid, 'createdAt', 50, env);
+    return new Response(JSON.stringify({ resources }), {
+      status: 200,
+      headers: _corsJsonHeaders(),
+    });
+  } catch (e) {
+    console.error('[resources] list failed:', e.message);
+    return _jsonError('Could not load your resources. Please try again.', 500);
   }
 }
 
