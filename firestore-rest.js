@@ -188,3 +188,50 @@ export async function fsUpdate(path, data, env) {
   }
   return true;
 }
+
+/**
+ * Runs a structured query against a collection, filtered to documents where
+ * fieldName == value, ordered by orderByField descending, limited to
+ * limitCount results. Used for "my resources" style listings.
+ */
+export async function fsQuery(collectionId, fieldName, value, orderByField, limitCount, env) {
+  const token = await _getAccessToken(env);
+
+  const structuredQuery = {
+    from: [{ collectionId }],
+    where: {
+      fieldFilter: {
+        field: { fieldPath: fieldName },
+        op: 'EQUAL',
+        value: _fsEncodeValue(value),
+      },
+    },
+    limit: limitCount || 50,
+  };
+
+  if (orderByField) {
+    structuredQuery.orderBy = [{ field: { fieldPath: orderByField }, direction: 'DESCENDING' }];
+  }
+
+  const queryUrl = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID +
+    '/databases/(default)/documents:runQuery';
+
+  const res = await fetch(queryUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ structuredQuery }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error('Firestore QUERY ' + collectionId + ' failed (' + res.status + '): ' + text.slice(0, 200));
+  }
+
+  const rows = await res.json();
+  return rows
+    .filter((r) => r.document)
+    .map((r) => _fsDecodeFields(r.document.fields || {}));
+}
