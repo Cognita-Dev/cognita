@@ -517,15 +517,18 @@
   margin: var(--space-5) 0;
 }
 
-/* ── Code blocks — horizontally scrollable, never stretch the page,
-     with a persistent copy button top-right ── */
+/* ── Code blocks — deliberately fixed-dark regardless of app theme
+     (like GitHub/most editors), so they never invert to an unreadable
+     white/light box when the app itself switches to dark mode.
+     Horizontally scrollable, never stretch the page, persistent copy
+     button top-right. ── */
 .code-block-wrap {
   position: relative;
   max-width: 100%;
   margin: var(--space-4) 0;
 }
 .message-content pre {
-  background: var(--text-1);
+  background: #1e1e1c;
   color: #f3f3ef;
   padding: var(--space-4);
   padding-top: 36px;
