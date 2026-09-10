@@ -195,3 +195,35 @@ export async function b2BuildPrivateDownloadUrl(env, key, downloadAuthToken) {
     encodeURIComponent(key).replace(/%2F/g, '/') +
     '?Authorization=' + downloadAuthToken;
 }
+
+/**
+ * "Deletes" a file by hiding it — b2_hide_file marks the current version
+ * as hidden so normal downloads/listing no longer see it, without needing
+ * to know the fileId up front (unlike b2_delete_file_version). Good fit
+ * for user-initiated deletes where we only know the file's name/key, like
+ * a chat conversation deleted from the sidebar. The hidden version still
+ * exists until a lifecycle rule purges it, per the bucket's configured
+ * file retention.
+ *
+ * @param {object} env
+ * @param {string} fileName - the exact key/path used at upload time
+ */
+export async function b2HideFile(env, fileName) {
+  const auth = await _authorize(env);
+
+  const res = await fetch(auth.apiUrl + '/b2api/v3/b2_hide_file', {
+    method: 'POST',
+    headers: {
+      Authorization: auth.authorizationToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ bucketId: env.B2_BUCKET_ID, fileName }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error('B2 hide_file failed (' + res.status + '): ' + text);
+  }
+
+  return res.json();
+}
