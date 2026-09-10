@@ -3,8 +3,10 @@
 // Callers pass in a resolved model-tier config (from entitlements.js) and
 // get back plain text. They never see provider names, model strings, or keys.
 
-async function _callGroq(messages, model, env) {
-  const body = { model, max_tokens: 2048, temperature: 0.5, messages };
+const DEFAULT_MAX_TOKENS = 2048;
+
+async function _callGroq(messages, model, env, maxTokens) {
+  const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -32,8 +34,8 @@ async function _callGroq(messages, model, env) {
   };
 }
 
-async function _callOpenRouter(messages, model, env) {
-  const body = { model, max_tokens: 2048, temperature: 0.5, messages };
+async function _callOpenRouter(messages, model, env, maxTokens) {
+  const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -145,9 +147,9 @@ export async function callVisionModel(model, messages, images, env) {
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
-async function _dispatch(providerName, messages, model, env) {
-  if (providerName === 'groq') return _callGroq(messages, model, env);
-  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env);
+async function _dispatch(providerName, messages, model, env, maxTokens) {
+  if (providerName === 'groq') return _callGroq(messages, model, env, maxTokens);
+  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens);
   if (providerName === 'workersai') return _callWorkersAI(messages, model, env);
   throw new Error('Unknown provider: ' + providerName);
 }
@@ -163,21 +165,26 @@ async function _dispatch(providerName, messages, model, env) {
  * @param {array} messages - chat messages array (always plain role/content
  *   pairs; see chat-endpoint.js)
  * @param {object} env - Worker env bindings
+ * @param {object} [options] - { maxTokens: number } — raise this for
+ *   long-form structured generation (documents, resources) where the
+ *   default 2048 tokens truncates mid-JSON and corrupts the whole output.
  */
-export async function callWithFallback(tierConfig, messages, env) {
+export async function callWithFallback(tierConfig, messages, env, options = {}) {
+  const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+
   try {
-    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env);
+    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env, maxTokens);
     if (result.finishReason === 'length') {
-      return await _continueIfTruncated(tierConfig.provider, tierConfig.model, messages, result, env);
+      return await _continueIfTruncated(tierConfig.provider, tierConfig.model, messages, result, env, maxTokens, options);
     }
     return result;
   } catch (primaryErr) {
     console.warn('[providers] primary failed:', primaryErr.message);
     if (!tierConfig.fallback) throw primaryErr;
     try {
-      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env);
+      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env, maxTokens);
       if (result.finishReason === 'length') {
-        return await _continueIfTruncated(tierConfig.fallback.provider, tierConfig.fallback.model, messages, result, env);
+        return await _continueIfTruncated(tierConfig.fallback.provider, tierConfig.fallback.model, messages, result, env, maxTokens, options);
       }
       return result;
     } catch (fallbackErr) {
@@ -189,15 +196,32 @@ export async function callWithFallback(tierConfig, messages, env) {
 
 // If a response got cut off by max_tokens, ask the same provider to continue
 // rather than surfacing a truncated answer to the user.
-async function _continueIfTruncated(providerName, model, messages, partial, env) {
+//
+// For plain prose this is a simple "continue from where you left off"
+// concatenation. For structured-JSON callers (options.jsonMode: true —
+// used by document-endpoint.js and resources-endpoint.js) a naive text
+// concatenation is unsafe: the cut can land mid-string or mid-key, and
+// gluing two fragments together with "\n\n" produces text that is no
+// longer valid JSON at all, which previously caused the whole structured
+// document to collapse into one raw unparsed blob. For jsonMode we ask
+// the model to continue the JSON with no separator and no repeated
+// preamble, and we do a plain concatenation (no inserted whitespace)
+// so the two fragments have a chance of forming valid JSON when joined.
+async function _continueIfTruncated(providerName, model, messages, partial, env, maxTokens, options) {
   try {
+    const jsonMode = !!options.jsonMode;
     const continuation = messages.concat([
       { role: 'assistant', content: partial.text },
-      { role: 'user', content: 'Continue directly from where you left off. Do not repeat anything already written.' },
+      {
+        role: 'user',
+        content: jsonMode
+          ? 'Your last response was cut off mid-JSON. Continue the JSON from the exact character after where you stopped. Output only the raw continuation — no repeated text, no markdown fences, no commentary.'
+          : 'Continue directly from where you left off. Do not repeat anything already written.',
+      },
     ]);
-    const extra = await _dispatch(providerName, continuation, model, env);
+    const extra = await _dispatch(providerName, continuation, model, env, maxTokens);
     return {
-      text: (partial.text + '\n\n' + extra.text).trim(),
+      text: jsonMode ? (partial.text + extra.text).trim() : (partial.text + '\n\n' + extra.text).trim(),
       finishReason: 'stop',
       reasoning: partial.reasoning || extra.reasoning || null,
     };
