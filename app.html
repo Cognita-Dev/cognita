@@ -17,6 +17,22 @@
      content can be sent to the model instead of being marked unreadable. -->
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<style>
+  .app-loading-overlay {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .app-content-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+</style>
 </head>
 <body class="app-page">
 
@@ -87,134 +103,145 @@
   </aside>
 
   <!-- ── Main conversation area ── -->
-  <main class="app-main">
+    <main class="app-main">
 
-    <header class="app-topbar">
-      <button class="mobile-sidebar-btn" id="mobileSidebarBtn" aria-label="Open sidebar">
-        <i class="ph ph-list"></i>
-      </button>
+      <header class="app-topbar">
+        <button class="mobile-sidebar-btn" id="mobileSidebarBtn" aria-label="Open sidebar">
+          <i class="ph ph-list"></i>
+        </button>
 
-      <h1 class="conversation-title" id="conversationTitle">New chat</h1>
+        <h1 class="conversation-title" id="conversationTitle">New chat</h1>
 
-      <div class="topbar-spacer"></div>
-    </header>
+        <div class="topbar-spacer"></div>
+      </header>
 
-    <div class="conversation" id="conversation">
-      <div class="empty-state" id="emptyState">
-        <img src="/assets/cognita.png" alt="" class="empty-state-mark">
-        <h1 class="empty-state-title">What are you working on?</h1>
-        <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
-
-        <div class="suggestion-list">
-          <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
-            <i class="ph ph-envelope-simple"></i>
-            <span>Draft an email</span>
-          </button>
-          <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
-            <i class="ph ph-lightbulb"></i>
-            <span>Explain a concept</span>
-          </button>
-          <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
-            <i class="ph ph-file-text"></i>
-            <span>Outline a document</span>
-          </button>
-          <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
-            <i class="ph ph-chart-line"></i>
-            <span>Think through a decision</span>
-          </button>
-        </div>
+      <div class="app-loading-overlay" id="appLoadingOverlay">
+        <div class="skeleton" style="width:55%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
+        <div class="skeleton" style="width:78%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
+        <div class="skeleton" style="width:42%;height:16px;border-radius:6px;margin-bottom:32px;"></div>
+        <div class="skeleton" style="width:90%;max-width:640px;height:52px;border-radius:14px;"></div>
       </div>
 
-      <div class="message-list" id="messageList" hidden></div>
-    </div>
+      <div class="app-content-wrap" id="appContentWrap" hidden>
 
-    <div class="composer-wrap">
+        <div class="conversation" id="conversation">
+          <div class="empty-state" id="emptyState">
+            <img src="/assets/cognita.png" alt="" class="empty-state-mark">
+            <h1 class="empty-state-title">What are you working on?</h1>
+            <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
 
-      <div class="composer" id="composer">
-        <div class="composer-attachments" id="composerAttachments" hidden></div>
-
-        <textarea
-          id="composerInput"
-          class="composer-input"
-          placeholder="Message Cognita"
-          rows="1"
-          aria-label="Message Cognita"
-        ></textarea>
-
-        <div class="composer-tools-row">
-          <div class="composer-tools-left">
-            <div class="attach-menu" id="attachMenu">
-              <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual or document">
-                <i class="ph ph-plus"></i>
+            <div class="suggestion-list">
+              <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
+                <i class="ph ph-envelope-simple"></i>
+                <span>Draft an email</span>
               </button>
-              <div class="attach-menu-list" id="attachMenuList" hidden>
-                <button class="attach-menu-item" id="attachFilesItem" type="button">
-                  <i class="ph ph-paperclip"></i>
-                  <span>Add photos & files</span>
-                </button>
-                <button class="attach-menu-item" id="attachDiagramItem" type="button" data-kind="diagram">
-                  <i class="ph ph-flow-arrow"></i>
-                  <span>Create a diagram</span>
-                </button>
-                <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
-                  <i class="ph ph-image-square"></i>
-                  <span>Create an illustration</span>
-                </button>
-                <button class="attach-menu-item" id="attachDocumentItem" type="button">
-                  <i class="ph ph-file-doc"></i>
-                  <span>Create a document</span>
+              <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
+                <i class="ph ph-lightbulb"></i>
+                <span>Explain a concept</span>
+              </button>
+              <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
+                <i class="ph ph-file-text"></i>
+                <span>Outline a document</span>
+              </button>
+              <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
+                <i class="ph ph-chart-line"></i>
+                <span>Think through a decision</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="message-list" id="messageList" hidden></div>
+        </div>
+
+        <div class="composer-wrap">
+
+          <div class="composer" id="composer">
+            <div class="composer-attachments" id="composerAttachments" hidden></div>
+
+            <textarea
+              id="composerInput"
+              class="composer-input"
+              placeholder="Message Cognita"
+              rows="1"
+              aria-label="Message Cognita"
+            ></textarea>
+
+            <div class="composer-tools-row">
+              <div class="composer-tools-left">
+                <div class="attach-menu" id="attachMenu">
+                  <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual or document">
+                    <i class="ph ph-plus"></i>
+                  </button>
+                  <div class="attach-menu-list" id="attachMenuList" hidden>
+                    <button class="attach-menu-item" id="attachFilesItem" type="button">
+                      <i class="ph ph-paperclip"></i>
+                      <span>Add photos & files</span>
+                    </button>
+                    <button class="attach-menu-item" id="attachDiagramItem" type="button" data-kind="diagram">
+                      <i class="ph ph-flow-arrow"></i>
+                      <span>Create a diagram</span>
+                    </button>
+                    <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
+                      <i class="ph ph-image-square"></i>
+                      <span>Create an illustration</span>
+                    </button>
+                    <button class="attach-menu-item" id="attachDocumentItem" type="button">
+                      <i class="ph ph-file-doc"></i>
+                      <span>Create a document</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="composer-tools-right">
+                <div class="quality-picker" id="qualityPicker">
+                  <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
+                    <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
+                    <span id="qualityPickerLabel">Standard</span>
+                    <i class="ph ph-caret-down quality-picker-caret"></i>
+                  </button>
+                  <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
+                    <button class="quality-picker-option is-active" data-quality="standard">
+                      <i class="ph ph-lightning"></i>
+                      <span class="quality-picker-option-text">
+                        <span class="quality-picker-option-name">Standard</span>
+                        <span class="quality-picker-option-desc">Fast, everyday answers</span>
+                      </span>
+                      <i class="ph ph-check quality-picker-check"></i>
+                    </button>
+                    <button class="quality-picker-option" data-quality="advanced">
+                      <i class="ph ph-brain"></i>
+                      <span class="quality-picker-option-text">
+                        <span class="quality-picker-option-name">Advanced</span>
+                        <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
+                      </span>
+                      <i class="ph ph-check quality-picker-check"></i>
+                    </button>
+                    <button class="quality-picker-option" data-quality="thorough">
+                      <i class="ph ph-magnifying-glass"></i>
+                      <span class="quality-picker-option-text">
+                        <span class="quality-picker-option-name">Thorough</span>
+                        <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
+                      </span>
+                      <i class="ph ph-check quality-picker-check"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
+                  <i class="ph ph-arrow-up"></i>
                 </button>
               </div>
             </div>
           </div>
 
-          <div class="composer-tools-right">
-            <div class="quality-picker" id="qualityPicker">
-              <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
-                <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
-                <span id="qualityPickerLabel">Standard</span>
-                <i class="ph ph-caret-down quality-picker-caret"></i>
-              </button>
-              <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
-                <button class="quality-picker-option is-active" data-quality="standard">
-                  <i class="ph ph-lightning"></i>
-                  <span class="quality-picker-option-text">
-                    <span class="quality-picker-option-name">Standard</span>
-                    <span class="quality-picker-option-desc">Fast, everyday answers</span>
-                  </span>
-                  <i class="ph ph-check quality-picker-check"></i>
-                </button>
-                <button class="quality-picker-option" data-quality="advanced">
-                  <i class="ph ph-brain"></i>
-                  <span class="quality-picker-option-text">
-                    <span class="quality-picker-option-name">Advanced</span>
-                    <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
-                  </span>
-                  <i class="ph ph-check quality-picker-check"></i>
-                </button>
-                <button class="quality-picker-option" data-quality="thorough">
-                  <i class="ph ph-magnifying-glass"></i>
-                  <span class="quality-picker-option-text">
-                    <span class="quality-picker-option-name">Thorough</span>
-                    <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
-                  </span>
-                  <i class="ph ph-check quality-picker-check"></i>
-                </button>
-              </div>
-            </div>
-
-            <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
-              <i class="ph ph-arrow-up"></i>
-            </button>
-          </div>
+          <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
+          <input type="file" id="fileInput" hidden accept=".txt,.csv,.pdf,.doc,.docx,text/plain,text/csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif">
         </div>
+
       </div>
 
-      <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
-      <input type="file" id="fileInput" hidden accept=".txt,.csv,.pdf,.doc,.docx,text/plain,text/csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif">
-    </div>
-
-  </main>
+    </main>
 </div>
 
 <!-- ── Visual generation modal (diagram / illustration) ── -->
