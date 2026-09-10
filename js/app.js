@@ -50,6 +50,10 @@ const EXPORT_MIME_TYPES = {
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 
+const PENDING_DELETES_KEY = 'cognita:pendingDeletes';
+const RECONCILE_THROTTLE_MS = 60000; // don't hit B2's list endpoint more than once a minute
+let _lastReconcileAt = 0;
+
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...] }
 let conversationMeta = [];
@@ -105,6 +109,9 @@ const THINKING_WORDS = [
   wireDocumentModal();
   wireSuggestionCards();
   startPlaceholderTypewriter();
+
+  reconcileIfDue();
+  window.addEventListener('focus', reconcileIfDue);
 })();
 
 /* ════════════════════════════════════════════════════════
@@ -235,17 +242,210 @@ async function syncConversationToB2(entry) {
   }
 }
 
-// Best-effort mirror of a sidebar delete to B2.
+function loadPendingDeletes() {
+  try {
+    const raw = localStorage.getItem(PENDING_DELETES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function savePendingDeletes(list) {
+  try {
+    localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('[app] Could not persist pending deletes:', e.message);
+  }
+}
+
+// Best-effort mirror of a sidebar delete to B2. Returns whether it
+// actually succeeded, so callers can track it as pending and retry later
+// rather than assuming a fire-and-forget call landed.
 async function deleteConversationFromB2(conversationId) {
   try {
-    await window.Auth.authedFetch(WORKER_URL + '/api/chat/delete', {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversationId }),
     });
+    return res.ok;
   } catch (e) {
     console.error('[app] Could not delete conversation from storage:', e.message);
+    return false;
   }
+}
+
+// Retries any deletes that haven't been confirmed by the server yet.
+// Called at the start of every reconciliation pass so a delete made while
+// offline doesn't get silently forgotten, and — critically — so a
+// not-yet-confirmed delete never gets treated as "missing" and resurrected
+// during reconciliation (see reconcileWithB2's pendingDeletes.includes check).
+async function flushPendingDeletes() {
+  const pending = loadPendingDeletes();
+  if (pending.length === 0) return;
+
+  const stillPending = [];
+  for (const id of pending) {
+    const ok = await deleteConversationFromB2(id);
+    if (!ok) stillPending.push(id);
+  }
+  savePendingDeletes(stillPending);
+}
+
+// Best-effort mirror of a conversation to B2. Never blocks the UI and
+// never surfaces errors to the user. On success, records the server's own
+// timestamp for this save (remoteSyncedAt) so later reconciliation can
+// tell "I already have this version" from "the server has something
+// newer" without trusting client clocks.
+async function syncConversationToB2(entry) {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: entry.id, conversation: entry }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.serverUpdatedAt) return;
+
+    const all = loadAllConversations();
+    const idx = all.findIndex((c) => c.id === entry.id);
+    if (idx >= 0) {
+      all[idx].remoteSyncedAt = data.serverUpdatedAt;
+      saveAllConversations(all);
+    }
+  } catch (e) {
+    console.error('[app] Could not sync conversation to storage:', e.message);
+  }
+}
+
+// Fetches one conversation's full body from B2 and merges it into local
+// storage, replacing whatever placeholder or stale copy was there. If
+// it's the conversation currently open on screen, re-renders it too.
+async function fetchAndMergeConversation(id, serverUpdatedAt) {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/' + id);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.conversation) return;
+
+    const all = loadAllConversations();
+    const idx = all.findIndex((c) => c.id === id);
+    const merged = { ...data.conversation, id, remoteSyncedAt: serverUpdatedAt, notLoaded: false };
+    if (idx >= 0) all[idx] = merged; else all.push(merged);
+    saveAllConversations(all);
+
+    if (id === currentConversationId) {
+      conversation = merged.messages || [];
+      conversationMeta = merged.meta || [];
+      if (merged.quality) setQuality(merged.quality);
+      renderConversation();
+      updateConversationTitle();
+    }
+    renderSidebarHistory();
+  } catch (e) {
+    console.error('[app] Could not fetch conversation from storage:', e.message);
+  }
+}
+
+// Reconciles local chat history against what B2 actually has. Timestamp
+// rule throughout: whichever of "edited" vs "deleted" happened later,
+// wins. Never mutates local storage on a failed or malformed server
+// response — a network hiccup must never be read as "everything's gone."
+async function reconcileWithB2() {
+  await flushPendingDeletes();
+
+  let serverList;
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/list');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!Array.isArray(data.conversations)) return;
+    serverList = data.conversations;
+  } catch (e) {
+    console.error('[app] Could not list remote conversations:', e.message);
+    return;
+  }
+
+  const pendingDeletes = loadPendingDeletes();
+  const serverMap = new Map(serverList.map((c) => [c.conversationId, c]));
+  const all = loadAllConversations();
+  let changed = false;
+
+  for (const local of all.slice()) {
+    if (pendingDeletes.includes(local.id)) continue; // delete not yet confirmed — don't touch
+
+    const remote = serverMap.get(local.id);
+
+    if (!remote) {
+      // Server has never seen this one. Only push it if we've never
+      // successfully synced it — otherwise it may have fallen off an old
+      // listing page or is mid-lifecycle-purge, not worth re-pushing blind.
+      if (!local.remoteSyncedAt) syncConversationToB2(local);
+      continue;
+    }
+
+    if (remote.status === 'deleted') {
+      if (local.updatedAt > remote.serverUpdatedAt) {
+        // Edited here after it was deleted elsewhere — the edit is the
+        // more recent intent, so it wins and gets pushed back up.
+        syncConversationToB2(local);
+      } else {
+        const idx = all.findIndex((c) => c.id === local.id);
+        if (idx >= 0) { all.splice(idx, 1); changed = true; }
+        if (local.id === currentConversationId) {
+          currentConversationId = null;
+          conversation = [];
+          conversationMeta = [];
+          renderConversation();
+          updateConversationTitle();
+          showToast('This chat was deleted from another device.');
+        }
+      }
+      continue;
+    }
+
+    // remote.status === 'live'
+    const serverIsNewer = !local.remoteSyncedAt || remote.serverUpdatedAt > local.remoteSyncedAt;
+    const localHasNoUnpushedEdit = local.remoteSyncedAt && local.updatedAt <= local.remoteSyncedAt;
+    if (serverIsNewer && (localHasNoUnpushedEdit || !local.remoteSyncedAt)) {
+      fetchAndMergeConversation(local.id, remote.serverUpdatedAt);
+    }
+  }
+
+  // Chats that exist on the server but not locally at all (new device, or
+  // started elsewhere) — add a lightweight placeholder; full content
+  // loads lazily only when opened, so this never downloads N bodies
+  // just to populate the sidebar.
+  for (const remote of serverList) {
+    if (remote.status !== 'live') continue;
+    if (all.some((c) => c.id === remote.conversationId)) continue;
+    all.push({
+      id: remote.conversationId,
+      title: 'Untitled chat',
+      messages: [],
+      meta: [],
+      quality: 'standard',
+      updatedAt: remote.serverUpdatedAt,
+      remoteSyncedAt: remote.serverUpdatedAt,
+      notLoaded: true,
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    saveAllConversations(all);
+    renderSidebarHistory();
+  }
+}
+
+function reconcileIfDue() {
+  const now = Date.now();
+  if (now - _lastReconcileAt < RECONCILE_THROTTLE_MS) return;
+  _lastReconcileAt = now;
+  reconcileWithB2();
 }
 
 // Called after every completed exchange so the sidebar and title always
@@ -260,6 +460,8 @@ function persistCurrentConversation() {
 
   const all = loadAllConversations();
   const existingIndex = all.findIndex((c) => c.id === currentConversationId);
+  const existing = existingIndex >= 0 ? all[existingIndex] : null;
+
   const entry = {
     id: currentConversationId,
     title: deriveTitle(conversation),
@@ -267,6 +469,7 @@ function persistCurrentConversation() {
     meta: conversationMeta,
     quality: currentQuality,
     updatedAt: Date.now(),
+    remoteSyncedAt: existing ? existing.remoteSyncedAt : undefined,
   };
 
   if (existingIndex >= 0) {
@@ -317,6 +520,18 @@ function loadConversation(id) {
   if (!entry) return;
 
   currentConversationId = entry.id;
+
+  if (entry.notLoaded) {
+    conversation = [];
+    conversationMeta = [];
+    renderConversation();
+    updateConversationTitle();
+    renderSidebarHistory();
+    closeMobileSidebar();
+    fetchAndMergeConversation(id, entry.remoteSyncedAt);
+    return;
+  }
+
   conversation = entry.messages;
   conversationMeta = entry.meta || [];
   if (entry.quality) setQuality(entry.quality);
@@ -329,7 +544,16 @@ function loadConversation(id) {
 function deleteConversation(id) {
   const all = loadAllConversations().filter((c) => c.id !== id);
   saveAllConversations(all);
-  deleteConversationFromB2(id);
+
+  const pending = loadPendingDeletes();
+  if (!pending.includes(id)) {
+    pending.push(id);
+    savePendingDeletes(pending);
+  }
+
+  deleteConversationFromB2(id).then((ok) => {
+    if (ok) savePendingDeletes(loadPendingDeletes().filter((pid) => pid !== id));
+  });
 
   if (id === currentConversationId) {
     currentConversationId = null;
