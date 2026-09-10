@@ -1,10 +1,17 @@
 // document-endpoint.js
 // POST /api/document
-// Frontend sends { topic, docType: 'letter'|'report'|'essay'|'memo', format: 'docx'|'pdf'|'pptx' }.
+// Frontend sends { topic, docType: 'letter'|'report'|'essay'|'memo', format: 'docx'|'pdf'|'pptx', conversationId }.
 // The Worker asks the model for a structured JSON representation of the
 // document (title + sections, each either a paragraph or a bullet list),
 // then builds the actual file server-side from that structure.
 // This endpoint is plan-gated: Free users get plain text only, no file export.
+//
+// Generated files (docx/pdf/pptx) are also saved to B2, scoped to the
+// conversation they were created in, so they can be re-downloaded later
+// via /api/files instead of only existing as a one-time blob in the
+// browser. If conversationId isn't provided (e.g. the very first message
+// in a brand-new chat that hasn't been persisted yet), the file is still
+// generated and returned normally, it just isn't saved for later retrieval.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
@@ -14,6 +21,7 @@ import { callWithFallback } from './providers.js';
 import { buildStructuredDocx } from './docx-builder.js';
 import { buildStructuredPdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
+import { saveGeneratedFileToB2 } from './chat-storage.js';
 
 const DOC_FORMATS = ['docx', 'pdf', 'pptx'];
 
@@ -56,6 +64,7 @@ export async function handleDocumentRequest(request, env) {
   const topic = (body.topic || '').trim();
   const docType = ['letter', 'report', 'essay', 'memo'].includes(body.docType) ? body.docType : 'report';
   const format = DOC_FORMATS.includes(body.format) ? body.format : 'docx';
+  const conversationId = typeof body.conversationId === 'string' ? body.conversationId.trim() : '';
   if (!topic) return _jsonError('Missing topic.', 400);
   if (topic.length > 800) return _jsonError('Topic description is too long (max 800 characters).', 400);
 
@@ -100,7 +109,7 @@ export async function handleDocumentRequest(request, env) {
 
   const title = structured.title || _titleFor(docType, topic);
 
-  // Free plan: return plain text only, no file export.
+  // Free plan: return plain text only, no file export, nothing to persist.
   if (!plan.features.documentExport) {
     return new Response(JSON.stringify({ format: 'text', content: _flattenToPlainText(structured) }), {
       status: 200,
@@ -125,10 +134,30 @@ export async function handleDocumentRequest(request, env) {
       extension = 'docx';
     }
 
+    const filename = filenameBase + '.' + extension;
+    const mimeType = _mimeTypeFor(extension);
+
+    // Persist to B2 so this file can be re-downloaded later from the
+    // conversation, instead of only existing as this one response's
+    // base64 payload. Best-effort: if it fails, the person still gets
+    // their file this one time via the direct download below — they just
+    // won't be able to re-fetch it after a page reload.
+    let fileId;
+    if (conversationId) {
+      try {
+        const saved = await saveGeneratedFileToB2(env, identity.uid, conversationId, filename, mimeType, fileBase64);
+        fileId = saved.fileId;
+      } catch (e) {
+        console.error('[document] could not persist generated file to storage:', e.message);
+      }
+    }
+
     return new Response(JSON.stringify({
       format,
-      filename: filenameBase + '.' + extension,
+      filename,
       content: fileBase64,
+      fileId: fileId || undefined,
+      conversationId: fileId ? conversationId : undefined,
       degraded: generationDegraded || undefined,
     }), {
       status: 200,
@@ -143,6 +172,12 @@ export async function handleDocumentRequest(request, env) {
       headers: _corsJsonHeaders(),
     });
   }
+}
+
+function _mimeTypeFor(extension) {
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
 // Parses the model's JSON response into { structured: { title, sections }, degraded }.
