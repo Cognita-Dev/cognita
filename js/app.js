@@ -73,6 +73,7 @@ let pendingAttachments = [];
 let currentAccountPlanId = null;
 let currentAccountHasVision = false;
 let currentAccountHasDocExport = false;
+let currentAccountChatTiers = ['fast'];
 let visualKind = 'diagram';
 let documentDocType = 'letter';
 let documentFormat = 'docx';
@@ -136,6 +137,7 @@ async function refreshAccount() {
     currentAccountPlanId = data.planId;
     currentAccountHasVision = !!(data.models && data.models.vision);
     currentAccountHasDocExport = !!(data.features && data.features.documentExport);
+    currentAccountChatTiers = (data.models && Array.isArray(data.models.chat)) ? data.models.chat : ['fast'];
 
     const upgradeLink = document.getElementById('upgradeLink');
     if (data.planId !== 'studio') {
@@ -146,6 +148,10 @@ async function refreshAccount() {
     // plan. Reflect that in the attach menu so lower-plan users get a
     // clear affordance instead of a dead click.
     updateImageAttachAvailability();
+    // Same idea for the quality picker: lock out tiers the plan doesn't
+    // actually have access to, instead of letting the person pick one
+    // and silently get a lower tier back with no explanation.
+    updateQualityPickerAvailability();
   } catch (e) {
     console.error('[app] Could not load account:', e.message);
   }
@@ -159,6 +165,28 @@ function updateImageAttachAvailability() {
       ? 'Generate a realistic illustration'
       : 'Realistic illustrations are available on Cognita Plus and above';
   }
+}
+
+// Maps a quality-picker option's data-quality value to the internal tier
+// key used by entitlements.js / the backend, so availability can be
+// checked against the plan's actual allowed chat tiers.
+function _tierKeyForQuality(quality) {
+  if (quality === 'thorough') return 'reasoning';
+  if (quality === 'advanced') return 'advanced';
+  return 'fast';
+}
+
+// Locks out quality-picker options the current plan isn't entitled to,
+// so the person can never successfully select a tier they don't have —
+// instead of picking one and silently getting a lower tier back with no
+// explanation.
+function updateQualityPickerAvailability() {
+  document.querySelectorAll('.quality-picker-option').forEach((opt) => {
+    const tierKey = _tierKeyForQuality(opt.dataset.quality);
+    const entitled = currentAccountChatTiers.includes(tierKey);
+    opt.classList.toggle('is-locked', !entitled);
+    opt.title = entitled ? '' : 'This quality level requires a higher Cognita plan.';
+  });
 }
 
 async function refreshUsage() {
@@ -642,6 +670,13 @@ function wireQualityPicker() {
   options.forEach((opt) => {
     opt.addEventListener('click', (e) => {
       e.stopPropagation();
+      const tierKey = _tierKeyForQuality(opt.dataset.quality);
+      if (!currentAccountChatTiers.includes(tierKey)) {
+        showToast('This quality level requires a higher Cognita plan. Upgrade to unlock it.');
+        menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+        return;
+      }
       setQuality(opt.dataset.quality);
       menu.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
