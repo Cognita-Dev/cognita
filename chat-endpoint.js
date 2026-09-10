@@ -18,15 +18,17 @@ import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision } fr
 import { callWithFallback, callVisionModel } from './providers.js';
 
 const MAX_IMAGES_PER_REQUEST = 4;
-// Workers AI free tier caps request payload size; keep a conservative
-// per-image ceiling so one huge photo can't blow the daily neuron budget
-// or the request body limit on its own. Also respect the plan's own
-// maxFileSizeMB where it's smaller.
 const HARD_MAX_IMAGE_BASE64_CHARS = 8_000_000; // ~6MB decoded, absolute ceiling
 
-// Built fresh per-request so "today" is always accurate.
-function _systemPrompt() {
+// Built fresh per-request so "today" is always accurate. userFirstName is
+// read from the caller's own verified security token (see
+// auth-middleware.js) — it is never taken from anything the frontend
+// sends directly, so it can't be spoofed.
+function _systemPrompt(userFirstName) {
   const today = new Date().toISOString().slice(0, 10);
+  const addressLine = userFirstName
+    ? 'The user\'s first name is ' + userFirstName + '. Address them by name occasionally where it feels natural and warm, but not in every single reply, and otherwise refer to them as the user or the client. '
+    : 'Address the person you are helping as the user, the client, or whatever term is most appropriate for the context. ';
   return (
     'You are Cognita, an AI assistant created by the Cognita team. You help ' +
     'with professional writing, academic work, document preparation, research, ' +
@@ -55,8 +57,7 @@ function _systemPrompt() {
     'reasoning as if you are working out the answer naturally, not describing ' +
     'a task you were given. Always use first-person singular ("I") when ' +
     'referring to yourself in reasoning or output; never use "we". ' +
-    'Address the person you are helping as the user, the client, or whatever ' +
-    'term is most appropriate for the context. ' +
+    addressLine +
     'If asked about your origin, creator, architecture, model name, training ' +
     'data, or who built you, always say you were created by the Cognita team. ' +
     'Never mention OpenAI, ChatGPT, Claude, Groq, Open Router, Workers AI, ' +
@@ -67,17 +68,12 @@ function _systemPrompt() {
   );
 }
 
-// Maps a user-facing "quality" hint to an internal model tier name.
-// This is the only vocabulary the frontend is allowed to use — it has no
-// way to name a tier, provider, or model directly.
 function _tierForQualityHint(hint) {
   if (hint === 'thorough') return 'reasoning';
   if (hint === 'advanced') return 'advanced';
   return 'fast';
 }
 
-// Some reasoning models wrap their chain of thought in <think>...</think>
-// inside the main text instead of a separate field. Split it out if present.
 function _extractThinking(text) {
   if (!text) return { thinking: null, reply: text || '' };
   const match = text.match(/<think>([\s\S]*?)<\/think>/i);
@@ -96,7 +92,7 @@ function _validateImages(images, plan) {
 
   const maxCharsForPlan = Math.min(
     HARD_MAX_IMAGE_BASE64_CHARS,
-    Math.floor((plan.limits.maxFileSizeMB || 5) * 1024 * 1024 * 1.37) // base64 overhead
+    Math.floor((plan.limits.maxFileSizeMB || 5) * 1024 * 1024 * 1.37)
   );
 
   for (const img of images) {
@@ -111,6 +107,17 @@ function _validateImages(images, plan) {
     }
   }
   return { ok: true, images };
+}
+
+// Pulls a usable first name out of the verified token's "name" claim.
+// This claim is populated by Firebase itself (from the Google profile,
+// or from updateProfile() on sign-up) — never from anything the request
+// body contains — so there is nothing here for a client to spoof.
+function _firstNameFromClaims(claims) {
+  const raw = claims && claims.name ? String(claims.name).trim() : '';
+  if (!raw) return null;
+  const first = raw.split(/\s+/)[0];
+  return first || null;
 }
 
 export async function handleChatRequest(request, env) {
@@ -186,13 +193,7 @@ export async function handleChatRequest(request, env) {
   }
 
   // 6) Resolve requested "quality" against what the plan is actually
-  //    entitled to. NEVER silently downgrade to a lower tier and pretend
-  //    the request succeeded — if the plan doesn't have the requested
-  //    tier, or has used up today's allowance for it, tell the person
-  //    plainly instead of quietly serving a cheaper model.
-  //    Images always override quality: the only free model in this stack
-  //    that can see images is the Workers AI vision model, so any request
-  //    with images always routes there regardless of the quality hint.
+  //    entitled to.
   const requestedTier = _tierForQualityHint(body.quality);
   let actualTier = 'fast';
 
@@ -207,10 +208,6 @@ export async function handleChatRequest(request, env) {
     }
 
     if (requestedTier !== 'fast') {
-      // Richer text tiers spend from the advanced-model daily allowance.
-      // Once used up for today, tell the person explicitly rather than
-      // silently serving a lower-tier response labeled as if it were
-      // the tier they asked for.
       const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
       if (!advQuota.allowed) {
         return _jsonError(
@@ -225,16 +222,19 @@ export async function handleChatRequest(request, env) {
   }
 
   // 7) Trim history to what the plan allows, and prepend the system prompt.
+  //    The person's first name (if we have one) comes from their verified
+  //    token claims — see _firstNameFromClaims — so it lets the AI greet
+  //    them naturally without any extra database lookups.
+  const userFirstName = _firstNameFromClaims(identity.claims);
+
   const trimmedHistory = history
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .slice(-plan.limits.maxContextMessages)
-    .map(m => ({ role: m.role, content: m.content })); // strip any extra client-side fields
+    .map(m => ({ role: m.role, content: m.content }));
 
-  const messages = [{ role: 'system', content: _systemPrompt() }, ...trimmedHistory];
+  const messages = [{ role: 'system', content: _systemPrompt(userFirstName) }, ...trimmedHistory];
 
-  // 8) Call the model — vision path if images were attached, otherwise the
-  //    normal tiered text path with built-in fallback. Provider details
-  //    never leave this function.
+  // 8) Call the model.
   let result;
   try {
     if (hasImages) {
