@@ -55,7 +55,7 @@ const RECONCILE_THROTTLE_MS = 60000; // don't hit B2's list endpoint more than o
 let _lastReconcileAt = 0;
 
 let currentQuality = 'standard';
-let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...] }
+let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...], documentFile?: {...} }
 let conversationMeta = [];
 let currentConversationId = null;
 let isSending = false;
@@ -253,6 +253,19 @@ function saveAllConversations(list) {
 
 function makeConversationId() {
   return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+}
+
+// Ensures a conversation id exists before an action that needs one to
+// scope server-side data (e.g. generating a document that should be
+// retrievable later). Does NOT persist anything by itself — the caller
+// still needs to trigger persistCurrentConversation() once there's an
+// actual message to save, same as before. This just avoids generating a
+// document against a null id and losing the ability to re-fetch it.
+function ensureConversationId() {
+  if (!currentConversationId) {
+    currentConversationId = makeConversationId();
+  }
+  return currentConversationId;
 }
 
 function loadPendingDeletes() {
@@ -1141,6 +1154,7 @@ function renderConversation() {
   list.innerHTML = conversation.map(renderMessage).join('');
   scrollToBottom();
   wireMessageActionButtons();
+  wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
   renderMathInElement(list);
 }
@@ -1204,6 +1218,25 @@ function renderMessage(msg, index) {
       '</div>';
   }
 
+  // Generated document (docx/pdf/pptx) attached to this assistant message.
+  // Rendered as a chip that re-fetches the actual bytes on click, via
+  // wireDocumentDownloadButtons — this is what makes the file
+  // re-downloadable after a reload, unlike a one-time blob URL.
+  let documentFileHtml = '';
+  if (!isUser && msg.documentFile) {
+    const df = msg.documentFile;
+    documentFileHtml =
+      '<button type="button" class="document-download-chip" ' +
+        'data-conversation-id="' + escapeHtml(df.conversationId || '') + '" ' +
+        'data-file-id="' + escapeHtml(df.fileId || '') + '" ' +
+        'data-filename="' + escapeHtml(df.filename || '') + '" ' +
+        'data-mime="' + escapeHtml(df.mimeType || '') + '">' +
+        '<i class="ph ph-file-arrow-down"></i>' +
+        '<span class="document-download-chip-name">' + escapeHtml(df.filename || 'document') + '</span>' +
+        '<span class="document-download-chip-state"></span>' +
+      '</button>';
+  }
+
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
       '<div class="message-avatar">' + avatarContent + '</div>' +
@@ -1211,6 +1244,7 @@ function renderMessage(msg, index) {
         thoughtHtml +
         attachmentsHtml +
         (msg.content ? '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' : '') +
+        documentFileHtml +
         sourcesHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
@@ -1243,6 +1277,67 @@ function wireMessageActionButtons() {
       await sendMessage(priorUserMsg.content);
     });
   });
+}
+
+// Wires the re-download chip for AI-generated documents. Each click
+// fetches the file's base64 content fresh from /api/files (authenticated,
+// scoped to the owning conversation) and triggers a real browser download
+// — this works after a reload, on another device, or days later, right
+// up until the conversation is deleted (see chat-storage.js's
+// deleteGeneratedFilesForConversation).
+function wireDocumentDownloadButtons(container) {
+  container.querySelectorAll('.document-download-chip').forEach((btn) => {
+    btn.addEventListener('click', () => downloadGeneratedFile(btn));
+  });
+}
+
+async function downloadGeneratedFile(btn) {
+  const conversationId = btn.dataset.conversationId;
+  const fileId = btn.dataset.fileId;
+  const filename = btn.dataset.filename;
+  const mimeType = btn.dataset.mime || 'application/octet-stream';
+  const stateEl = btn.querySelector('.document-download-chip-state');
+
+  if (!conversationId || !fileId || !filename) {
+    showToast('This file is no longer available for download.');
+    return;
+  }
+
+  if (btn.disabled) return;
+  btn.disabled = true;
+  if (stateEl) stateEl.innerHTML = '<i class="ph ph-spinner ph-spin"></i>';
+
+  try {
+    const url = WORKER_URL + '/api/files/' + encodeURIComponent(conversationId) +
+      '/' + encodeURIComponent(fileId) + '?filename=' + encodeURIComponent(filename);
+    const res = await window.Auth.authedFetch(url);
+    const data = await res.json();
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not download that file.');
+      return;
+    }
+
+    const byteChars = atob(data.content);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+  } catch (e) {
+    console.error('[app] Could not download generated file:', e.message);
+    showToast('Could not reach Cognita. Please try again.');
+  } finally {
+    btn.disabled = false;
+    if (stateEl) stateEl.innerHTML = '';
+  }
 }
 
 function wireCodeCopyButtons(container) {
@@ -1632,11 +1727,16 @@ function wireDocumentModal() {
 
     setModalLoading(submitBtn, true);
 
+    // A document generated in a brand-new chat still needs somewhere to
+    // be scoped for later retrieval — make sure a conversationId exists
+    // before asking the server to build (and persist) the file.
+    const conversationId = ensureConversationId();
+
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, docType: documentDocType, format: documentFormat }),
+        body: JSON.stringify({ topic, docType: documentDocType, format: documentFormat, conversationId }),
       });
 
       const data = await res.json();
@@ -1648,7 +1748,7 @@ function wireDocumentModal() {
       }
 
       modal.hidden = true;
-      insertDocumentIntoConversation(data, topic, documentDocType);
+      insertDocumentIntoConversation(data, topic, documentDocType, conversationId);
     } catch (e) {
       setModalLoading(submitBtn, false);
       showToast('Could not reach Cognita. Please try again.');
@@ -1657,35 +1757,56 @@ function wireDocumentModal() {
   });
 }
 
-function insertDocumentIntoConversation(data, topicText, docType) {
+function insertDocumentIntoConversation(data, topicText, docType, conversationId) {
   conversation.push({ role: 'user', content: 'Create a ' + docType + ' about: ' + topicText });
 
   const mimeType = EXPORT_MIME_TYPES[data.format];
 
   if (mimeType) {
-    // Decode the base64 file and trigger a real browser download rather
-    // than dumping the file's binary content anywhere in the chat.
-    const byteChars = atob(data.content);
-    const byteNumbers = new Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
-    const url = URL.createObjectURL(blob);
+    const assistantMessage = { role: 'assistant', content: '[Generated a ' + docType + ' document: ' + data.filename + ']' };
 
-    conversation.push({ role: 'assistant', content: '[Generated a ' + docType + ' document: ' + data.filename + ']' });
+    // If the server confirmed it persisted the file (fileId present),
+    // attach that metadata to the message so it travels with the
+    // conversation to B2 and survives a reload — this is what the
+    // re-download chip in renderMessage reads from. If persistence
+    // failed server-side (fileId missing), the person still gets this
+    // one-time download below, they just won't be able to re-fetch it
+    // later — flagged so it's an honest degradation, not a silent one.
+    if (data.fileId) {
+      assistantMessage.documentFile = {
+        fileId: data.fileId,
+        conversationId: data.conversationId || conversationId,
+        filename: data.filename,
+        mimeType,
+      };
+    }
+
+    conversation.push(assistantMessage);
     renderConversation();
     updateConversationTitle();
 
-    const list = document.getElementById('messageList');
-    const lastMsg = list.lastElementChild;
-    if (lastMsg) {
-      const contentEl = lastMsg.querySelector('.message-content');
-      if (contentEl) {
-        contentEl.innerHTML =
-          '<a class="document-download-chip" href="' + url + '" download="' + escapeHtml(data.filename) + '">' +
-            '<i class="ph ph-file-arrow-down"></i>' +
-            '<span>' + escapeHtml(data.filename) + '</span>' +
-          '</a>';
+    if (!data.fileId) {
+      // Fallback: no persisted copy exists, so give an immediate one-time
+      // download via a blob URL built from this response's own bytes.
+      const byteChars = atob(data.content);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+
+      const list = document.getElementById('messageList');
+      const lastMsg = list.lastElementChild;
+      if (lastMsg) {
+        const contentEl = lastMsg.querySelector('.message-content');
+        if (contentEl) {
+          contentEl.innerHTML =
+            '<a class="document-download-chip" href="' + url + '" download="' + escapeHtml(data.filename) + '">' +
+              '<i class="ph ph-file-arrow-down"></i>' +
+              '<span>' + escapeHtml(data.filename) + '</span>' +
+            '</a>';
+        }
       }
+      showToast('This file could not be saved for later — download it now before leaving this chat.');
     }
   } else {
     // Free plan: plain text only, shown directly as the reply.
