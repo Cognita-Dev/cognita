@@ -37,6 +37,7 @@ export const PLANS = {
       documentExport: true,        // docx/pdf export, basic
       prioritySupport: false,
       longContext: false,
+      designTemplates: false,
     },
   },
   plus: {
@@ -64,6 +65,7 @@ export const PLANS = {
       documentExport: true,
       prioritySupport: false,
       longContext: true,
+      designTemplates: true,
     },
   },
   studio: {
@@ -91,6 +93,7 @@ export const PLANS = {
       documentExport: true,
       prioritySupport: true,
       longContext: true,
+      designTemplates: true,
     },
   },
 };
