@@ -31,15 +31,17 @@ export async function handleAccountRequest(request, env) {
     status: account.status,
     periodEnd: account.periodEnd,
     email: identity.email,
-    // The frontend needs this to know whether to unlock image
-    // understanding / illustration generation / document export in the
-    // UI — without it, those features silently look locked for everyone
-    // regardless of plan.
+    // The frontend needs these to know exactly which features/tiers to
+    // unlock in the UI (image understanding, quality levels, document
+    // export, design templates) — without them, gating either locks
+    // everyone out or silently lets everyone in.
     models: {
       vision: plan.models.vision,
+      chat: plan.models.chat,
     },
     features: {
       documentExport: plan.features.documentExport,
+      designTemplates: plan.features.designTemplates,
     },
   }), {
     status: 200,
