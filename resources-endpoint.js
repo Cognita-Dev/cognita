@@ -2,8 +2,14 @@
 // POST /api/resources/generate
 // Frontend sends { resourceType, fields: {...} }. The Worker selects the
 // matching Recipe, generates structured content via the existing AI
-// provider plumbing, validates it, stores it in Firestore, renders a docx,
-// and uploads that docx to the dedicated Cognita Resources B2 bucket.
+// provider plumbing, validates it, stores it in Firestore, renders export
+// file(s), and uploads them to the dedicated Cognita Resources B2 bucket.
+//
+// Export format per resource type: every type gets a PDF (built from the
+// same plain-text rendering used for DOCX, so it can never drift out of
+// sync with the structured content). Additionally, "presentation" gets a
+// real .pptx instead of a .docx, since a lesson plan as a Word doc makes
+// sense but a slide deck as a Word doc does not.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
@@ -12,16 +18,18 @@ import { getPlan, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildSimpleDocx } from './docx-builder.js';
+import { buildSimplePdf } from './pdf-builder.js';
+import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
+
+// Resource types that export as a real .pptx instead of the default .docx.
+const PPTX_TYPES = new Set(['presentation']);
 
 function _makeResourceId() {
   return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-// Strips code fences if the model wraps its JSON in them anyway, then parses.
-// Returns null on failure rather than throwing, so the caller can respond
-// with a clean error instead of a 500.
 function _parseStructuredJson(text) {
   if (!text) return null;
   let clean = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
@@ -73,8 +81,6 @@ export async function handleResourceGenerate(request, env) {
 
   const plan = getPlan(account.planId);
 
-  // Resources generation is metered separately from chat, reusing the same
-  // checkAndIncrement mechanism. Limit key added to entitlements.js below.
   const quota = await checkAndIncrement(identity.uid, 'resourceGen', plan.limits.resourceGenPerDay, env);
   if (!quota.allowed) {
     return _jsonError(
@@ -85,9 +91,6 @@ export async function handleResourceGenerate(request, env) {
 
   const resourceId = _makeResourceId();
 
-  // Mark as generating immediately so the resource shows up in "My
-  // Resources" even if generation fails partway — the status field reflects
-  // the truth rather than the resource silently not existing.
   const baseDoc = {
     id: resourceId,
     ownerId: identity.uid,
@@ -115,9 +118,6 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('Could not start generation. Please try again.', 500);
   }
 
-  // Generate structured content via the existing provider plumbing —
-  // same callWithFallback used by chat/document, just a different tier
-  // and system prompt.
   const messages = [
     { role: 'system', content: recipe.systemPrompt },
     { role: 'user', content: recipe.buildUserPrompt(fields) },
@@ -145,28 +145,7 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('The generated resource did not meet quality checks. Please try again.', 503);
   }
 
-  // Render + upload the docx export.
-  let fileReferences = {};
-  try {
-    const plainText = recipe.toPlainTextParagraphs(structuredContent);
-    const docxBase64 = await buildSimpleDocx(plainText, structuredContent.title || baseDoc.title);
-    const docxBytes = _base64ToBytes(docxBase64);
-    const key = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
-
-    const uploadResult = await b2UploadFile(
-      env,
-      key,
-      docxBytes,
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    );
-
-    fileReferences.docx = { key, fileId: uploadResult.fileId };
-  } catch (e) {
-    // The structured resource is still valid and saved even if the export
-    // upload fails — we don't fail the whole generation over a storage
-    // hiccup. Export can be retried later without regenerating content.
-    console.error('[resources] docx export/upload failed:', e.message);
-  }
+  const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, env);
 
   const finalDoc = {
     ...baseDoc,
@@ -195,6 +174,63 @@ export async function handleResourceGenerate(request, env) {
   });
 }
 
+// Renders + uploads every export format applicable to this recipe. Never
+// throws — a failed export upload is logged and simply omitted from
+// fileReferences, since the structured resource itself is still valid and
+// saved even if a file render/upload hiccups.
+async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, env) {
+  const fileReferences = {};
+  const plainText = recipe.toPlainTextParagraphs(structuredContent);
+  const title = structuredContent.title || baseDoc.title;
+
+  // PDF — built for every resource type.
+  try {
+    const pdfBase64 = await buildSimplePdf(plainText, title);
+    const pdfBytes = _base64ToBytes(pdfBase64);
+    const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
+    const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
+    fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+  } catch (e) {
+    console.error('[resources] pdf export/upload failed:', e.message);
+  }
+
+  if (PPTX_TYPES.has(recipe.resourceType) && Array.isArray(structuredContent.slides)) {
+    // PPTX — presentation-type resources only.
+    try {
+      const pptxBase64 = await buildSimplePptx(structuredContent.slides, title);
+      const pptxBytes = _base64ToBytes(pptxBase64);
+      const pptxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pptx';
+      const pptxUpload = await b2UploadFile(
+        env,
+        pptxKey,
+        pptxBytes,
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      );
+      fileReferences.pptx = { key: pptxKey, fileId: pptxUpload.fileId };
+    } catch (e) {
+      console.error('[resources] pptx export/upload failed:', e.message);
+    }
+  } else {
+    // DOCX — every other resource type.
+    try {
+      const docxBase64 = await buildSimpleDocx(plainText, title);
+      const docxBytes = _base64ToBytes(docxBase64);
+      const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
+      const docxUpload = await b2UploadFile(
+        env,
+        docxKey,
+        docxBytes,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+    } catch (e) {
+      console.error('[resources] docx export/upload failed:', e.message);
+    }
+  }
+
+  return fileReferences;
+}
+
 async function _markFailed(resourceId, baseDoc, env) {
   try {
     await fsSet('resources/' + resourceId, { ...baseDoc, status: 'failed', updatedAt: new Date().toISOString() }, env);
@@ -210,10 +246,17 @@ function _base64ToBytes(base64) {
   return bytes;
 }
 
+const DOWNLOAD_CONTENT_TYPES = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pdf: 'application/pdf',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
 /**
- * POST /api/resources/:id/download
- * Returns a short-lived, scoped download URL for the resource's docx —
- * never a raw B2 URL, and only ever for a resource the requester owns.
+ * POST /api/resources/:id/download?format=docx|pdf|pptx
+ * Returns a short-lived, scoped download URL for the requested export
+ * format — never a raw B2 URL, and only ever for a resource the requester
+ * owns. Defaults to whichever format actually exists if none is specified.
  */
 export async function handleResourceDownload(request, env, resourceId) {
   let identity;
@@ -222,6 +265,9 @@ export async function handleResourceDownload(request, env, resourceId) {
   } catch (e) {
     return _jsonError('Not authenticated: ' + e.message, 401);
   }
+
+  const url = new URL(request.url);
+  const requestedFormat = url.searchParams.get('format');
 
   let doc;
   try {
@@ -233,15 +279,20 @@ export async function handleResourceDownload(request, env, resourceId) {
 
   if (!doc) return _jsonError('Resource not found.', 404);
   if (doc.ownerId !== identity.uid) return _jsonError('Not authorized to access this resource.', 403);
-  if (!doc.fileReferences || !doc.fileReferences.docx) {
+
+  const format = requestedFormat && doc.fileReferences && doc.fileReferences[requestedFormat]
+    ? requestedFormat
+    : Object.keys(doc.fileReferences || {})[0];
+
+  if (!format || !doc.fileReferences[format]) {
     return _jsonError('No export file is available for this resource yet.', 404);
   }
 
   try {
     const prefix = 'generated/' + resourceId + '/exports/';
-    const authToken = await b2GetDownloadAuthorization(env, prefix, 3600); // 1 hour
-    const url = await b2BuildPrivateDownloadUrl(env, doc.fileReferences.docx.key, authToken);
-    return new Response(JSON.stringify({ url, expiresInSeconds: 3600 }), {
+    const authToken = await b2GetDownloadAuthorization(env, prefix, 3600);
+    const downloadUrl = await b2BuildPrivateDownloadUrl(env, doc.fileReferences[format].key, authToken);
+    return new Response(JSON.stringify({ url: downloadUrl, format, expiresInSeconds: 3600 }), {
       status: 200,
       headers: _corsJsonHeaders(),
     });
