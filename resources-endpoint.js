@@ -1,21 +1,23 @@
 // resources-endpoint.js
 // POST /api/resources/generate
-// Frontend sends { resourceType, fields: {...} }. The Worker selects the
-// matching Recipe, generates structured content via the existing AI
-// provider plumbing, validates it, stores it in Firestore, renders export
-// file(s), and uploads them to the dedicated Cognita Resources B2 bucket.
+// Frontend sends { resourceType, fields: {...}, designTemplateId }. The
+// Worker selects the matching Recipe, resolves the requested design
+// template against what the user's plan actually entitles (never trusts
+// the client id directly), generates structured content via the existing
+// AI provider plumbing, validates it, stores it in Firestore, renders
+// export file(s) in the resolved template, and uploads them to the
+// dedicated Cognita Resources B2 bucket.
 //
 // Export format per resource type: every type gets a PDF and (except
 // "presentation") a DOCX, both built from a generic structured rendering
 // of the recipe's own structuredContent — real headings and bullet lists,
-// not a flattened wall of text — so output quality never depends on each
-// recipe file remembering to format itself. "presentation" gets a real
-// .pptx instead, since a slide deck as a Word doc doesn't make sense.
+// not a flattened wall of text. "presentation" gets a real .pptx instead,
+// since a slide deck as a Word doc doesn't make sense.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
-import { getPlan, MODEL_TIERS } from './entitlements.js';
+import { getPlan, planSatisfies, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildStructuredDocx } from './docx-builder.js';
@@ -23,6 +25,7 @@ import { buildStructuredPdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
+import { resolveEntitledTemplate } from './design-templates.js';
 
 // Resource types that export as a real .pptx instead of the default .docx.
 const PPTX_TYPES = new Set(['presentation']);
@@ -103,13 +106,6 @@ function _repairTruncatedJson(text) {
 // walking it the same way the frontend's renderStructuredPreview() does,
 // so every resource type gets real headings and bullet lists without
 // each recipe needing its own bespoke exporter.
-//
-//   - top-level "title" is used as the document title, not a section
-//   - an array of plain values (or objects) becomes a "bullets" section
-//     under a heading derived from the key (camelCase -> Title Case)
-//   - a string becomes a "paragraph" section under the same kind of heading
-//   - anything else (numbers, nested objects) is stringified into a
-//     single-line paragraph section
 function _structuredContentToSections(content) {
   const sections = [];
 
@@ -124,8 +120,6 @@ function _structuredContentToSections(content) {
       if (value.length === 0) continue;
       const items = value.map((item) => {
         if (item && typeof item === 'object') {
-          // e.g. a flashcard { front, back } or a slide-like object —
-          // render as "front — back" rather than a raw JSON string.
           return Object.values(item)
             .filter((v) => typeof v === 'string' || typeof v === 'number')
             .join(' — ');
@@ -188,6 +182,12 @@ export async function handleResourceGenerate(request, env) {
     );
   }
 
+  // Never trust the client's requested template id directly — resolve it
+  // against what the plan is actually entitled to. A Plus user requesting
+  // a Studio-only template silently gets the default instead of an error,
+  // matching how model-tier resolution already works elsewhere.
+  const resolvedTemplate = resolveEntitledTemplate(account.planId, body.designTemplateId, planSatisfies);
+
   const resourceId = _makeResourceId();
 
   const baseDoc = {
@@ -204,6 +204,7 @@ export async function handleResourceGenerate(request, env) {
     visibility: 'private',
     status: 'generating',
     structuredContent: null,
+    designTemplateId: resolvedTemplate.id,
     currentVersion: 1,
     fileReferences: {},
     createdAt: new Date().toISOString(),
@@ -247,7 +248,7 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('The generated resource did not meet quality checks. Please try again.', 503);
   }
 
-  const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, env);
+  const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, resolvedTemplate.id, env);
 
   const finalDoc = {
     ...baseDoc,
@@ -263,6 +264,7 @@ export async function handleResourceGenerate(request, env) {
       resourceId,
       version: 1,
       structuredContent,
+      designTemplateId: resolvedTemplate.id,
       createdAt: finalDoc.updatedAt,
     }, env);
   } catch (e) {
@@ -276,20 +278,19 @@ export async function handleResourceGenerate(request, env) {
   });
 }
 
-// Renders + uploads every export format applicable to this recipe. Never
-// throws — a failed export upload is logged and simply omitted from
-// fileReferences, since the structured resource itself is still valid and
-// saved even if a file render/upload hiccups.
-async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, env) {
+// Renders + uploads every export format applicable to this recipe, in the
+// resolved design template. Never throws — a failed export upload is
+// logged and simply omitted from fileReferences, since the structured
+// resource itself is still valid and saved even if a file render/upload
+// hiccups.
+async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, templateId, env) {
   const fileReferences = {};
   const title = structuredContent.title || baseDoc.title;
 
   if (PPTX_TYPES.has(recipe.resourceType) && Array.isArray(structuredContent.slides)) {
-    // PPTX — presentation-type resources only. Slide shape from
-    // presentation.js ({ heading, bulletPoints, ... }) already matches
-    // what pptx-builder.js expects.
+    // PPTX — presentation-type resources only.
     try {
-      const pptxBase64 = await buildSimplePptx(structuredContent.slides, title);
+      const pptxBase64 = await buildSimplePptx(structuredContent.slides, title, templateId);
       const pptxBytes = _base64ToBytes(pptxBase64);
       const pptxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pptx';
       const pptxUpload = await b2UploadFile(
@@ -311,7 +312,7 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
         type: 'bullets',
         content: Array.isArray(s.bulletPoints) ? s.bulletPoints : [String(s.bulletPoints || '')],
       }));
-      const pdfBase64 = await buildStructuredPdf({ title, sections }, title);
+      const pdfBase64 = await buildStructuredPdf({ title, sections }, title, templateId);
       const pdfBytes = _base64ToBytes(pdfBase64);
       const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
       const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
@@ -330,7 +331,7 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
   const structuredForExport = { title, sections };
 
   try {
-    const pdfBase64 = await buildStructuredPdf(structuredForExport, title);
+    const pdfBase64 = await buildStructuredPdf(structuredForExport, title, templateId);
     const pdfBytes = _base64ToBytes(pdfBase64);
     const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
     const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
