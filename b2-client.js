@@ -52,6 +52,13 @@ async function _authorize(env) {
   return _authCache;
 }
 
+// Exposes the internal auth cache to other server-side modules that need
+// to build their own download requests (e.g. chat-storage.js's binary-safe
+// generated-file download, since b2DownloadFileByName here assumes text).
+export async function b2AuthorizeForDownload(env) {
+  return _authorize(env);
+}
+
 async function _getUploadUrl(env) {
   const auth = await _authorize(env);
 
