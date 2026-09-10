@@ -35,6 +35,11 @@
     <div class="auth-divider"><span>or</span></div>
     <form id="signupForm" class="auth-form" novalidate>
       <label class="auth-field">
+        <span>What should we call you?</span>
+        <input type="text" id="fullName" autocomplete="name" required>
+        <p id="nameError" class="field-error" aria-live="polite"></p>
+      </label>
+      <label class="auth-field">
         <span>Email</span>
         <input type="email" id="email" autocomplete="email" required>
         <p id="emailError" class="field-error" aria-live="polite"></p>
@@ -76,6 +81,7 @@
   const form = document.getElementById('signupForm');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
+  const nameInput = document.getElementById('fullName');
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
   const strengthFill = document.getElementById('strengthFill');
@@ -94,6 +100,7 @@
   }
 
   const errorEls = {
+    name: document.getElementById('nameError'),
     email: document.getElementById('emailError'),
     password: document.getElementById('passwordError'),
     google: document.getElementById('googleError'),
@@ -116,12 +123,21 @@
     submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
 
+  let nameValid = false;
   let emailValid = false;
   let passwordValid = false;
 
   function updateSubmitState() {
-    submitBtn.disabled = !(emailValid && passwordValid);
+    submitBtn.disabled = !(nameValid && emailValid && passwordValid);
   }
+
+  nameInput.addEventListener('input', () => {
+    const value = nameInput.value.trim();
+    nameValid = value.length > 0;
+    nameInput.classList.toggle('is-invalid', value !== '' ? false : false);
+    errorEls.name.textContent = '';
+    updateSubmitState();
+  });
 
   emailInput.addEventListener('input', () => {
     const value = emailInput.value.trim();
@@ -158,6 +174,11 @@
       e.preventDefault();
       clearErrors();
 
+      const name = nameInput.value.trim();
+      if (!nameValid) {
+        errorEls.name.textContent = 'Tell us what to call you.';
+        return;
+      }
       if (!emailValid) {
         errorEls.email.textContent = 'Enter a valid email address.';
         return;
@@ -169,7 +190,7 @@
 
       setLoading(true);
       try {
-        await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value);
+        await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value, name);
         window.location.href = postAuthDestination;
       } catch (err) {
         showError(err);
