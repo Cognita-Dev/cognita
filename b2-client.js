@@ -86,7 +86,7 @@ async function _sha1Hex(bytes) {
  * @param {Uint8Array} data - raw file bytes
  * @param {string} contentType - MIME type, e.g.
  *   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
- * @returns {Promise<{fileId: string, fileName: string}>}
+ * @returns {Promise<{fileId: string, fileName: string, uploadTimestamp: number}>}
  */
 export async function b2UploadFile(env, key, data, contentType) {
   const { uploadUrl, authorizationToken } = await _getUploadUrl(env);
@@ -110,7 +110,10 @@ export async function b2UploadFile(env, key, data, contentType) {
   }
 
   const result = await res.json();
-  return { fileId: result.fileId, fileName: result.fileName };
+  // uploadTimestamp is B2's own server clock — used as the authoritative
+  // "as of when is this version current" for sync reconciliation, so we
+  // don't have to trust client clocks for that comparison.
+  return { fileId: result.fileId, fileName: result.fileName, uploadTimestamp: result.uploadTimestamp };
 }
 
 /**
@@ -226,4 +229,99 @@ export async function b2HideFile(env, fileName) {
   }
 
   return res.json();
+}
+
+/**
+ * Returns the latest version of every file under a prefix, keyed by
+ * fileName — including hidden (deleted) files, which b2_list_file_names
+ * would silently omit. This is what makes sync reconciliation possible:
+ * for each chat, we learn both whether it's currently live or deleted,
+ * AND the server-clock timestamp of that state, without downloading any
+ * file content just to build a listing.
+ *
+ * B2 returns versions of the same fileName newest-first within the
+ * paginated stream, so the first occurrence of a name we see is always
+ * its current state.
+ *
+ * @param {object} env
+ * @param {string} prefix - e.g. "chats/uid123/"
+ * @returns {Promise<Map<string, {action: 'upload'|'hide', uploadTimestamp: number, fileId: string}>>}
+ */
+export async function b2ListLatestVersionsByPrefix(env, prefix) {
+  const auth = await _authorize(env);
+  const latestByName = new Map();
+
+  let startFileName = prefix;
+  let startFileId = null;
+  const MAX_PAGES = 50; // defensive cap — 50k versions is far beyond any real personal chat history
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await fetch(auth.apiUrl + '/b2api/v3/b2_list_file_versions', {
+      method: 'POST',
+      headers: {
+        Authorization: auth.authorizationToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        bucketId: env.B2_BUCKET_ID,
+        prefix,
+        startFileName,
+        startFileId,
+        maxFileCount: 1000,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error('B2 list_file_versions failed (' + res.status + '): ' + text);
+    }
+
+    const data = await res.json();
+
+    for (const file of data.files) {
+      if (!latestByName.has(file.fileName)) {
+        latestByName.set(file.fileName, {
+          action: file.action, // 'upload' = live, 'hide' = deleted
+          uploadTimestamp: file.uploadTimestamp,
+          fileId: file.fileId,
+        });
+      }
+    }
+
+    if (!data.nextFileName) break;
+    startFileName = data.nextFileName;
+    startFileId = data.nextFileId;
+  }
+
+  return latestByName;
+}
+
+/**
+ * Downloads a file's raw content by its exact name/key, using the
+ * account-level auth token (server-side only — never expose this token to
+ * a client). Returns null on a 404 rather than throwing, since "not
+ * found" is an expected, non-error outcome for callers like
+ * getConversationFromB2.
+ *
+ * @param {object} env
+ * @param {string} fileName - the exact key/path used at upload time
+ * @returns {Promise<string|null>}
+ */
+export async function b2DownloadFileByName(env, fileName) {
+  const auth = await _authorize(env);
+  const url = auth.downloadUrl + '/file/' + env.B2_BUCKET_NAME + '/' +
+    encodeURIComponent(fileName).replace(/%2F/g, '/');
+
+  const res = await fetch(url, {
+    headers: { Authorization: auth.authorizationToken },
+  });
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error('B2 download failed (' + res.status + '): ' + text);
+  }
+
+  return res.text();
 }
