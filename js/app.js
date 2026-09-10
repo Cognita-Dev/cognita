@@ -42,6 +42,14 @@ const DOC_FILE_RE = /\.doc$/i; // legacy .doc — mammoth can't read this, flagg
 // note that it was trimmed rather than silently truncating.
 const MAX_EXTRACTED_CHARS = 40000;
 
+// Mime types for AI-generated document downloads, keyed by the "format"
+// the /api/document endpoint returns. Kept in sync with document-endpoint.js.
+const EXPORT_MIME_TYPES = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pdf: 'application/pdf',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...] }
 let conversationMeta = [];
@@ -63,6 +71,7 @@ let currentAccountHasVision = false;
 let currentAccountHasDocExport = false;
 let visualKind = 'diagram';
 let documentDocType = 'letter';
+let documentFormat = 'docx';
 
 const THINKING_WORDS = [
   'Thinking',
@@ -184,7 +193,8 @@ function updateConversationTitle() {
 }
 
 /* ════════════════════════════════════════════════════════
-   CHAT HISTORY (persisted client-side in localStorage)
+   CHAT HISTORY (persisted client-side in localStorage, mirrored to
+   Backblaze B2 server-side so it isn't lost if local storage is cleared)
 ════════════════════════════════════════════════════════ */
 
 function loadAllConversations() {
@@ -208,6 +218,34 @@ function saveAllConversations(list) {
 
 function makeConversationId() {
   return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+}
+
+// Best-effort mirror of a conversation to B2. Never blocks the UI and
+// never surfaces errors to the user — if this fails, localStorage is
+// still the source of truth for the current session.
+async function syncConversationToB2(entry) {
+  try {
+    await window.Auth.authedFetch(WORKER_URL + '/api/chat/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: entry.id, conversation: entry }),
+    });
+  } catch (e) {
+    console.error('[app] Could not sync conversation to storage:', e.message);
+  }
+}
+
+// Best-effort mirror of a sidebar delete to B2.
+async function deleteConversationFromB2(conversationId) {
+  try {
+    await window.Auth.authedFetch(WORKER_URL + '/api/chat/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId }),
+    });
+  } catch (e) {
+    console.error('[app] Could not delete conversation from storage:', e.message);
+  }
 }
 
 // Called after every completed exchange so the sidebar and title always
@@ -239,6 +277,7 @@ function persistCurrentConversation() {
 
   saveAllConversations(all);
   renderSidebarHistory();
+  syncConversationToB2(entry);
 }
 
 function renderSidebarHistory() {
@@ -290,6 +329,7 @@ function loadConversation(id) {
 function deleteConversation(id) {
   const all = loadAllConversations().filter((c) => c.id !== id);
   saveAllConversations(all);
+  deleteConversationFromB2(id);
 
   if (id === currentConversationId) {
     currentConversationId = null;
@@ -1303,9 +1343,12 @@ function openDocumentModal() {
   const modal = document.getElementById('documentModal');
   const topicInput = document.getElementById('documentTopicInput');
   const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
+  const formatOptions = document.querySelectorAll('#documentFormatToggle .visual-type-option');
 
   documentDocType = 'letter';
+  documentFormat = 'docx';
   typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.doctype === documentDocType));
+  formatOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.format === documentFormat));
 
   modal.hidden = false;
   topicInput.value = '';
@@ -1318,6 +1361,7 @@ function wireDocumentModal() {
   const submitBtn = document.getElementById('documentSubmitBtn');
   const topicInput = document.getElementById('documentTopicInput');
   const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
+  const formatOptions = document.querySelectorAll('#documentFormatToggle .visual-type-option');
 
   closeBtn.addEventListener('click', () => { modal.hidden = true; });
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
@@ -1327,6 +1371,14 @@ function wireDocumentModal() {
       typeOptions.forEach((b) => b.classList.remove('is-active'));
       btn.classList.add('is-active');
       documentDocType = btn.dataset.doctype;
+    });
+  });
+
+  formatOptions.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      formatOptions.forEach((b) => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      documentFormat = btn.dataset.format;
     });
   });
 
@@ -1340,7 +1392,7 @@ function wireDocumentModal() {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, docType: documentDocType }),
+        body: JSON.stringify({ topic, docType: documentDocType, format: documentFormat }),
       });
 
       const data = await res.json();
@@ -1364,15 +1416,15 @@ function wireDocumentModal() {
 function insertDocumentIntoConversation(data, topicText, docType) {
   conversation.push({ role: 'user', content: 'Create a ' + docType + ' about: ' + topicText });
 
-  if (data.format === 'docx') {
-    // Decode the base64 .docx and trigger a real browser download rather
+  const mimeType = EXPORT_MIME_TYPES[data.format];
+
+  if (mimeType) {
+    // Decode the base64 file and trigger a real browser download rather
     // than dumping the file's binary content anywhere in the chat.
     const byteChars = atob(data.content);
     const byteNumbers = new Array(byteChars.length);
     for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-    const blob = new Blob([new Uint8Array(byteNumbers)], {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    });
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
     const url = URL.createObjectURL(blob);
 
     conversation.push({ role: 'assistant', content: '[Generated a ' + docType + ' document: ' + data.filename + ']' });
