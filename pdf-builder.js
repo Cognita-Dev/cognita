@@ -154,3 +154,121 @@ export async function buildSimplePdf(content, title) {
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
+
+/* ── Structured builder — used by document-endpoint.js. Adds a second,
+   bold font resource so headings can actually look like headings, and
+   builds each line with a bold/plain flag instead of assuming everything
+   is one plain paragraph run. ── */
+
+function _structuredToLines(structured, title) {
+  const lines = [];
+  lines.push({ text: title, bold: true });
+  lines.push({ text: '', bold: false });
+
+  structured.sections.forEach((s) => {
+    if (s.heading) {
+      lines.push({ text: s.heading, bold: true });
+    }
+    if (s.type === 'bullets') {
+      s.content.forEach((item) => {
+        _wrapLine('• ' + item, MAX_CHARS_PER_LINE).forEach((l) => lines.push({ text: l, bold: false }));
+      });
+    } else if (s.content && s.content.trim()) {
+      _wrapLine(s.content, MAX_CHARS_PER_LINE).forEach((l) => lines.push({ text: l, bold: false }));
+    }
+    lines.push({ text: '', bold: false });
+  });
+
+  return lines;
+}
+
+function _chunkLinesIntoPages(lines) {
+  const pages = [];
+  for (let i = 0; i < lines.length; i += LINES_PER_PAGE) {
+    pages.push(lines.slice(i, i + LINES_PER_PAGE));
+  }
+  return pages.length ? pages : [[]];
+}
+
+function _buildStructuredContentStream(pageLines) {
+  let stream = 'BT\n' + LINE_HEIGHT + ' TL\n' + MARGIN + ' ' + (PAGE_HEIGHT - MARGIN) + ' Td\n';
+
+  pageLines.forEach((line, i) => {
+    if (i > 0) stream += 'T*\n';
+    const font = line.bold ? '/F2' : '/F1';
+    stream += font + ' ' + FONT_SIZE + ' Tf\n';
+    stream += '(' + _escapePdfText(line.text) + ') Tj\n';
+  });
+
+  stream += 'ET';
+  return stream;
+}
+
+/**
+ * Builds a .pdf file from the structured { title, sections } shape used by
+ * the document-generation endpoint. Headings render bold; "bullets"
+ * sections render as a bullet-prefixed list; "paragraph" sections render
+ * as wrapped plain text. Returns a base64 string.
+ *
+ * @param {{title: string, sections: Array<{heading: string, type: 'paragraph'|'bullets', content: string|string[]}>}} structured
+ * @param {string} title
+ */
+export async function buildStructuredPdf(structured, title) {
+  const lines = _structuredToLines(structured, title);
+  const pages = _chunkLinesIntoPages(lines);
+
+  // Object numbering: 1 = Catalog, 2 = Pages, 3 = Font (regular), 4 = Font (bold).
+  // For page i (0-indexed): content stream = 5 + 2*i, page object = 6 + 2*i.
+  const pageObjectIds = pages.map((_, i) => 6 + 2 * i);
+  const contentObjectIds = pages.map((_, i) => 5 + 2 * i);
+  const maxId = 6 + 2 * (pages.length - 1);
+
+  const objects = new Map();
+  objects.set(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  const kids = pageObjectIds.map((id) => id + ' 0 R').join(' ');
+  objects.set(2, '<< /Type /Pages /Kids [ ' + kids + ' ] /Count ' + pages.length + ' >>');
+  objects.set(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  objects.set(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+
+  pages.forEach((pageLines, i) => {
+    const stream = _buildStructuredContentStream(pageLines);
+    const streamBytes = ENCODER.encode(stream);
+    objects.set(contentObjectIds[i], '<< /Length ' + streamBytes.length + ' >>\nstream\n' + stream + '\nendstream');
+    objects.set(pageObjectIds[i],
+      '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> ' +
+      '/MediaBox [0 0 ' + PAGE_WIDTH + ' ' + PAGE_HEIGHT + '] /Contents ' + contentObjectIds[i] + ' 0 R >>'
+    );
+  });
+
+  let out = '%PDF-1.4\n';
+  const offsets = new Map();
+
+  for (let id = 1; id <= maxId; id++) {
+    if (!objects.has(id)) continue;
+    offsets.set(id, ENCODER.encode(out).length);
+    out += id + ' 0 obj\n' + objects.get(id) + '\nendobj\n';
+  }
+
+  const xrefOffset = ENCODER.encode(out).length;
+  const sortedIds = [...offsets.keys()].sort((a, b) => a - b);
+  const highestId = sortedIds[sortedIds.length - 1];
+
+  let xref = 'xref\n0 ' + (highestId + 1) + '\n0000000000 65535 f \n';
+  for (let id = 1; id <= highestId; id++) {
+    const offset = offsets.get(id);
+    if (offset === undefined) {
+      xref += '0000000000 00000 f \n';
+    } else {
+      xref += String(offset).padStart(10, '0') + ' 00000 n \n';
+    }
+  }
+
+  out += xref;
+  out += 'trailer\n<< /Size ' + (highestId + 1) + ' /Root 1 0 R >>\n';
+  out += 'startxref\n' + xrefOffset + '\n%%EOF';
+
+  const bytes = ENCODER.encode(out);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
