@@ -13,6 +13,7 @@ import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
+import { handleFilesList, handleFileGet } from './files-endpoint.js';
 
 
 function _corsPreflight() {
@@ -78,6 +79,22 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/document') {
       return handleDocumentRequest(request, env);
+    }
+
+    // GET /api/files/:conversationId  -> list generated files for that chat
+    if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
+      const conversationId = url.pathname.split('/')[3];
+      return handleFilesList(request, env, conversationId);
+    }
+
+    // GET /api/files/:conversationId/:fileId?filename=... -> fetch one file's content.
+    // Must come after the single-segment check above, since both match a
+    // "/api/files/<segment>..." shape.
+    if (request.method === 'GET' && /^\/api\/files\/[^/]+\/[^/]+$/.test(url.pathname)) {
+      const parts = url.pathname.split('/');
+      const conversationId = parts[3];
+      const fileId = parts[4];
+      return handleFileGet(request, env, conversationId, fileId);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/resources/generate') {
