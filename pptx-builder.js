@@ -3,18 +3,23 @@
 // (heading + bullet points per slide). Same hand-written-ZIP approach as
 // docx-builder.js — no external library, stored/uncompressed entries.
 //
-// Design system (matches pdf-builder.js's accent color so docx/pdf/pptx
-// exports feel like one product): a thin accent-green top bar and
-// underline rule on every content slide, accent-colored bullet markers,
-// dark ink body text, a small slide-number footer, and PowerPoint's own
-// normAutofit so a slide with more content than fits shrinks itself
-// instead of overflowing. A slide with no bullet points (used for a
-// document's title page — see document-endpoint.js's
-// _structuredToSlides) renders as a distinct centered title slide instead
-// of an empty content slide.
+// Design: driven by a design-templates.js template (palette + a theme
+// typeface name — PowerPoint substitutes fonts it doesn't have installed,
+// so no embedding is needed), selected per-resource by
+// resources-endpoint.js and passed in as a templateId. Falls back to the
+// 'classic' template if none is given, so document-endpoint.js's existing
+// calls keep working unchanged. The chosen typeface is set once in the
+// theme's font scheme (major/minor font) rather than per text run, so it
+// applies automatically to every placeholder.
+//
+// A slide with no bullet points (used for a document's title page — see
+// document-endpoint.js's _structuredToSlides) renders as a distinct
+// centered title slide instead of an empty content slide.
 //
 // Speaker notes and custom design beyond this are intentionally out of
 // scope — flagging that honestly rather than faking it.
+
+import { getTemplate, getDefaultTemplate } from './design-templates.js';
 
 const ENCODER = new TextEncoder();
 
@@ -92,14 +97,14 @@ function _xmlEscape(str) {
     .replace(/'/g, '&apos;');
 }
 
-/* ── Design tokens (kept as plain hex so they read the same as
-   pdf-builder.js's accent, and match the theme's accent1 below) ── */
-const ACCENT_HEX = '3F6B5B';
-const ACCENT_SOFT_HEX = '8DB7A5';
-const INK_HEX = '171717';
-const MUTED_HEX = '8C8C86';
+/* ── Template resolution ── */
+function _resolveTheme(templateId) {
+  const template = getTemplate(templateId) || getDefaultTemplate();
+  return { colors: template.colors, font: template.pptxFont };
+}
 
-/* ── Static OOXML parts that don't vary per-deck ── */
+/* ── Static OOXML parts that don't vary per-deck (except theme, which
+   now takes the resolved colors + font) ── */
 
 function _contentTypesXml(slideCount) {
   const slideOverrides = Array.from({ length: slideCount }, (_, i) =>
@@ -193,31 +198,29 @@ function _slideLayoutRelsXml() {
     '</Relationships>';
 }
 
-function _themeXml() {
-  // Minimal valid theme — a real design theme would define fonts/colors in
-  // depth, but PowerPoint accepts this abbreviated form without error.
-  // accent1 here is the same green used as pdf-builder.js's ACCENT, so
-  // exports across formats read as one visual identity.
+function _themeXml(theme) {
+  const c = theme.colors;
+  const font = _xmlEscape(theme.font);
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Cognita">' +
     '<a:themeElements>' +
     '<a:clrScheme name="Cognita">' +
     '<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>' +
     '<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>' +
-    '<a:dk2><a:srgbClr val="171717"/></a:dk2>' +
+    '<a:dk2><a:srgbClr val="' + c.ink + '"/></a:dk2>' +
     '<a:lt2><a:srgbClr val="F7F7F5"/></a:lt2>' +
-    '<a:accent1><a:srgbClr val="3F6B5B"/></a:accent1>' +
-    '<a:accent2><a:srgbClr val="8DB7A5"/></a:accent2>' +
-    '<a:accent3><a:srgbClr val="6F6F6A"/></a:accent3>' +
-    '<a:accent4><a:srgbClr val="8C8C86"/></a:accent4>' +
-    '<a:accent5><a:srgbClr val="B4B4AE"/></a:accent5>' +
-    '<a:accent6><a:srgbClr val="365D4F"/></a:accent6>' +
-    '<a:hlink><a:srgbClr val="3F6B5B"/></a:hlink>' +
-    '<a:folHlink><a:srgbClr val="365D4F"/></a:folHlink>' +
+    '<a:accent1><a:srgbClr val="' + c.accent + '"/></a:accent1>' +
+    '<a:accent2><a:srgbClr val="' + c.accentSoft + '"/></a:accent2>' +
+    '<a:accent3><a:srgbClr val="' + c.muted + '"/></a:accent3>' +
+    '<a:accent4><a:srgbClr val="' + c.muted + '"/></a:accent4>' +
+    '<a:accent5><a:srgbClr val="' + c.rule + '"/></a:accent5>' +
+    '<a:accent6><a:srgbClr val="' + c.accent + '"/></a:accent6>' +
+    '<a:hlink><a:srgbClr val="' + c.accent + '"/></a:hlink>' +
+    '<a:folHlink><a:srgbClr val="' + c.accent + '"/></a:folHlink>' +
     '</a:clrScheme>' +
     '<a:fontScheme name="Cognita">' +
-    '<a:majorFont><a:latin typeface="Calibri"/></a:majorFont>' +
-    '<a:minorFont><a:latin typeface="Calibri"/></a:minorFont>' +
+    '<a:majorFont><a:latin typeface="' + font + '"/></a:majorFont>' +
+    '<a:minorFont><a:latin typeface="' + font + '"/></a:minorFont>' +
     '</a:fontScheme>' +
     '<a:fmtScheme name="Cognita">' +
     '<a:fillStyleLst><a:solidFill><a:schemeClr val="accent1"/></a:solidFill>' +
@@ -255,9 +258,9 @@ function _rectShapeXml(id, name, x, y, cx, cy, fillHex) {
     '<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody></p:sp>';
 }
 
-function _titleSlideXml(slide) {
+function _titleSlideXml(slide, colors) {
   const titleRun =
-    '<a:r><a:rPr lang="en-US" b="1" sz="4000" dirty="0"><a:solidFill><a:srgbClr val="' + INK_HEX + '"/></a:solidFill></a:rPr>' +
+    '<a:r><a:rPr lang="en-US" b="1" sz="4000" dirty="0"><a:solidFill><a:srgbClr val="' + colors.ink + '"/></a:solidFill></a:rPr>' +
     '<a:t>' + _xmlEscape(slide.heading || '') + '</a:t></a:r>';
 
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -274,22 +277,22 @@ function _titleSlideXml(slide) {
     '<p:spPr><a:xfrm><a:off x="857250" y="2514600"/><a:ext cx="10477500" cy="1143000"/></a:xfrm></p:spPr>' +
     '<p:txBody><a:bodyPr anchor="b"/><a:lstStyle/><a:p><a:pPr algn="ctr"/>' + titleRun + '</a:p></p:txBody></p:sp>' +
 
-    _rectShapeXml(3, 'Rule', 5486400, 3886200, 1219200, 38100, ACCENT_HEX) +
+    _rectShapeXml(3, 'Rule', 5486400, 3886200, 1219200, 38100, colors.accent) +
 
     '</p:spTree></p:cSld>' +
     '</p:sld>';
 }
 
-function _contentSlideXml(slide, slideIndex, slideCount) {
+function _contentSlideXml(slide, slideIndex, slideCount, colors) {
   const titleRun =
-    '<a:r><a:rPr lang="en-US" b="1" sz="2800" dirty="0"><a:solidFill><a:srgbClr val="' + INK_HEX + '"/></a:solidFill></a:rPr>' +
+    '<a:r><a:rPr lang="en-US" b="1" sz="2800" dirty="0"><a:solidFill><a:srgbClr val="' + colors.ink + '"/></a:solidFill></a:rPr>' +
     '<a:t>' + _xmlEscape(slide.heading || '') + '</a:t></a:r>';
 
   const bulletParagraphs = (slide.bulletPoints || []).map((point) =>
     '<a:p><a:pPr marL="342900" indent="-342900">' +
-    '<a:buFont typeface="Arial"/><a:buClr><a:srgbClr val="' + ACCENT_SOFT_HEX + '"/></a:buClr><a:buChar char="&#8226;"/>' +
+    '<a:buFont typeface="Arial"/><a:buClr><a:srgbClr val="' + colors.accentSoft + '"/></a:buClr><a:buChar char="&#8226;"/>' +
     '</a:pPr>' +
-    '<a:r><a:rPr lang="en-US" sz="1800" dirty="0"><a:solidFill><a:srgbClr val="' + INK_HEX + '"/></a:solidFill></a:rPr>' +
+    '<a:r><a:rPr lang="en-US" sz="1800" dirty="0"><a:solidFill><a:srgbClr val="' + colors.ink + '"/></a:solidFill></a:rPr>' +
     '<a:t>' + _xmlEscape(point) + '</a:t></a:r></a:p>'
   ).join('');
 
@@ -304,7 +307,7 @@ function _contentSlideXml(slide, slideIndex, slideCount) {
 
     // Thin accent bar along the top edge — the deck's one recurring
     // design accent, kept deliberately minimal.
-    _rectShapeXml(2, 'AccentBar', 0, 0, 12192000, 91440, ACCENT_HEX) +
+    _rectShapeXml(2, 'AccentBar', 0, 0, 12192000, 91440, colors.accent) +
 
     // Title.
     '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>' +
@@ -313,7 +316,7 @@ function _contentSlideXml(slide, slideIndex, slideCount) {
     '<p:txBody><a:bodyPr/><a:lstStyle/><a:p>' + titleRun + '</a:p></p:txBody></p:sp>' +
 
     // Rule under the title.
-    _rectShapeXml(4, 'Rule', 685800, 1287780, 762000, 28575, ACCENT_HEX) +
+    _rectShapeXml(4, 'Rule', 685800, 1287780, 762000, 28575, colors.accent) +
 
     // Body — bullet list, auto-shrinks via PowerPoint's own normAutofit
     // if a slide runs longer than the box, instead of overflowing.
@@ -326,15 +329,15 @@ function _contentSlideXml(slide, slideIndex, slideCount) {
     '<p:sp><p:nvSpPr><p:cNvPr id="6" name="PageNumber"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>' +
     '<p:spPr><a:xfrm><a:off x="11125200" y="6400800"/><a:ext cx="800100" cy="365760"/></a:xfrm></p:spPr>' +
     '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="r"/>' +
-    '<a:r><a:rPr lang="en-US" sz="1000" dirty="0"><a:solidFill><a:srgbClr val="' + MUTED_HEX + '"/></a:solidFill></a:rPr>' +
+    '<a:r><a:rPr lang="en-US" sz="1000" dirty="0"><a:solidFill><a:srgbClr val="' + colors.muted + '"/></a:solidFill></a:rPr>' +
     '<a:t>' + _xmlEscape(pageLabel) + '</a:t></a:r></a:p></p:txBody></p:sp>' +
 
     '</p:spTree></p:cSld>' +
     '</p:sld>';
 }
 
-function _slideXml(slide, slideIndex, slideCount) {
-  return _isTitleSlide(slide) ? _titleSlideXml(slide) : _contentSlideXml(slide, slideIndex, slideCount);
+function _slideXml(slide, slideIndex, slideCount, colors) {
+  return _isTitleSlide(slide) ? _titleSlideXml(slide, colors) : _contentSlideXml(slide, slideIndex, slideCount, colors);
 }
 
 function _slideRelsXml() {
@@ -345,7 +348,8 @@ function _slideRelsXml() {
 }
 
 /**
- * Builds a designed .pptx file from a slide array.
+ * Builds a designed .pptx file from a slide array, in the given design
+ * template's palette and typeface.
  * Returns a base64 string ready to send to the frontend for download.
  *
  * @param {Array<{heading: string, bulletPoints: string[]}>} slides - a
@@ -354,8 +358,12 @@ function _slideRelsXml() {
  *   (accent top bar, title, rule, bulleted body, slide number).
  * @param {string} title - used only for the file's internal naming; not
  *   rendered as its own slide (the caller's first slide should carry the title).
+ * @param {string} [templateId] - a design-templates.js id; defaults to
+ *   'classic' if omitted or unrecognized. Callers are responsible for
+ *   entitlement-checking the id before passing it in.
  */
-export async function buildSimplePptx(slides, title) {
+export async function buildSimplePptx(slides, title, templateId) {
+  const theme = _resolveTheme(templateId);
   const slideCount = slides.length;
 
   const files = [
@@ -367,11 +375,11 @@ export async function buildSimplePptx(slides, title) {
     { name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels', data: ENCODER.encode(_slideMasterRelsXml()) },
     { name: 'ppt/slideLayouts/slideLayout1.xml', data: ENCODER.encode(_slideLayoutXml()) },
     { name: 'ppt/slideLayouts/_rels/slideLayout1.xml.rels', data: ENCODER.encode(_slideLayoutRelsXml()) },
-    { name: 'ppt/theme/theme1.xml', data: ENCODER.encode(_themeXml()) },
+    { name: 'ppt/theme/theme1.xml', data: ENCODER.encode(_themeXml(theme)) },
   ];
 
   slides.forEach((slide, i) => {
-    files.push({ name: 'ppt/slides/slide' + (i + 1) + '.xml', data: ENCODER.encode(_slideXml(slide, i, slideCount)) });
+    files.push({ name: 'ppt/slides/slide' + (i + 1) + '.xml', data: ENCODER.encode(_slideXml(slide, i, slideCount, theme.colors)) });
     files.push({ name: 'ppt/slides/_rels/slide' + (i + 1) + '.xml.rels', data: ENCODER.encode(_slideRelsXml()) });
   });
 
