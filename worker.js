@@ -12,6 +12,7 @@ import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
+import { handleChatSave, handleChatDelete } from './chat-sync-endpoint.js';
 
 
 function _corsPreflight() {
@@ -50,6 +51,14 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/chat') {
       return handleChatRequest(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/chat/save') {
+      return handleChatSave(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/chat/delete') {
+      return handleChatDelete(request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/image') {
