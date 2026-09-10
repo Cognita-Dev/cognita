@@ -7,6 +7,7 @@ import {
   signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  updateProfile,
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -44,15 +45,6 @@ let _readyResolvers = [];
 let _isReady = false;
 
 // ── Persistence, with a fallback chain for private/incognito browsing ──
-// Firebase's default persistence relies on IndexedDB. In private/incognito
-// mode, indexedDB.open() is often not broken — just very slow (a known
-// WebKit/Chromium quirk; it can take many seconds instead of the usual
-// near-instant resolve). If we simply `await setPersistence(...)`, we sit
-// there blocked on that slow call for as long as it takes, which is why
-// things "start working if you wait a bit." To avoid making users wait,
-// we race each persistence attempt against a short timeout and fall
-// through to the next option (eventually a fast, always-available
-// in-memory session) rather than blocking on a slow one.
 function _withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timed out')), ms);
@@ -80,8 +72,6 @@ async function _initPersistence() {
   console.error('[Auth] All persistence modes failed or timed out — continuing without persistence.');
 }
 
-// Wire up onAuthStateChanged only after we've attempted persistence setup,
-// so we're not racing Firebase's own internal IndexedDB calls.
 const _authReadyPromise = _initPersistence().finally(() => {
   onAuthStateChanged(
     auth,
@@ -92,10 +82,6 @@ const _authReadyPromise = _initPersistence().finally(() => {
       _readyResolvers = [];
     },
     (error) => {
-      // onAuthStateChanged's error callback — fires if Firebase's internal
-      // listener setup itself fails (rare, but possible under restrictive
-      // storage). Without this, such a failure would leave ready() hanging
-      // forever with no user and no signal of a problem.
       console.error('[Auth] onAuthStateChanged error:', error.message);
       _currentUser = null;
       _isReady = true;
@@ -105,11 +91,6 @@ const _authReadyPromise = _initPersistence().finally(() => {
   );
 });
 
-// Absolute safety net: even if something above never calls back at all
-// (an edge case some browsers' storage lockdowns can still produce),
-// ready() will resolve as "signed out" after 5s rather than hang the
-// entire app forever. A real signed-in user will almost always resolve
-// in well under 5s once persistence + listener are wired.
 const _READY_TIMEOUT_MS = 5000;
 let _timeoutFired = false;
 setTimeout(() => {
@@ -122,8 +103,6 @@ setTimeout(() => {
   }
 }, _READY_TIMEOUT_MS);
 
-/** Resolves once Firebase has determined the initial auth state (or the
- *  safety-net timeout above has fired). Never hangs indefinitely. */
 function ready() {
   if (_isReady) return Promise.resolve(_currentUser);
   return new Promise((resolve) => _readyResolvers.push(resolve));
@@ -133,7 +112,6 @@ function getCurrentUser() {
   return _currentUser;
 }
 
-/** Returns a fresh ID token for the current user, or null if signed out. */
 async function getIdToken(forceRefresh = false) {
   if (!_currentUser) return null;
   try {
@@ -165,16 +143,9 @@ function _waitForGis(timeoutMs = 8000) {
 
 /**
  * Starts Google sign-in using Google Identity Services' OAuth2 token
- * popup, NOT One Tap and NOT Firebase's popup/redirect. Unlike One Tap,
- * this opens a real, reliable popup directly to accounts.google.com in
- * response to the user's click, so it isn't subject to One Tap's
- * display/cooldown restrictions or FedCM quirks on Safari. It still
- * never touches firebaseapp.com's iframe. We get back an access token,
- * which Firebase accepts directly to build a credential.
- *
- * Every error thrown from this function is tagged with authField='google'
- * so the caller always knows to render it under the Google button —
- * these errors never carry a Firebase auth/... code of their own.
+ * popup. Google's own profile info (name, photo, email) rides along
+ * automatically and Firebase copies it onto the resulting user record —
+ * no separate name entry is needed for Google sign-in.
  */
 async function signInWithGoogle() {
   await _waitForGis();
@@ -211,11 +182,12 @@ async function signInWithGoogle() {
   const credential = GoogleAuthProvider.credential(null, accessToken);
   try {
     const result = await signInWithCredential(auth, credential);
+    // Force a fresh ID token so the "name" claim (copied from the Google
+    // profile onto the Firebase user record) is guaranteed to be present
+    // on the very first request the app makes right after this resolves.
+    try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
     return result.user;
   } catch (err) {
-    // Firebase-side failure of an otherwise successful Google auth
-    // (e.g. account-exists-with-different-credential) still belongs
-    // under the Google button, not the email/password fields.
     if (!err.authField) err.authField = 'google';
     throw err;
   }
@@ -226,8 +198,20 @@ async function signInWithEmail(email, password) {
   return result.user;
 }
 
-async function signUpWithEmail(email, password) {
+/**
+ * Creates an email/password account and attaches the person's chosen
+ * name to their Firebase profile as displayName. The ID token is then
+ * force-refreshed so the "name" claim is available immediately on the
+ * very next authenticated request (the Worker reads it from there —
+ * see auth-middleware.js / chat-endpoint.js).
+ */
+async function signUpWithEmail(email, password, name) {
   const result = await createUserWithEmailAndPassword(auth, email, password);
+  const trimmedName = String(name || '').trim();
+  if (trimmedName) {
+    await updateProfile(result.user, { displayName: trimmedName });
+    try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
+  }
   return result.user;
 }
 
@@ -239,12 +223,6 @@ async function logOut() {
   await signOut(auth);
 }
 
-/**
- * Fetches from the Worker with the current user's ID token attached.
- * Use this instead of raw fetch() for any /api/* call that requires auth.
- * Automatically retries once with a forced token refresh on a 401, since
- * that's the common case of a token having just expired.
- */
 async function authedFetch(url, options = {}) {
   let token = await getIdToken(false);
   if (!token) throw new Error('Not signed in.');
@@ -266,10 +244,6 @@ async function authedFetch(url, options = {}) {
   return res;
 }
 
-/**
- * Redirects to login.html if no user is signed in once auth state settles.
- * Call this at the top of any protected page (app.html, account.html, etc).
- */
 async function requireAuthOrRedirect() {
   const user = await ready();
   if (!user) {
@@ -279,14 +253,6 @@ async function requireAuthOrRedirect() {
   return user;
 }
 
-/**
- * Turns ANY auth error — Firebase-coded or our own — into a
- * { field, message } pair that's always safe to show a user directly.
- * field is one of: 'email', 'password', 'google', 'general'.
- * There is no path through here that can surface a raw Firebase code
- * or error.message unless we've explicitly decided it's already
- * human-readable (i.e. it came from our own code with authField set).
- */
 function classifyAuthError(error) {
   const code = error?.code || '';
 
@@ -314,22 +280,12 @@ function classifyAuthError(error) {
 
   if (codeMap[code]) return codeMap[code];
 
-  // Our own thrown errors (Google flow, "Not signed in.", forgot-password
-  // guard, etc.) already carry a safe message and, where relevant, a
-  // pre-set field.
   if (error?.authField) {
     return { field: error.authField, message: error.message || 'Something went wrong. Please try again.' };
   }
 
-  // Unknown/unmapped — never leak the raw code or message.
   return { field: 'general', message: 'Something went wrong. Please try again.' };
 }
-
-// ── Client-side input validation ──
-// This is UX help, not a security boundary: it just gives people instant
-// feedback instead of a round trip to Firebase. The real enforcement is
-// server-side — Firebase Auth's own account rules, plus auth-middleware.js
-// independently re-verifying every token on every request.
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -337,13 +293,6 @@ function isValidEmail(email) {
   return EMAIL_RE.test(String(email || '').trim());
 }
 
-/**
- * Evaluates password strength against fixed requirements:
- * 6+ characters, at least one lowercase letter, one uppercase letter,
- * one number. Special characters are optional but count toward score.
- * Returns { score (0-5), percent, level ('weak'|'fair'|'strong'),
- * checks: { length, lower, upper, number, special }, valid (bool) }.
- */
 function evaluatePasswordStrength(password) {
   const pwd = String(password || '');
   const checks = {
@@ -355,7 +304,7 @@ function evaluatePasswordStrength(password) {
   };
 
   const requiredMet = checks.length && checks.lower && checks.upper && checks.number;
-  const score = Object.values(checks).filter(Boolean).length; // 0-5
+  const score = Object.values(checks).filter(Boolean).length;
   const percent = Math.min(100, (score / 5) * 100);
 
   let level = 'weak';
@@ -381,6 +330,5 @@ const Auth = {
   evaluatePasswordStrength,
 };
 
-// Keep the global for any legacy code, but pages should import directly.
 window.Auth = Auth;
 export { Auth };
