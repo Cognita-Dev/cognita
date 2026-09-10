@@ -3,10 +3,11 @@
 // Frontend sends { resourceType, fields: {...}, designTemplateId }. The
 // Worker selects the matching Recipe, resolves the requested design
 // template against what the user's plan actually entitles (never trusts
-// the client id directly), generates structured content via the existing
-// AI provider plumbing, validates it, stores it in Firestore, renders
-// export file(s) in the resolved template, and uploads them to the
-// dedicated Cognita Resources B2 bucket.
+// the client id directly, and never silently substitutes a different
+// template than what was requested), generates structured content via
+// the existing AI provider plumbing, validates it, stores it in
+// Firestore, renders export file(s) in the resolved template, and
+// uploads them to the dedicated Cognita Resources B2 bucket.
 //
 // Export format per resource type: every type gets a PDF and (except
 // "presentation") a DOCX, both built from a generic structured rendering
@@ -174,6 +175,16 @@ export async function handleResourceGenerate(request, env) {
 
   const plan = getPlan(account.planId);
 
+  // Check the requested design template's entitlement BEFORE spending the
+  // person's daily quota — a rejected template request shouldn't cost
+  // them a generation they never actually got. Never silently substitute
+  // a different template than what was asked for.
+  const templateResolution = resolveEntitledTemplate(account.planId, body.designTemplateId, planSatisfies);
+  if (!templateResolution.ok) {
+    return _jsonError(templateResolution.error, 403);
+  }
+  const resolvedTemplate = templateResolution.template;
+
   const quota = await checkAndIncrement(identity.uid, 'resourceGen', plan.limits.resourceGenPerDay, env);
   if (!quota.allowed) {
     return _jsonError(
@@ -181,12 +192,6 @@ export async function handleResourceGenerate(request, env) {
       429
     );
   }
-
-  // Never trust the client's requested template id directly — resolve it
-  // against what the plan is actually entitled to. A Plus user requesting
-  // a Studio-only template silently gets the default instead of an error,
-  // matching how model-tier resolution already works elsewhere.
-  const resolvedTemplate = resolveEntitledTemplate(account.planId, body.designTemplateId, planSatisfies);
 
   const resourceId = _makeResourceId();
 
