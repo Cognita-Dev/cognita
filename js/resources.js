@@ -255,18 +255,6 @@ function setBtnLoading(btn, isLoading) {
    RESULT PREVIEW
 ════════════════════════════════════════════════════════ */
 
-function wireResultPanel() {
-  document.getElementById('resourceResultClose').addEventListener('click', () => {
-    document.getElementById('resourcesResultPanel').hidden = true;
-    currentResource = null;
-  });
-
-  document.getElementById('resourceDownloadBtn').addEventListener('click', async () => {
-    if (!currentResource) return;
-    await downloadResource(currentResource.id);
-  });
-}
-
 // Renders a reasonable generic preview from structuredContent regardless
 // of resource type — walks the object shallowly rather than needing a
 // bespoke renderer per recipe. Good enough for a first preview; a proper
@@ -296,38 +284,57 @@ function renderStructuredPreview(content) {
   return html;
 }
 
+function wireResultPanel() {
+  document.getElementById('resourceResultClose').addEventListener('click', () => {
+    document.getElementById('resourcesResultPanel').hidden = true;
+    currentResource = null;
+  });
+}
+
+const FORMAT_LABELS = { docx: 'Word (.docx)', pdf: 'PDF', pptx: 'PowerPoint (.pptx)' };
+
 function showResultPanel(resource) {
   document.getElementById('resourcesResultPanel').hidden = false;
   document.getElementById('resourceResultTitle').textContent = resource.structuredContent.title || resource.title;
   document.getElementById('resourceResultBody').innerHTML = renderStructuredPreview(resource.structuredContent);
 
-  const downloadBtn = document.getElementById('resourceDownloadBtn');
-  downloadBtn.disabled = !(resource.fileReferences && resource.fileReferences.docx);
-  downloadBtn.querySelector('span').textContent = downloadBtn.disabled
-    ? 'Export not available yet'
-    : 'Download DOCX';
+  const actionsWrap = document.querySelector('.resource-result-actions');
+  const availableFormats = Object.keys(resource.fileReferences || {});
+
+  if (availableFormats.length === 0) {
+    actionsWrap.innerHTML = '<p style="color:var(--text-3);font-size:var(--text-sm);text-align:center;">No export is available for this resource yet.</p>';
+  } else {
+    actionsWrap.innerHTML = availableFormats.map((format) =>
+      '<button class="resource-download-btn" data-format="' + format + '" style="margin-bottom:8px;">' +
+        '<i class="ph ph-file-arrow-down"></i>' +
+        '<span>Download ' + (FORMAT_LABELS[format] || format.toUpperCase()) + '</span>' +
+      '</button>'
+    ).join('');
+
+    actionsWrap.querySelectorAll('.resource-download-btn').forEach((btn) => {
+      btn.addEventListener('click', () => downloadResource(resource.id, btn.dataset.format, btn));
+    });
+  }
 
   document.getElementById('resourcesResultPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function downloadResource(resourceId) {
-  const btn = document.getElementById('resourceDownloadBtn');
-  btn.disabled = true;
+async function downloadResource(resourceId, format, btn) {
+  if (btn) btn.disabled = true;
 
   try {
-    const res = await window.Auth.authedFetch(WORKER_URL + '/api/resources/' + resourceId + '/download', {
-      method: 'POST',
-    });
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/resources/' + resourceId + '/download?format=' + encodeURIComponent(format),
+      { method: 'POST' }
+    );
     const data = await res.json();
 
     if (!res.ok) {
       showToast(data.error || 'Could not prepare the download.');
-      btn.disabled = false;
+      if (btn) btn.disabled = false;
       return;
     }
 
-    // Open the time-limited B2 URL directly — it's already scoped and
-    // expiring, so a plain navigation/download is fine here.
     const a = document.createElement('a');
     a.href = data.url;
     a.download = '';
@@ -339,7 +346,7 @@ async function downloadResource(resourceId) {
     console.error('[resources] download failed:', e.message);
   }
 
-  btn.disabled = false;
+  if (btn) btn.disabled = false;
 }
 
 /* ════════════════════════════════════════════════════════
