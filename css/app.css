@@ -922,22 +922,24 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 }
 
 /* Locked (plan-gated) menu item gets a small lock badge rather than
-   silently doing nothing when clicked. */
+   silently doing nothing when clicked. Uses an inline SVG rather than an
+   icon-font codepoint, so it renders correctly regardless of font
+   loading order or icon-set version. */
 .attach-menu-item.is-locked { color: var(--text-4); }
 .attach-menu-item.is-locked::after {
-  content: '\f3c4';
+  content: '';
   position: absolute;
   top: 6px;
   right: 8px;
-  width: 14px;
-  height: 14px;
-  font-size: 9px;
-  line-height: 14px;
-  text-align: center;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--bg-subtle);
-  color: var(--text-4);
+  background-color: var(--bg-subtle);
   border: 1px solid var(--border);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23888880' d='M208 80h-24V56a56 56 0 0 0-112 0v24H48a16 16 0 0 0-16 16v112a16 16 0 0 0 16 16h160a16 16 0 0 0 16-16V96a16 16 0 0 0-16-16ZM96 56a32 32 0 0 1 64 0v24H96Z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 9px 9px;
 }
 
 /* ── Quality picker ── */
@@ -1018,24 +1020,26 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 
 /* Locked (plan-gated) quality level — same treatment as attach-menu-item:
    dimmed text and a small lock badge, rather than a button that silently
-   does nothing (or worse, silently applies a lower tier) when clicked. */
+   does nothing (or worse, silently applies a lower tier) when clicked.
+   Uses an inline SVG rather than an icon-font codepoint, so it renders
+   correctly regardless of font loading order or icon-set version. */
 .quality-picker-option.is-locked .quality-picker-option-name,
 .quality-picker-option.is-locked .quality-picker-option-desc { color: var(--text-4); }
 .quality-picker-option.is-locked > i:first-child { color: var(--text-4); }
 .quality-picker-option.is-locked::after {
-  content: '\f3c4';
+  content: '';
   position: absolute;
   top: 6px;
   right: 8px;
-  width: 14px;
-  height: 14px;
-  font-size: 9px;
-  line-height: 14px;
-  text-align: center;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--bg-subtle);
-  color: var(--text-4);
+  background-color: var(--bg-subtle);
   border: 1px solid var(--border);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23888880' d='M208 80h-24V56a56 56 0 0 0-112 0v24H48a16 16 0 0 0-16 16v112a16 16 0 0 0 16 16h160a16 16 0 0 0 16-16V96a16 16 0 0 0-16-16ZM96 56a32 32 0 0 1 64 0v24H96Z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 9px 9px;
 }
 
 .composer-send-btn {
