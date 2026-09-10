@@ -1261,7 +1261,9 @@ function wireMessageActionButtons() {
   document.querySelectorAll('[data-action="copy"]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.index, 10);
-      navigator.clipboard.writeText(conversation[idx].content);
+      const messageEl = btn.closest('.message');
+      const contentEl = messageEl ? messageEl.querySelector('.message-content') : null;
+      copyMessageContent(contentEl, conversation[idx] ? conversation[idx].content : '');
       showToast('Copied to clipboard.');
     });
   });
@@ -1277,6 +1279,37 @@ function wireMessageActionButtons() {
       await sendMessage(priorUserMsg.content);
     });
   });
+}
+
+// Copies what the person actually SEES (rendered bold, lists, tables,
+// etc.) rather than the raw markdown source. Writes both a rich text/html
+// version (so pasting into Word, Gmail, Docs, Notion, etc. keeps the
+// formatting) and a plain-text fallback derived from the rendered content
+// (so pasting into a plain text field shows clean text, not **asterisks**
+// and other markdown syntax). Falls back to the old plain writeText
+// behavior on browsers/contexts that don't support rich clipboard writes
+// (e.g. non-HTTPS, older Safari, some in-app browsers).
+async function copyMessageContent(contentEl, fallbackRawText) {
+  const plainText = contentEl ? contentEl.innerText : (fallbackRawText || '');
+
+  if (contentEl && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+    try {
+      const htmlBlob = new Blob([contentEl.innerHTML], { type: 'text/html' });
+      const textBlob = new Blob([plainText], { type: 'text/plain' });
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob }),
+      ]);
+      return;
+    } catch (e) {
+      console.error('[app] Rich copy failed, falling back to plain text:', e.message);
+    }
+  }
+
+  try {
+    await navigator.clipboard.writeText(plainText);
+  } catch (e) {
+    console.error('[app] Copy failed:', e.message);
+  }
 }
 
 // Wires the re-download chip for AI-generated documents. Each click
@@ -1438,11 +1471,7 @@ function scrollToBottom() {
   conv.scrollTop = conv.scrollHeight;
 }
 
-/* ── Markdown-lite + LaTeX renderer ──
-   NOTE: rewritten to avoid regex lookbehind assertions ((?<!...)),
-   which some browser engines fail to *parse* — a SyntaxError there
-   would previously break this whole module and silently disable
-   every click handler in the app. */
+/* ── Markdown-lite + LaTeX renderer ── */
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
 
@@ -1483,10 +1512,32 @@ function renderMarkdownLite(text, sources) {
   raw = raw.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   raw = raw.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
+  // Blockquotes: consecutive "> " lines become one <blockquote>. Must run
+  // before paragraph-wrapping so the block survives as a unit.
+  raw = raw.replace(/^[ \t]*&gt;[ \t]?(.*)$/gm, '\x00BQ\x00$1');
+  raw = raw.replace(/(?:\x00BQ\x00.*(?:\n|$))+/g, (block) => {
+    const lines = block.split('\x00BQ\x00').filter((s) => s.length > 0 || s === '');
+    const inner = lines.map((l) => l.trim()).join('<br>');
+    return '<blockquote>' + inner + '</blockquote>';
+  });
+
+  // Horizontal rules: a line that's only ---, ***, or ___ (3+ chars).
+  // Must run before the list-bullet regex below, which would otherwise
+  // misread "***" as a malformed bullet.
+  raw = raw.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, '<hr>');
+
+  // Emphasis, resolved inside-out so mixed **bold*italic*** combinations
+  // don't leave stray asterisks behind: triple first, then double, then
+  // single (asterisk and underscore forms).
+  raw = raw.replace(/\*\*\*([^*]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  raw = raw.replace(/___([^_]+?)___/g, '<strong><em>$1</em></strong>');
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
-  // Italic: *text* — again, capture the preceding character instead of
-  // using a lookbehind, so this doesn't fail to parse anywhere.
+  raw = raw.replace(/__([^_]+?)__/g, '<strong>$1</strong>');
+  // Italic: *text* / _text_ — capture the preceding character instead of
+  // a lookbehind. Underscore form uses word boundaries so it doesn't
+  // fire inside snake_case_names.
   raw = raw.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, (_, pre, content) => pre + '<em>' + content + '</em>');
+  raw = raw.replace(/\b_([^_\n]+?)_\b/g, '<em>$1</em>');
 
   if (sources && sources.length) {
     raw = raw.replace(/\[(\d+)\]/g, (whole, n) => {
@@ -1497,14 +1548,19 @@ function renderMarkdownLite(text, sources) {
     });
   }
 
-  raw = raw.replace(/((?:^\|.+\|\s*$\n?)+)/gm, (block) => {
-    const lines = block.trim().split('\n').filter(Boolean);
+  // Tables: was previously strict about every line starting AND ending
+  // with "|", which many real-world (and AI-generated) tables don't do.
+  // Now: any block of 2+ consecutive lines that each contain at least
+  // one "|", where the second line looks like a separator row
+  // (only -, :, |, and whitespace), is treated as a table.
+  raw = raw.replace(/((?:^.*\|.*$\n?){2,})/gm, (block) => {
+    const lines = block.replace(/\n$/, '').split('\n');
     if (lines.length < 2) return block;
+    if (!/^[\s|:-]+$/.test(lines[1])) return block; // not a real separator row — leave as-is
 
-    const parseCells = (line) => line.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
-    const isSeparator = /^[\|\s\-:]+$/.test(lines[1]);
+    const parseCells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
     const headerCells = parseCells(lines[0]);
-    const bodyLines = isSeparator ? lines.slice(2) : lines.slice(1);
+    const bodyLines = lines.slice(2).filter((l) => l.trim() !== '');
     if (bodyLines.length === 0) return block;
 
     const thead = '<thead><tr>' + headerCells.map((c) => '<th>' + c + '</th>').join('') + '</tr></thead>';
@@ -1531,7 +1587,7 @@ function renderMarkdownLite(text, sources) {
   raw = blocks.map((block) => {
     const trimmed = block.trim();
     if (!trimmed) return '';
-    if (/^<(ul|ol|table|div|pre|h[1-6])/.test(trimmed)) return trimmed;
+    if (/^<(ul|ol|table|div|pre|h[1-6]|blockquote|hr)/.test(trimmed)) return trimmed;
     if (/^\x00CODEBLOCK\d+\x00$/.test(trimmed)) return trimmed;
     if (/^\x00MATH\d+\x00$/.test(trimmed)) return trimmed;
     return '<p>' + trimmed.replace(/\n/g, '<br>') + '</p>';
