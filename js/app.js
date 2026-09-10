@@ -227,21 +227,6 @@ function makeConversationId() {
   return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-// Best-effort mirror of a conversation to B2. Never blocks the UI and
-// never surfaces errors to the user — if this fails, localStorage is
-// still the source of truth for the current session.
-async function syncConversationToB2(entry) {
-  try {
-    await window.Auth.authedFetch(WORKER_URL + '/api/chat/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: entry.id, conversation: entry }),
-    });
-  } catch (e) {
-    console.error('[app] Could not sync conversation to storage:', e.message);
-  }
-}
-
 function loadPendingDeletes() {
   try {
     const raw = localStorage.getItem(PENDING_DELETES_KEY);
