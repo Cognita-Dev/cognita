@@ -89,9 +89,10 @@ let currentAccountHasDesignTemplates = false;
 })();
 
 function renderAccountInfo(user) {
-  const email = user.email || 'Signed in';
-  document.getElementById('accountEmail').textContent = email;
-  document.getElementById('accountAvatar').textContent = email.charAt(0).toUpperCase();
+  const displayName = (user.displayName || '').trim();
+  const label = displayName || user.email || 'Signed in';
+  document.getElementById('accountEmail').textContent = label;
+  document.getElementById('accountAvatar').textContent = label.charAt(0).toUpperCase();
 }
 
 async function refreshAccount() {
