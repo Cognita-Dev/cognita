@@ -51,8 +51,6 @@ function _concat(arrays) {
   return out;
 }
 
-// NOTE: the line above is intentionally never reached — replaced by the
-// straightforward version below to avoid a confusing one-liner.
 function _assembleZip(files) {
   const { time, date } = _dosDateTime();
   const localBlobs = [];
@@ -164,6 +162,72 @@ export async function buildSimpleDocx(content, title) {
     { name: '[Content_Types].xml', data: ENCODER.encode(_contentTypesXml()) },
     { name: '_rels/.rels', data: ENCODER.encode(_rootRelsXml()) },
     { name: 'word/document.xml', data: ENCODER.encode(_documentXml(title, paragraphs)) },
+  ];
+
+  const zipBytes = _assembleZip(files);
+
+  let binary = '';
+  for (let i = 0; i < zipBytes.length; i++) binary += String.fromCharCode(zipBytes[i]);
+  return btoa(binary);
+}
+
+/* ── Structured builder — used by document-endpoint.js so AI-generated
+   documents get real headings and bullet lists instead of one flat wall
+   of text. ── */
+
+function _structuredBodyXml(structured) {
+  const parts = [];
+  structured.sections.forEach((s) => {
+    if (s.heading) {
+      parts.push(
+        '<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>' +
+        '<w:r><w:rPr><w:b/><w:sz w:val="26"/></w:rPr><w:t xml:space="preserve">' +
+        _xmlEscape(s.heading) + '</w:t></w:r></w:p>'
+      );
+    }
+    if (s.type === 'bullets') {
+      s.content.forEach((item) => {
+        parts.push(
+          '<w:p><w:pPr><w:ind w:left="360"/></w:pPr>' +
+          '<w:r><w:t xml:space="preserve">• ' + _xmlEscape(item) + '</w:t></w:r></w:p>'
+        );
+      });
+    } else if (s.content && s.content.trim()) {
+      parts.push('<w:p><w:r><w:t xml:space="preserve">' + _xmlEscape(s.content) + '</w:t></w:r></w:p>');
+    } else {
+      parts.push('<w:p/>');
+    }
+  });
+  return parts.join('');
+}
+
+function _structuredDocumentXml(title, structured) {
+  const titleXml =
+    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t xml:space="preserve">' +
+    _xmlEscape(title) + '</w:t></w:r></w:p>' +
+    '<w:p/>';
+
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:body>' + titleXml + _structuredBodyXml(structured) +
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>' +
+    '</w:body></w:document>';
+}
+
+/**
+ * Builds a .docx file from the structured { title, sections } shape used
+ * by the document-generation endpoint (headings rendered bold, "bullets"
+ * sections rendered as a bulleted list, "paragraph" sections as plain
+ * text). Returns a base64 string ready to send to the frontend.
+ *
+ * @param {{title: string, sections: Array<{heading: string, type: 'paragraph'|'bullets', content: string|string[]}>}} structured
+ * @param {string} title - document title, rendered as a centered heading
+ */
+export async function buildStructuredDocx(structured, title) {
+  const files = [
+    { name: '[Content_Types].xml', data: ENCODER.encode(_contentTypesXml()) },
+    { name: '_rels/.rels', data: ENCODER.encode(_rootRelsXml()) },
+    { name: 'word/document.xml', data: ENCODER.encode(_structuredDocumentXml(title, structured)) },
   ];
 
   const zipBytes = _assembleZip(files);
