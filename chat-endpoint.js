@@ -185,22 +185,43 @@ export async function handleChatRequest(request, env) {
     }
   }
 
-  // 6) Resolve requested "quality" to a tier the user's plan actually permits.
-  //    resolveChatTier NEVER lets this exceed what the plan allows —
-  //    a Starter user asking for 'thorough' silently gets 'fast' instead.
-  //    Images override quality entirely: the only free model in this stack
+  // 6) Resolve requested "quality" against what the plan is actually
+  //    entitled to. NEVER silently downgrade to a lower tier and pretend
+  //    the request succeeded — if the plan doesn't have the requested
+  //    tier, or has used up today's allowance for it, tell the person
+  //    plainly instead of quietly serving a cheaper model.
+  //    Images always override quality: the only free model in this stack
   //    that can see images is the Workers AI vision model, so any request
   //    with images always routes there regardless of the quality hint.
-  let actualTier = resolveChatTier(account.planId, _tierForQualityHint(body.quality));
+  const requestedTier = _tierForQualityHint(body.quality);
+  let actualTier = 'fast';
 
-  if (!hasImages && actualTier !== 'fast') {
-    // Richer text tiers spend from the advanced-model daily allowance
-    // (0 for Starter). Once used up for today, fall back to 'fast' rather
-    // than letting them keep using the richer tier for free.
-    const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
-    if (!advQuota.allowed) {
-      actualTier = 'fast';
+  if (!hasImages) {
+    const allowedTiers = plan.models.chat;
+    if (!allowedTiers.includes(requestedTier)) {
+      return _jsonError(
+        'The "' + (body.quality || 'advanced') + '" quality level isn\'t available on the ' + plan.name +
+        ' plan. Upgrade to unlock it, or switch to Standard quality.',
+        403
+      );
     }
+
+    if (requestedTier !== 'fast') {
+      // Richer text tiers spend from the advanced-model daily allowance.
+      // Once used up for today, tell the person explicitly rather than
+      // silently serving a lower-tier response labeled as if it were
+      // the tier they asked for.
+      const advQuota = await checkAndIncrement(identity.uid, 'advancedModel', plan.limits.advancedModelPerDay, env);
+      if (!advQuota.allowed) {
+        return _jsonError(
+          'You\'ve reached your daily limit for Advanced/Thorough quality on the ' + plan.name + ' plan (' +
+          advQuota.limit + ' per day). It resets at midnight UTC — switch to Standard quality to keep chatting, or upgrade for a higher limit.',
+          429
+        );
+      }
+    }
+
+    actualTier = requestedTier;
   }
 
   // 7) Trim history to what the plan allows, and prepend the system prompt.
