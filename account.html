@@ -42,14 +42,21 @@
     </button>
   </div>
 
-  <!-- ── Usage ── -->
-  <div class="settings-group-label">Today's usage</div>
+  <!-- ── Usage: Chat ── -->
+  <div class="settings-group-label">Today's usage — Chat</div>
   <div class="settings-group" id="usageDetailGrid">
     <div class="settings-row skeleton" style="height:52px;"></div>
     <div class="settings-row skeleton" style="height:52px;"></div>
     <div class="settings-row skeleton" style="height:52px;"></div>
     <div class="settings-row skeleton" style="height:52px;"></div>
   </div>
+
+  <!-- ── Usage: Resources ── -->
+  <div class="settings-group-label">Today's usage — Resources</div>
+  <div class="settings-group" id="usageResourcesGrid">
+    <div class="settings-row skeleton" style="height:52px;"></div>
+  </div>
+
   <p class="settings-footnote">Usage resets daily at midnight UTC.</p>
 
   <!-- ── Account details ── -->
@@ -85,12 +92,14 @@
     advancedModel: 'ph-brain',
     imageGen: 'ph-image',
     documentGen: 'ph-file-text',
+    resourceGen: 'ph-graduation-cap',
   };
   const USAGE_LABELS = {
     messages: 'Messages',
     advancedModel: 'Advanced model',
     imageGen: 'Images',
     documentGen: 'Documents',
+    resourceGen: 'Generated resources',
   };
 
   function usageRow(key, used, limit) {
@@ -157,14 +166,21 @@
       if (!res.ok) throw new Error(data.error || 'Failed to load usage.');
 
       const u = data.usage;
+
       document.getElementById('usageDetailGrid').innerHTML =
         usageRow('messages', u.messages.used, u.messages.limit) +
         usageRow('advancedModel', u.advancedModel.used, u.advancedModel.limit) +
         usageRow('imageGen', u.imageGen.used, u.imageGen.limit) +
         usageRow('documentGen', u.documentGen.used, u.documentGen.limit);
+
+      // Resources usage lives in its own grouped section so it reads as
+      // a distinct category rather than being mixed in with chat usage.
+      document.getElementById('usageResourcesGrid').innerHTML =
+        usageRow('resourceGen', u.resourceGen.used, u.resourceGen.limit);
     } catch (e) {
-      document.getElementById('usageDetailGrid').innerHTML =
-        '<p style="color:var(--text-3); padding: var(--space-4);">Could not load usage details.</p>';
+      const errorHtml = '<p style="color:var(--text-3); padding: var(--space-4);">Could not load usage details.</p>';
+      document.getElementById('usageDetailGrid').innerHTML = errorHtml;
+      document.getElementById('usageResourcesGrid').innerHTML = errorHtml;
       console.error('[account] ' + e.message);
     }
   }
