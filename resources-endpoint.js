@@ -5,11 +5,12 @@
 // provider plumbing, validates it, stores it in Firestore, renders export
 // file(s), and uploads them to the dedicated Cognita Resources B2 bucket.
 //
-// Export format per resource type: every type gets a PDF (built from the
-// same plain-text rendering used for DOCX, so it can never drift out of
-// sync with the structured content). Additionally, "presentation" gets a
-// real .pptx instead of a .docx, since a lesson plan as a Word doc makes
-// sense but a slide deck as a Word doc does not.
+// Export format per resource type: every type gets a PDF and (except
+// "presentation") a DOCX, both built from a generic structured rendering
+// of the recipe's own structuredContent — real headings and bullet lists,
+// not a flattened wall of text — so output quality never depends on each
+// recipe file remembering to format itself. "presentation" gets a real
+// .pptx instead, since a slide deck as a Word doc doesn't make sense.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
@@ -17,14 +18,23 @@ import { checkAndIncrement } from './usage.js';
 import { getPlan, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
-import { buildSimpleDocx } from './docx-builder.js';
-import { buildSimplePdf } from './pdf-builder.js';
+import { buildStructuredDocx } from './docx-builder.js';
+import { buildStructuredPdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
 
 // Resource types that export as a real .pptx instead of the default .docx.
 const PPTX_TYPES = new Set(['presentation']);
+
+// Structured-content generation (flashcards, exams, rubrics, etc.) tends
+// to run long — same reasoning as document-endpoint.js's DOCUMENT_MAX_TOKENS.
+const RESOURCE_MAX_TOKENS = 6000;
+
+// Keys that read as metadata rather than content when walking a recipe's
+// structuredContent generically — skipped so they don't show up as their
+// own heading in the exported file.
+const SKIP_KEYS = new Set(['title']);
 
 function _makeResourceId() {
   return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2);
@@ -37,11 +47,100 @@ function _parseStructuredJson(text) {
   const end = clean.lastIndexOf('}');
   if (start === -1 || end === -1) return null;
   clean = clean.slice(start, end + 1);
+
   try {
     return JSON.parse(clean);
   } catch (e) {
+    // fall through to repair attempt
+  }
+
+  const repaired = _repairTruncatedJson(clean);
+  if (repaired === null) return null;
+  try {
+    return JSON.parse(repaired);
+  } catch (e) {
     return null;
   }
+}
+
+// Same structural-repair heuristic as document-endpoint.js: closes an
+// unterminated string and any still-open braces/brackets left by a
+// response that got cut off mid-JSON by the token budget.
+function _repairTruncatedJson(text) {
+  if (!text) return null;
+
+  const stack = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) { escape = false; }
+      else if (ch === '\\') { escape = true; }
+      else if (ch === '"') { inString = false; }
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+
+  if (stack.length === 0 && !inString) return null;
+
+  let repaired = text;
+  if (inString) repaired += '"';
+  repaired = repaired.replace(/,\s*$/, '');
+
+  for (let i = stack.length - 1; i >= 0; i--) {
+    repaired += stack[i] === '{' ? '}' : ']';
+  }
+  return repaired;
+}
+
+// Turns a recipe's freeform structuredContent object into the generic
+// { title, sections } shape the structured docx/pdf builders expect —
+// walking it the same way the frontend's renderStructuredPreview() does,
+// so every resource type gets real headings and bullet lists without
+// each recipe needing its own bespoke exporter.
+//
+//   - top-level "title" is used as the document title, not a section
+//   - an array of plain values (or objects) becomes a "bullets" section
+//     under a heading derived from the key (camelCase -> Title Case)
+//   - a string becomes a "paragraph" section under the same kind of heading
+//   - anything else (numbers, nested objects) is stringified into a
+//     single-line paragraph section
+function _structuredContentToSections(content) {
+  const sections = [];
+
+  for (const key in content) {
+    if (SKIP_KEYS.has(key)) continue;
+    const value = content[key];
+    if (value === null || typeof value === 'undefined') continue;
+
+    const heading = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      const items = value.map((item) => {
+        if (item && typeof item === 'object') {
+          // e.g. a flashcard { front, back } or a slide-like object —
+          // render as "front — back" rather than a raw JSON string.
+          return Object.values(item)
+            .filter((v) => typeof v === 'string' || typeof v === 'number')
+            .join(' — ');
+        }
+        return String(item);
+      });
+      sections.push({ heading, type: 'bullets', content: items });
+    } else if (typeof value === 'object') {
+      sections.push({ heading, type: 'paragraph', content: JSON.stringify(value) });
+    } else if (String(value).trim()) {
+      sections.push({ heading, type: 'paragraph', content: String(value) });
+    }
+  }
+
+  return sections;
 }
 
 export async function handleResourceGenerate(request, env) {
@@ -125,7 +224,10 @@ export async function handleResourceGenerate(request, env) {
 
   let structuredContent;
   try {
-    const result = await callWithFallback(MODEL_TIERS.advanced, messages, env);
+    const result = await callWithFallback(MODEL_TIERS.advanced, messages, env, {
+      maxTokens: RESOURCE_MAX_TOKENS,
+      jsonMode: true,
+    });
     structuredContent = _parseStructuredJson(result.text);
   } catch (e) {
     console.error('[resources] generation call failed:', e.message);
@@ -180,22 +282,12 @@ export async function handleResourceGenerate(request, env) {
 // saved even if a file render/upload hiccups.
 async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, env) {
   const fileReferences = {};
-  const plainText = recipe.toPlainTextParagraphs(structuredContent);
   const title = structuredContent.title || baseDoc.title;
 
-  // PDF — built for every resource type.
-  try {
-    const pdfBase64 = await buildSimplePdf(plainText, title);
-    const pdfBytes = _base64ToBytes(pdfBase64);
-    const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
-    const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
-    fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
-  } catch (e) {
-    console.error('[resources] pdf export/upload failed:', e.message);
-  }
-
   if (PPTX_TYPES.has(recipe.resourceType) && Array.isArray(structuredContent.slides)) {
-    // PPTX — presentation-type resources only.
+    // PPTX — presentation-type resources only. Slide shape from
+    // presentation.js ({ heading, bulletPoints, ... }) already matches
+    // what pptx-builder.js expects.
     try {
       const pptxBase64 = await buildSimplePptx(structuredContent.slides, title);
       const pptxBytes = _base64ToBytes(pptxBase64);
@@ -210,22 +302,56 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
     } catch (e) {
       console.error('[resources] pptx export/upload failed:', e.message);
     }
-  } else {
-    // DOCX — every other resource type.
+
+    // Presentations also get a PDF export of the same slide content, so
+    // there's always a viewable/printable fallback.
     try {
-      const docxBase64 = await buildSimpleDocx(plainText, title);
-      const docxBytes = _base64ToBytes(docxBase64);
-      const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
-      const docxUpload = await b2UploadFile(
-        env,
-        docxKey,
-        docxBytes,
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      );
-      fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+      const sections = structuredContent.slides.map((s) => ({
+        heading: s.heading || '',
+        type: 'bullets',
+        content: Array.isArray(s.bulletPoints) ? s.bulletPoints : [String(s.bulletPoints || '')],
+      }));
+      const pdfBase64 = await buildStructuredPdf({ title, sections }, title);
+      const pdfBytes = _base64ToBytes(pdfBase64);
+      const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
+      const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
+      fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
     } catch (e) {
-      console.error('[resources] docx export/upload failed:', e.message);
+      console.error('[resources] pdf export/upload failed:', e.message);
     }
+
+    return fileReferences;
+  }
+
+  // Every other resource type: generic structured sections -> real PDF
+  // and DOCX, with actual headings and bullet lists instead of a flat
+  // paragraph dump.
+  const sections = _structuredContentToSections(structuredContent);
+  const structuredForExport = { title, sections };
+
+  try {
+    const pdfBase64 = await buildStructuredPdf(structuredForExport, title);
+    const pdfBytes = _base64ToBytes(pdfBase64);
+    const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
+    const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
+    fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+  } catch (e) {
+    console.error('[resources] pdf export/upload failed:', e.message);
+  }
+
+  try {
+    const docxBase64 = await buildStructuredDocx(structuredForExport, title);
+    const docxBytes = _base64ToBytes(docxBase64);
+    const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
+    const docxUpload = await b2UploadFile(
+      env,
+      docxKey,
+      docxBytes,
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+  } catch (e) {
+    console.error('[resources] docx export/upload failed:', e.message);
   }
 
   return fileReferences;
