@@ -14,11 +14,18 @@ const RESOURCE_TYPES = [
   { type: 'scheme_of_work', label: 'Scheme of Work', icon: 'calendar-check' },
   { type: 'quiz', label: 'Quiz', icon: 'question' },
   { type: 'study_guide', label: 'Study Guide', icon: 'book-open-text' },
+  { type: 'teaching_guide', label: 'Teaching Guide', icon: 'chalkboard' },
+  { type: 'classroom_activity', label: 'Classroom Activity', icon: 'users-three' },
+  { type: 'assignment', label: 'Assignment', icon: 'clipboard-text' },
+  { type: 'marking_scheme', label: 'Marking Scheme', icon: 'check-square-offset' },
+  { type: 'rubric', label: 'Rubric', icon: 'table' },
+  { type: 'flashcards', label: 'Flashcards', icon: 'cards' },
+  { type: 'student_handout', label: 'Student Handout', icon: 'file-text' },
+  { type: 'presentation', label: 'Presentation Slides', icon: 'presentation-chart' },
+  { type: 'project', label: 'Project', icon: 'flag-checkered' },
+  { type: 'test', label: 'Test', icon: 'pencil-simple-line' },
 ];
 
-// Which optional fields each resource type shows, beyond the always-shown
-// subject/class/topic. Keeps resources.html generic instead of needing a
-// separate form per type.
 const TYPE_FIELD_CONFIG = {
   lesson_plan: { topic: true, duration: true },
   worksheet: { topic: true, questionCount: true },
@@ -26,6 +33,16 @@ const TYPE_FIELD_CONFIG = {
   scheme_of_work: { topic: false, term: true, weekCount: true },
   quiz: { topic: true, questionCount: true },
   study_guide: { topic: true },
+  teaching_guide: { topic: true },
+  classroom_activity: { topic: true, duration: true },
+  assignment: { topic: true },
+  marking_scheme: { topic: true },
+  rubric: { topic: true },
+  flashcards: { topic: true, questionCount: true },
+  student_handout: { topic: true },
+  presentation: { topic: true, questionCount: true },
+  project: { topic: true, duration: true },
+  test: { topic: true, duration: true },
 };
 
 let selectedType = null;
