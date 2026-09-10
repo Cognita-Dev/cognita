@@ -45,8 +45,32 @@ const TYPE_FIELD_CONFIG = {
   test: { topic: true, duration: true },
 };
 
+// Mirrors design-templates.js on the backend — the backend is the source
+// of truth and re-validates whatever id is sent, so a stale copy here can
+// only ever under- or over-offer choices in the UI, never bypass
+// entitlement. Keep in sync when templates change server-side.
+const DESIGN_TEMPLATES = [
+  { id: 'classic', name: 'Classic', tier: 'free', accent: '#3F6B5B' },
+  { id: 'midnight', name: 'Midnight', tier: 'plus', accent: '#2A3F5F' },
+  { id: 'sunrise', name: 'Sunrise', tier: 'plus', accent: '#C1611D' },
+  { id: 'slate', name: 'Slate', tier: 'studio', accent: '#33383D' },
+  { id: 'forest', name: 'Forest', tier: 'studio', accent: '#234D35' },
+  { id: 'rose', name: 'Rose', tier: 'studio', accent: '#7A2E3A' },
+];
+const PLAN_HIERARCHY = ['free', 'plus', 'studio'];
+function _planRank(planId) {
+  const i = PLAN_HIERARCHY.indexOf(planId);
+  return i === -1 ? 0 : i;
+}
+function _planSatisfies(userPlan, requiredTier) {
+  return _planRank(userPlan) >= _planRank(requiredTier);
+}
+
 let selectedType = null;
 let currentResource = null;
+let selectedDesignTemplateId = 'classic';
+let currentAccountPlanId = 'free';
+let currentAccountHasDesignTemplates = false;
 
 (async function init() {
   const user = await window.Auth.requireAuthOrRedirect();
@@ -78,6 +102,19 @@ async function refreshAccount() {
     document.getElementById('accountPlan').textContent = data.planName;
     document.getElementById('accountPlan').classList.remove('skeleton');
     document.getElementById('accountEmail').classList.remove('skeleton');
+
+    currentAccountPlanId = data.planId || 'free';
+    currentAccountHasDesignTemplates = !!(data.features && data.features.designTemplates);
+
+    // If the previously selected template is no longer entitled (e.g. the
+    // account downgraded), fall back to the default rather than silently
+    // sending a template id the server will just reject anyway.
+    const stillEntitled = DESIGN_TEMPLATES.find(
+      (t) => t.id === selectedDesignTemplateId && _planSatisfies(currentAccountPlanId, t.tier)
+    );
+    if (!stillEntitled) selectedDesignTemplateId = 'classic';
+
+    renderDesignTemplatePicker();
   } catch (e) {
     console.error('[resources] could not load account:', e.message);
   }
@@ -175,6 +212,8 @@ function openForm(type) {
   document.getElementById('questionCountFieldWrap').hidden = !config.questionCount;
   document.getElementById('termFieldWrap').hidden = !config.term;
   document.getElementById('weekCountFieldWrap').hidden = !config.weekCount;
+
+  renderDesignTemplatePicker();
 }
 
 function closeForm() {
@@ -182,6 +221,67 @@ function closeForm() {
   document.getElementById('resourceForm').reset();
   document.getElementById('resourceForm').hidden = true;
   document.getElementById('resourceTypeGrid').hidden = false;
+}
+
+/* ── Design template picker — built via DOM insertion rather than static
+   markup, so this ships without needing an HTML file edit. Inserted once,
+   just before the Generate button, and re-rendered whenever the account's
+   plan or the active resource type changes. ── */
+function _ensureDesignTemplatePickerContainer() {
+  let container = document.getElementById('designTemplatePicker');
+  if (container) return container;
+
+  container = document.createElement('div');
+  container.id = 'designTemplatePicker';
+  container.className = 'design-template-picker';
+
+  const generateBtn = document.getElementById('resourceGenerateBtn');
+  if (generateBtn && generateBtn.parentElement) {
+    generateBtn.parentElement.insertBefore(container, generateBtn);
+  } else {
+    document.getElementById('resourceForm').appendChild(container);
+  }
+  return container;
+}
+
+function renderDesignTemplatePicker() {
+  const form = document.getElementById('resourceForm');
+  if (!form || form.hidden) return; // nothing to render into yet
+
+  const container = _ensureDesignTemplatePickerContainer();
+
+  const swatchesHtml = DESIGN_TEMPLATES.map((t) => {
+    const entitled = _planSatisfies(currentAccountPlanId, t.tier);
+    const isActive = t.id === selectedDesignTemplateId;
+    return (
+      '<button type="button" class="design-template-swatch' +
+        (isActive ? ' is-active' : '') + (entitled ? '' : ' is-locked') + '" ' +
+        'data-template-id="' + t.id + '" data-entitled="' + entitled + '" title="' + escapeHtml(t.name) + '">' +
+        '<span class="design-template-swatch-dot" style="background:' + t.accent + '"></span>' +
+        '<span class="design-template-swatch-name">' + escapeHtml(t.name) + '</span>' +
+        (entitled ? '' : '<i class="ph ph-lock-simple design-template-swatch-lock"></i>') +
+      '</button>'
+    );
+  }).join('');
+
+  container.innerHTML =
+    '<span class="design-template-picker-label">Design</span>' +
+    '<div class="design-template-swatch-row">' + swatchesHtml + '</div>';
+
+  container.querySelectorAll('.design-template-swatch').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const entitled = btn.dataset.entitled === 'true';
+      const templateId = btn.dataset.templateId;
+      if (!entitled) {
+        const template = DESIGN_TEMPLATES.find((t) => t.id === templateId);
+        const tierLabel = template && template.tier === 'studio' ? 'Cognita Studio' : 'Cognita Plus';
+        showToast('The "' + (template ? template.name : 'selected') + '" design is available on ' + tierLabel + ' and above.');
+        return;
+      }
+      selectedDesignTemplateId = templateId;
+      renderDesignTemplatePicker();
+    });
+  });
 }
 
 function wireForm() {
@@ -222,7 +322,7 @@ async function generateResource(resourceType, fields) {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/resources/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resourceType, fields }),
+      body: JSON.stringify({ resourceType, fields, designTemplateId: selectedDesignTemplateId }),
     });
 
     const data = await res.json();
