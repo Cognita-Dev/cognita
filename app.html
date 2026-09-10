@@ -267,8 +267,18 @@
         <button class="visual-type-option" data-doctype="essay">Essay</button>
         <button class="visual-type-option" data-doctype="memo">Memo</button>
       </div>
-      <button class="modal-submit-btn" id="documentSubmitBtn">
-        <span class="btn-label">Generate</span>
+      <div class="visual-type-toggle" id="documentFormatToggle" style="margin-top:8px;">
+        <button class="visual-type-option is-active" data-format="docx">
+          <i class="ph ph-file-doc"></i> Word
+        </button>
+        <button class="visual-type-option" data-format="pdf">
+          <i class="ph ph-file-pdf"></i> PDF
+        </button>
+        <button class="visual-type-option" data-format="pptx">
+          <i class="ph ph-presentation-chart"></i> PowerPoint
+        </button>
+      </div>
+      <button class="modal-submit-btn" id="documentSubmitBtn">        <span class="btn-label">Generate</span>
         <span class="btn-spinner" hidden></span>
       </button>
     </div>
