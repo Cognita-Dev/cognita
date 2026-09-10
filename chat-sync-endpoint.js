@@ -4,7 +4,10 @@
 //   (B2's own upload timestamp) so the client can track "as of when" this
 //   save is authoritative, for later sync reconciliation.
 // POST /api/chat/delete { conversationId }                -> hides the
-//   conversation's file in B2.
+//   conversation's file in B2, and also deletes any AI-generated files
+//   (docx/pdf/pptx) that were created inside that conversation (handled
+//   inside chat-storage.js's deleteConversationFromB2, so this file
+//   doesn't need to know about that layer).
 // GET  /api/chat/list                                     -> lightweight
 //   list of every conversation (live or deleted) with its current state's
 //   timestamp — used to reconcile against a device's local cache.
