@@ -813,6 +813,15 @@ function wireAttachMenu() {
    COMPOSER + ATTACHMENTS + SENDING MESSAGES
 ════════════════════════════════════════════════════════ */
 
+// Detects whether this device's primary input is touch (phones/tablets)
+// rather than a mouse/trackpad with a real keyboard. Used to decide
+// whether Enter should send the message or just insert a line break —
+// on touch devices there's no reliable Shift key, so intercepting Enter
+// there makes it impossible to ever add a line break.
+function _isTouchPrimaryDevice() {
+  return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+}
+
 function wireComposer() {
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
@@ -832,10 +841,26 @@ function wireComposer() {
   input.addEventListener('focus', notifyComposerActivity);
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!sendBtn.disabled) sendMessage(input.value.trim());
-    }
+    if (e.key !== 'Enter') return;
+
+    // Never treat Enter as "send" while an IME composition is in
+    // progress (e.g. typing accented characters, or Chinese/Japanese/
+    // Korean input) — that Enter is confirming the composed character,
+    // not submitting the message. e.keyCode === 229 is the older
+    // cross-browser signal some engines still rely on alongside
+    // isComposing.
+    if (e.isComposing || e.keyCode === 229) return;
+
+    // On touch-primary devices (phones/tablets) there's no dependable
+    // Shift key, so Enter always inserts a line break there — sending
+    // happens via the send button instead. On keyboard-primary devices,
+    // Enter sends and Shift+Enter inserts a line break, as before.
+    if (_isTouchPrimaryDevice()) return;
+
+    if (e.shiftKey) return;
+
+    e.preventDefault();
+    if (!sendBtn.disabled) sendMessage(input.value.trim());
   });
 
   sendBtn.addEventListener('click', () => {
