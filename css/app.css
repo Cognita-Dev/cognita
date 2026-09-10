@@ -689,7 +689,10 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   white-space: nowrap;
 }
 
-/* ── Thought block — small, unobtrusive, not a card ── */
+/* ── Thought block — small, unobtrusive, not a card ──
+     Font sizes here were reduced below the normal --text-xs (12px)
+     token on purpose: this is meant to read as quiet, secondary
+     text, not a regular label. */
 .thought-block {
   margin-bottom: var(--space-3);
   max-width: 100%;
@@ -699,7 +702,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   align-items: center;
   gap: 6px;
   padding: 3px 0;
-  font-size: var(--text-xs);
+  font-size: 0.6875rem; /* 11px — was var(--text-xs) / 12px */
   font-weight: 500;
   color: var(--text-4);
   cursor: pointer;
@@ -718,7 +721,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   margin-top: var(--space-2);
   padding: var(--space-1) 0 var(--space-2) var(--space-3);
   border-left: 2px solid var(--border);
-  font-size: var(--text-xs);
+  font-size: 0.6875rem; /* 11px — was var(--text-xs) / 12px */
   color: var(--text-3);
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -731,14 +734,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   width: 100%;
 }
 .message-sources-label {
-  font-size: var(--text-xs);
+  font-size: 0.625rem; /* 10px — was var(--text-xs) / 12px */
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-4);
   margin-bottom: var(--space-2);
 }
-.message-sources-list { font-size: var(--text-sm); padding-left: 1.2em; color: var(--text-2); }
+.message-sources-list { font-size: var(--text-xs); padding-left: 1.2em; color: var(--text-2); }
 .message-sources-list a { color: var(--accent); }
 .message-sources-list a:hover { text-decoration: underline; }
 
@@ -767,7 +770,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   align-items: center;
   gap: 8px;
   color: var(--text-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs); /* 12px — was var(--text-sm) / 14px */
   font-weight: 450;
   padding: 4px 0;
 }
@@ -783,7 +786,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   50% { opacity: 1; transform: scale(1); }
 }
 .thinking-word { font-weight: 450; }
-.thinking-timer { color: var(--text-4); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.thinking-timer { color: var(--text-4); font-variant-numeric: tabular-nums; font-size: 0.625rem; } /* 10px — was var(--text-xs) / 12px */
 
 /* ── Composer — the most polished surface in the app: a soft
      elevated panel with a thin inner highlight, not a plain box ── */
@@ -1056,7 +1059,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 
 .composer-hint {
   text-align: center;
-  font-size: var(--text-xs);
+  font-size: 0.6875rem; /* 11px — was var(--text-xs) / 12px */
   color: var(--text-4);
   margin-top: var(--space-2);
 }
