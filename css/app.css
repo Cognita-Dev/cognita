@@ -684,14 +684,9 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   }
 }
 
-.md-table {
-  table-layout: auto;
-}
-
-.md-table th,
-.md-table td {
-  white-space: normal;
-  overflow-wrap: anywhere;
+.md-table { table-layout: auto; }
+.md-table th, .md-table td {
+  white-space: nowrap;
 }
 
 /* ── Thought block — small, unobtrusive, not a card ── */
