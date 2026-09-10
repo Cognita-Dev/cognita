@@ -92,17 +92,35 @@ export function getDefaultTemplate() {
 }
 
 // Resolves a requested template id against what the plan is actually
-// entitled to. Never throws — always returns a usable template — so a
-// missing, invalid, or downgraded id degrades to the default rather than
-// failing generation outright.
+// entitled to. Returns { ok: true, template } if the request is fine, or
+// { ok: false, error, requiredTier } if it isn't — it never silently
+// substitutes the default template for one the plan doesn't have access
+// to, since that would mean generating something different from what
+// was actually requested without telling the person.
 //
 // @param {string} planId
 // @param {string} requestedTemplateId
 // @param {(planId: string, requiredTier: string) => boolean} planSatisfies
 export function resolveEntitledTemplate(planId, requestedTemplateId, planSatisfies) {
-  const requested = requestedTemplateId ? getTemplate(requestedTemplateId) : null;
-  if (requested && planSatisfies(planId, requested.tier)) return requested;
-  return getDefaultTemplate();
+  if (!requestedTemplateId) {
+    return { ok: true, template: getDefaultTemplate() };
+  }
+
+  const requested = getTemplate(requestedTemplateId);
+  if (!requested) {
+    return { ok: false, error: 'Unknown design template: ' + requestedTemplateId };
+  }
+
+  if (!planSatisfies(planId, requested.tier)) {
+    const tierLabel = requested.tier === 'studio' ? 'Cognita Studio' : 'Cognita Plus';
+    return {
+      ok: false,
+      error: 'The "' + requested.name + '" design is available on ' + tierLabel + ' and above.',
+      requiredTier: requested.tier,
+    };
+  }
+
+  return { ok: true, template: requested };
 }
 
 // PDF font-family lookup with a safe fallback to Helvetica.
