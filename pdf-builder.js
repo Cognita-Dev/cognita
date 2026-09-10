@@ -4,29 +4,23 @@
 // (Workers can't load native ones), so this hand-writes PDF syntax
 // directly: object table, one content stream per page, xref, trailer.
 //
-// Design system (intentionally minimal — one accent color, one typeface
-// family, generous whitespace):
-//   - Helvetica / Helvetica-Bold, the only fonts every PDF reader must
-//     support without embedding.
-//   - A single accent color (Cognita green, #3F6B5B — the same accent
-//     used in the pptx theme, so exports feel consistent) used sparingly:
-//     the title's underline rule, section headings, and bullet markers.
-//   - A layout engine that measures each block (title/heading/paragraph/
-//     bullet) and paginates by actual accumulated height, not a fixed
-//     lines-per-page guess — so headings, bullets, and body text can
-//     freely mix without misaligned page breaks.
-//   - A light footer rule + centered "Page X of Y" on every page.
+// Design: driven by a design-templates.js template (palette + a PDF
+// standard-14 font family — Helvetica/Times/Courier, no embedding
+// needed), selected per-resource by resources-endpoint.js and passed in
+// as a templateId. Falls back to the 'classic' template if none is given,
+// so callers that don't care about templates (e.g. document-endpoint.js)
+// keep working unchanged.
 //
-// Text encoding: PDF's built-in Helvetica uses WinAnsiEncoding (~
-// Windows-1252), not UTF-8. AI-generated text often contains curly
-// quotes, em dashes, ellipses, and bullet characters that corrupt a PDF
-// literal string if written as raw UTF-8 bytes (the previous version did
-// exactly this, and would silently break the file's byte offsets on that
-// content). Text is sanitized to WinAnsi-safe single-byte characters
-// before being placed in a content stream, and content streams are
-// encoded 1 char = 1 byte (Latin-1), never UTF-8.
+// Text encoding: PDF's built-in fonts use WinAnsiEncoding (~Windows-1252),
+// not UTF-8. AI-generated text often contains curly quotes, em dashes,
+// ellipses, and bullet characters that corrupt a PDF literal string if
+// written as raw UTF-8 bytes. Text is sanitized to WinAnsi-safe single-byte
+// characters before being placed in a content stream, and content streams
+// are encoded 1 char = 1 byte (Latin-1), never UTF-8.
 
-/* ── Page geometry & design tokens ── */
+import { getTemplate, getDefaultTemplate, getPdfFontFamily } from './design-templates.js';
+
+/* ── Page geometry ── */
 const PAGE_WIDTH = 595.28;   // A4
 const PAGE_HEIGHT = 841.89;
 const MARGIN_X = 64;
@@ -35,11 +29,6 @@ const MARGIN_BOTTOM = 56;    // reserved for footer rule + page number
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
 const CONTENT_TOP = PAGE_HEIGHT - MARGIN_TOP;
 const CONTENT_BOTTOM = MARGIN_BOTTOM;
-
-const ACCENT = [0.247, 0.420, 0.357];   // #3F6B5B
-const INK = [0.09, 0.09, 0.09];
-const MUTED = [0.52, 0.52, 0.50];
-const RULE = [0.85, 0.85, 0.83];
 
 const TITLE_SIZE = 21;
 const TITLE_LINE_HEIGHT = 25;
@@ -56,6 +45,28 @@ const PARAGRAPH_GAP_AFTER = 10;
 const LIST_GAP_AFTER = 12;
 const BULLET_INDENT = 16;
 const FOOTER_SIZE = 8;
+
+/* ── Template resolution ── */
+function _resolveTheme(templateId) {
+  const template = getTemplate(templateId) || getDefaultTemplate();
+  return {
+    colors: {
+      accent: _hexToRgb(template.colors.accent),
+      ink: _hexToRgb(template.colors.ink),
+      muted: _hexToRgb(template.colors.muted),
+      rule: _hexToRgb(template.colors.rule),
+    },
+    family: getPdfFontFamily(template.id),
+  };
+}
+
+function _hexToRgb(hex) {
+  const clean = String(hex || '').replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  return [r, g, b];
+}
 
 /* ── WinAnsi-safe text sanitizing ── */
 const WIN_ANSI_MAP = {
@@ -94,13 +105,15 @@ function _latin1Bytes(str) {
 
 /* ── Text measurement (approximate — no real font metrics without
    embedding a font, but close enough that lines don't visibly overflow
-   the margin in practice) ── */
-function _avgCharWidth(size, bold) {
-  return size * (bold ? 0.54 : 0.50);
+   the margin in practice). Width factor comes from the resolved template
+   family, since Times/Courier/Helvetica have meaningfully different
+   average glyph widths. ── */
+function _avgCharWidth(size, bold, family) {
+  return size * (bold ? family.boldWidthFactor : family.widthFactor);
 }
 
-function _wrapToWidth(text, widthPts, size, bold) {
-  const maxChars = Math.max(4, Math.floor(widthPts / _avgCharWidth(size, bold)));
+function _wrapToWidth(text, widthPts, size, bold, family) {
+  const maxChars = Math.max(4, Math.floor(widthPts / _avgCharWidth(size, bold, family)));
   const words = String(text == null ? '' : text).split(/\s+/).filter(Boolean);
   if (words.length === 0) return [''];
 
@@ -121,7 +134,8 @@ function _wrapToWidth(text, widthPts, size, bold) {
 
 /* ── Layout engine: turns { title, sections } into pages of absolute-
    positioned draw operations, breaking pages by accumulated height
-   rather than a fixed line count. ── */
+   rather than a fixed line count. Takes a resolved theme (colors +
+   font family) so every block is drawn in the chosen template. ── */
 
 function _newLayoutState() {
   return { pages: [[]], cursorY: CONTENT_TOP, page: 0 };
@@ -147,56 +161,56 @@ function _drawRect(state, { x, y, w, h, color }) {
   _pushOp(state, { cmd: 'rect', x, y, w, h, color });
 }
 
-function _layoutTitle(state, title) {
-  const lines = _wrapToWidth(title, CONTENT_WIDTH, TITLE_SIZE, true).slice(0, 3);
+function _layoutTitle(state, title, theme) {
+  const lines = _wrapToWidth(title, CONTENT_WIDTH, TITLE_SIZE, true, theme.family).slice(0, 3);
   lines.forEach((line) => {
     _ensureSpace(state, TITLE_LINE_HEIGHT);
     state.cursorY -= (TITLE_LINE_HEIGHT - 4);
-    _drawTextLine(state, line, { x: MARGIN_X, size: TITLE_SIZE, bold: true, color: INK });
+    _drawTextLine(state, line, { x: MARGIN_X, size: TITLE_SIZE, bold: true, color: theme.colors.ink });
     state.cursorY -= 4;
   });
   // Accent underline beneath the title block.
   _ensureSpace(state, 18);
   state.cursorY -= 6;
-  _drawRect(state, { x: MARGIN_X, y: state.cursorY - 2, w: 54, h: 2.5, color: ACCENT });
+  _drawRect(state, { x: MARGIN_X, y: state.cursorY - 2, w: 54, h: 2.5, color: theme.colors.accent });
   state.cursorY -= 22;
 }
 
-function _layoutHeading(state, text) {
-  const lines = _wrapToWidth(text, CONTENT_WIDTH, HEADING_SIZE, true);
+function _layoutHeading(state, text, theme) {
+  const lines = _wrapToWidth(text, CONTENT_WIDTH, HEADING_SIZE, true, theme.family);
   _ensureSpace(state, HEADING_SPACE_BEFORE + lines.length * HEADING_LINE_HEIGHT);
   state.cursorY -= HEADING_SPACE_BEFORE;
   lines.forEach((line) => {
     state.cursorY -= (HEADING_LINE_HEIGHT - 4);
-    _drawTextLine(state, line, { x: MARGIN_X, size: HEADING_SIZE, bold: true, color: ACCENT });
+    _drawTextLine(state, line, { x: MARGIN_X, size: HEADING_SIZE, bold: true, color: theme.colors.accent });
     state.cursorY -= 4;
   });
   state.cursorY -= HEADING_SPACE_AFTER;
 }
 
-function _layoutParagraph(state, text) {
+function _layoutParagraph(state, text, theme) {
   if (!text || !String(text).trim()) return;
-  const lines = _wrapToWidth(text, CONTENT_WIDTH, BODY_SIZE, false);
+  const lines = _wrapToWidth(text, CONTENT_WIDTH, BODY_SIZE, false, theme.family);
   lines.forEach((line) => {
     _ensureSpace(state, BODY_LINE_HEIGHT);
     state.cursorY -= (BODY_LINE_HEIGHT - 4);
-    _drawTextLine(state, line, { x: MARGIN_X, size: BODY_SIZE, bold: false, color: INK });
+    _drawTextLine(state, line, { x: MARGIN_X, size: BODY_SIZE, bold: false, color: theme.colors.ink });
     state.cursorY -= 4;
   });
   state.cursorY -= PARAGRAPH_GAP_AFTER;
 }
 
-function _layoutBullets(state, items) {
+function _layoutBullets(state, items, theme) {
   const textWidth = CONTENT_WIDTH - BULLET_INDENT;
   (items || []).forEach((item) => {
-    const lines = _wrapToWidth(item, textWidth, BULLET_SIZE, false);
+    const lines = _wrapToWidth(item, textWidth, BULLET_SIZE, false, theme.family);
     lines.forEach((line, i) => {
       _ensureSpace(state, BULLET_LINE_HEIGHT);
       state.cursorY -= (BULLET_LINE_HEIGHT - 3.5);
       if (i === 0) {
-        _drawTextLine(state, '\u2022', { x: MARGIN_X + 2, size: BULLET_SIZE, bold: false, color: ACCENT });
+        _drawTextLine(state, '\u2022', { x: MARGIN_X + 2, size: BULLET_SIZE, bold: false, color: theme.colors.accent });
       }
-      _drawTextLine(state, line, { x: MARGIN_X + BULLET_INDENT, size: BULLET_SIZE, bold: false, color: INK });
+      _drawTextLine(state, line, { x: MARGIN_X + BULLET_INDENT, size: BULLET_SIZE, bold: false, color: theme.colors.ink });
       state.cursorY -= 3.5;
     });
     state.cursorY -= BULLET_ITEM_GAP;
@@ -204,16 +218,16 @@ function _layoutBullets(state, items) {
   state.cursorY -= (LIST_GAP_AFTER - BULLET_ITEM_GAP);
 }
 
-function _layoutStructured(structured, title) {
+function _layoutStructured(structured, title, theme) {
   const state = _newLayoutState();
-  _layoutTitle(state, title || structured.title || '');
+  _layoutTitle(state, title || structured.title || '', theme);
 
   (structured.sections || []).forEach((s) => {
-    if (s.heading) _layoutHeading(state, s.heading);
+    if (s.heading) _layoutHeading(state, s.heading, theme);
     if (s.type === 'bullets') {
-      _layoutBullets(state, s.content);
+      _layoutBullets(state, s.content, theme);
     } else if (s.content && String(s.content).trim()) {
-      _layoutParagraph(state, s.content);
+      _layoutParagraph(state, s.content, theme);
     }
   });
 
@@ -226,7 +240,7 @@ function _colorOp(color) {
   return color[0] + ' ' + color[1] + ' ' + color[2] + ' rg';
 }
 
-function _buildContentStream(ops, pageIndex, pageCount) {
+function _buildContentStream(ops, pageIndex, pageCount, theme) {
   let stream = '';
   ops.forEach((op) => {
     if (op.cmd === 'rect') {
@@ -242,18 +256,18 @@ function _buildContentStream(ops, pageIndex, pageCount) {
 
   // Footer: light rule + centered page number, same on every page.
   const footerY = MARGIN_BOTTOM - 18;
-  stream += _colorOp(RULE) + '\n';
+  stream += _colorOp(theme.colors.rule) + '\n';
   stream += MARGIN_X.toFixed(2) + ' ' + (footerY + 14).toFixed(2) + ' ' + CONTENT_WIDTH.toFixed(2) + ' 0.75 re\nf\n';
   const footerText = 'Page ' + (pageIndex + 1) + ' of ' + pageCount;
   const footerX = PAGE_WIDTH / 2 - footerText.length * FOOTER_SIZE * 0.24;
-  stream += 'BT\n' + _colorOp(MUTED) + '\n/F1 ' + FOOTER_SIZE + ' Tf\n' +
+  stream += 'BT\n' + _colorOp(theme.colors.muted) + '\n/F1 ' + FOOTER_SIZE + ' Tf\n' +
     footerX.toFixed(2) + ' ' + footerY.toFixed(2) + ' Td\n' +
     '(' + _escapePdfText(footerText) + ') Tj\nET\n';
 
   return stream;
 }
 
-function _assemblePdf(pages) {
+function _assemblePdf(pages, theme) {
   const pageCount = pages.length;
   // Object numbering: 1 = Catalog, 2 = Pages, 3 = Font regular, 4 = Font bold.
   // Page i (0-indexed): content stream = 5 + 2*i, page object = 6 + 2*i.
@@ -265,11 +279,11 @@ function _assemblePdf(pages) {
   objects.set(1, { body: '<< /Type /Catalog /Pages 2 0 R >>' });
   const kids = pageObjectIds.map((id) => id + ' 0 R').join(' ');
   objects.set(2, { body: '<< /Type /Pages /Kids [ ' + kids + ' ] /Count ' + pageCount + ' >>' });
-  objects.set(3, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>' });
-  objects.set(4, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>' });
+  objects.set(3, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /' + theme.family.regular + ' /Encoding /WinAnsiEncoding >>' });
+  objects.set(4, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /' + theme.family.bold + ' /Encoding /WinAnsiEncoding >>' });
 
   pages.forEach((ops, i) => {
-    const stream = _buildContentStream(ops, i, pageCount);
+    const stream = _buildContentStream(ops, i, pageCount, theme);
     objects.set(contentObjectIds[i], { raw: true, bytes: _latin1Bytes(stream) });
     objects.set(pageObjectIds[i], {
       body: '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> ' +
@@ -332,35 +346,40 @@ function _assemblePdf(pages) {
 
 /**
  * Builds a designed .pdf from the structured { title, sections } shape —
- * headings, paragraphs, and bullet lists as real, positioned blocks with
- * consistent typography and an accent color, not a flat wall of text.
- * Returns a base64 string.
+ * headings, paragraphs, and bullet lists as real, positioned blocks —
+ * in the given design template's palette and font family.
  *
  * @param {{title: string, sections: Array<{heading: string, type: 'paragraph'|'bullets', content: string|string[]}>}} structured
  * @param {string} title
+ * @param {string} [templateId] - a design-templates.js id; defaults to
+ *   'classic' if omitted or unrecognized. Callers are responsible for
+ *   entitlement-checking the id before passing it in — this function
+ *   trusts whatever it's given and just falls back safely if it's bad.
  */
-export async function buildStructuredPdf(structured, title) {
-  const pages = _layoutStructured(structured, title);
-  return _assemblePdf(pages);
+export async function buildStructuredPdf(structured, title, templateId) {
+  const theme = _resolveTheme(templateId);
+  const pages = _layoutStructured(structured, title, theme);
+  return _assemblePdf(pages, theme);
 }
 
 /**
  * Builds a designed .pdf from plain text content and a title — used as a
  * fallback path when structured content isn't available. Internally this
  * is just a structured document with one untitled paragraph section per
- * input paragraph, so it goes through the same layout engine (same
- * margins, same typography, same pagination) rather than a separate,
- * plainer code path.
+ * input paragraph, so it goes through the same layout engine and the
+ * same design template as buildStructuredPdf.
  *
  * @param {string} content - plain text, paragraphs separated by blank lines
  * @param {string} title
+ * @param {string} [templateId]
  */
-export async function buildSimplePdf(content, title) {
+export async function buildSimplePdf(content, title, templateId) {
   const paragraphs = String(content || '').split(/\n\s*\n/).map((p) => p.replace(/\n/g, ' ').trim()).filter(Boolean);
   const structured = {
     title,
     sections: paragraphs.map((p) => ({ heading: '', type: 'paragraph', content: p })),
   };
-  const pages = _layoutStructured(structured, title);
-  return _assemblePdf(pages);
+  const theme = _resolveTheme(templateId);
+  const pages = _layoutStructured(structured, title, theme);
+  return _assemblePdf(pages, theme);
 }
