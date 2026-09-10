@@ -113,6 +113,11 @@ const THINKING_WORDS = [
 
   reconcileIfDue();
   window.addEventListener('focus', reconcileIfDue);
+
+  const overlay = document.getElementById('appLoadingOverlay');
+  const contentWrap = document.getElementById('appContentWrap');
+  if (overlay) overlay.hidden = true;
+  if (contentWrap) contentWrap.hidden = false;
 })();
 
 /* ════════════════════════════════════════════════════════
