@@ -727,6 +727,28 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   overflow-wrap: anywhere;
 }
 
+/* The markdown renderer wraps thought text in <p>, <li>, etc. Those tags
+   are targeted directly by a global rule in shared.css (p { font-size:
+   var(--text-base) }), which overrides simple inheritance from
+   .thought-content above. These rules force every text element inside
+   the thought block back down to the small size. */
+.thought-content p,
+.thought-content li,
+.thought-content span,
+.thought-content code,
+.thought-content blockquote,
+.thought-content h1,
+.thought-content h2,
+.thought-content h3,
+.thought-content h4,
+.thought-content h5,
+.thought-content h6 {
+  font-size: inherit;
+}
+.thought-content p { margin-bottom: var(--space-2); }
+.thought-content ul,
+.thought-content ol { margin: var(--space-2) 0; padding-left: 1.2em; }
+
 .message-sources {
   margin-top: var(--space-4);
   padding-top: var(--space-3);
