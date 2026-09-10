@@ -67,6 +67,7 @@ export async function handleUsageRequest(request, env) {
     'advancedModel',
     'imageGen',
     'documentGen',
+    'resourceGen',
   ], env);
   return new Response(JSON.stringify({
     planName: plan.name,
@@ -75,6 +76,7 @@ export async function handleUsageRequest(request, env) {
       advancedModel: { used: used.advancedModel, limit: plan.limits.advancedModelPerDay },
       imageGen: { used: used.imageGen, limit: plan.limits.imageGenPerDay },
       documentGen: { used: used.documentGen, limit: plan.limits.documentGenPerDay },
+      resourceGen: { used: used.resourceGen, limit: plan.limits.resourceGenPerDay },
     },
   }), {
     status: 200,
