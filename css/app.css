@@ -907,6 +907,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-sm);
   text-align: left;
+  position: relative;
   transition: background var(--duration-fast) var(--ease);
 }
 .quality-picker-option:hover { background: var(--bg-subtle); }
@@ -935,6 +936,28 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   opacity: 0;
 }
 .quality-picker-option.is-active .quality-picker-check { opacity: 1; }
+
+/* Locked (plan-gated) quality level — same treatment as attach-menu-item:
+   dimmed text and a small lock badge, rather than a button that silently
+   does nothing (or worse, silently applies a lower tier) when clicked. */
+.quality-picker-option.is-locked .quality-picker-option-name,
+.quality-picker-option.is-locked .quality-picker-option-desc { color: var(--text-4); }
+.quality-picker-option.is-locked > i:first-child { color: var(--text-4); }
+.quality-picker-option.is-locked::after {
+  content: '\f3c4';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--text-4);
+  border: 1px solid var(--border);
+}
 
 .composer-send-btn {
   width: 32px; height: 32px;
