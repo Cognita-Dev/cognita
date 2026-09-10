@@ -1498,8 +1498,28 @@ function scrollToBottom() {
 }
 
 /* ── Markdown-lite + LaTeX renderer ── */
+
+// A short, fixed whitelist of harmless inline formatting tags the AI
+// sometimes emits directly (mainly <br> inside table cells, since
+// markdown tables can't contain real line breaks any other way).
+// escapeHtml() turns every "<" into "&lt;" for safety — this step
+// re-allows ONLY these exact escaped tags back into real tags. Nothing
+// else the AI outputs can ever pass through this, so this cannot be used
+// to smuggle in a script tag or any other unsafe markup.
+const _ALLOWED_RAW_TAG_RE =
+  /&lt;(br|\/?b|\/?i|\/?u|\/?em|\/?strong|\/?sup|\/?sub|hr)\s*\/?&gt;/gi;
+
+function _unescapeAllowedTags(html) {
+  return html.replace(_ALLOWED_RAW_TAG_RE, (match, tagName) => {
+    const lower = tagName.toLowerCase();
+    if (lower === 'br' || lower === 'hr') return '<' + lower + '>';
+    return '<' + lower + '>';
+  });
+}
+
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
+  raw = _unescapeAllowedTags(raw);
 
   // Protect LaTeX before anything else touches the string.
   const mathBlocks = [];
@@ -1511,8 +1531,6 @@ function renderMarkdownLite(text, sources) {
     mathBlocks.push({ expr, display: true });
     return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
-  // Inline math: $expr$ — avoid lookbehind by capturing the preceding
-  // character (or start-of-string) instead of asserting on it.
   raw = raw.replace(/(^|[^$])\$([^$\n]+?)\$(?!\$)/g, (_, pre, expr) => {
     mathBlocks.push({ expr, display: false });
     return pre + '\x00MATH' + (mathBlocks.length - 1) + '\x00';
@@ -1548,20 +1566,14 @@ function renderMarkdownLite(text, sources) {
   });
 
   // Horizontal rules: a line that's only ---, ***, or ___ (3+ chars).
-  // Must run before the list-bullet regex below, which would otherwise
-  // misread "***" as a malformed bullet.
   raw = raw.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, '<hr>');
 
   // Emphasis, resolved inside-out so mixed **bold*italic*** combinations
-  // don't leave stray asterisks behind: triple first, then double, then
-  // single (asterisk and underscore forms).
+  // don't leave stray asterisks behind.
   raw = raw.replace(/\*\*\*([^*]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   raw = raw.replace(/___([^_]+?)___/g, '<strong><em>$1</em></strong>');
   raw = raw.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
   raw = raw.replace(/__([^_]+?)__/g, '<strong>$1</strong>');
-  // Italic: *text* / _text_ — capture the preceding character instead of
-  // a lookbehind. Underscore form uses word boundaries so it doesn't
-  // fire inside snake_case_names.
   raw = raw.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, (_, pre, content) => pre + '<em>' + content + '</em>');
   raw = raw.replace(/\b_([^_\n]+?)_\b/g, '<em>$1</em>');
 
@@ -1574,15 +1586,16 @@ function renderMarkdownLite(text, sources) {
     });
   }
 
-  // Tables: was previously strict about every line starting AND ending
-  // with "|", which many real-world (and AI-generated) tables don't do.
-  // Now: any block of 2+ consecutive lines that each contain at least
-  // one "|", where the second line looks like a separator row
-  // (only -, :, |, and whitespace), is treated as a table.
+  // Tables: any block of 2+ consecutive lines that each contain at least
+  // one "|", where the second line looks like a separator row, is
+  // treated as a table. Cell content may now legitimately contain real
+  // <br> (and the other whitelisted tags) thanks to _unescapeAllowedTags
+  // above, so a cell's line breaks render correctly instead of showing
+  // literal "<br>" text.
   raw = raw.replace(/((?:^.*\|.*$\n?){2,})/gm, (block) => {
     const lines = block.replace(/\n$/, '').split('\n');
     if (lines.length < 2) return block;
-    if (!/^[\s|:-]+$/.test(lines[1])) return block; // not a real separator row — leave as-is
+    if (!/^[\s|:-]+$/.test(lines[1])) return block;
 
     const parseCells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
     const headerCells = parseCells(lines[0]);
