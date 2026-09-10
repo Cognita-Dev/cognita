@@ -610,6 +610,70 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .document-download-chip i { color: var(--accent); font-size: 1.1rem; }
 .document-download-chip:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
 
+/* ── Generated document download chip — button-specific resets + states ── */
+.document-download-chip {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.document-download-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.document-download-chip-state {
+  display: inline-flex;
+  align-items: center;
+  font-size: 1rem;
+  color: var(--text-3);
+}
+
+.document-download-chip-state:empty {
+  display: none;
+}
+
+/* ── Shimmer loading effect ── */
+.document-download-chip-state.is-loading {
+  background: linear-gradient(
+    90deg,
+    var(--text-3) 0%,
+    var(--text-3) 35%,
+    var(--text-1) 50%,
+    var(--text-3) 65%,
+    var(--text-3) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: document-download-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes document-download-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ── Accessibility ── */
+@media (prefers-reduced-motion: reduce) {
+  .document-download-chip-state.is-loading {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--text-3);
+    color: var(--text-3);
+  }
+}
+
+.md-table { table-layout: auto; }
+.md-table th, .md-table td {
+  white-space: nowrap;
+}
+
 /* ── Thought block — small, unobtrusive, not a card ── */
 .thought-block {
   margin-bottom: var(--space-3);
