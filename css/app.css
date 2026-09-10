@@ -505,6 +505,18 @@
   overflow-wrap: anywhere;
 }
 
+.message-content blockquote {
+  margin: var(--space-3) 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-3);
+}
+.message-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-5) 0;
+}
+
 /* ── Code blocks — horizontally scrollable, never stretch the page,
      with a persistent copy button top-right ── */
 .code-block-wrap {
