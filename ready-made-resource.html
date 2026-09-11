@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+<title>Resource · Cognita</title>
+
+<link rel="icon" href="/assets/cognita.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap"
+>
+
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/resource-renderers.css">
+<link rel="stylesheet" href="/css/ready-made-resource.css">
+
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css"
+>
+</head>
+
+<body class="app-page">
+
+<div class="app-shell">
+
+  <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+  <aside class="app-sidebar" id="appSidebar">
+
+    <div class="sidebar-top">
+
+      <a href="/index.html" class="sidebar-logo">
+        <img src="/assets/cognita.png" alt="Cognita">
+        <span>Cognita</span>
+      </a>
+
+      <div class="sidebar-top-actions">
+
+        <button
+          class="sidebar-collapse-btn"
+          id="sidebarCollapseBtn"
+          aria-label="Collapse sidebar"
+        >
+          <i class="ph ph-sidebar-simple"></i>
+        </button>
+
+        <button
+          class="sidebar-close-btn"
+          id="sidebarCloseBtn"
+          aria-label="Close sidebar"
+        >
+          <i class="ph ph-x"></i>
+        </button>
+
+      </div>
+
+    </div>
+
+    <a href="/app.html" class="new-chat-btn">
+      <i class="ph ph-chat-circle"></i>
+      <span>Back to chat</span>
+    </a>
+
+    <nav class="sidebar-history" aria-label="Navigation">
+
+      <a
+        href="/app.html"
+        class="sidebar-history-item"
+      >
+        <i class="ph ph-chat-circle"></i>
+        <span>Chat</span>
+      </a>
+
+      <a
+        href="/resources.html"
+        class="sidebar-history-item is-active"
+      >
+        <i class="ph ph-graduation-cap"></i>
+        <span>Resources</span>
+      </a>
+
+      <a
+        href="/collections.html"
+        class="sidebar-history-item"
+      >
+        <i class="ph ph-books"></i>
+        <span>Collections</span>
+      </a>
+
+    </nav>
+
+    <div class="sidebar-bottom">
+
+      <div class="usage-widget" id="usageWidget">
+
+        <div class="usage-row">
+          <span class="usage-label">
+            Resources today
+          </span>
+
+          <span
+            class="usage-value skeleton"
+            id="usageResources"
+          >
+            00 / 00
+          </span>
+        </div>
+
+        <div class="usage-bar">
+          <div
+            class="usage-bar-fill"
+            id="usageResourcesBar"
+          ></div>
+        </div>
+
+      </div>
+
+      <button
+        class="account-btn"
+        id="accountBtn"
+      >
+
+        <span
+          class="account-avatar"
+          id="accountAvatar"
+        >
+          C
+        </span>
+
+        <span class="account-info">
+
+          <span
+            class="account-name skeleton"
+            id="accountEmail"
+          >
+            Loading
+          </span>
+
+          <span
+            class="account-plan skeleton"
+            id="accountPlan"
+          >
+            Loading
+          </span>
+
+        </span>
+
+        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
+
+      </button>
+
+      <div
+        class="account-menu"
+        id="accountMenu"
+        hidden
+      >
+
+        <a href="/account.html">
+          <i class="ph ph-gear"></i>
+          Settings
+        </a>
+
+        <a href="/pricing.html">
+          <i class="ph ph-arrow-up-circle"></i>
+          Plans
+        </a>
+
+        <button id="logOutBtn">
+          <i class="ph ph-sign-out"></i>
+          Sign out
+        </button>
+
+      </div>
+
+    </div>
+
+  </aside>
+
+  <main class="app-main">
+
+    <header class="app-topbar">
+
+      <button
+        class="mobile-sidebar-btn"
+        id="mobileSidebarBtn"
+        aria-label="Open sidebar"
+      >
+        <i class="ph ph-list"></i>
+      </button>
+
+      <h1 class="conversation-title">
+        Resource
+      </h1>
+
+      <div class="topbar-spacer"></div>
+
+    </header>
+
+    <div class="resource-detail-scroll">
+
+      <main
+        class="resource-detail-main"
+        id="resourceDetailMain"
+      >
+
+        <div
+          class="resource-detail-loading"
+          id="resourceDetailLoading"
+        >
+          <div class="resource-detail-loading-icon">
+            <i class="ph ph-graduation-cap"></i>
+          </div>
+
+          <div class="resource-detail-loading-lines">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+
+        <div
+          class="resource-detail-error"
+          id="resourceDetailError"
+          hidden
+        >
+          <div class="resource-detail-error-icon">
+            <i class="ph ph-warning-circle"></i>
+          </div>
+
+          <h2>Resource unavailable</h2>
+
+          <p id="resourceDetailErrorMessage">
+            We couldn't load this resource.
+          </p>
+
+          <div class="resource-detail-error-actions">
+
+            <button
+              type="button"
+              class="resource-detail-button primary"
+              id="resourceDetailRetry"
+            >
+              Try again
+            </button>
+
+            <a
+              href="/resources.html"
+              class="resource-detail-button secondary"
+            >
+              Back to resources
+            </a>
+
+          </div>
+        </div>
+
+        <div
+          class="resource-detail-content"
+          id="resourceDetailContent"
+          hidden
+        >
+
+          <nav
+            class="resource-detail-breadcrumbs"
+            aria-label="Breadcrumb"
+          >
+            <a href="/resources.html">
+              Resources
+            </a>
+
+            <i class="ph ph-caret-right"></i>
+
+            <span id="resourceBreadcrumbType">
+              Resource
+            </span>
+          </nav>
+
+          <section class="resource-detail-hero">
+
+            <div class="resource-detail-hero-copy">
+
+              <div class="resource-detail-eyebrow-row">
+
+                <span
+                  class="resource-detail-type"
+                  id="resourceDetailType"
+                >
+                  Resource
+                </span>
+
+                <span
+                  class="resource-detail-badge"
+                  id="resourceDetailFeatured"
+                  hidden
+                >
+                  Featured
+                </span>
+
+                <span
+                  class="resource-detail-badge recommended"
+                  id="resourceDetailRecommended"
+                  hidden
+                >
+                  Recommended
+                </span>
+
+              </div>
+
+              <h1 id="resourceDetailTitle">
+                Resource title
+              </h1>
+
+              <p
+                class="resource-detail-description"
+                id="resourceDetailDescription"
+              >
+                Resource description
+              </p>
+
+              <div
+                class="resource-detail-meta"
+                id="resourceDetailMeta"
+              ></div>
+
+              <div
+                class="resource-detail-tags"
+                id="resourceDetailTags"
+              ></div>
+
+            </div>
+
+            <aside class="resource-detail-actions-card">
+
+              <div class="resource-detail-actions-heading">
+                <span>Ready to use</span>
+                <i class="ph ph-sparkle"></i>
+              </div>
+
+              <p>
+                Preview the complete resource or download
+                a classroom-ready copy.
+              </p>
+
+              <div
+                class="resource-download-actions"
+                id="resourceDownloadActions"
+              ></div>
+
+              <a
+                href="/resources.html"
+                class="resource-back-link"
+              >
+                <i class="ph ph-arrow-left"></i>
+                Back to resource library
+              </a>
+
+            </aside>
+
+          </section>
+
+          <section
+            class="resource-detail-collection"
+            id="resourceCollectionSection"
+            hidden
+          >
+
+            <div class="resource-detail-collection-icon">
+              <i class="ph ph-books"></i>
+            </div>
+
+            <div class="resource-detail-collection-copy">
+
+              <span>
+                Part of a collection
+              </span>
+
+              <strong id="resourceCollectionTitle">
+                Collection
+              </strong>
+
+              <p id="resourceCollectionDescription"></p>
+
+            </div>
+
+            <a
+              href="#"
+              class="resource-detail-collection-link"
+              id="resourceCollectionLink"
+            >
+              View collection
+              <i class="ph ph-arrow-right"></i>
+            </a>
+
+          </section>
+
+          <section class="resource-detail-preview-section">
+
+            <div class="resource-detail-section-heading">
+
+              <div>
+                <span class="resource-detail-section-kicker">
+                  RESOURCE PREVIEW
+                </span>
+
+                <h2>
+                  Explore the resource
+                </h2>
+              </div>
+
+              <span
+                class="resource-detail-version"
+                id="resourceDetailVersion"
+              >
+                Version 1
+              </span>
+
+            </div>
+
+            <div
+              class="resource-detail-preview"
+              id="resourceDetailPreview"
+            ></div>
+
+          </section>
+
+          <section
+            class="resource-related-section"
+            id="resourceRelatedSection"
+            hidden
+          >
+
+            <div class="resource-detail-section-heading">
+
+              <div>
+                <span class="resource-detail-section-kicker">
+                  KEEP EXPLORING
+                </span>
+
+                <h2>
+                  Related resources
+                </h2>
+              </div>
+
+              <a href="/resources.html">
+                View all
+                <i class="ph ph-arrow-right"></i>
+              </a>
+
+            </div>
+
+            <div
+              class="resource-related-grid"
+              id="resourceRelatedGrid"
+            ></div>
+
+          </section>
+
+        </div>
+
+      </main>
+
+    </div>
+
+  </main>
+
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+
+<script src="/js/resource-renderers.js"></script>
+
+<script src="/js/ready-made-resource.js"></script>
+
+</body>
+</html>
