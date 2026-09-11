@@ -189,6 +189,20 @@ export async function fsUpdate(path, data, env) {
   return true;
 }
 
+/** Deletes a document. Safe to call even if it doesn't exist. */
+export async function fsDelete(path, env) {
+  const token = await _getAccessToken(env);
+  const res = await fetch(_baseUrl(env) + path, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => '');
+    throw new Error('Firestore DELETE ' + path + ' failed (' + res.status + '): ' + text.slice(0, 200));
+  }
+  return true;
+}
+
 /**
  * Runs a structured query against a collection, filtered to documents where
  * fieldName == value, ordered by orderByField descending, limited to
