@@ -18,6 +18,10 @@ import {
 } from './ready-made-resources-endpoint.js';
 
 import {
+  handleUseReadyMadeResource,
+} from './use-resource-endpoint.js';
+
+import {
   handleCollectionList,
   handleCollectionGet,
 } from './collections-endpoint.js';
@@ -44,10 +48,12 @@ import {
 
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
+
 import {
   handleAccountRequest,
   handleUsageRequest,
 } from './account-endpoint.js';
+
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 
 import {
@@ -65,25 +71,35 @@ import {
 function _corsPreflight() {
   return new Response(null, {
     status: 204,
+
     headers: {
       'Access-Control-Allow-Origin': '*',
+
       'Access-Control-Allow-Methods':
         'GET, POST, PATCH, OPTIONS',
+
       'Access-Control-Allow-Headers':
         'Content-Type, Authorization',
-      'Access-Control-Max-Age': '86400',
+
+      'Access-Control-Max-Age':
+        '86400',
     },
   });
 }
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') {
+    if (
+      request.method === 'OPTIONS'
+    ) {
       return _corsPreflight();
     }
 
-    const url = new URL(request.url);
-    const path = url.pathname;
+    const url =
+      new URL(request.url);
+
+    const path =
+      url.pathname;
 
     if (
       request.method === 'GET' &&
@@ -91,7 +107,9 @@ export default {
     ) {
       return new Response(
         'Cognita Worker is running.',
-        { status: 200 }
+        {
+          status: 200,
+        }
       );
     }
 
@@ -136,21 +154,30 @@ export default {
       request.method === 'POST' &&
       path === '/api/chat/save'
     ) {
-      return handleChatSave(request, env);
+      return handleChatSave(
+        request,
+        env
+      );
     }
 
     if (
       request.method === 'POST' &&
       path === '/api/chat/delete'
     ) {
-      return handleChatDelete(request, env);
+      return handleChatDelete(
+        request,
+        env
+      );
     }
 
     if (
       request.method === 'GET' &&
       path === '/api/chat/list'
     ) {
-      return handleChatList(request, env);
+      return handleChatList(
+        request,
+        env
+      );
     }
 
     if (
@@ -203,9 +230,12 @@ export default {
 
     if (
       request.method === 'GET' &&
-      /^\/api\/files\/[^/]+\/[^/]+$/.test(path)
+      /^\/api\/files\/[^/]+\/[^/]+$/.test(
+        path
+      )
     ) {
-      const parts = path.split('/');
+      const parts =
+        path.split('/');
 
       return handleFileGet(
         request,
@@ -241,7 +271,9 @@ export default {
 
     if (
       request.method === 'POST' &&
-      /^\/api\/resources\/[^/]+\/download$/.test(path)
+      /^\/api\/resources\/[^/]+\/download$/.test(
+        path
+      )
     ) {
       return handleResourceDownload(
         request,
@@ -251,134 +283,165 @@ export default {
     }
 
     // ─────────────────────────────────────
-// Public Ready-made Resources
-// ─────────────────────────────────────
+    // Public Ready-made Resources
+    // ─────────────────────────────────────
 
-if (
-  request.method === 'GET' &&
-  path === '/api/ready-made-resources'
-) {
-  return handleReadyMadeResourceList(
-    request,
-    env
-  );
-}
+    if (
+      request.method === 'GET' &&
+      path === '/api/ready-made-resources'
+    ) {
+      return handleReadyMadeResourceList(
+        request,
+        env
+      );
+    }
 
-if (
-  request.method === 'GET' &&
-  /^\/api\/ready-made-resources\/[^/]+$/.test(path)
-) {
-  return handleReadyMadeResourceGet(
-    request,
-    env,
-    path.split('/')[3]
-  );
-}
+    if (
+      request.method === 'GET' &&
+      /^\/api\/ready-made-resources\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleReadyMadeResourceGet(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
 
-if (
-  request.method === 'POST' &&
-  /^\/api\/ready-made-resources\/[^/]+\/download$/.test(path)
-) {
-  return handleReadyMadeResourceDownload(
-    request,
-    env,
-    path.split('/')[3]
-  );
-}
+    if (
+      request.method === 'POST' &&
+      /^\/api\/ready-made-resources\/[^/]+\/download$/.test(
+        path
+      )
+    ) {
+      return handleReadyMadeResourceDownload(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
 
-  // ─────────────────────────────────────
-// Public Collections
-// ─────────────────────────────────────
+    // ─────────────────────────────────────
+    // Use Ready-made Resource
+    // ─────────────────────────────────────
 
-if (
-  request.method === 'GET' &&
-  path === '/api/collections'
-) {
-  return handleCollectionList(
-    request,
-    env
-  );
-}
+    if (
+      request.method === 'POST' &&
+      /^\/api\/ready-made-resources\/[^/]+\/use$/.test(
+        path
+      )
+    ) {
+      return handleUseReadyMadeResource(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
 
-if (
-  request.method === 'GET' &&
-  /^\/api\/collections\/[^/]+$/.test(path)
-) {
-  return handleCollectionGet(
-    request,
-    env,
-    path.split('/')[3]
-  );
-}
+    // ─────────────────────────────────────
+    // Public Collections
+    // ─────────────────────────────────────
 
-// ─────────────────────────────────────
-// Admin Collections
-// ─────────────────────────────────────
+    if (
+      request.method === 'GET' &&
+      path === '/api/collections'
+    ) {
+      return handleCollectionList(
+        request,
+        env
+      );
+    }
 
-if (
-  request.method === 'GET' &&
-  path === '/api/admin/collections'
-) {
-  return handleAdminCollectionList(
-    request,
-    env
-  );
-}
+    if (
+      request.method === 'GET' &&
+      /^\/api\/collections\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleCollectionGet(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
 
-if (
-  request.method === 'POST' &&
-  path === '/api/admin/collections'
-) {
-  return handleAdminCollectionCreate(
-    request,
-    env
-  );
-}
+    // ─────────────────────────────────────
+    // Admin Collections
+    // ─────────────────────────────────────
 
-if (
-  request.method === 'GET' &&
-  /^\/api\/admin\/collections\/[^/]+$/.test(path)
-) {
-  return handleAdminCollectionGet(
-    request,
-    env,
-    path.split('/')[4]
-  );
-}
+    if (
+      request.method === 'GET' &&
+      path === '/api/admin/collections'
+    ) {
+      return handleAdminCollectionList(
+        request,
+        env
+      );
+    }
 
-if (
-  request.method === 'PATCH' &&
-  /^\/api\/admin\/collections\/[^/]+$/.test(path)
-) {
-  return handleAdminCollectionUpdate(
-    request,
-    env,
-    path.split('/')[4]
-  );
-}
+    if (
+      request.method === 'POST' &&
+      path === '/api/admin/collections'
+    ) {
+      return handleAdminCollectionCreate(
+        request,
+        env
+      );
+    }
 
-if (
-  request.method === 'POST' &&
-  /^\/api\/admin\/collections\/[^/]+\/publish$/.test(path)
-) {
-  return handleAdminCollectionPublish(
-    request,
-    env,
-    path.split('/')[4]
-  );
-}
+    if (
+      request.method === 'GET' &&
+      /^\/api\/admin\/collections\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleAdminCollectionGet(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
 
-if (
-  request.method === 'POST' &&
-  /^\/api\/admin\/collections\/[^/]+\/archive$/.test(path)
-) {
-  return handleAdminCollectionArchive(
-    request,
-    env,
-    path.split('/')[4]
-  );
-}
-    
+    if (
+      request.method === 'PATCH' &&
+      /^\/api\/admin\/collections\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleAdminCollectionUpdate(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      /^\/api\/admin\/collections\/[^/]+\/publish$/.test(
+        path
+      )
+    ) {
+      return handleAdminCollectionPublish(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      /^\/api\/admin\/collections\/[^/]+\/archive$/.test(
+        path
+      )
+    ) {
+      return handleAdminCollectionArchive(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
     // ─────────────────────────────────────
     // Admin Resources
     // ─────────────────────────────────────
@@ -415,7 +478,9 @@ if (
 
     if (
       request.method === 'GET' &&
-      /^\/api\/admin\/resources\/[^/]+$/.test(path)
+      /^\/api\/admin\/resources\/[^/]+$/.test(
+        path
+      )
     ) {
       return handleAdminResourceGet(
         request,
@@ -426,7 +491,9 @@ if (
 
     if (
       request.method === 'PATCH' &&
-      /^\/api\/admin\/resources\/[^/]+$/.test(path)
+      /^\/api\/admin\/resources\/[^/]+$/.test(
+        path
+      )
     ) {
       return handleAdminResourceUpdate(
         request,
@@ -437,7 +504,9 @@ if (
 
     if (
       request.method === 'POST' &&
-      /^\/api\/admin\/resources\/[^/]+\/publish$/.test(path)
+      /^\/api\/admin\/resources\/[^/]+\/publish$/.test(
+        path
+      )
     ) {
       return handleAdminResourcePublish(
         request,
@@ -448,7 +517,9 @@ if (
 
     if (
       request.method === 'POST' &&
-      /^\/api\/admin\/resources\/[^/]+\/archive$/.test(path)
+      /^\/api\/admin\/resources\/[^/]+\/archive$/.test(
+        path
+      )
     ) {
       return handleAdminResourceArchive(
         request,
@@ -459,7 +530,9 @@ if (
 
     if (
       request.method === 'POST' &&
-      /^\/api\/admin\/generation-jobs\/[^/]+\/process$/.test(path)
+      /^\/api\/admin\/generation-jobs\/[^/]+\/process$/.test(
+        path
+      )
     ) {
       return handleAdminJobProcess(
         request,
@@ -508,6 +581,7 @@ if (
       }),
       {
         status: 404,
+
         headers: {
           'Content-Type':
             'application/json',
