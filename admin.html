@@ -162,6 +162,47 @@
         <div class="my-resources-list" id="collectionsList" style="margin-top:12px;"></div>
       </section>
 
+      <!-- ── Roles (admin/moderator management) — hidden entirely for
+           moderators, since the server rejects these calls for them
+           anyway; wiring shows/hides this based on the signed-in
+           person's own role. ── -->
+      <section class="my-resources-panel" id="rolesPanel" hidden>
+        <h2 class="resources-heading">Admins &amp; Moderators</h2>
+
+        <div class="my-resources-list" id="rolesList" style="margin-bottom:16px;">
+          <div class="my-resources-empty">Loading...</div>
+        </div>
+
+        <h3>Grant a role</h3>
+
+        <div class="resource-field" style="margin-bottom:12px;">
+          <label><input type="radio" name="grantLookupMode" value="email" checked> By email</label>
+          &nbsp;&nbsp;
+          <label><input type="radio" name="grantLookupMode" value="uid"> By uid directly</label>
+        </div>
+
+        <label class="resource-field" id="grantEmailWrap">
+          <span>User's email</span>
+          <input type="email" id="grantEmailInput" placeholder="person@example.com">
+        </label>
+
+        <label class="resource-field" id="grantUidWrap" hidden>
+          <span>User's uid</span>
+          <input type="text" id="grantUidInput" placeholder="Firebase uid">
+        </label>
+
+        <label class="resource-field">
+          <span>Role</span>
+          <select id="grantRoleSelect">
+            <option value="moderator">Moderator</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+
+        <button class="resource-generate-btn" id="grantRoleBtn">Grant role</button>
+        <p id="grantResultLine" style="margin-top:8px;"></p>
+      </section>
+
     </div>
   </main>
 </div>
