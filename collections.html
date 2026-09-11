@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Cognita Collections</title>
+
+  <link
+    rel="stylesheet"
+    href="/css/collections.css"
+  />
+</head>
+
+<body>
+  <div class="collections-shell">
+
+    <header class="collections-header">
+      <a
+        href="/resources.html"
+        class="back-link"
+      >
+        ← Resources
+      </a>
+
+      <div class="brand">
+        <div class="brand-mark">C</div>
+
+        <div>
+          <strong>Cognita</strong>
+          <span>Collections</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="collections-main">
+
+      <section class="hero">
+        <span class="eyebrow">
+          CURATED LEARNING
+        </span>
+
+        <h1>
+          Learn with a complete collection.
+        </h1>
+
+        <p>
+          Carefully assembled sets of
+          classroom-ready resources,
+          organised around a subject,
+          level or learning goal.
+        </p>
+      </section>
+
+      <div class="toolbar">
+        <button
+          class="filter active"
+          data-filter="all"
+        >
+          All
+        </button>
+
+        <button
+          class="filter"
+          data-filter="featured"
+        >
+          Featured
+        </button>
+
+        <button
+          class="filter"
+          data-filter="recommended"
+        >
+          Recommended
+        </button>
+      </div>
+
+      <section
+        id="collectionsGrid"
+        class="collections-grid"
+      ></section>
+
+    </main>
+  </div>
+
+  <script
+    type="module"
+    src="/js/collections.js"
+  ></script>
+</body>
+</html>
