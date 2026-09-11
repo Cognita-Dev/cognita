@@ -96,6 +96,7 @@ let activeType = '';
   if (!user) return;
 
   renderReadyMadeTypeFilters();
+
   await loadReadyMadeResources();
 })();
 
@@ -136,6 +137,8 @@ async function loadReadyMadeResources() {
         : [];
 
     renderReadyMadeResources();
+
+    await openResourceFromQuery();
   } catch (e) {
     console.error(
       '[ready-made] load failed:',
@@ -145,8 +148,15 @@ async function loadReadyMadeResources() {
     list.innerHTML = `
       <div class="ready-made-empty">
         <i class="ph ph-cloud-slash"></i>
-        <h3>Couldn’t load resources</h3>
-        <p>Please try again in a moment.</p>
+
+        <h3>
+          Couldn’t load resources
+        </h3>
+
+        <p>
+          Please try again in a moment.
+        </p>
+
         <button
           type="button"
           class="ready-made-retry"
@@ -158,11 +168,51 @@ async function loadReadyMadeResources() {
     `;
 
     document
-      .getElementById('readyMadeRetry')
+      .getElementById(
+        'readyMadeRetry'
+      )
       ?.addEventListener(
         'click',
         loadReadyMadeResources
       );
+  }
+}
+
+async function openResourceFromQuery() {
+  const params =
+    new URLSearchParams(
+      window.location.search
+    );
+
+  const resourceId =
+    params.get('resource');
+
+  if (!resourceId) return;
+
+  const resource =
+    allReadyMadeResources.find(
+      (item) =>
+        item.id === resourceId
+    );
+
+  if (!resource) return;
+
+  await openReadyMadeResource(
+    resourceId
+  );
+
+  const panel =
+    document.getElementById(
+      'readyMadePreviewPanel'
+    );
+
+  if (panel) {
+    window.setTimeout(() => {
+      panel.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 50);
   }
 }
 
@@ -189,10 +239,17 @@ function renderReadyMadeTypeFilters() {
         <button
           type="button"
           class="ready-made-filter"
-          data-type="${escapeHtml(item.type)}"
+          data-type="${escapeHtml(
+            item.type
+          )}"
         >
-          <i class="ph ph-${escapeHtml(item.icon)}"></i>
-          ${escapeHtml(item.label)}
+          <i class="ph ph-${escapeHtml(
+            item.icon
+          )}"></i>
+
+          ${escapeHtml(
+            item.label
+          )}
         </button>
       `
     ),
@@ -207,7 +264,8 @@ function renderReadyMadeTypeFilters() {
         'click',
         () => {
           activeType =
-            button.dataset.type || '';
+            button.dataset.type ||
+            '';
 
           container
             .querySelectorAll(
@@ -252,12 +310,18 @@ function renderReadyMadeResources() {
   if (!resources.length) {
     list.innerHTML = `
       <div class="ready-made-empty">
+
         <i class="ph ph-books"></i>
-        <h3>No resources here yet</h3>
+
+        <h3>
+          No resources here yet
+        </h3>
+
         <p>
           New curated resources will appear here
           as Cognita publishes them.
         </p>
+
       </div>
     `;
 
@@ -268,7 +332,9 @@ function renderReadyMadeResources() {
     resources
       .map(
         (resource) =>
-          renderResourceCard(resource)
+          renderResourceCard(
+            resource
+          )
       )
       .join('');
 
@@ -284,14 +350,35 @@ function renderReadyMadeResources() {
             card.dataset.readyMadeId
           )
       );
+
+      card.addEventListener(
+        'keydown',
+        (event) => {
+          if (
+            event.key ===
+              'Enter' ||
+            event.key ===
+              ' '
+          ) {
+            event.preventDefault();
+
+            openReadyMadeResource(
+              card.dataset.readyMadeId
+            );
+          }
+        }
+      );
     });
 }
 
-function renderResourceCard(resource) {
+function renderResourceCard(
+  resource
+) {
   const type =
     READY_MADE_TYPES.find(
       (item) =>
-        item.type === resource.resourceType
+        item.type ===
+        resource.resourceType
     );
 
   const meta = [
@@ -303,39 +390,62 @@ function renderResourceCard(resource) {
   return `
     <article
       class="ready-made-card"
-      data-ready-made-id="${escapeHtml(resource.id)}"
+      data-ready-made-id="${escapeHtml(
+        resource.id
+      )}"
       tabindex="0"
       role="button"
+      aria-label="Open ${escapeHtml(
+        resource.title
+      )}"
     >
+
       <div class="ready-made-card-top">
+
         <div class="ready-made-card-icon">
           <i class="ph ph-${
             type
-              ? escapeHtml(type.icon)
+              ? escapeHtml(
+                  type.icon
+                )
               : 'file-text'
           }"></i>
         </div>
 
         <div class="ready-made-card-badges">
+
           ${
             resource.featured
-              ? '<span class="ready-made-badge featured">Featured</span>'
+              ? `
+                <span class="ready-made-badge featured">
+                  Featured
+                </span>
+              `
               : ''
           }
 
           ${
             resource.recommended
-              ? '<span class="ready-made-badge">Recommended</span>'
+              ? `
+                <span class="ready-made-badge">
+                  Recommended
+                </span>
+              `
               : ''
           }
+
         </div>
+
       </div>
 
       <div class="ready-made-card-content">
+
         <span class="ready-made-card-type">
           ${
             type
-              ? escapeHtml(type.label)
+              ? escapeHtml(
+                  type.label
+                )
               : escapeHtml(
                   resource.resourceType
                 )
@@ -343,7 +453,9 @@ function renderResourceCard(resource) {
         </span>
 
         <h3>
-          ${escapeHtml(resource.title)}
+          ${escapeHtml(
+            resource.title
+          )}
         </h3>
 
         ${
@@ -362,6 +474,7 @@ function renderResourceCard(resource) {
           meta.length
             ? `
               <div class="ready-made-card-meta">
+
                 ${meta
                   .map(
                     (item) =>
@@ -370,15 +483,18 @@ function renderResourceCard(resource) {
                       )}</span>`
                   )
                   .join('')}
+
               </div>
             `
             : ''
         }
+
       </div>
 
       <div class="ready-made-card-arrow">
         <i class="ph ph-arrow-up-right"></i>
       </div>
+
     </article>
   `;
 }
@@ -409,7 +525,13 @@ async function openReadyMadeResource(
       'readyMadePreviewTitle'
     );
 
-  if (!panel || !body || !title) return;
+  if (
+    !panel ||
+    !body ||
+    !title
+  ) {
+    return;
+  }
 
   title.textContent =
     resource.title;
@@ -418,7 +540,8 @@ async function openReadyMadeResource(
 
   if (
     window.ResourceRenderers &&
-    typeof window.ResourceRenderers
+    typeof window
+      .ResourceRenderers
       .render === 'function'
   ) {
     body.innerHTML =
@@ -433,7 +556,9 @@ async function openReadyMadeResource(
       );
   }
 
-  renderDownloadButtons(resource);
+  renderDownloadButtons(
+    resource
+  );
 }
 
 function renderDownloadButtons(
@@ -447,13 +572,24 @@ function renderDownloadButtons(
   if (!container) return;
 
   const refs =
-    resource.fileReferences || {};
+    resource.fileReferences ||
+    {};
 
   const formats =
-    ['pdf', 'docx', 'pptx'].filter(
+    [
+      'pdf',
+      'docx',
+      'pptx',
+    ].filter(
       (format) =>
         refs[format]
     );
+
+  if (!formats.length) {
+    container.innerHTML = '';
+
+    return;
+  }
 
   container.innerHTML =
     formats
@@ -497,6 +633,7 @@ async function downloadReadyMadeResource(
     button.innerHTML;
 
   button.disabled = true;
+
   button.innerHTML =
     '<i class="ph ph-spinner ph-spin"></i> Preparing…';
 
@@ -505,7 +642,9 @@ async function downloadReadyMadeResource(
       await window.Auth.authedFetch(
         READY_MADE_WORKER_URL +
           '/api/ready-made-resources/' +
-          encodeURIComponent(resourceId) +
+          encodeURIComponent(
+            resourceId
+          ) +
           '/download',
         {
           method: 'POST',
@@ -543,22 +682,35 @@ async function downloadReadyMadeResource(
     );
   } finally {
     button.disabled = false;
-    button.innerHTML = original;
+    button.innerHTML =
+      original;
   }
 }
 
-function renderFallbackPreview(content) {
+function renderFallbackPreview(
+  content
+) {
   if (!content) {
-    return '<p>No preview available.</p>';
+    return `
+      <p>
+        No preview available.
+      </p>
+    `;
   }
 
-  return Object.entries(content)
+  return Object.entries(
+    content
+  )
     .filter(
-      ([key]) => key !== 'title'
+      ([key]) =>
+        key !== 'title'
     )
     .map(
       ([key, value]) => `
-        <section class="ready-made-fallback-section">
+        <section
+          class="ready-made-fallback-section"
+        >
+
           <h3>
             ${escapeHtml(
               key
@@ -573,6 +725,7 @@ function renderFallbackPreview(content) {
                 )
             )}
           </h3>
+
           <p>
             ${escapeHtml(
               typeof value ===
@@ -583,6 +736,7 @@ function renderFallbackPreview(content) {
                   )
             )}
           </p>
+
         </section>
       `
     )
@@ -590,11 +744,25 @@ function renderFallbackPreview(content) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+  return String(
+    value ?? ''
+  )
+    .replace(
+      /&/g,
+      '&amp;'
+    )
+    .replace(
+      /</g,
+      '&lt;'
+    )
+    .replace(
+      />/g,
+      '&gt;'
+    )
+    .replace(
+      /"/g,
+      '&quot;'
+    )
     .replace(
       /'/g,
       '&#039;'
