@@ -1,45 +1,92 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+>
 
 <title>Resource · Cognita</title>
 
-<link rel="icon" href="/assets/cognita.png">
+<link
+  rel="icon"
+  href="/assets/cognita.png"
+>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  rel="preconnect"
+  href="https://fonts.googleapis.com"
+>
+
+<link
+  rel="preconnect"
+  href="https://fonts.gstatic.com"
+  crossorigin
+>
 
 <link
   rel="stylesheet"
   href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap"
 >
 
-<link rel="stylesheet" href="/css/shared.css">
-<link rel="stylesheet" href="/css/app.css">
-<link rel="stylesheet" href="/css/resource-renderers.css">
-<link rel="stylesheet" href="/css/ready-made-resource.css">
+<link
+  rel="stylesheet"
+  href="/css/shared.css"
+>
+
+<link
+  rel="stylesheet"
+  href="/css/app.css"
+>
+
+<link
+  rel="stylesheet"
+  href="/css/resource-renderers.css"
+>
+
+<link
+  rel="stylesheet"
+  href="/css/ready-made-resource.css"
+>
 
 <link
   rel="stylesheet"
   href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css"
 >
+
 </head>
 
 <body class="app-page">
 
 <div class="app-shell">
 
-  <div class="sidebar-scrim" id="sidebarScrim"></div>
+  <div
+    class="sidebar-scrim"
+    id="sidebarScrim"
+  ></div>
 
-  <aside class="app-sidebar" id="appSidebar">
+  <aside
+    class="app-sidebar"
+    id="appSidebar"
+  >
 
     <div class="sidebar-top">
 
-      <a href="/index.html" class="sidebar-logo">
-        <img src="/assets/cognita.png" alt="Cognita">
-        <span>Cognita</span>
+      <a
+        href="/index.html"
+        class="sidebar-logo"
+      >
+        <img
+          src="/assets/cognita.png"
+          alt="Cognita"
+        >
+
+        <span>
+          Cognita
+        </span>
       </a>
 
       <div class="sidebar-top-actions">
@@ -64,19 +111,29 @@
 
     </div>
 
-    <a href="/app.html" class="new-chat-btn">
+    <a
+      href="/app.html"
+      class="new-chat-btn"
+    >
       <i class="ph ph-chat-circle"></i>
-      <span>Back to chat</span>
+      <span>
+        Back to chat
+      </span>
     </a>
 
-    <nav class="sidebar-history" aria-label="Navigation">
+    <nav
+      class="sidebar-history"
+      aria-label="Navigation"
+    >
 
       <a
         href="/app.html"
         class="sidebar-history-item"
       >
         <i class="ph ph-chat-circle"></i>
-        <span>Chat</span>
+        <span>
+          Chat
+        </span>
       </a>
 
       <a
@@ -84,7 +141,9 @@
         class="sidebar-history-item is-active"
       >
         <i class="ph ph-graduation-cap"></i>
-        <span>Resources</span>
+        <span>
+          Resources
+        </span>
       </a>
 
       <a
@@ -92,16 +151,22 @@
         class="sidebar-history-item"
       >
         <i class="ph ph-books"></i>
-        <span>Collections</span>
+        <span>
+          Collections
+        </span>
       </a>
 
     </nav>
 
     <div class="sidebar-bottom">
 
-      <div class="usage-widget" id="usageWidget">
+      <div
+        class="usage-widget"
+        id="usageWidget"
+      >
 
         <div class="usage-row">
+
           <span class="usage-label">
             Resources today
           </span>
@@ -112,13 +177,16 @@
           >
             00 / 00
           </span>
+
         </div>
 
         <div class="usage-bar">
+
           <div
             class="usage-bar-fill"
             id="usageResourcesBar"
           ></div>
+
         </div>
 
       </div>
@@ -215,6 +283,7 @@
           class="resource-detail-loading"
           id="resourceDetailLoading"
         >
+
           <div class="resource-detail-loading-icon">
             <i class="ph ph-graduation-cap"></i>
           </div>
@@ -224,6 +293,7 @@
             <span></span>
             <span></span>
           </div>
+
         </div>
 
         <div
@@ -231,11 +301,14 @@
           id="resourceDetailError"
           hidden
         >
+
           <div class="resource-detail-error-icon">
             <i class="ph ph-warning-circle"></i>
           </div>
 
-          <h2>Resource unavailable</h2>
+          <h2>
+            Resource unavailable
+          </h2>
 
           <p id="resourceDetailErrorMessage">
             We couldn't load this resource.
@@ -259,6 +332,7 @@
             </a>
 
           </div>
+
         </div>
 
         <div
@@ -271,6 +345,7 @@
             class="resource-detail-breadcrumbs"
             aria-label="Breadcrumb"
           >
+
             <a href="/resources.html">
               Resources
             </a>
@@ -280,6 +355,7 @@
             <span id="resourceBreadcrumbType">
               Resource
             </span>
+
           </nav>
 
           <section class="resource-detail-hero">
@@ -339,14 +415,48 @@
             <aside class="resource-detail-actions-card">
 
               <div class="resource-detail-actions-heading">
-                <span>Ready to use</span>
+
+                <span>
+                  Ready to use
+                </span>
+
                 <i class="ph ph-sparkle"></i>
+
               </div>
 
               <p>
-                Preview the complete resource or download
-                a classroom-ready copy.
+                Add this curated resource to your
+                private library or download a
+                classroom-ready copy.
               </p>
+
+              <button
+                type="button"
+                class="resource-use-button"
+                id="useResourceButton"
+              >
+                <span class="resource-use-button-icon">
+                  <i class="ph ph-plus-circle"></i>
+                </span>
+
+                <span class="resource-use-button-copy">
+                  <strong>
+                    Use This Resource
+                  </strong>
+
+                  <small>
+                    Add to My Resources
+                  </small>
+                </span>
+
+                <i class="ph ph-arrow-right"></i>
+              </button>
+
+              <div
+                class="resource-use-status"
+                id="resourceUseStatus"
+                hidden
+              ></div>
 
               <div
                 class="resource-download-actions"
@@ -405,6 +515,7 @@
             <div class="resource-detail-section-heading">
 
               <div>
+
                 <span class="resource-detail-section-kicker">
                   RESOURCE PREVIEW
                 </span>
@@ -412,6 +523,7 @@
                 <h2>
                   Explore the resource
                 </h2>
+
               </div>
 
               <span
@@ -439,6 +551,7 @@
             <div class="resource-detail-section-heading">
 
               <div>
+
                 <span class="resource-detail-section-kicker">
                   KEEP EXPLORING
                 </span>
@@ -446,6 +559,7 @@
                 <h2>
                   Related resources
                 </h2>
+
               </div>
 
               <a href="/resources.html">
@@ -472,7 +586,10 @@
 
 </div>
 
-<script type="module" src="/js/auth.js"></script>
+<script
+  type="module"
+  src="/js/auth.js"
+></script>
 
 <script src="/js/resource-renderers.js"></script>
 
