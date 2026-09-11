@@ -1,85 +1,207 @@
 // recipes/worksheet.js
-// Worksheet resource type. Unlike Lesson Plan, this schema centers on a
-// list of questions plus an answer key — validation checks that the
-// answer key actually has one entry per question, since a mismatched
-// count is the most common way this resource type goes wrong.
 
 export const WORKSHEET_RECIPE = {
   resourceType: 'worksheet',
 
   requiredFields: ['subject', 'classLevel', 'topic'],
-  optionalFields: ['questionCount', 'difficulty', 'curriculum', 'educationalLevel'],
+
+  optionalFields: [
+    'questionCount',
+    'difficulty',
+    'questionMix',
+    'curriculum',
+    'educationalLevel',
+  ],
 
   systemPrompt:
-    'You are an expert teacher creating a student worksheet. Generate the ' +
-    'worksheet as a single JSON object and nothing else — no markdown fences, ' +
-    'no commentary before or after. The JSON object must have exactly this shape:\n' +
-    '{\n' +
-    '  "title": string,\n' +
-    '  "instructions": string,\n' +
-    '  "questions": [ { "number": number, "question": string, "type": string } ],\n' +
-    '  "answerKey": [ { "number": number, "answer": string } ]\n' +
-    '}\n' +
-    'The "questions" array and "answerKey" array must have exactly the same ' +
-    'length, and each question\'s "number" must have a matching entry in ' +
-    'answerKey with the same "number". Question numbering must start at 1 and ' +
-    'be sequential with no gaps or repeats. "type" should be a short label such ' +
-    'as "short answer", "multiple choice", or "fill in the blank". Content must ' +
-    'be age-appropriate for the given class level and match the requested ' +
-    'difficulty if one is given. Do not wrap the JSON in code fences.',
+    'You are an expert teacher creating a classroom worksheet. ' +
+    'Generate one JSON object and nothing else. No markdown fences. ' +
+    'Use exactly this structure:\\n' +
+    '{\\n' +
+    '  "title": string,\\n' +
+    '  "instructions": string,\\n' +
+    '  "difficulty": "easy" | "medium" | "hard" | "mixed",\\n' +
+    '  "questions": [\\n' +
+    '    {\\n' +
+    '      "number": number,\\n' +
+    '      "question": string,\\n' +
+    '      "type": "short_answer" | "multiple_choice" | "fill_blank",\\n' +
+    '      "options": string[],\\n' +
+    '      "marks": number\\n' +
+    '    }\\n' +
+    '  ],\\n' +
+    '  "answerKey": [\\n' +
+    '    { "number": number, "answer": string, "marks": number }\\n' +
+    '  ]\\n' +
+    '}\\n' +
+    'Question numbers must be sequential starting at 1. The answer key must contain ' +
+    'exactly one entry per question. For non-multiple-choice questions, options should ' +
+    'be an empty array. Match the requested difficulty and question mix.',
 
   buildUserPrompt(fields) {
-    let prompt = 'Create a worksheet.\n';
-    prompt += 'Subject: ' + fields.subject + '\n';
-    prompt += 'Class: ' + fields.classLevel + '\n';
-    prompt += 'Topic: ' + fields.topic + '\n';
-    prompt += 'Number of questions: ' + (fields.questionCount || 10) + '\n';
-    if (fields.difficulty) prompt += 'Difficulty: ' + fields.difficulty + '\n';
-    if (fields.curriculum) prompt += 'Curriculum: ' + fields.curriculum + '\n';
-    if (fields.educationalLevel) prompt += 'Educational level: ' + fields.educationalLevel + '\n';
+    const count = Number(fields.questionCount) || 10;
+
+    let prompt = 'Create a worksheet.\\n';
+    prompt += 'Subject: ' + fields.subject + '\\n';
+    prompt += 'Class: ' + fields.classLevel + '\\n';
+    prompt += 'Topic: ' + fields.topic + '\\n';
+    prompt += 'Number of questions: ' + count + '\\n';
+    prompt += 'Difficulty: ' + (fields.difficulty || 'medium') + '\\n';
+    prompt += 'Question mix: ' + (fields.questionMix || 'mixed') + '\\n';
+
+    if (fields.curriculum) {
+      prompt += 'Curriculum: ' + fields.curriculum + '\\n';
+    }
+
+    if (fields.educationalLevel) {
+      prompt += 'Educational level: ' + fields.educationalLevel + '\\n';
+    }
+
     return prompt;
   },
 
-  validate(content) {
+  validate(content, fields = {}) {
     if (!content || typeof content !== 'object') {
       return { ok: false, error: 'Generated content was not a valid object.' };
     }
-    if (typeof content.title !== 'string' || !content.title.trim()) {
+
+    if (
+      typeof content.title !== 'string' ||
+      !content.title.trim()
+    ) {
       return { ok: false, error: 'Missing title.' };
     }
-    if (typeof content.instructions !== 'string' || !content.instructions.trim()) {
+
+    if (
+      typeof content.instructions !== 'string' ||
+      !content.instructions.trim()
+    ) {
       return { ok: false, error: 'Missing instructions.' };
     }
+
     if (!Array.isArray(content.questions) || content.questions.length === 0) {
       return { ok: false, error: 'Missing or empty questions array.' };
     }
-    if (!Array.isArray(content.answerKey) || content.answerKey.length === 0) {
-      return { ok: false, error: 'Missing or empty answerKey array.' };
-    }
-    if (content.questions.length !== content.answerKey.length) {
-      return { ok: false, error: 'Question count (' + content.questions.length + ') does not match answer key count (' + content.answerKey.length + ').' };
+
+    if (!Array.isArray(content.answerKey)) {
+      return { ok: false, error: 'Missing answer key.' };
     }
 
-    const questionNumbers = content.questions.map((q) => q.number).sort((a, b) => a - b);
-    const answerNumbers = content.answerKey.map((a) => a.number).sort((a, b) => a - b);
+    const requestedCount = Number(fields.questionCount) || 10;
 
-    for (let i = 0; i < questionNumbers.length; i++) {
-      if (questionNumbers[i] !== i + 1) {
-        return { ok: false, error: 'Question numbering is not sequential starting at 1.' };
+    if (content.questions.length !== requestedCount) {
+      return {
+        ok: false,
+        error:
+          'Expected ' +
+          requestedCount +
+          ' questions but received ' +
+          content.questions.length +
+          '.',
+      };
+    }
+
+    if (content.answerKey.length !== content.questions.length) {
+      return {
+        ok: false,
+        error: 'Question count does not match answer key count.',
+      };
+    }
+
+    for (let i = 0; i < content.questions.length; i++) {
+      const q = content.questions[i];
+
+      if (q.number !== i + 1) {
+        return {
+          ok: false,
+          error: 'Question numbering is not sequential starting at 1.',
+        };
       }
-      if (answerNumbers[i] !== i + 1) {
-        return { ok: false, error: 'Answer key numbering does not match question numbering.' };
+
+      if (!q.question || typeof q.question !== 'string') {
+        return {
+          ok: false,
+          error: 'Question ' + q.number + ' is missing its text.',
+        };
+      }
+
+      if (
+        !['short_answer', 'multiple_choice', 'fill_blank'].includes(q.type)
+      ) {
+        return {
+          ok: false,
+          error: 'Question ' + q.number + ' has an invalid type.',
+        };
+      }
+
+      if (!Array.isArray(q.options)) {
+        return {
+          ok: false,
+          error: 'Question ' + q.number + ' has invalid options.',
+        };
+      }
+
+      if (q.type === 'multiple_choice' && q.options.length !== 4) {
+        return {
+          ok: false,
+          error:
+            'Multiple-choice question ' +
+            q.number +
+            ' must have exactly 4 options.',
+        };
+      }
+
+      if (q.type !== 'multiple_choice' && q.options.length !== 0) {
+        return {
+          ok: false,
+          error:
+            'Non-multiple-choice question ' +
+            q.number +
+            ' must have no options.',
+        };
+      }
+
+      if (
+        typeof q.marks !== 'number' ||
+        q.marks < 1
+      ) {
+        return {
+          ok: false,
+          error:
+            'Question ' + q.number + ' has invalid marks.',
+        };
       }
     }
 
-    for (const q of content.questions) {
-      if (typeof q.question !== 'string' || !q.question.trim()) {
-        return { ok: false, error: 'A question is missing its text.' };
+    for (let i = 0; i < content.answerKey.length; i++) {
+      const answer = content.answerKey[i];
+
+      if (answer.number !== i + 1) {
+        return {
+          ok: false,
+          error: 'Answer key numbering does not match question numbering.',
+        };
       }
-    }
-    for (const a of content.answerKey) {
-      if (typeof a.answer !== 'string' || !a.answer.trim()) {
-        return { ok: false, error: 'An answer key entry is missing its answer.' };
+
+      if (
+        typeof answer.answer !== 'string' ||
+        !answer.answer.trim()
+      ) {
+        return {
+          ok: false,
+          error:
+            'Answer key entry ' + answer.number + ' is missing its answer.',
+        };
+      }
+
+      if (answer.marks !== content.questions[i].marks) {
+        return {
+          ok: false,
+          error:
+            'Answer key marks for question ' +
+            answer.number +
+            ' do not match the question.',
+        };
       }
     }
 
@@ -87,22 +209,45 @@ export const WORKSHEET_RECIPE = {
   },
 
   toPlainTextParagraphs(content) {
-    const lines = [];
-    lines.push(content.title);
-    lines.push('');
-    lines.push(content.instructions);
-    lines.push('');
+    const lines = [
+      content.title,
+      'Difficulty: ' + (content.difficulty || ''),
+      '',
+      content.instructions,
+    ];
+
     content.questions.forEach((q) => {
-      lines.push(q.number + '. ' + q.question);
+      lines.push('');
+      lines.push(
+        q.number +
+          '. ' +
+          q.question +
+          ' (' +
+          q.marks +
+          ' marks)'
+      );
+
+      q.options.forEach((option, i) => {
+        lines.push(
+          String.fromCharCode(65 + i) + ') ' + option
+        );
+      });
     });
+
     lines.push('');
     lines.push('Answer Key');
-    content.answerKey
-      .slice()
-      .sort((a, b) => a.number - b.number)
-      .forEach((a) => {
-        lines.push(a.number + '. ' + a.answer);
-      });
+
+    content.answerKey.forEach((answer) => {
+      lines.push(
+        answer.number +
+          '. ' +
+          answer.answer +
+          ' (' +
+          answer.marks +
+          ' marks)'
+      );
+    });
+
     return lines.join('\n\n');
   },
 };
