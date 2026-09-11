@@ -27,22 +27,137 @@ const RESOURCE_TYPES = [
 ];
 
 const TYPE_FIELD_CONFIG = {
-  lesson_plan: { topic: true, duration: true },
-  worksheet: { topic: true, questionCount: true },
-  exam: { topic: true, duration: true },
-  scheme_of_work: { topic: false, term: true, weekCount: true },
-  quiz: { topic: true, questionCount: true },
-  study_guide: { topic: true },
-  teaching_guide: { topic: true },
-  classroom_activity: { topic: true, duration: true },
-  assignment: { topic: true },
-  marking_scheme: { topic: true },
-  rubric: { topic: true },
-  flashcards: { topic: true, questionCount: true },
-  student_handout: { topic: true },
-  presentation: { topic: true, questionCount: true },
-  project: { topic: true, duration: true },
-  test: { topic: true, duration: true },
+  lesson_plan: {
+    topic: true,
+    duration: true,
+    lessonStyle: true,
+    objectiveFocus: true,
+  },
+
+  worksheet: {
+    topic: true,
+    questionCount: true,
+    difficulty: true,
+    questionMix: true,
+  },
+
+  exam: {
+    topic: true,
+    duration: true,
+    totalMarks: true,
+    difficulty: true,
+    sectionCount: true,
+  },
+
+  scheme_of_work: {
+    topic: false,
+    term: true,
+    weekCount: true,
+    lessonsPerWeek: true,
+  },
+
+  quiz: {
+    topic: true,
+    questionCount: true,
+    difficulty: true,
+    questionStyle: true,
+  },
+
+  study_guide: {
+    topic: true,
+  },
+
+  teaching_guide: {
+    topic: true,
+  },
+
+  classroom_activity: {
+    topic: true,
+    duration: true,
+  },
+
+  assignment: {
+    topic: true,
+  },
+
+  marking_scheme: {
+    topic: true,
+  },
+
+  rubric: {
+    topic: true,
+  },
+
+  flashcards: {
+    topic: true,
+    questionCount: true,
+    difficulty: true,
+    cardStyle: true,
+  },
+
+  student_handout: {
+    topic: true,
+  },
+
+  presentation: {
+    topic: true,
+    questionCount: true,
+  },
+
+  project: {
+    topic: true,
+    duration: true,
+  },
+
+  test: {
+    topic: true,
+    duration: true,
+  },
+};
+
+const RESOURCE_OPTIONS = {
+  difficulty: [
+    { value: 'easy', label: 'Easy' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'hard', label: 'Hard' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
+
+  lessonStyle: [
+    { value: 'direct_instruction', label: 'Direct Instruction' },
+    { value: 'inquiry', label: 'Inquiry-Based' },
+    { value: 'discussion', label: 'Discussion-Based' },
+    { value: 'practical', label: 'Practical / Activity-Based' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
+
+  objectiveFocus: [
+    { value: 'knowledge', label: 'Knowledge & Understanding' },
+    { value: 'application', label: 'Application' },
+    { value: 'skills', label: 'Skills Development' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
+
+  questionStyle: [
+    { value: 'knowledge', label: 'Knowledge' },
+    { value: 'conceptual', label: 'Conceptual' },
+    { value: 'application', label: 'Application' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
+
+  questionMix: [
+    { value: 'short_answer', label: 'Short Answer' },
+    { value: 'multiple_choice', label: 'Multiple Choice' },
+    { value: 'fill_blank', label: 'Fill in the Blank' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
+
+  cardStyle: [
+    { value: 'concept_definition', label: 'Concept → Definition' },
+    { value: 'question_answer', label: 'Question → Answer' },
+    { value: 'term_example', label: 'Term → Example' },
+    { value: 'mixed', label: 'Mixed' },
+  ],
 };
 
 // Mirrors design-templates.js on the backend — the backend is the source
@@ -197,6 +312,86 @@ function renderResourceTypeGrid() {
   });
 }
 
+function _setFieldVisibility(id, visible) {
+  const wrap = document.getElementById(id);
+  if (wrap) wrap.hidden = !visible;
+}
+
+function _populateSelect(id, options, defaultValue) {
+  const select = document.getElementById(id);
+  if (!select) return;
+
+  select.innerHTML = options.map((option) =>
+    '<option value="' + escapeHtml(option.value) + '">' +
+      escapeHtml(option.label) +
+    '</option>'
+  ).join('');
+
+  if (defaultValue) {
+    select.value = defaultValue;
+  }
+}
+
+function renderResourceSpecificFields(config) {
+  _setFieldVisibility('difficultyFieldWrap', !!config.difficulty);
+  _setFieldVisibility('lessonStyleFieldWrap', !!config.lessonStyle);
+  _setFieldVisibility('objectiveFocusFieldWrap', !!config.objectiveFocus);
+  _setFieldVisibility('questionStyleFieldWrap', !!config.questionStyle);
+  _setFieldVisibility('questionMixFieldWrap', !!config.questionMix);
+  _setFieldVisibility('cardStyleFieldWrap', !!config.cardStyle);
+  _setFieldVisibility('totalMarksFieldWrap', !!config.totalMarks);
+  _setFieldVisibility('sectionCountFieldWrap', !!config.sectionCount);
+  _setFieldVisibility('lessonsPerWeekFieldWrap', !!config.lessonsPerWeek);
+
+  if (config.difficulty) {
+    _populateSelect(
+      'fieldDifficulty',
+      RESOURCE_OPTIONS.difficulty,
+      'medium'
+    );
+  }
+
+  if (config.lessonStyle) {
+    _populateSelect(
+      'fieldLessonStyle',
+      RESOURCE_OPTIONS.lessonStyle,
+      'direct_instruction'
+    );
+  }
+
+  if (config.objectiveFocus) {
+    _populateSelect(
+      'fieldObjectiveFocus',
+      RESOURCE_OPTIONS.objectiveFocus,
+      'mixed'
+    );
+  }
+
+  if (config.questionStyle) {
+    _populateSelect(
+      'fieldQuestionStyle',
+      RESOURCE_OPTIONS.questionStyle,
+      'mixed'
+    );
+  }
+
+  if (config.questionMix) {
+    _populateSelect(
+      'fieldQuestionMix',
+      RESOURCE_OPTIONS.questionMix,
+      'mixed'
+    );
+  }
+
+  if (config.cardStyle) {
+    _populateSelect(
+      'fieldCardStyle',
+      RESOURCE_OPTIONS.cardStyle,
+      'concept_definition'
+    );
+  }
+}
+
 function openForm(type) {
   selectedType = type;
   const config = TYPE_FIELD_CONFIG[type] || {};
@@ -214,6 +409,11 @@ function openForm(type) {
   document.getElementById('termFieldWrap').hidden = !config.term;
   document.getElementById('weekCountFieldWrap').hidden = !config.weekCount;
 
+  _setFieldVisibility('totalMarksFieldWrap', !!config.totalMarks);
+  _setFieldVisibility('sectionCountFieldWrap', !!config.sectionCount);
+  _setFieldVisibility('lessonsPerWeekFieldWrap', !!config.lessonsPerWeek);
+
+  renderResourceSpecificFields(config);
   renderDesignTemplatePicker();
 }
 
@@ -287,30 +487,94 @@ function renderDesignTemplatePicker() {
 
 function wireForm() {
   document.getElementById('resourceFormBack').addEventListener('click', closeForm);
-
   document.getElementById('resourceForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!selectedType) return;
-
     const fields = {
       subject: document.getElementById('fieldSubject').value.trim(),
       classLevel: document.getElementById('fieldClassLevel').value.trim(),
       curriculum: document.getElementById('fieldCurriculum').value.trim(),
     };
-
     const config = TYPE_FIELD_CONFIG[selectedType] || {};
-    if (config.topic) fields.topic = document.getElementById('fieldTopic').value.trim();
-    if (config.duration) fields.duration = document.getElementById('fieldDuration').value.trim();
+    if (config.topic) {
+      fields.topic = document.getElementById('fieldTopic').value.trim();
+    }
+    if (config.duration) {
+      fields.duration = document.getElementById('fieldDuration').value.trim();
+    }
     if (config.questionCount) {
-      const n = parseInt(document.getElementById('fieldQuestionCount').value, 10);
-      if (n) fields.questionCount = n;
+      const n = parseInt(
+        document.getElementById('fieldQuestionCount').value,
+        10
+      );
+      if (n) {
+        fields.questionCount = n;
+      }
     }
-    if (config.term) fields.term = document.getElementById('fieldTerm').value.trim();
+    if (config.term) {
+      fields.term = document.getElementById('fieldTerm').value.trim();
+    }
     if (config.weekCount) {
-      const n = parseInt(document.getElementById('fieldWeekCount').value, 10);
-      if (n) fields.weekCount = n;
+      const n = parseInt(
+        document.getElementById('fieldWeekCount').value,
+        10
+      );
+      if (n) {
+        fields.weekCount = n;
+      }
     }
-
+    // ── Resource-specific generation controls ──
+    if (config.difficulty) {
+      fields.difficulty =
+        document.getElementById('fieldDifficulty').value;
+    }
+    if (config.lessonStyle) {
+      fields.lessonStyle =
+        document.getElementById('fieldLessonStyle').value;
+    }
+    if (config.objectiveFocus) {
+      fields.objectiveFocus =
+        document.getElementById('fieldObjectiveFocus').value;
+    }
+    if (config.questionStyle) {
+      fields.questionStyle =
+        document.getElementById('fieldQuestionStyle').value;
+    }
+    if (config.questionMix) {
+      fields.questionMix =
+        document.getElementById('fieldQuestionMix').value;
+    }
+    if (config.cardStyle) {
+      fields.cardStyle =
+        document.getElementById('fieldCardStyle').value;
+    }
+    if (config.totalMarks) {
+      const n = parseInt(
+        document.getElementById('fieldTotalMarks').value,
+        10
+      );
+      if (n) {
+        fields.totalMarks = n;
+      }
+    }
+    if (config.sectionCount) {
+      const n = parseInt(
+        document.getElementById('fieldSectionCount').value,
+        10
+      );
+      if (n) {
+        fields.sectionCount = n;
+      }
+    }
+    if (config.lessonsPerWeek) {
+      const n = parseInt(
+        document.getElementById('fieldLessonsPerWeek').value,
+        10
+      );
+      if (n) {
+        fields.lessonsPerWeek = n;
+      }
+    }
     await generateResource(selectedType, fields);
   });
 }
