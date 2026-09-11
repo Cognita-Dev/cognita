@@ -1,8 +1,8 @@
 // js/bootstrap.js
-// One-time first-admin bootstrap page, meant to be opened directly on a
-// phone browser — no console or curl needed. Signs in via the same
-// window.Auth used everywhere else, then makes the single bootstrap call
-// with a tap.
+// One-time first-admin bootstrap page. Eligibility is based on the
+// signed-in user's email matching a hardcoded allow-list on the server
+// (admin-roles-endpoint.js) — this page just needs to be signed in and
+// tap the button, nothing else to type.
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
@@ -25,15 +25,8 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
     'Signed in as: ' + (user.email || user.uid);
 
   document.getElementById('submitBtn').addEventListener('click', async () => {
-    const secret = document.getElementById('secretInput').value.trim();
     const resultLine = document.getElementById('resultLine');
     const btn = document.getElementById('submitBtn');
-
-    if (!secret) {
-      resultLine.textContent = 'Enter the bootstrap secret first.';
-      resultLine.style.color = '#7A2E3A';
-      return;
-    }
 
     btn.disabled = true;
     btn.textContent = 'Working...';
@@ -42,7 +35,7 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/bootstrap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret }),
+        body: JSON.stringify({}),
       });
 
       const data = await res.json();
