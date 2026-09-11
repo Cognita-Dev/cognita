@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bootstrap Admin · Cognita</title>
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="app-page" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+
+<div style="max-width:420px;width:100%;">
+  <h2>Cognita — Create First Admin</h2>
+  <p id="statusLine">Checking sign-in...</p>
+
+  <div id="signInWrap" hidden>
+    <p>Not signed in. Sign in first, then come back to this page.</p>
+    <button id="goToLoginBtn" style="padding:10px 16px;">Go to sign in</button>
+  </div>
+
+  <div id="bootstrapWrap" hidden>
+    <p id="signedInAs" style="color:#3F6B5B;"></p>
+
+    <label style="display:block;margin:12px 0;">
+      <span>Bootstrap secret</span>
+      <input type="password" id="secretInput" style="width:100%;padding:8px;margin-top:4px;">
+    </label>
+
+    <button id="submitBtn" style="padding:10px 16px;width:100%;">Make this account the first admin</button>
+
+    <p id="resultLine" style="margin-top:16px;"></p>
+  </div>
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module" src="/js/bootstrap.js"></script>
+
+</body>
+</html>
