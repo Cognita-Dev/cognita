@@ -1,0 +1,292 @@
+// admin-roles-endpoint.js
+// First-admin bootstrap, and admin/moderator role management.
+//
+// Bootstrap: a one-time-only endpoint that creates the very first admin,
+// gated by a secret set as the ADMIN_BOOTSTRAP_SECRET Worker environment
+// variable (not a code constant — set it via `wrangler secret put
+// ADMIN_BOOTSTRAP_SECRET`). It can only ever succeed once: a singleton
+// system/bootstrapStatus document is checked first, and set immediately
+// after the first admin is created, so replaying the same request (or
+// anyone else who later learns the secret) gets a 409, not a second admin.
+//
+// After bootstrap, all further role changes go through grant/revoke,
+// which require an existing 'admin' (requireSuperAdmin) — moderators
+// cannot use these endpoints.
+
+import { requireAuth } from './auth-middleware.js';
+import { requireSuperAdmin } from './admin-auth.js';
+import { fsGet, fsSet, fsQuery, fsDelete, getGoogleAccessToken } from './firestore-rest.js';
+
+const VALID_ROLES = ['admin', 'moderator'];
+const BOOTSTRAP_DOC_PATH = 'system/bootstrapStatus';
+
+function _corsJsonHeaders() {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+}
+
+function _jsonError(message, status) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+}
+
+function _jsonOk(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: _corsJsonHeaders() });
+}
+
+// ── Bootstrap the first admin ─────────────────────────────────────────
+// POST /api/admin/bootstrap
+// Body: { secret }
+// Caller just needs to be signed in (requireAuth) — there's no admin to
+// require yet. The secret is what actually gates this, not the caller's
+// identity. Whoever is signed in when this succeeds becomes the first
+// admin.
+export async function handleAdminBootstrap(request, env) {
+  let identity;
+  try {
+    identity = await requireAuth(request, env);
+  } catch (e) {
+    return _jsonError('Not authenticated: ' + e.message, 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400);
+  }
+
+  if (!env.ADMIN_BOOTSTRAP_SECRET) {
+    return _jsonError('Server misconfiguration: ADMIN_BOOTSTRAP_SECRET is not set.', 500);
+  }
+
+  if (!body.secret || body.secret !== env.ADMIN_BOOTSTRAP_SECRET) {
+    return _jsonError('Incorrect bootstrap secret.', 403);
+  }
+
+  let bootstrapDoc;
+  try {
+    bootstrapDoc = await fsGet(BOOTSTRAP_DOC_PATH, env);
+  } catch (e) {
+    return _jsonError('Could not check bootstrap status.', 500);
+  }
+
+  if (bootstrapDoc && bootstrapDoc.completed) {
+    return _jsonError('Bootstrap has already been completed. Use role grant/revoke instead.', 409);
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    // Mark completed FIRST. If the admin-doc write below fails partway,
+    // it's safer to require a manual Firestore fix for one stuck bootstrap
+    // than to leave the door open for a second concurrent bootstrap
+    // request to also succeed and create two "first" admins.
+    await fsSet(BOOTSTRAP_DOC_PATH, {
+      completed: true,
+      completedAt: now,
+      firstAdminUid: identity.uid,
+    }, env);
+
+    await fsSet('admins/' + identity.uid, {
+      uid: identity.uid,
+      role: 'admin',
+      grantedBy: 'bootstrap',
+      createdAt: now,
+    }, env);
+  } catch (e) {
+    console.error('[admin-roles] bootstrap failed:', e.message);
+    return _jsonError('Bootstrap failed partway. Check Firestore at ' + BOOTSTRAP_DOC_PATH + ' and admins/' + identity.uid + ' before retrying.', 500);
+  }
+
+  return _jsonOk({ uid: identity.uid, role: 'admin' }, 201);
+}
+
+// ── List current admins/moderators ────────────────────────────────────
+// GET /api/admin/roles
+export async function handleAdminRoleList(request, env) {
+  try {
+    await requireSuperAdmin(request, env);
+  } catch (e) {
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+  }
+
+  try {
+    const [admins, moderators] = await Promise.all([
+      fsQuery('admins', 'role', 'admin', 'createdAt', 200, env),
+      fsQuery('admins', 'role', 'moderator', 'createdAt', 200, env),
+    ]);
+    return _jsonOk({ people: [...admins, ...moderators] });
+  } catch (e) {
+    console.error('[admin-roles] list failed:', e.message);
+    return _jsonError('Could not load roles.', 500);
+  }
+}
+
+// ── Grant a role (create or change) ──────────────────────────────────
+// POST /api/admin/roles/grant
+// Body: { uid, role: 'admin' | 'moderator' }
+// Idempotent: granting the same role again just re-saves it, no error.
+// Changing an existing person's role (moderator -> admin or vice versa)
+// overwrites it in place.
+export async function handleAdminRoleGrant(request, env) {
+  let identity;
+  try {
+    identity = await requireSuperAdmin(request, env);
+  } catch (e) {
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400);
+  }
+
+  const uid = String(body.uid || '').trim();
+  const role = body.role;
+
+  if (!uid) return _jsonError('uid is required.', 400);
+  if (!VALID_ROLES.includes(role)) {
+    return _jsonError('role must be "admin" or "moderator".', 400);
+  }
+
+  let existing;
+  try {
+    existing = await fsGet('admins/' + uid, env);
+  } catch (e) {
+    return _jsonError('Could not check existing role.', 500);
+  }
+
+  const now = new Date().toISOString();
+  const doc = {
+    uid,
+    role,
+    grantedBy: identity.uid,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+
+  try {
+    await fsSet('admins/' + uid, doc, env);
+  } catch (e) {
+    console.error('[admin-roles] grant failed:', e.message);
+    return _jsonError('Could not grant the role.', 500);
+  }
+
+  return _jsonOk({ person: doc });
+}
+
+// ── Revoke a role ──────────────────────────────────────────────────────
+// POST /api/admin/roles/revoke
+// Body: { uid }
+// Refuses to remove the last remaining 'admin' — the system must always
+// have at least one person who can manage roles.
+export async function handleAdminRoleRevoke(request, env) {
+  try {
+    await requireSuperAdmin(request, env);
+  } catch (e) {
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400);
+  }
+
+  const uid = String(body.uid || '').trim();
+  if (!uid) return _jsonError('uid is required.', 400);
+
+  let target;
+  try {
+    target = await fsGet('admins/' + uid, env);
+  } catch (e) {
+    return _jsonError('Could not load that person.', 500);
+  }
+
+  if (!target) {
+    return _jsonOk({ revoked: true }); // already not a role-holder — idempotent
+  }
+
+  if (target.role === 'admin') {
+    try {
+      const remainingAdmins = await fsQuery('admins', 'role', 'admin', 'createdAt', 200, env);
+      if (remainingAdmins.length <= 1) {
+        return _jsonError('Cannot revoke the last remaining admin. Grant someone else the admin role first.', 409);
+      }
+    } catch (e) {
+      return _jsonError('Could not verify remaining admin count.', 500);
+    }
+  }
+
+  try {
+    await fsDelete('admins/' + uid, env);
+  } catch (e) {
+    console.error('[admin-roles] revoke failed:', e.message);
+    return _jsonError('Could not revoke the role.', 500);
+  }
+
+  return _jsonOk({ revoked: true });
+}
+
+// ── Look up a user's uid by email (convenience for "select from
+//    existing users") ─────────────────────────────────────────────────
+// POST /api/admin/roles/lookup-email
+// Body: { email }
+// Uses the Identity Toolkit REST API with a scoped OAuth token from the
+// same service account already used for Firestore — no Admin SDK needed.
+// Best-effort: if the lookup call itself fails (network, API not
+// enabled, etc.), this returns a clear error rather than crashing, and an
+// admin can still grant a role by uid directly if they already have it.
+export async function handleAdminRoleLookupEmail(request, env) {
+  try {
+    await requireSuperAdmin(request, env);
+  } catch (e) {
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400);
+  }
+
+  const email = String(body.email || '').trim();
+  if (!email) return _jsonError('email is required.', 400);
+
+  try {
+    const token = await getGoogleAccessToken(env, 'https://www.googleapis.com/auth/identitytoolkit');
+
+    const res = await fetch(
+      'https://identitytoolkit.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID + '/accounts:lookup',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: [email] }),
+      }
+    );
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error('Identity Toolkit lookup failed (' + res.status + '): ' + text.slice(0, 200));
+    }
+
+    const data = await res.json();
+    const users = data.users || [];
+
+    if (users.length === 0) {
+      return _jsonError('No user found with that email.', 404);
+    }
+
+    return _jsonOk({
+      uid: users[0].localId,
+      email: users[0].email,
+      displayName: users[0].displayName || null,
+    });
+  } catch (e) {
+    console.error('[admin-roles] email lookup failed:', e.message);
+    return _jsonError('Could not look up that email. You can grant a role by uid instead.', 502);
+  }
+}
