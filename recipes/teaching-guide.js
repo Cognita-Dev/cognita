@@ -1,5 +1,8 @@
+// recipes/teaching-guide.js
+
 export const TEACHING_GUIDE_RECIPE = {
   resourceType: 'teaching_guide',
+
   requiredFields: ['subject', 'classLevel', 'topic'],
   optionalFields: ['curriculum', 'educationalLevel'],
 
@@ -15,37 +18,189 @@ export const TEACHING_GUIDE_RECIPE = {
     '  "differentiationStrategies": string[],\n' +
     '  "suggestedResources": string[]\n' +
     '}\n' +
-    'Step numbers must be sequential starting at 1. Do not wrap in code fences.',
+    'Step numbers must be sequential starting at 1. ' +
+    'Do not wrap in code fences.',
 
   buildUserPrompt(fields) {
-    let p = 'Create a teaching guide.\nSubject: ' + fields.subject + '\nClass: ' + fields.classLevel + '\nTopic: ' + fields.topic + '\n';
-    if (fields.curriculum) p += 'Curriculum: ' + fields.curriculum + '\n';
-    if (fields.educationalLevel) p += 'Educational level: ' + fields.educationalLevel + '\n';
+    let p =
+      'Create a teaching guide.\n' +
+      'Subject: ' +
+      fields.subject +
+      '\n' +
+      'Class: ' +
+      fields.classLevel +
+      '\n' +
+      'Topic: ' +
+      fields.topic +
+      '\n';
+
+    if (fields.curriculum) {
+      p += 'Curriculum: ' + fields.curriculum + '\n';
+    }
+
+    if (fields.educationalLevel) {
+      p +=
+        'Educational level: ' +
+        fields.educationalLevel +
+        '\n';
+    }
+
     return p;
   },
 
-  validate(c) {
-    if (!c || typeof c !== 'object') return { ok: false, error: 'Invalid object.' };
-    if (!c.title) return { ok: false, error: 'Missing title.' };
-    if (!Array.isArray(c.teachingSteps) || c.teachingSteps.length === 0) return { ok: false, error: 'Missing teachingSteps.' };
-    const nums = c.teachingSteps.map((s) => s.step).sort((a, b) => a - b);
-    for (let i = 0; i < nums.length; i++) if (nums[i] !== i + 1) return { ok: false, error: 'Steps not sequential from 1.' };
-    if (!Array.isArray(c.commonStudentDifficulties) || c.commonStudentDifficulties.length === 0) return { ok: false, error: 'Missing commonStudentDifficulties.' };
-    if (!Array.isArray(c.differentiationStrategies) || c.differentiationStrategies.length === 0) return { ok: false, error: 'Missing differentiationStrategies.' };
+  validate(content, fields) {
+    if (!content || typeof content !== 'object') {
+      return {
+        ok: false,
+        error: 'Generated content was not a valid object.',
+      };
+    }
+
+    if (
+      typeof content.title !== 'string' ||
+      !content.title.trim()
+    ) {
+      return { ok: false, error: 'Missing title.' };
+    }
+
+    if (
+      typeof content.topicOverview !== 'string' ||
+      !content.topicOverview.trim()
+    ) {
+      return {
+        ok: false,
+        error: 'Missing topicOverview.',
+      };
+    }
+
+    if (
+      !Array.isArray(content.teachingSteps) ||
+      content.teachingSteps.length === 0
+    ) {
+      return {
+        ok: false,
+        error: 'Missing teachingSteps.',
+      };
+    }
+
+    const nums = content.teachingSteps
+      .map((s) => s && s.step)
+      .sort((a, b) => a - b);
+
+    for (let i = 0; i < nums.length; i++) {
+      if (nums[i] !== i + 1) {
+        return {
+          ok: false,
+          error: 'Steps not sequential from 1.',
+        };
+      }
+    }
+
+    for (const step of content.teachingSteps) {
+      if (
+        typeof step.instruction !== 'string' ||
+        !step.instruction.trim()
+      ) {
+        return {
+          ok: false,
+          error: 'A teaching step is missing its instruction.',
+        };
+      }
+
+      if (
+        step.tip !== undefined &&
+        typeof step.tip !== 'string'
+      ) {
+        return {
+          ok: false,
+          error: 'A teaching step has an invalid tip.',
+        };
+      }
+    }
+
+    if (
+      !Array.isArray(content.commonStudentDifficulties) ||
+      content.commonStudentDifficulties.length === 0
+    ) {
+      return {
+        ok: false,
+        error:
+          'Missing commonStudentDifficulties.',
+      };
+    }
+
+    if (
+      !Array.isArray(content.differentiationStrategies) ||
+      content.differentiationStrategies.length === 0
+    ) {
+      return {
+        ok: false,
+        error:
+          'Missing differentiationStrategies.',
+      };
+    }
+
+    if (
+      !Array.isArray(content.suggestedResources)
+    ) {
+      return {
+        ok: false,
+        error: 'Invalid suggestedResources array.',
+      };
+    }
+
     return { ok: true };
   },
 
-  toPlainTextParagraphs(c) {
-    const lines = [c.title, '', c.topicOverview, '', 'Teaching Steps'];
-    c.teachingSteps.forEach((s) => lines.push(s.step + '. ' + s.instruction + (s.tip ? ' (Tip: ' + s.tip + ')' : '')));
-    lines.push('', 'Common Student Difficulties');
-    c.commonStudentDifficulties.forEach((d) => lines.push('- ' + d));
-    lines.push('', 'Differentiation Strategies');
-    c.differentiationStrategies.forEach((d) => lines.push('- ' + d));
-    if (c.suggestedResources && c.suggestedResources.length) {
+  toPlainTextParagraphs(content) {
+    const lines = [
+      content.title,
+      '',
+      content.topicOverview,
+      '',
+      'Teaching Steps',
+    ];
+
+    content.teachingSteps.forEach((s) => {
+      lines.push(
+        s.step +
+          '. ' +
+          s.instruction +
+          (s.tip
+            ? ' (Tip: ' + s.tip + ')'
+            : '')
+      );
+    });
+
+    lines.push(
+      '',
+      'Common Student Difficulties'
+    );
+
+    content.commonStudentDifficulties.forEach((d) => {
+      lines.push('- ' + d);
+    });
+
+    lines.push(
+      '',
+      'Differentiation Strategies'
+    );
+
+    content.differentiationStrategies.forEach((d) => {
+      lines.push('- ' + d);
+    });
+
+    if (
+      content.suggestedResources &&
+      content.suggestedResources.length
+    ) {
       lines.push('', 'Suggested Resources');
-      c.suggestedResources.forEach((r) => lines.push('- ' + r));
+
+      content.suggestedResources.forEach((r) => {
+        lines.push('- ' + r);
+      });
     }
+
     return lines.join('\n\n');
   },
 };
