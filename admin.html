@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
@@ -13,6 +14,11 @@
     rel="stylesheet"
     href="/css/admin.css"
   />
+
+  <link
+    rel="stylesheet"
+    href="/css/admin-collections.css"
+  />
 </head>
 
 <body>
@@ -21,6 +27,7 @@
     <aside class="admin-sidebar">
       <div class="brand">
         <div class="brand-mark">C</div>
+
         <div>
           <strong>Cognita</strong>
           <span>Admin</span>
@@ -83,6 +90,7 @@
           <div class="eyebrow">
             CONTENT CONTROL CENTER
           </div>
+
           <h1 id="pageTitle">
             Dashboard
           </h1>
@@ -96,11 +104,14 @@
         </button>
       </header>
 
+      <!-- DASHBOARD -->
+
       <section
         id="dashboardView"
         class="view active"
       >
         <div class="stats-grid">
+
           <div class="stat-card">
             <span>Ready-made</span>
             <strong id="statTotal">—</strong>
@@ -120,6 +131,7 @@
             <span>Jobs</span>
             <strong id="statJobs">—</strong>
           </div>
+
         </div>
 
         <div class="hero-card">
@@ -152,6 +164,7 @@
             <span class="eyebrow">
               REVIEW QUEUE
             </span>
+
             <h2>Drafts</h2>
           </div>
         </div>
@@ -162,12 +175,15 @@
         ></div>
       </section>
 
+      <!-- RESOURCES -->
+
       <section
         id="resourcesView"
         class="view"
       >
         <div class="toolbar">
           <div class="segmented">
+
             <button
               class="filter-button active"
               data-status=""
@@ -195,6 +211,7 @@
             >
               Archived
             </button>
+
           </div>
         </div>
 
@@ -204,6 +221,8 @@
         ></div>
       </section>
 
+      <!-- GENERATE -->
+
       <section
         id="generateView"
         class="view"
@@ -211,11 +230,14 @@
         <div class="generate-layout">
 
           <div class="panel">
+
             <div class="panel-header">
               <span class="eyebrow">
                 AI GENERATOR
               </span>
+
               <h2>Create curated content</h2>
+
               <p>
                 Generated content starts as a draft.
                 Nothing becomes public automatically.
@@ -234,48 +256,63 @@
                   <option value="lesson_plan">
                     Lesson Plan
                   </option>
+
                   <option value="worksheet">
                     Worksheet
                   </option>
+
                   <option value="exam">
                     Examination
                   </option>
+
                   <option value="scheme_of_work">
                     Scheme of Work
                   </option>
+
                   <option value="quiz">
                     Quiz
                   </option>
+
                   <option value="study_guide">
                     Study Guide
                   </option>
+
                   <option value="teaching_guide">
                     Teaching Guide
                   </option>
+
                   <option value="classroom_activity">
                     Classroom Activity
                   </option>
+
                   <option value="assignment">
                     Assignment
                   </option>
+
                   <option value="marking_scheme">
                     Marking Scheme
                   </option>
+
                   <option value="rubric">
                     Rubric
                   </option>
+
                   <option value="flashcards">
                     Flashcards
                   </option>
+
                   <option value="student_handout">
                     Student Handout
                   </option>
+
                   <option value="presentation">
                     Presentation
                   </option>
+
                   <option value="project">
                     Project
                   </option>
+
                   <option value="test">
                     Test
                   </option>
@@ -283,8 +320,10 @@
               </label>
 
               <div class="two-column">
+
                 <label>
                   Subject
+
                   <input
                     id="subject"
                     placeholder="Biology"
@@ -294,16 +333,20 @@
 
                 <label>
                   Class / Level
+
                   <input
                     id="classLevel"
                     placeholder="SS2"
                   />
                 </label>
+
               </div>
 
               <div class="two-column">
+
                 <label>
                   Educational level
+
                   <input
                     id="educationalLevel"
                     placeholder="Secondary"
@@ -312,15 +355,18 @@
 
                 <label>
                   Curriculum
+
                   <input
                     id="curriculum"
                     placeholder="WAEC"
                   />
                 </label>
+
               </div>
 
               <label>
                 Topic
+
                 <input
                   id="topic"
                   placeholder="Photosynthesis"
@@ -330,6 +376,7 @@
 
               <label>
                 Generation count
+
                 <input
                   id="count"
                   type="number"
@@ -337,6 +384,7 @@
                   max="20"
                   value="1"
                 />
+
                 <small>
                   Batch jobs generate one resource at a
                   time to avoid long-running requests.
@@ -345,6 +393,7 @@
 
               <label>
                 Design template
+
                 <input
                   id="designTemplateId"
                   value="default"
@@ -353,6 +402,7 @@
 
               <label>
                 Additional instructions
+
                 <textarea
                   id="instructions"
                   rows="5"
@@ -374,14 +424,17 @@
               id="generateMessage"
               class="message"
             ></div>
+
           </div>
 
           <div class="panel tips-panel">
+
             <span class="eyebrow">
               WORKFLOW
             </span>
 
             <div class="workflow">
+
               <div>
                 <strong>01</strong>
                 <span>Generate</span>
@@ -406,20 +459,29 @@
                 <strong>05</strong>
                 <span>Publish</span>
               </div>
+
             </div>
 
             <div class="notice">
-              <strong>Publishing is deliberate.</strong>
+
+              <strong>
+                Publishing is deliberate.
+              </strong>
+
               <p>
                 AI output never goes directly into
                 the public library. Admin review is
                 always required.
               </p>
+
             </div>
+
           </div>
 
         </div>
       </section>
+
+      <!-- JOBS -->
 
       <section
         id="jobsView"
@@ -431,10 +493,13 @@
         ></div>
       </section>
 
+      <!-- RESOURCE EDITOR -->
+
       <section
         id="editorView"
         class="view"
       >
+
         <button
           class="back-button"
           id="backToResources"
@@ -443,7 +508,9 @@
         </button>
 
         <div class="editor-header">
+
           <div>
+
             <span
               id="editorStatus"
               class="status-pill"
@@ -456,9 +523,11 @@
             </h2>
 
             <p id="editorMeta"></p>
+
           </div>
 
           <div class="editor-actions">
+
             <button
               id="saveButton"
               class="secondary-button"
@@ -472,19 +541,24 @@
             >
               Publish
             </button>
+
           </div>
+
         </div>
 
         <div class="editor-grid">
 
           <div class="panel">
+
             <label>
               Title
+
               <input id="editTitle" />
             </label>
 
             <label>
               Description
+
               <textarea
                 id="editDescription"
                 rows="4"
@@ -493,6 +567,7 @@
 
             <label>
               Tags
+
               <input
                 id="editTags"
                 placeholder="biology, photosynthesis, revision"
@@ -500,52 +575,175 @@
             </label>
 
             <div class="two-column">
+
               <label>
                 Featured
+
                 <select id="editFeatured">
+
                   <option value="false">
                     No
                   </option>
+
                   <option value="true">
                     Yes
                   </option>
+
                 </select>
               </label>
 
               <label>
                 Recommended
+
                 <select id="editRecommended">
+
                   <option value="false">
                     No
                   </option>
+
                   <option value="true">
                     Yes
                   </option>
+
                 </select>
               </label>
+
             </div>
+
           </div>
 
           <div class="panel">
+
             <label>
               Structured content
+
               <textarea
                 id="editContent"
                 class="code-editor"
                 spellcheck="false"
               ></textarea>
             </label>
+
           </div>
 
         </div>
+
+      </section>
+
+      <!-- COLLECTIONS -->
+
+      <section
+        id="collectionsView"
+        class="view"
+      >
+
+        <div class="collections-toolbar">
+
+          <div>
+            <span class="eyebrow">
+              CURATED LIBRARY
+            </span>
+
+            <h2>
+              Collections
+            </h2>
+
+            <p>
+              Group published resources into focused
+              learning paths for teachers and students.
+            </p>
+          </div>
+
+          <button
+            id="newCollectionButton"
+            class="primary-button"
+          >
+            + New Collection
+          </button>
+
+        </div>
+
+        <div class="collection-workspace">
+
+          <div class="panel collection-list-panel">
+
+            <div class="collection-panel-heading">
+              <div>
+                <strong>Your collections</strong>
+                <span id="collectionCount">
+                  0 collections
+                </span>
+              </div>
+
+              <select id="collectionStatusFilter">
+                <option value="">
+                  All
+                </option>
+
+                <option value="draft">
+                  Drafts
+                </option>
+
+                <option value="published">
+                  Published
+                </option>
+
+                <option value="archived">
+                  Archived
+                </option>
+              </select>
+            </div>
+
+            <div
+              id="collectionList"
+              class="collection-list"
+            ></div>
+
+          </div>
+
+          <div
+            id="collectionEditor"
+            class="panel collection-editor-panel"
+          >
+
+            <div class="collection-empty-editor">
+
+              <div class="collection-empty-icon">
+                ▦
+              </div>
+
+              <h3>
+                Select a collection
+              </h3>
+
+              <p>
+                Choose an existing collection or create
+                a new one to start building your library.
+              </p>
+
+              <button
+                id="emptyNewCollectionButton"
+                class="secondary-button"
+              >
+                New Collection
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
       </section>
 
     </main>
+
   </div>
 
   <script
     type="module"
     src="/js/admin.js"
   ></script>
+
 </body>
 </html>
