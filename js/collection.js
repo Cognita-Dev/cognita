@@ -17,34 +17,110 @@ function $(id) {
 
 function escapeHtml(value) {
   return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+    .replaceAll(
+      '&',
+      '&amp;'
+    )
+    .replaceAll(
+      '<',
+      '&lt;'
+    )
+    .replaceAll(
+      '>',
+      '&gt;'
+    )
+    .replaceAll(
+      '"',
+      '&quot;'
+    )
+    .replaceAll(
+      "'",
+      '&#039;'
+    );
 }
 
 function resourceLabel(type) {
   const labels = {
-    lesson_plan: 'Lesson Plan',
-    worksheet: 'Worksheet',
-    exam: 'Examination',
-    scheme_of_work: 'Scheme of Work',
-    quiz: 'Quiz',
-    study_guide: 'Study Guide',
-    teaching_guide: 'Teaching Guide',
-    classroom_activity: 'Classroom Activity',
-    assignment: 'Assignment',
-    marking_scheme: 'Marking Scheme',
-    rubric: 'Rubric',
-    flashcards: 'Flashcards',
-    student_handout: 'Student Handout',
-    presentation: 'Presentation',
-    project: 'Project',
-    test: 'Test',
+    lesson_plan:
+      'Lesson Plan',
+    worksheet:
+      'Worksheet',
+    exam:
+      'Examination',
+    scheme_of_work:
+      'Scheme of Work',
+    quiz:
+      'Quiz',
+    study_guide:
+      'Study Guide',
+    teaching_guide:
+      'Teaching Guide',
+    classroom_activity:
+      'Classroom Activity',
+    assignment:
+      'Assignment',
+    marking_scheme:
+      'Marking Scheme',
+    rubric:
+      'Rubric',
+    flashcards:
+      'Flashcards',
+    student_handout:
+      'Student Handout',
+    presentation:
+      'Presentation',
+    project:
+      'Project',
+    test:
+      'Test',
   };
 
-  return labels[type] || type;
+  return (
+    labels[type] ||
+    type
+  );
+}
+
+function resourceIcon(type) {
+  const icons = {
+    lesson_plan:
+      'chalkboard-teacher',
+    worksheet:
+      'note-pencil',
+    exam:
+      'exam',
+    scheme_of_work:
+      'calendar-check',
+    quiz:
+      'question',
+    study_guide:
+      'book-open-text',
+    teaching_guide:
+      'chalkboard',
+    classroom_activity:
+      'users-three',
+    assignment:
+      'clipboard-text',
+    marking_scheme:
+      'check-square-offset',
+    rubric:
+      'table',
+    flashcards:
+      'cards',
+    student_handout:
+      'file-text',
+    presentation:
+      'presentation-chart',
+    project:
+      'flag-checkered',
+    test:
+      'pencil-simple-line',
+  };
+
+  return (
+    icons[type] ||
+    'file-text'
+  );
 }
 
 async function api(path) {
@@ -133,7 +209,8 @@ function render(collection) {
       <span>
         ${collection.resourceCount}
         resource${
-          collection.resourceCount === 1
+          collection.resourceCount ===
+          1
             ? ''
             : 's'
         }
@@ -172,6 +249,14 @@ function render(collection) {
               resource.title
             )}"
           >
+
+            <div class="resource-card-icon">
+              <i class="ph ph-${escapeHtml(
+                resourceIcon(
+                  resource.resourceType
+                )
+              )}"></i>
+            </div>
 
             <span class="resource-type">
               ${escapeHtml(
@@ -216,7 +301,8 @@ function render(collection) {
             </div>
 
             <div class="resource-action">
-              View resource →
+              View resource
+              <i class="ph ph-arrow-up-right"></i>
             </div>
 
           </article>
@@ -231,9 +317,14 @@ function render(collection) {
     .forEach((card) => {
       const openResource =
         () => {
+          const id =
+            card.dataset.id;
+
+          if (!id) return;
+
           window.location.href =
-            `/resources.html?resource=${encodeURIComponent(
-              card.dataset.id
+            `/ready-made-resource.html?id=${encodeURIComponent(
+              id
             )}`;
         };
 
@@ -283,19 +374,25 @@ async function init() {
         )}`
       );
 
+    if (!data?.collection) {
+      throw new Error(
+        'Collection not found.'
+      );
+    }
+
     render(
       data.collection
     );
-  } catch (e) {
+  } catch (error) {
     console.error(
       '[collection]',
-      e
+      error
     );
 
     $('collectionMain').innerHTML = `
       <div class="empty">
         ${escapeHtml(
-          e.message
+          error.message
         )}
       </div>
     `;
