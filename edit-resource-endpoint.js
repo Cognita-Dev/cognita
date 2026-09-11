@@ -1,29 +1,14 @@
 // edit-resource-endpoint.js
-//
 // GET    /api/resources/:id
 // PATCH  /api/resources/:id
 // GET    /api/resources/:id/versions
-//
-// Owner-only resource editing and versioning.
-//
-// Editing never calls AI and never consumes generation quota.
-// Every successful save creates a new resourceVersions/<id>_<version>
-// document and regenerates the downloadable exports in B2.
 
 import { requireAuth } from './auth-middleware.js';
 import { fsGet, fsSet, fsQuery } from './firestore-rest.js';
-import {
-  buildStructuredDocx,
-} from './docx-builder.js';
-import {
-  buildStructuredPdf,
-} from './pdf-builder.js';
-import {
-  buildSimplePptx,
-} from './pptx-builder.js';
-import {
-  b2UploadFile,
-} from './b2-client.js';
+import { buildStructuredDocx } from './docx-builder.js';
+import { buildStructuredPdf } from './pdf-builder.js';
+import { buildSimplePptx } from './pptx-builder.js';
+import { b2UploadFile } from './b2-client.js';
 
 const PPTX_TYPES = new Set(['presentation']);
 
@@ -135,16 +120,16 @@ function _structuredContentToSections(content) {
 }
 
 async function _buildAndUploadExports(
-  doc,
+  resource,
   structuredContent,
   env
 ) {
-  const resourceId = doc.id;
-  const resourceType = doc.resourceType;
-  const templateId = doc.designTemplateId;
+  const resourceId = resource.id;
+  const resourceType = resource.resourceType;
+  const templateId = resource.designTemplateId;
   const title =
     structuredContent.title ||
-    doc.title ||
+    resource.title ||
     'Cognita Resource';
 
   const fileReferences = {};
@@ -160,7 +145,7 @@ async function _buildAndUploadExports(
         templateId
       );
 
-      const pptxKey =
+      const key =
         'generated/' +
         resourceId +
         '/exports/' +
@@ -169,13 +154,13 @@ async function _buildAndUploadExports(
 
       const upload = await b2UploadFile(
         env,
-        pptxKey,
+        key,
         _base64ToBytes(pptxBase64),
         CONTENT_TYPES.pptx
       );
 
       fileReferences.pptx = {
-        key: pptxKey,
+        key,
         fileId: upload.fileId,
       };
     } catch (e) {
@@ -192,11 +177,7 @@ async function _buildAndUploadExports(
           type: 'bullets',
           content: Array.isArray(slide.bulletPoints)
             ? slide.bulletPoints
-            : [
-                String(
-                  slide.bulletPoints || ''
-                ),
-              ],
+            : [String(slide.bulletPoints || '')],
         }));
 
       const pdfBase64 = await buildStructuredPdf(
@@ -208,7 +189,7 @@ async function _buildAndUploadExports(
         templateId
       );
 
-      const pdfKey =
+      const key =
         'generated/' +
         resourceId +
         '/exports/' +
@@ -217,13 +198,13 @@ async function _buildAndUploadExports(
 
       const upload = await b2UploadFile(
         env,
-        pdfKey,
+        key,
         _base64ToBytes(pdfBase64),
         CONTENT_TYPES.pdf
       );
 
       fileReferences.pdf = {
-        key: pdfKey,
+        key,
         fileId: upload.fileId,
       };
     } catch (e) {
@@ -236,25 +217,21 @@ async function _buildAndUploadExports(
     return fileReferences;
   }
 
-  const sections =
-    _structuredContentToSections(
-      structuredContent
-    );
-
   const exportData = {
     title,
-    sections,
+    sections: _structuredContentToSections(
+      structuredContent
+    ),
   };
 
   try {
-    const pdfBase64 =
-      await buildStructuredPdf(
-        exportData,
-        title,
-        templateId
-      );
+    const pdfBase64 = await buildStructuredPdf(
+      exportData,
+      title,
+      templateId
+    );
 
-    const pdfKey =
+    const key =
       'generated/' +
       resourceId +
       '/exports/' +
@@ -263,13 +240,13 @@ async function _buildAndUploadExports(
 
     const upload = await b2UploadFile(
       env,
-      pdfKey,
+      key,
       _base64ToBytes(pdfBase64),
       CONTENT_TYPES.pdf
     );
 
     fileReferences.pdf = {
-      key: pdfKey,
+      key,
       fileId: upload.fileId,
     };
   } catch (e) {
@@ -280,13 +257,12 @@ async function _buildAndUploadExports(
   }
 
   try {
-    const docxBase64 =
-      await buildStructuredDocx(
-        exportData,
-        title
-      );
+    const docxBase64 = await buildStructuredDocx(
+      exportData,
+      title
+    );
 
-    const docxKey =
+    const key =
       'generated/' +
       resourceId +
       '/exports/' +
@@ -295,13 +271,13 @@ async function _buildAndUploadExports(
 
     const upload = await b2UploadFile(
       env,
-      docxKey,
+      key,
       _base64ToBytes(docxBase64),
       CONTENT_TYPES.docx
     );
 
     fileReferences.docx = {
-      key: docxKey,
+      key,
       fileId: upload.fileId,
     };
   } catch (e) {
@@ -377,20 +353,16 @@ async function _loadOwnedResource(
   };
 }
 
-/**
- * GET /api/resources/:id
- */
 export async function handleResourceGet(
   request,
   env,
   resourceId
 ) {
-  const result =
-    await _loadOwnedResource(
-      request,
-      env,
-      resourceId
-    );
+  const result = await _loadOwnedResource(
+    request,
+    env,
+    resourceId
+  );
 
   if (result.errorResponse) {
     return result.errorResponse;
@@ -401,20 +373,16 @@ export async function handleResourceGet(
   });
 }
 
-/**
- * GET /api/resources/:id/versions
- */
 export async function handleResourceVersions(
   request,
   env,
   resourceId
 ) {
-  const result =
-    await _loadOwnedResource(
-      request,
-      env,
-      resourceId
-    );
+  const result = await _loadOwnedResource(
+    request,
+    env,
+    resourceId
+  );
 
   if (result.errorResponse) {
     return result.errorResponse;
@@ -439,11 +407,11 @@ export async function handleResourceVersions(
       .map((version) => ({
         resourceId: version.resourceId,
         version: version.version,
+        title: version.title || '',
+        description: version.description || '',
         designTemplateId:
           version.designTemplateId,
         createdAt: version.createdAt,
-        structuredContent:
-          version.structuredContent,
       }));
 
     return _json({
@@ -462,28 +430,16 @@ export async function handleResourceVersions(
   }
 }
 
-/**
- * PATCH /api/resources/:id
- *
- * Body:
- * {
- *   title,
- *   description,
- *   structuredContent,
- *   baseVersion
- * }
- */
 export async function handleResourceUpdate(
   request,
   env,
   resourceId
 ) {
-  const result =
-    await _loadOwnedResource(
-      request,
-      env,
-      resourceId
-    );
+  const result = await _loadOwnedResource(
+    request,
+    env,
+    resourceId
+  );
 
   if (result.errorResponse) {
     return result.errorResponse;
@@ -556,10 +512,7 @@ export async function handleResourceUpdate(
     );
   }
 
-  if (
-    title.length >
-    MAX_TITLE_LENGTH
-  ) {
+  if (title.length > MAX_TITLE_LENGTH) {
     return _error(
       'The title is too long.',
       400
@@ -593,10 +546,9 @@ export async function handleResourceUpdate(
   let serialized;
 
   try {
-    serialized =
-      JSON.stringify(
-        structuredContent
-      );
+    serialized = JSON.stringify(
+      structuredContent
+    );
   } catch (e) {
     return _error(
       'The content could not be serialized.',
@@ -633,10 +585,8 @@ export async function handleResourceUpdate(
     ...existing,
     title,
     description,
-    structuredContent:
-      nextContent,
-    currentVersion:
-      nextVersion,
+    structuredContent: nextContent,
+    currentVersion: nextVersion,
     status: 'generating',
     updatedAt: now,
   };
@@ -703,8 +653,7 @@ export async function handleResourceUpdate(
         version: nextVersion,
         title,
         description,
-        structuredContent:
-          nextContent,
+        structuredContent: nextContent,
         designTemplateId:
           existing.designTemplateId ||
           'classic',
