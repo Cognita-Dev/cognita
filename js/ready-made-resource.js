@@ -39,11 +39,13 @@ const RESOURCE_ICONS = {
   test: 'pencil-simple-line',
 };
 
-const params = new URLSearchParams(
-  window.location.search
-);
+const params =
+  new URLSearchParams(
+    window.location.search
+  );
 
-const resourceId = params.get('id');
+const resourceId =
+  params.get('id');
 
 let currentResource = null;
 
@@ -52,7 +54,9 @@ function $(id) {
 }
 
 function escapeHtml(value) {
-  return String(value == null ? '' : value)
+  return String(
+    value == null ? '' : value
+  )
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -75,7 +79,9 @@ function resourceIcon(type) {
 }
 
 function formatDate(value) {
-  if (!value) return '';
+  if (!value) {
+    return '';
+  }
 
   let date;
 
@@ -90,7 +96,11 @@ function formatDate(value) {
     date = new Date(value);
   }
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
     return '';
   }
 
@@ -104,7 +114,10 @@ function formatDate(value) {
   ).format(date);
 }
 
-async function api(path, options = {}) {
+async function api(
+  path,
+  options = {}
+) {
   const response =
     await window.Auth.authedFetch(
       WORKER_URL + path,
@@ -114,7 +127,8 @@ async function api(path, options = {}) {
   let data = null;
 
   try {
-    data = await response.json();
+    data =
+      await response.json();
   } catch (_) {
     data = null;
   }
@@ -122,7 +136,7 @@ async function api(path, options = {}) {
   if (!response.ok) {
     throw new Error(
       data?.error ||
-      'Could not load this resource.'
+        'Could not load this resource.'
     );
   }
 
@@ -136,11 +150,12 @@ async function loadResource() {
     );
   }
 
-  const data = await api(
-    `/api/ready-made-resources/${encodeURIComponent(
-      resourceId
-    )}`
-  );
+  const data =
+    await api(
+      `/api/ready-made-resources/${encodeURIComponent(
+        resourceId
+      )}`
+    );
 
   if (!data?.resource) {
     throw new Error(
@@ -153,9 +168,10 @@ async function loadResource() {
 
 async function loadCollections() {
   try {
-    const data = await api(
-      '/api/collections'
-    );
+    const data =
+      await api(
+        '/api/collections'
+      );
 
     return Array.isArray(
       data?.collections
@@ -172,7 +188,9 @@ async function loadCollections() {
   }
 }
 
-function getCollectionResources(collection) {
+function getCollectionResources(
+  collection
+) {
   return Array.isArray(
     collection?.resources
   )
@@ -190,7 +208,8 @@ function findContainingCollection(
         collection
       ).some(
         (item) =>
-          item.id === resource.id
+          item.id ===
+          resource.id
       )
   );
 }
@@ -203,9 +222,22 @@ function getRelatedResources(
   const seen = new Set();
 
   function add(item) {
-    if (!item?.id) return;
-    if (item.id === resource.id) return;
-    if (seen.has(item.id)) return;
+    if (!item?.id) {
+      return;
+    }
+
+    if (
+      item.id ===
+      resource.id
+    ) {
+      return;
+    }
+
+    if (
+      seen.has(item.id)
+    ) {
+      return;
+    }
 
     seen.add(item.id);
     related.push(item);
@@ -232,14 +264,12 @@ function getRelatedResources(
         return false;
       }
 
-      const resources =
-        getCollectionResources(
-          collection
-        );
-
-      return resources.some(
+      return getCollectionResources(
+        collection
+      ).some(
         (item) =>
-          item.id === resource.id
+          item.id ===
+          resource.id
       );
     })
     .forEach((collection) => {
@@ -249,13 +279,13 @@ function getRelatedResources(
     });
 
   if (
-    related.length <
-    4
+    related.length < 4
   ) {
-    const fallbackCandidates =
-      window.__readyMadeResources || [];
+    const fallback =
+      window.__readyMadeResources ||
+      [];
 
-    fallbackCandidates
+    fallback
       .filter(
         (item) =>
           item.subject ===
@@ -277,7 +307,8 @@ function renderMeta(resource) {
     },
     {
       icon: 'student',
-      label: resource.educationalLevel,
+      label:
+        resource.educationalLevel,
     },
     {
       icon: 'graduation-cap',
@@ -297,7 +328,8 @@ function renderMeta(resource) {
     (item) => item.label
   );
 
-  $('resourceDetailMeta').innerHTML =
+  $('resourceDetailMeta')
+    .innerHTML =
     values
       .map(
         (item) => `
@@ -315,11 +347,14 @@ function renderMeta(resource) {
 }
 
 function renderTags(resource) {
-  const tags = Array.isArray(
-    resource.tags
-  )
-    ? resource.tags.filter(Boolean)
-    : [];
+  const tags =
+    Array.isArray(
+      resource.tags
+    )
+      ? resource.tags.filter(
+          Boolean
+        )
+      : [];
 
   const container =
     $('resourceDetailTags');
@@ -332,16 +367,17 @@ function renderTags(resource) {
 
   container.hidden = false;
 
-  container.innerHTML = tags
-    .slice(0, 12)
-    .map(
-      (tag) => `
-        <span>
-          ${escapeHtml(tag)}
-        </span>
-      `
-    )
-    .join('');
+  container.innerHTML =
+    tags
+      .slice(0, 12)
+      .map(
+        (tag) => `
+          <span>
+            ${escapeHtml(tag)}
+          </span>
+        `
+      )
+      .join('');
 }
 
 function renderHeader(resource) {
@@ -351,16 +387,20 @@ function renderHeader(resource) {
     );
 
   document.title =
-    `${resource.title || type} · Cognita`;
+    `${
+      resource.title ||
+      type
+    } · Cognita`;
 
-  $('resourceDetailType').innerHTML = `
-    <i class="ph ph-${escapeHtml(
-      resourceIcon(
-        resource.resourceType
-      )
-    )}"></i>
-    ${escapeHtml(type)}
-  `;
+  $('resourceDetailType')
+    .innerHTML = `
+      <i class="ph ph-${escapeHtml(
+        resourceIcon(
+          resource.resourceType
+        )
+      )}"></i>
+      ${escapeHtml(type)}
+    `;
 
   $('resourceBreadcrumbType')
     .textContent = type;
@@ -376,10 +416,12 @@ function renderHeader(resource) {
     resource.topic ||
     `A classroom-ready ${type.toLowerCase()}.`;
 
-  $('resourceDetailFeatured').hidden =
+  $('resourceDetailFeatured')
+    .hidden =
     !resource.featured;
 
-  $('resourceDetailRecommended').hidden =
+  $('resourceDetailRecommended')
+    .hidden =
     !resource.recommended;
 
   renderMeta(resource);
@@ -388,7 +430,8 @@ function renderHeader(resource) {
   $('resourceDetailVersion')
     .textContent =
     `Version ${Number(
-      resource.currentVersion || 1
+      resource.currentVersion ||
+        1
     )}`;
 }
 
@@ -415,10 +458,8 @@ function renderCollection(
     collection.description ||
     'Explore the rest of this curated collection.';
 
-  const link =
-    $('resourceCollectionLink');
-
-  link.href =
+  $('resourceCollectionLink')
+    .href =
     `/collection.html?id=${encodeURIComponent(
       collection.id
     )}`;
@@ -448,14 +489,15 @@ function renderResourcePreview(
 
       if (
         rendered &&
-        typeof rendered === 'string'
+        typeof rendered ===
+          'string'
       ) {
         container.innerHTML =
           rendered;
 
         if (
           typeof window.ResourceRenderers.mount ===
-          'function'
+            'function'
         ) {
           window.ResourceRenderers.mount(
             container,
@@ -512,13 +554,14 @@ function renderStructuredContent(
       <div class="structured-list">
         ${value
           .map(
-            (item) =>
-              `<div class="structured-list-item">
+            (item) => `
+              <div class="structured-list-item">
                 ${renderStructuredContent(
                   item,
                   depth + 1
                 )}
-              </div>`
+              </div>
+            `
           )
           .join('')}
       </div>
@@ -565,13 +608,18 @@ function renderStructuredContent(
 
 function prettifyKey(key) {
   return String(key || '')
-    .replace(/[_-]+/g, ' ')
+    .replace(
+      /[_-]+/g,
+      ' '
+    )
     .replace(
       /([a-z])([A-Z])/g,
       '$1 $2'
     )
-    .replace(/\b\w/g, (char) =>
-      char.toUpperCase()
+    .replace(
+      /\b\w/g,
+      (char) =>
+        char.toUpperCase()
     );
 }
 
@@ -580,12 +628,10 @@ function createDownloadButton(
   format
 ) {
   const references =
-    resource.fileReferences || {};
+    resource.fileReferences ||
+    {};
 
-  const reference =
-    references[format];
-
-  if (!reference) {
+  if (!references[format]) {
     return '';
   }
 
@@ -607,11 +653,13 @@ function createDownloadButton(
       class="resource-download-button"
       data-download-format="${format}"
     >
+
       <span class="resource-download-icon">
         <i class="ph ph-${icons[format]}"></i>
       </span>
 
       <span class="resource-download-copy">
+
         <strong>
           ${labels[format]}
         </strong>
@@ -619,9 +667,11 @@ function createDownloadButton(
         <small>
           Classroom-ready file
         </small>
+
       </span>
 
       <i class="ph ph-arrow-down"></i>
+
     </button>
   `;
 }
@@ -638,22 +688,25 @@ function renderDownloadActions(
     'pptx',
   ];
 
-  const buttons = formats
-    .map(
-      (format) =>
-        createDownloadButton(
-          resource,
-          format
-        )
-    )
-    .filter(Boolean);
+  const buttons =
+    formats
+      .map(
+        (format) =>
+          createDownloadButton(
+            resource,
+            format
+          )
+      )
+      .filter(Boolean);
 
   if (!buttons.length) {
     container.innerHTML = `
       <div class="resource-no-downloads">
         <i class="ph ph-info"></i>
+
         <span>
-          Download files are not available for this resource yet.
+          Download files are not available
+          for this resource yet.
         </span>
       </div>
     `;
@@ -701,9 +754,15 @@ async function downloadResource(
 
   button.innerHTML = `
     <span class="resource-download-spinner"></span>
+
     <span class="resource-download-copy">
-      <strong>Preparing download…</strong>
-      <small>Please wait</small>
+      <strong>
+        Preparing download…
+      </strong>
+
+      <small>
+        Please wait
+      </small>
     </span>
   `;
 
@@ -715,48 +774,63 @@ async function downloadResource(
         )}/download`,
         {
           method: 'POST',
+
           headers: {
             'Content-Type':
               'application/json',
           },
+
           body: JSON.stringify({
             format,
           }),
         }
       );
 
-    if (!data?.downloadUrl) {
+    if (
+      !data?.downloadUrl
+    ) {
       throw new Error(
         'The download is not available.'
       );
     }
 
     const anchor =
-      document.createElement('a');
+      document.createElement(
+        'a'
+      );
 
     anchor.href =
       data.downloadUrl;
 
     anchor.target = '_blank';
-    anchor.rel = 'noopener';
+    anchor.rel =
+      'noopener noreferrer';
+
+    document.body.appendChild(
+      anchor
+    );
+
     anchor.click();
+
+    anchor.remove();
   } catch (error) {
     console.error(
       '[ready-made-resource] download failed:',
       error
     );
 
-    showToast(
+    window.alert(
       error.message ||
         'Could not prepare the download.'
     );
   } finally {
     button.disabled = false;
-    button.innerHTML = original;
+    button.innerHTML =
+      original;
   }
 }
 
-function renderRelatedResources(
+function renderRelated(
   resources
 ) {
   const section =
@@ -765,8 +839,12 @@ function renderRelatedResources(
   const grid =
     $('resourceRelatedGrid');
 
-  if (!resources.length) {
+  if (
+    !resources ||
+    !resources.length
+  ) {
     section.hidden = true;
+    grid.innerHTML = '';
     return;
   }
 
@@ -776,14 +854,14 @@ function renderRelatedResources(
     resources
       .map(
         (resource) => `
-          <a
-            href="/ready-made-resource.html?id=${encodeURIComponent(
+          <article
+            class="resource-related-card"
+            data-resource-id="${escapeHtml(
               resource.id
             )}"
-            class="resource-related-card"
           >
 
-            <div class="resource-related-icon">
+            <div class="resource-related-card-icon">
               <i class="ph ph-${escapeHtml(
                 resourceIcon(
                   resource.resourceType
@@ -791,7 +869,7 @@ function renderRelatedResources(
               )}"></i>
             </div>
 
-            <div class="resource-related-copy">
+            <div class="resource-related-card-copy">
 
               <span>
                 ${escapeHtml(
@@ -812,7 +890,7 @@ function renderRelatedResources(
                 ${escapeHtml(
                   resource.description ||
                     resource.topic ||
-                    'Classroom-ready resource.'
+                    ''
                 )}
               </p>
 
@@ -820,104 +898,213 @@ function renderRelatedResources(
 
             <i class="ph ph-arrow-up-right"></i>
 
-          </a>
+          </article>
         `
       )
       .join('');
+
+  grid
+    .querySelectorAll(
+      '[data-resource-id]'
+    )
+    .forEach((card) => {
+      card.addEventListener(
+        'click',
+        () => {
+          window.location.href =
+            `/ready-made-resource.html?id=${encodeURIComponent(
+              card.dataset
+                .resourceId
+            )}`;
+        }
+      );
+    });
 }
 
-function showToast(message) {
-  let toast =
-    document.getElementById(
-      'resourceDetailToast'
-    );
-
-  if (!toast) {
-    toast =
-      document.createElement('div');
-
-    toast.id =
-      'resourceDetailToast';
-
-    toast.className =
-      'resource-detail-toast';
-
-    document.body.appendChild(
-      toast
-    );
+async function useResource() {
+  if (
+    !currentResource?.id
+  ) {
+    return;
   }
 
-  toast.textContent = message;
-  toast.classList.add('is-visible');
+  const button =
+    $('useResourceButton');
 
-  window.clearTimeout(
-    toast._timer
-  );
+  const status =
+    $('resourceUseStatus');
 
-  toast._timer =
-    window.setTimeout(
-      () => {
-        toast.classList.remove(
-          'is-visible'
-        );
-      },
-      3500
+  const original =
+    button.innerHTML;
+
+  button.disabled = true;
+
+  button.innerHTML = `
+    <span class="resource-use-button-icon">
+      <span class="resource-download-spinner"></span>
+    </span>
+
+    <span class="resource-use-button-copy">
+      <strong>
+        Adding to My Resources…
+      </strong>
+
+      <small>
+        Preparing your private copy
+      </small>
+    </span>
+  `;
+
+  status.hidden = true;
+  status.innerHTML = '';
+
+  try {
+    const data =
+      await api(
+        `/api/ready-made-resources/${encodeURIComponent(
+          currentResource.id
+        )}/use`,
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+        }
+      );
+
+    if (
+      !data?.resource?.id
+    ) {
+      throw new Error(
+        'The resource could not be added.'
+      );
+    }
+
+    status.hidden = false;
+
+    status.innerHTML = `
+      <div class="resource-use-status-success">
+        <i class="ph ph-check-circle"></i>
+
+        <div>
+          <strong>
+            Added to My Resources
+          </strong>
+
+          <span>
+            Your private copy is ready.
+          </span>
+        </div>
+      </div>
+
+      <a
+        class="resource-use-status-link"
+        href="/resources.html?resource=${encodeURIComponent(
+          data.resource.id
+        )}"
+      >
+        Open My Resource
+        <i class="ph ph-arrow-right"></i>
+      </a>
+    `;
+
+    button.innerHTML = `
+      <span class="resource-use-button-icon">
+        <i class="ph ph-check"></i>
+      </span>
+
+      <span class="resource-use-button-copy">
+        <strong>
+          Added to My Resources
+        </strong>
+
+        <small>
+          You can edit it from your library
+        </small>
+      </span>
+    `;
+
+    button.classList.add(
+      'is-complete'
     );
+  } catch (error) {
+    console.error(
+      '[ready-made-resource] use failed:',
+      error
+    );
+
+    status.hidden = false;
+
+    status.innerHTML = `
+      <div class="resource-use-status-error">
+        <i class="ph ph-warning-circle"></i>
+
+        <span>
+          ${escapeHtml(
+            error.message ||
+              'Could not add this resource.'
+          )}
+        </span>
+      </div>
+    `;
+
+    button.disabled = false;
+    button.innerHTML =
+      original;
+  }
 }
 
 function showLoading() {
-  $('resourceDetailLoading').hidden =
-    false;
+  $('resourceDetailLoading')
+    .hidden = false;
 
-  $('resourceDetailError').hidden =
-    true;
+  $('resourceDetailError')
+    .hidden = true;
 
-  $('resourceDetailContent').hidden =
-    true;
+  $('resourceDetailContent')
+    .hidden = true;
 }
 
 function showError(error) {
-  $('resourceDetailLoading').hidden =
-    true;
+  $('resourceDetailLoading')
+    .hidden = true;
 
-  $('resourceDetailContent').hidden =
-    true;
+  $('resourceDetailContent')
+    .hidden = true;
 
-  $('resourceDetailError').hidden =
-    false;
+  $('resourceDetailError')
+    .hidden = false;
 
   $('resourceDetailErrorMessage')
     .textContent =
     error?.message ||
-    'Could not load this resource.';
+    'We could not load this resource.';
 }
 
 function showContent() {
-  $('resourceDetailLoading').hidden =
-    true;
+  $('resourceDetailLoading')
+    .hidden = true;
 
-  $('resourceDetailError').hidden =
-    true;
+  $('resourceDetailError')
+    .hidden = true;
 
-  $('resourceDetailContent').hidden =
-    false;
+  $('resourceDetailContent')
+    .hidden = false;
 }
 
 async function init() {
-  const user =
-    await window.Auth.requireAuthOrRedirect();
-
-  if (!user) return;
-
   showLoading();
 
-  $('resourceDetailRetry')
-    ?.addEventListener(
-      'click',
-      init
-    );
-
   try {
+    const user =
+      await window.Auth.requireAuthOrRedirect();
+
+    if (!user) {
+      return;
+    }
+
     const [
       resource,
       collections,
@@ -929,47 +1116,34 @@ async function init() {
     currentResource =
       resource;
 
-    window.__readyMadeResources =
-      collections.flatMap(
-        (collection) =>
-          getCollectionResources(
-            collection
-          )
-      );
-
     renderHeader(resource);
-    renderDownloadActions(resource);
-    renderResourcePreview(resource);
 
-    const collection =
+    renderCollection(
       findContainingCollection(
         collections,
         resource
-      );
-
-    renderCollection(
-      collection
+      )
     );
 
-    const related =
+    renderResourcePreview(
+      resource
+    );
+
+    renderDownloadActions(
+      resource
+    );
+
+    renderRelated(
       getRelatedResources(
         collections,
         resource
-      );
-
-    renderRelatedResources(
-      related
+      )
     );
 
     showContent();
-
-    window.scrollTo({
-      top: 0,
-      behavior: 'instant',
-    });
   } catch (error) {
     console.error(
-      '[ready-made-resource]',
+      '[ready-made-resource] init failed:',
       error
     );
 
@@ -977,4 +1151,31 @@ async function init() {
   }
 }
 
-init();
+document.addEventListener(
+  'DOMContentLoaded',
+  () => {
+    const retry =
+      $('resourceDetailRetry');
+
+    if (retry) {
+      retry.addEventListener(
+        'click',
+        () => {
+          init();
+        }
+      );
+    }
+
+    const useButton =
+      $('useResourceButton');
+
+    if (useButton) {
+      useButton.addEventListener(
+        'click',
+        useResource
+      );
+    }
+
+    init();
+  }
+);
