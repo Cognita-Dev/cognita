@@ -74,6 +74,8 @@ import {
   handleFileGet,
 } from './files-endpoint.js';
 
+import { requireAdmin } from './admin-middleware.js';
+
 function _corsPreflight() {
   return new Response(null, {
     status: 204,
@@ -91,6 +93,23 @@ function _corsPreflight() {
         '86400',
     },
   });
+}
+
+function _json(data, status = 200) {
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+
+      headers: {
+        'Content-Type':
+          'application/json',
+
+        'Access-Control-Allow-Origin':
+          '*',
+      },
+    }
+  );
 }
 
 export default {
@@ -411,6 +430,44 @@ export default {
         env,
         path.split('/')[3]
       );
+    }
+
+    // ─────────────────────────────────────
+    // Admin authentication check
+    //
+    // Used only for frontend routing.
+    // Actual admin API authorization remains
+    // protected by requireAdmin().
+    // ─────────────────────────────────────
+
+    if (
+      request.method === 'GET' &&
+      path === '/api/admin/check'
+    ) {
+      try {
+        await requireAdmin(
+          request,
+          env
+        );
+
+        return _json({
+          admin: true,
+        });
+      } catch (error) {
+        if (error.status === 403) {
+          return _json({
+            admin: false,
+          });
+        }
+
+        return _json(
+          {
+            error:
+              'Not authenticated.',
+          },
+          401
+        );
+      }
     }
 
     // ─────────────────────────────────────
