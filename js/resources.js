@@ -360,28 +360,66 @@ function setBtnLoading(btn, isLoading) {
 // of resource type — walks the object shallowly rather than needing a
 // bespoke renderer per recipe. Good enough for a first preview; a proper
 // per-type renderer can replace this later without touching the backend.
-function renderStructuredPreview(content) {
+function renderStructuredPreview(content, resourceType) {
+
+  if (
+    window.ResourceRenderers &&
+    typeof window.ResourceRenderers.render === 'function'
+  ) {
+    const specialized = window.ResourceRenderers.render(
+      resourceType,
+      content
+    );
+
+    if (specialized) {
+      return specialized;
+    }
+  }
+
   let html = '';
+
   for (const key in content) {
     const value = content[key];
-    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+    const label = key
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, (c) => c.toUpperCase());
 
     if (Array.isArray(value)) {
       html += '<h4>' + escapeHtml(label) + '</h4><ul>';
+
       value.forEach((item) => {
         if (typeof item === 'object' && item !== null) {
-          html += '<li>' + escapeHtml(Object.values(item).join(' — ')) + '</li>';
+          html +=
+            '<li>' +
+            escapeHtml(Object.values(item).join(' — ')) +
+            '</li>';
         } else {
           html += '<li>' + escapeHtml(String(item)) + '</li>';
         }
       });
+
       html += '</ul>';
     } else if (typeof value === 'object' && value !== null) {
-      html += '<h4>' + escapeHtml(label) + '</h4><p>' + escapeHtml(JSON.stringify(value)) + '</p>';
-    } else if (typeof value !== 'undefined' && value !== null && String(value).trim()) {
-      html += '<h4>' + escapeHtml(label) + '</h4><p>' + escapeHtml(String(value)) + '</p>';
+      html +=
+        '<h4>' +
+        escapeHtml(label) +
+        '</h4><p>' +
+        escapeHtml(JSON.stringify(value)) +
+        '</p>';
+    } else if (
+      typeof value !== 'undefined' &&
+      value !== null &&
+      String(value).trim()
+    ) {
+      html +=
+        '<h4>' +
+        escapeHtml(label) +
+        '</h4><p>' +
+        escapeHtml(String(value)) +
+        '</p>';
     }
   }
+
   return html;
 }
 
@@ -397,8 +435,24 @@ const FORMAT_LABELS = { docx: 'Word (.docx)', pdf: 'PDF', pptx: 'PowerPoint (.pp
 function showResultPanel(resource) {
   document.getElementById('resourcesResultPanel').hidden = false;
   document.getElementById('resourceResultTitle').textContent = resource.structuredContent.title || resource.title;
-  document.getElementById('resourceResultBody').innerHTML = renderStructuredPreview(resource.structuredContent);
+  const resultBody = document.getElementById('resourceResultBody');
 
+resultBody.innerHTML = renderStructuredPreview(
+  resource.structuredContent,
+  resource.resourceType
+);
+
+if (
+  window.ResourceRenderers &&
+  typeof window.ResourceRenderers.mount === 'function'
+) {
+  window.ResourceRenderers.mount(
+    resource.resourceType,
+    resultBody,
+    resource.structuredContent
+  );
+}
+  
   const actionsWrap = document.querySelector('.resource-result-actions');
   const availableFormats = Object.keys(resource.fileReferences || {});
 
