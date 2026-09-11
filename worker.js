@@ -18,6 +18,20 @@ import {
 } from './ready-made-resources-endpoint.js';
 
 import {
+  handleCollectionList,
+  handleCollectionGet,
+} from './collections-endpoint.js';
+
+import {
+  handleAdminCollectionList,
+  handleAdminCollectionGet,
+  handleAdminCollectionCreate,
+  handleAdminCollectionUpdate,
+  handleAdminCollectionPublish,
+  handleAdminCollectionArchive,
+} from './admin-collections-endpoint.js';
+
+import {
   handleAdminResourceList,
   handleAdminResourceGet,
   handleAdminResourceGenerate,
@@ -269,6 +283,99 @@ if (
     request,
     env,
     path.split('/')[3]
+  );
+}
+
+  // ─────────────────────────────────────
+// Public Collections
+// ─────────────────────────────────────
+
+if (
+  request.method === 'GET' &&
+  path === '/api/collections'
+) {
+  return handleCollectionList(
+    request,
+    env
+  );
+}
+
+if (
+  request.method === 'GET' &&
+  /^\/api\/collections\/[^/]+$/.test(path)
+) {
+  return handleCollectionGet(
+    request,
+    env,
+    path.split('/')[3]
+  );
+}
+
+// ─────────────────────────────────────
+// Admin Collections
+// ─────────────────────────────────────
+
+if (
+  request.method === 'GET' &&
+  path === '/api/admin/collections'
+) {
+  return handleAdminCollectionList(
+    request,
+    env
+  );
+}
+
+if (
+  request.method === 'POST' &&
+  path === '/api/admin/collections'
+) {
+  return handleAdminCollectionCreate(
+    request,
+    env
+  );
+}
+
+if (
+  request.method === 'GET' &&
+  /^\/api\/admin\/collections\/[^/]+$/.test(path)
+) {
+  return handleAdminCollectionGet(
+    request,
+    env,
+    path.split('/')[4]
+  );
+}
+
+if (
+  request.method === 'PATCH' &&
+  /^\/api\/admin\/collections\/[^/]+$/.test(path)
+) {
+  return handleAdminCollectionUpdate(
+    request,
+    env,
+    path.split('/')[4]
+  );
+}
+
+if (
+  request.method === 'POST' &&
+  /^\/api\/admin\/collections\/[^/]+\/publish$/.test(path)
+) {
+  return handleAdminCollectionPublish(
+    request,
+    env,
+    path.split('/')[4]
+  );
+}
+
+if (
+  request.method === 'POST' &&
+  /^\/api\/admin\/collections\/[^/]+\/archive$/.test(path)
+) {
+  return handleAdminCollectionArchive(
+    request,
+    env,
+    path.split('/')[4]
   );
 }
     
