@@ -14,6 +14,10 @@ import { fsSet, fsGet, fsQuery, fsDelete } from './firestore-rest.js';
 import { getRecipe } from './recipes/index.js';
 import { callWithFallback } from './providers.js';
 import { MODEL_TIERS } from './entitlements.js';
+import { buildStructuredDocx } from './docx-builder.js';
+import { buildStructuredPdf } from './pdf-builder.js';
+import { buildSimplePptx } from './pptx-builder.js';
+import { b2UploadFile } from './b2-client.js';
 
 const RESOURCE_MAX_TOKENS = 6000;
 
@@ -264,6 +268,111 @@ async function _createOne(adminUid, body, env) {
   return { resource: doc, wasExisting: false };
 }
 
+const PPTX_TYPES = new Set(['presentation']);
+const SKIP_KEYS = new Set(['title']);
+
+function _base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Same generic structuredContent -> sections walk as resources-endpoint.js
+// uses, kept as its own copy here so this file has no import dependency
+// on that one.
+function _structuredContentToSections(content) {
+  const sections = [];
+  for (const key in content) {
+    if (SKIP_KEYS.has(key)) continue;
+    const value = content[key];
+    if (value === null || typeof value === 'undefined') continue;
+    const heading = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      const items = value.map((item) => {
+        if (item && typeof item === 'object') {
+          return Object.values(item).filter((v) => typeof v === 'string' || typeof v === 'number').join(' — ');
+        }
+        return String(item);
+      });
+      sections.push({ heading, type: 'bullets', content: items });
+    } else if (typeof value === 'object') {
+      sections.push({ heading, type: 'paragraph', content: JSON.stringify(value) });
+    } else if (String(value).trim()) {
+      sections.push({ heading, type: 'paragraph', content: String(value) });
+    }
+  }
+  return sections;
+}
+
+// Renders + uploads publish-time exports for an admin resource. Never
+// throws — any single format's failure is logged and just omitted from
+// the returned fileReferences, so publishing itself always succeeds once
+// the version snapshot is saved.
+async function _buildAndUploadAdminExports(doc, resourceId, env) {
+  const fileReferences = {};
+  const content = doc.structuredContent;
+  const title = content.title || 'Untitled';
+  const templateId = doc.designTemplateId || 'classic';
+  const basePrefix = 'adminGenerated/' + resourceId + '/exports/';
+
+  if (PPTX_TYPES.has(doc.resourceType) && Array.isArray(content.slides)) {
+    try {
+      const pptxBase64 = await buildSimplePptx(content.slides, title, templateId);
+      const pptxKey = basePrefix + doc.resourceType + '.pptx';
+      const pptxUpload = await b2UploadFile(
+        env, pptxKey, _base64ToBytes(pptxBase64),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      );
+      fileReferences.pptx = { key: pptxKey, fileId: pptxUpload.fileId };
+    } catch (e) {
+      console.error('[admin-resources] pptx export/upload failed:', e.message);
+    }
+
+    try {
+      const sections = content.slides.map((s) => ({
+        heading: s.heading || '',
+        type: 'bullets',
+        content: Array.isArray(s.bulletPoints) ? s.bulletPoints : [String(s.bulletPoints || '')],
+      }));
+      const pdfBase64 = await buildStructuredPdf({ title, sections }, title, templateId);
+      const pdfKey = basePrefix + doc.resourceType + '.pdf';
+      const pdfUpload = await b2UploadFile(env, pdfKey, _base64ToBytes(pdfBase64), 'application/pdf');
+      fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+    } catch (e) {
+      console.error('[admin-resources] pdf export/upload failed:', e.message);
+    }
+
+    return fileReferences;
+  }
+
+  const structuredForExport = { title, sections: _structuredContentToSections(content) };
+
+  try {
+    const pdfBase64 = await buildStructuredPdf(structuredForExport, title, templateId);
+    const pdfKey = basePrefix + doc.resourceType + '.pdf';
+    const pdfUpload = await b2UploadFile(env, pdfKey, _base64ToBytes(pdfBase64), 'application/pdf');
+    fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+  } catch (e) {
+    console.error('[admin-resources] pdf export/upload failed:', e.message);
+  }
+
+  try {
+    const docxBase64 = await buildStructuredDocx(structuredForExport, title);
+    const docxKey = basePrefix + doc.resourceType + '.docx';
+    const docxUpload = await b2UploadFile(
+      env, docxKey, _base64ToBytes(docxBase64),
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+  } catch (e) {
+    console.error('[admin-resources] docx export/upload failed:', e.message);
+  }
+
+  return fileReferences;
+}
+
 // ── Batch create (idempotent) ─────────────────────────────────────────
 // POST /api/admin/resources/batch
 // Body: { items: [{ resourceType, mode, fields?, manualContent?,
@@ -489,6 +598,7 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
       return _jsonError('Could not save the published version. Please try again.', 500);
     }
     updated.publishedAt = now;
+    updated.fileReferences = await _buildAndUploadAdminExports(doc, resourceId, env);
   }
 
   try {
