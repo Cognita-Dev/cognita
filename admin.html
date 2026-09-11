@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Admin · Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="app-page">
+
+<div class="app-shell">
+  <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+  <aside class="app-sidebar" id="appSidebar">
+    <div class="sidebar-top">
+      <a href="/index.html" class="sidebar-logo">
+        <img src="/assets/cognita.png" alt="Cognita">
+        <span>Cognita Admin</span>
+      </a>
+    </div>
+
+    <nav class="sidebar-history" aria-label="Navigation">
+      <a href="/app.html" class="sidebar-history-item">
+        <i class="ph ph-chat-circle" style="margin-right:8px;"></i><span>Chat</span>
+      </a>
+      <a href="/admin.html" class="sidebar-history-item is-active">
+        <i class="ph ph-shield-check" style="margin-right:8px;"></i><span>Admin</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <button class="account-btn" id="accountBtn">
+        <span class="account-avatar" id="accountAvatar">C</span>
+        <span class="account-info"><span class="account-name" id="accountEmail">Loading</span></span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="app-main">
+    <header class="app-topbar">
+      <h1 class="conversation-title">Admin — Resource Curation</h1>
+    </header>
+
+    <div class="resources-scroll">
+
+      <!-- ── Status filter tabs ── -->
+      <section class="resources-generate-panel">
+        <div id="statusTabs" class="resource-type-grid" style="grid-template-columns:repeat(6,1fr);"></div>
+      </section>
+
+      <!-- ── Create panel ── -->
+      <section class="resources-generate-panel">
+        <h2 class="resources-heading">Create a resource</h2>
+
+        <div class="resource-field" style="margin-bottom:12px;">
+          <label><input type="radio" name="createMode" value="single" checked> Single</label>
+          &nbsp;&nbsp;
+          <label><input type="radio" name="createMode" value="batch"> Batch</label>
+        </div>
+
+        <div id="singleCreateForm">
+          <label class="resource-field">
+            <span>Resource type</span>
+            <select id="fieldResourceType"></select>
+          </label>
+
+          <label class="resource-field">
+            <span>Mode</span>
+            <select id="fieldCreationMode">
+              <option value="ai">Generate with AI</option>
+              <option value="manual">Write by hand</option>
+            </select>
+          </label>
+
+          <div id="aiFieldsWrap">
+            <label class="resource-field"><span>Subject</span><input type="text" id="fieldSubject"></label>
+            <label class="resource-field"><span>Class</span><input type="text" id="fieldClassLevel"></label>
+            <label class="resource-field"><span>Topic</span><input type="text" id="fieldTopic"></label>
+          </div>
+
+          <div id="manualContentWrap" hidden>
+            <label class="resource-field">
+              <span>Content JSON (must match the recipe's structure — see title field required)</span>
+              <textarea id="fieldManualContent" rows="10" style="width:100%;font-family:monospace;"></textarea>
+            </label>
+          </div>
+
+          <button type="button" class="resource-generate-btn" id="createSingleBtn">
+            <span class="btn-label">Create draft</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </div>
+
+        <div id="batchCreateForm" hidden>
+          <label class="resource-field">
+            <span>Batch items (JSON array — each item: resourceType, mode, fields or manualContent, optional clientRequestId)</span>
+            <textarea id="fieldBatchItems" rows="12" style="width:100%;font-family:monospace;"
+              placeholder='[{"resourceType":"lesson_plan","mode":"ai","fields":{"subject":"Biology","classLevel":"SS2","topic":"Photosynthesis"},"clientRequestId":"batch1-item1"}]'></textarea>
+          </label>
+          <button type="button" class="resource-generate-btn" id="createBatchBtn">
+            <span class="btn-label">Run batch</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+          <div id="batchResults" style="margin-top:12px;"></div>
+        </div>
+      </section>
+
+      <!-- ── Resource list ── -->
+      <section class="my-resources-panel">
+        <h2 class="resources-heading">Resources</h2>
+        <div class="my-resources-list" id="adminResourceList">
+          <div class="my-resources-empty">No resources in this status.</div>
+        </div>
+      </section>
+
+      <!-- ── Detail / edit panel ── -->
+      <section class="resources-result-panel" id="detailPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="detailTitle">Resource</h2>
+          <button class="resource-result-close" id="detailClose" aria-label="Close"><i class="ph ph-x"></i></button>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <span id="detailStatusBadge" class="my-resource-status"></span>
+        </div>
+
+        <label class="resource-field">
+          <span>Structured content JSON</span>
+          <textarea id="detailContentJson" rows="14" style="width:100%;font-family:monospace;"></textarea>
+        </label>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+          <button class="resource-generate-btn" id="saveEditBtn">Save edit</button>
+          <button class="resource-generate-btn" id="submitReviewBtn">Submit for review</button>
+          <button class="resource-generate-btn" id="requestChangesBtn">Request changes</button>
+          <button class="resource-generate-btn" id="validateBtn">Validate</button>
+          <button class="resource-generate-btn" id="publishBtn">Publish</button>
+          <button class="resource-generate-btn" id="archiveBtn">Archive</button>
+          <button class="resource-generate-btn" id="restoreBtn">Restore to draft</button>
+          <button class="resource-generate-btn" id="deleteBtn" style="background:#7A2E3A;">Delete</button>
+        </div>
+
+        <h3>Version history</h3>
+        <div id="versionHistory"></div>
+      </section>
+
+      <!-- ── Collections ── -->
+      <section class="my-resources-panel">
+        <h2 class="resources-heading">Collections</h2>
+        <label class="resource-field">
+          <span>New collection name</span>
+          <input type="text" id="newCollectionName">
+        </label>
+        <button class="resource-generate-btn" id="createCollectionBtn">Create collection</button>
+        <div class="my-resources-list" id="collectionsList" style="margin-top:12px;"></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module" src="/js/admin.js"></script>
+</body>
+</html>
