@@ -3,9 +3,14 @@
 // Uses a service account JWT (signed with FIREBASE_PRIVATE_KEY) to get an
 // OAuth token, then talks to the Firestore REST API directly.
 // No official Firebase Admin SDK dependency — Workers runtime can't run it.
+//
+// Access tokens are cached per OAuth scope, since admin-roles-endpoint.js
+// needs a token scoped for the Identity Toolkit API in addition to the
+// Firestore ("datastore") scope used everywhere else in this file.
 
-let _tokenCache = null;
-let _tokenExpiry = 0;
+const DATASTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
+
+const _tokenCacheByScope = new Map(); // scope -> { token, expiry }
 
 function _b64urlEncode(obj) {
   const json = typeof obj === 'string' ? obj : JSON.stringify(obj);
@@ -24,15 +29,13 @@ function _b64urlToBytes(str) {
   return arr;
 }
 
-async function _signServiceAccountJwt(clientEmail, privateKeyPem) {
+async function _signServiceAccountJwt(clientEmail, privateKeyPem, scope) {
   const pemBody = privateKeyPem
     .replace(/\\n/g, '\n')
     .replace('-----BEGIN PRIVATE KEY-----', '')
     .replace('-----END PRIVATE KEY-----', '')
     .replace(/\s+/g, '');
 
-  const keyBytes = _b64urlToBytes(pemBody.replace(/\+/g, '-').replace(/\//g, '_'));
-  // Standard base64 (not url-safe) is what PEM bodies use — decode plainly.
   const rawBytes = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
 
   const cryptoKey = await crypto.subtle.importKey(
@@ -51,7 +54,7 @@ async function _signServiceAccountJwt(clientEmail, privateKeyPem) {
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/datastore',
+    scope,
   });
 
   const signInput = header + '.' + payload;
@@ -69,15 +72,23 @@ async function _signServiceAccountJwt(clientEmail, privateKeyPem) {
   return signInput + '.' + sig;
 }
 
-async function _getAccessToken(env) {
+/**
+ * Gets (and caches) an OAuth access token for the given scope. Defaults to
+ * the Firestore "datastore" scope, which is what every fs* function below
+ * uses. admin-roles-endpoint.js requests the Identity Toolkit scope
+ * separately to look up users by email — that token is cached under its
+ * own key and never mixed up with the Firestore one.
+ */
+export async function getGoogleAccessToken(env, scope = DATASTORE_SCOPE) {
   const now = Date.now();
-  if (_tokenCache && now < _tokenExpiry) return _tokenCache;
+  const cached = _tokenCacheByScope.get(scope);
+  if (cached && now < cached.expiry) return cached.token;
 
   if (!env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
     throw new Error('Server misconfiguration: Firebase service account not set.');
   }
 
-  const jwt = await _signServiceAccountJwt(env.FIREBASE_CLIENT_EMAIL, env.FIREBASE_PRIVATE_KEY);
+  const jwt = await _signServiceAccountJwt(env.FIREBASE_CLIENT_EMAIL, env.FIREBASE_PRIVATE_KEY, scope);
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -87,13 +98,17 @@ async function _getAccessToken(env) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error('Firebase token exchange failed: ' + text.slice(0, 200));
+    throw new Error('Google token exchange failed: ' + text.slice(0, 200));
   }
 
   const data = await res.json();
-  _tokenCache = data.access_token;
-  _tokenExpiry = now + (data.expires_in - 120) * 1000; // refresh 2 min early
-  return _tokenCache;
+  const token = data.access_token;
+  _tokenCacheByScope.set(scope, { token, expiry: now + (data.expires_in - 120) * 1000 });
+  return token;
+}
+
+async function _getAccessToken(env) {
+  return getGoogleAccessToken(env, DATASTORE_SCOPE);
 }
 
 function _fsDecodeValue(v) {
