@@ -17,12 +17,10 @@
   <a href="/index.html" class="auth-logo">
     <img src="/assets/cognita.png" alt="Cognita">
   </a>
-
   <div class="auth-header">
     <h1 class="auth-title">Your thinking,<br>right where you left it.</h1>
     <p class="auth-subtitle">Sign in to pick up the thread.</p>
   </div>
-
   <div class="auth-card">
     <button id="googleBtn" class="auth-btn auth-btn--google" type="button">
       <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -33,300 +31,143 @@
       </svg>
       Continue with Google
     </button>
-
     <p id="googleError" class="field-error" aria-live="polite"></p>
-
     <div class="auth-divider"><span>or</span></div>
-
     <form id="loginForm" class="auth-form" novalidate>
       <label class="auth-field">
         <span>Email</span>
         <input type="email" id="email" autocomplete="email" required>
         <p id="emailError" class="field-error" aria-live="polite"></p>
       </label>
-
       <label class="auth-field">
         <div class="auth-field-row">
           <span>Password</span>
           <button type="button" id="forgotBtn" class="auth-link-btn">Forgot password?</button>
         </div>
-
         <input type="password" id="password" autocomplete="current-password" required>
         <p id="passwordError" class="field-error" aria-live="polite"></p>
       </label>
-
       <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
         <span class="btn-label">Sign in</span>
         <span class="btn-spinner" hidden></span>
       </button>
-
       <p id="generalError" class="auth-btn-error" aria-live="polite"></p>
     </form>
   </div>
-
   <p class="auth-switch">
     Don't have an account? <a href="/signup.html">Create one</a>
   </p>
 </div>
-
 <script type="module">
   import { Auth } from '/js/auth.js';
+  const form = document.getElementById('loginForm');
+  const submitBtn = document.getElementById('submitBtn');
+  const googleBtn = document.getElementById('googleBtn');
+  const forgotBtn = document.getElementById('forgotBtn');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
 
-  const WORKER_URL =
-    'https://cognita.cognitai.workers.dev';
+  const params = new URLSearchParams(window.location.search);
+  const planId = params.get('plan');
+  const postAuthDestination = planId
+    ? '/payment.html?plan=' + encodeURIComponent(planId)
+    : '/app.html';
 
-  const form =
-    document.getElementById('loginForm');
-
-  const submitBtn =
-    document.getElementById('submitBtn');
-
-  const googleBtn =
-    document.getElementById('googleBtn');
-
-  const forgotBtn =
-    document.getElementById('forgotBtn');
-
-  const emailInput =
-    document.getElementById('email');
-
-  const passwordInput =
-    document.getElementById('password');
-
-  const params =
-    new URLSearchParams(window.location.search);
-
-  const planId =
-    params.get('plan');
-
-  const normalDestination =
-    planId
-      ? '/payment.html?plan=' +
-        encodeURIComponent(planId)
-      : '/app.html';
-
-  // Preserve the intended plan when bouncing to signup.
-  const signupLink =
-    document.querySelector(
-      '.auth-switch a[href="/signup.html"]'
-    );
-
+  // Preserve the intended plan when bouncing to the signup page instead.
+  const signupLink = document.querySelector('.auth-switch a[href="/signup.html"]');
   if (signupLink && planId) {
-    signupLink.href =
-      '/signup.html?plan=' +
-      encodeURIComponent(planId);
+    signupLink.href = '/signup.html?plan=' + encodeURIComponent(planId);
   }
 
   const errorEls = {
-    email:
-      document.getElementById('emailError'),
-
-    password:
-      document.getElementById('passwordError'),
-
-    google:
-      document.getElementById('googleError'),
-
-    general:
-      document.getElementById('generalError'),
+    email: document.getElementById('emailError'),
+    password: document.getElementById('passwordError'),
+    google: document.getElementById('googleError'),
+    general: document.getElementById('generalError'),
   };
 
   function clearErrors() {
-    Object.values(errorEls).forEach((el) => {
-      el.textContent = '';
-    });
+    Object.values(errorEls).forEach((el) => { el.textContent = ''; });
   }
 
   function showError(error) {
     clearErrors();
-
-    const {
-      field,
-      message,
-    } = Auth.classifyAuthError(error);
-
-    (
-      errorEls[field] ||
-      errorEls.general
-    ).textContent = message;
+    const { field, message } = Auth.classifyAuthError(error);
+    (errorEls[field] || errorEls.general).textContent = message;
   }
 
   function setLoading(isLoading) {
     submitBtn.disabled = isLoading;
-
-    submitBtn.querySelector(
-      '.btn-label'
-    ).hidden = isLoading;
-
-    submitBtn.querySelector(
-      '.btn-spinner'
-    ).hidden = !isLoading;
+    submitBtn.querySelector('.btn-label').hidden = isLoading;
+    submitBtn.querySelector('.btn-spinner').hidden = !isLoading;
   }
 
-  /*
-   * The Worker is the source of truth for admin status.
-   * The admin UID never appears in frontend code.
-   */
-  async function getPostAuthDestination() {
-    try {
-      const response =
-        await Auth.authedFetch(
-          WORKER_URL +
-            '/api/admin/check'
-        );
-
-      if (response.ok) {
-        const data =
-          await response.json();
-
-        if (data?.admin === true) {
-          return '/admin.html';
-        }
-      }
-    } catch (error) {
-      console.warn(
-        '[login] Could not check admin status:',
-        error.message
-      );
-    }
-
-    return normalDestination;
-  }
-
-  async function redirectAfterAuth() {
-    const destination =
-      await getPostAuthDestination();
-
-    window.location.href =
-      destination;
-  }
-
-  emailInput.addEventListener(
-    'input',
-    () => {
-      emailInput.classList.remove(
-        'is-invalid'
-      );
-
-      errorEls.email.textContent = '';
-    }
-  );
+  emailInput.addEventListener('input', () => {
+    emailInput.classList.remove('is-invalid');
+    errorEls.email.textContent = '';
+  });
 
   try {
     await Auth.ready();
-
     if (Auth.getCurrentUser()) {
-      await redirectAfterAuth();
+      window.location.href = postAuthDestination;
     }
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearErrors();
 
-    form.addEventListener(
-      'submit',
-      async (e) => {
-        e.preventDefault();
-
-        clearErrors();
-
-        const email =
-          emailInput.value.trim();
-
-        if (!Auth.isValidEmail(email)) {
-          emailInput.classList.add(
-            'is-invalid'
-          );
-
-          errorEls.email.textContent =
-            'Enter a valid email address.';
-
-          return;
-        }
-
-        if (!passwordInput.value) {
-          errorEls.password.textContent =
-            'Enter your password.';
-
-          return;
-        }
-
-        setLoading(true);
-
-        try {
-          await Auth.signInWithEmail(
-            email,
-            passwordInput.value
-          );
-
-          await redirectAfterAuth();
-        } catch (err) {
-          showError(err);
-          setLoading(false);
-        }
+      const email = emailInput.value.trim();
+      if (!Auth.isValidEmail(email)) {
+        emailInput.classList.add('is-invalid');
+        errorEls.email.textContent = 'Enter a valid email address.';
+        return;
       }
-    );
-
-    googleBtn.addEventListener(
-      'click',
-      async () => {
-        clearErrors();
-
-        try {
-          await Auth.signInWithGoogle();
-
-          await redirectAfterAuth();
-        } catch (err) {
-          showError(err);
-        }
+      if (!passwordInput.value) {
+        errorEls.password.textContent = 'Enter your password.';
+        return;
       }
-    );
 
-    forgotBtn.addEventListener(
-      'click',
-      async () => {
-        clearErrors();
-
-        const email =
-          emailInput.value.trim();
-
-        if (!email) {
-          errorEls.email.textContent =
-            'Enter your email above first, then tap "Forgot password?" again.';
-
-          return;
-        }
-
-        if (!Auth.isValidEmail(email)) {
-          emailInput.classList.add(
-            'is-invalid'
-          );
-
-          errorEls.email.textContent =
-            'Enter a valid email address.';
-
-          return;
-        }
-
-        try {
-          await Auth.resetPassword(email);
-
-          errorEls.general.style.color =
-            'var(--accent)';
-
-          errorEls.general.textContent =
-            'Password reset email sent to ' +
-            email +
-            '.';
-        } catch (err) {
-          showError(err);
-        }
+      setLoading(true);
+      try {
+        await Auth.signInWithEmail(email, passwordInput.value);
+        window.location.href = postAuthDestination;
+      } catch (err) {
+        showError(err);
+        setLoading(false);
       }
-    );
+    });
+    googleBtn.addEventListener('click', async () => {
+      clearErrors();
+      try {
+        await Auth.signInWithGoogle();
+        window.location.href = postAuthDestination;
+      } catch (err) {
+        showError(err);
+      }
+    });
+    forgotBtn.addEventListener('click', async () => {
+      clearErrors();
+      const email = emailInput.value.trim();
+      if (!email) {
+        errorEls.email.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
+        return;
+      }
+      if (!Auth.isValidEmail(email)) {
+        emailInput.classList.add('is-invalid');
+        errorEls.email.textContent = 'Enter a valid email address.';
+        return;
+      }
+      try {
+        await Auth.resetPassword(email);
+        errorEls.general.style.color = 'var(--accent)';
+        errorEls.general.textContent = 'Password reset email sent to ' + email + '.';
+      } catch (err) {
+        showError(err);
+      }
+    });
   } catch (initErr) {
-    console.error(
-      'Auth initialization failed:',
-      initErr
-    );
-
-    errorEls.general.textContent =
-      'Unable to load authentication. Please refresh the page.';
+    console.error('Auth initialization failed:', initErr);
+    errorEls.general.textContent = 'Unable to load authentication. Please refresh the page.';
   }
 </script>
 </body>
