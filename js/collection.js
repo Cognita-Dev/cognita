@@ -48,20 +48,22 @@ function resourceLabel(type) {
 }
 
 async function api(path) {
-  const response = await Auth.authedFetch(
-    WORKER_URL + path
-  );
+  const response =
+    await Auth.authedFetch(
+      WORKER_URL + path
+    );
 
   let data = null;
 
   try {
-    data = await response.json();
+    data =
+      await response.json();
   } catch (_) {}
 
   if (!response.ok) {
     throw new Error(
       data?.error ||
-      'Could not load collection.'
+        'Could not load collection.'
     );
   }
 
@@ -86,32 +88,45 @@ function render(collection) {
     <p>
       ${escapeHtml(
         collection.description ||
-        'A curated set of classroom-ready resources.'
+          'A curated set of classroom-ready resources.'
       )}
     </p>
 
     <div class="collection-meta">
+
       ${
         collection.subject
-          ? `<span>${escapeHtml(
-              collection.subject
-            )}</span>`
+          ? `
+            <span>
+              ${escapeHtml(
+                collection.subject
+              )}
+            </span>
+          `
           : ''
       }
 
       ${
         collection.classLevel
-          ? `<span>${escapeHtml(
-              collection.classLevel
-            )}</span>`
+          ? `
+            <span>
+              ${escapeHtml(
+                collection.classLevel
+              )}
+            </span>
+          `
           : ''
       }
 
       ${
         collection.curriculum
-          ? `<span>${escapeHtml(
-              collection.curriculum
-            )}</span>`
+          ? `
+            <span>
+              ${escapeHtml(
+                collection.curriculum
+              )}
+            </span>
+          `
           : ''
       }
 
@@ -123,11 +138,13 @@ function render(collection) {
             : 's'
         }
       </span>
+
     </div>
   `;
 
   const resources =
-    collection.resources || [];
+    collection.resources ||
+    [];
 
   if (!resources.length) {
     $('resourcesGrid').innerHTML = `
@@ -149,7 +166,13 @@ function render(collection) {
             data-id="${escapeHtml(
               resource.id
             )}"
+            tabindex="0"
+            role="button"
+            aria-label="View ${escapeHtml(
+              resource.title
+            )}"
           >
+
             <span class="resource-type">
               ${escapeHtml(
                 resourceLabel(
@@ -167,12 +190,13 @@ function render(collection) {
             <p>
               ${escapeHtml(
                 resource.description ||
-                resource.topic ||
-                'Classroom-ready resource.'
+                  resource.topic ||
+                  'Classroom-ready resource.'
               )}
             </p>
 
             <div class="resource-meta">
+
               ${
                 resource.subject
                   ? escapeHtml(
@@ -188,11 +212,13 @@ function render(collection) {
                     )}`
                   : ''
               }
+
             </div>
 
             <div class="resource-action">
               View resource →
             </div>
+
           </article>
         `
       )
@@ -203,13 +229,31 @@ function render(collection) {
       '.resource-card'
     )
     .forEach((card) => {
-      card.addEventListener(
-        'click',
+      const openResource =
         () => {
           window.location.href =
             `/resources.html?resource=${encodeURIComponent(
               card.dataset.id
             )}`;
+        };
+
+      card.addEventListener(
+        'click',
+        openResource
+      );
+
+      card.addEventListener(
+        'keydown',
+        (event) => {
+          if (
+            event.key ===
+              'Enter' ||
+            event.key ===
+              ' '
+          ) {
+            event.preventDefault();
+            openResource();
+          }
         }
       );
     });
@@ -232,17 +276,27 @@ async function init() {
   }
 
   try {
-    const data = await api(
-      `/api/collections/${encodeURIComponent(
-        collectionId
-      )}`
+    const data =
+      await api(
+        `/api/collections/${encodeURIComponent(
+          collectionId
+        )}`
+      );
+
+    render(
+      data.collection
+    );
+  } catch (e) {
+    console.error(
+      '[collection]',
+      e
     );
 
-    render(data.collection);
-  } catch (e) {
     $('collectionMain').innerHTML = `
       <div class="empty">
-        ${escapeHtml(e.message)}
+        ${escapeHtml(
+          e.message
+        )}
       </div>
     `;
   }
