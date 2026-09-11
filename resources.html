@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/resources.css">
 <link rel="stylesheet" href="/css/resource-renderers.css">
+<link rel="stylesheet" href="/css/ready-made-resources.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body class="app-page">
@@ -218,6 +219,67 @@
         </form>
       </section>
 
+      <section class="ready-made-library">
+
+  <div class="ready-made-library-header">
+    <div>
+      <h2 class="ready-made-library-heading">
+        Ready-made resources
+      </h2>
+      <p class="ready-made-library-subheading">
+        Classroom-ready resources created and reviewed by Cognita.
+      </p>
+    </div>
+  </div>
+
+  <div
+    class="ready-made-type-filters"
+    id="readyMadeTypeFilters"
+    aria-label="Resource categories"
+  ></div>
+
+  <div
+    class="ready-made-resources-list"
+    id="readyMadeResourcesList"
+  ></div>
+
+</section>
+
+<section
+  class="ready-made-preview-panel"
+  id="readyMadePreviewPanel"
+  hidden
+>
+  <div class="ready-made-preview-card">
+
+    <header class="ready-made-preview-header">
+      <h2 id="readyMadePreviewTitle">
+        Resource
+      </h2>
+
+      <button
+        type="button"
+        class="ready-made-preview-close"
+        id="readyMadePreviewClose"
+        aria-label="Close"
+      >
+        <i class="ph ph-x"></i>
+      </button>
+    </header>
+
+    <div
+      class="ready-made-preview-body"
+      id="readyMadePreviewBody"
+    ></div>
+
+    <div
+      class="ready-made-download-actions"
+      id="readyMadeDownloadActions"
+    ></div>
+
+  </div>
+</section>
+      
       <!-- ── Result preview ── -->
       <section class="resources-result-panel" id="resourcesResultPanel" hidden>
         <div class="resource-result-header">
@@ -251,5 +313,28 @@
 <script src="/js/resource-renderers.js"></script>
 <script type="module" src="/js/resources.js"></script>
 
+<script src="/js/ready-made-resources.js"></script>
+
+<script>
+  document
+    .getElementById('readyMadePreviewClose')
+    ?.addEventListener('click', () => {
+      document.getElementById(
+        'readyMadePreviewPanel'
+      ).hidden = true;
+    });
+
+  document
+    .getElementById('readyMadePreviewPanel')
+    ?.addEventListener('click', (event) => {
+      if (
+        event.target.id ===
+        'readyMadePreviewPanel'
+      ) {
+        event.currentTarget.hidden = true;
+      }
+    });
+</script>
+  
 </body>
 </html>
