@@ -1,0 +1,262 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f7f7f5;
+  color: #171717;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Display",
+    "SF Pro Text",
+    system-ui,
+    sans-serif;
+}
+
+.collections-shell {
+  min-height: 100vh;
+}
+
+.collections-header {
+  height: 72px;
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e7e7e3;
+  background: rgba(255,255,255,.86);
+  backdrop-filter: blur(18px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.back-link {
+  color: #555;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand strong {
+  font-size: 15px;
+}
+
+.brand span {
+  margin-top: 2px;
+  color: #888;
+  font-size: 11px;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #111;
+  color: white;
+  font-weight: 700;
+}
+
+.collections-main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 72px 28px;
+}
+
+.hero {
+  max-width: 720px;
+  margin-bottom: 48px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: .14em;
+  font-weight: 700;
+  color: #888;
+}
+
+.hero h1 {
+  margin: 12px 0;
+  font-size: clamp(36px, 6vw, 64px);
+  line-height: 1;
+  letter-spacing: -.055em;
+}
+
+.hero p {
+  color: #777;
+  font-size: 17px;
+  line-height: 1.65;
+  max-width: 650px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.filter {
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 999px;
+  padding: 9px 15px;
+  cursor: pointer;
+}
+
+.filter.active {
+  background: #111;
+  color: white;
+  border-color: #111;
+}
+
+.collections-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.collection-card {
+  background: white;
+  border: 1px solid #e6e6e2;
+  border-radius: 24px;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    transform .18s ease,
+    box-shadow .18s ease;
+}
+
+.collection-card:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 18px 50px rgba(0,0,0,.08);
+}
+
+.card-top {
+  padding: 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.collection-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: #f1f1ed;
+  font-weight: 700;
+}
+
+.badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.badges span {
+  padding: 6px 9px;
+  background: #f4f4f1;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.card-body {
+  padding: 0 22px 22px;
+}
+
+.card-body h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  letter-spacing: -.025em;
+}
+
+.card-body p {
+  color: #777;
+  line-height: 1.55;
+  min-height: 48px;
+}
+
+.meta {
+  color: #999;
+  font-size: 12px;
+  margin-bottom: 18px;
+}
+
+.resource-preview {
+  border-top: 1px solid #eee;
+}
+
+.resource-row {
+  padding: 11px 0;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.resource-row span {
+  color: #999;
+  white-space: nowrap;
+}
+
+.resource-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-footer {
+  border-top: 1px solid #eee;
+  padding: 17px 22px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.empty {
+  background: white;
+  border: 1px solid #e6e6e2;
+  border-radius: 20px;
+  padding: 40px;
+  color: #777;
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+  .collections-header {
+    padding: 0 18px;
+  }
+
+  .collections-main {
+    padding: 44px 18px;
+  }
+
+  .collections-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero h1 {
+    font-size: 42px;
+  }
+}
