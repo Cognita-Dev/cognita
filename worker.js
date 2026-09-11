@@ -14,6 +14,30 @@ import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js'
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
 import { handleFilesList, handleFileGet } from './files-endpoint.js';
+import {
+  handleAdminResourceCreate,
+  handleAdminResourceBatchCreate,
+  handleAdminResourceEdit,
+  handleAdminResourceTransition,
+  handleAdminResourceList,
+  handleAdminResourceGet,
+  handleAdminResourceVersions,
+  handleAdminResourceDelete,
+} from './admin-resources-endpoint.js';
+import {
+  handleCollectionCreate,
+  handleCollectionEdit,
+  handleCollectionResourceEdit,
+  handleAdminCollectionList,
+  handleCollectionDelete,
+  handlePublicCollectionList,
+} from './collections-endpoint.js';
+import {
+  handleLibraryList,
+  handleLibraryGet,
+  handleLibraryDownload,
+  handleLibraryCollectionGet,
+} from './library-endpoint.js';
 
 
 function _corsPreflight() {
@@ -21,7 +45,7 @@ function _corsPreflight() {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': '*', // tighten to your domain in production
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400',
     },
@@ -120,6 +144,97 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
       return handleSubscriptionCancel(request, env);
+    }
+
+    // ── Admin: resources ──────────────────────────────────────────────
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/resources/batch') {
+      return handleAdminResourceBatchCreate(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/resources') {
+      return handleAdminResourceCreate(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/resources') {
+      return handleAdminResourceList(request, env);
+    }
+
+    // Must come before the plain "/api/admin/resources/:id" checks below,
+    // since /transition and /versions both match a two-segment tail too.
+    if (request.method === 'POST' && /^\/api\/admin\/resources\/[^/]+\/transition$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleAdminResourceTransition(request, env, resourceId);
+    }
+
+    if (request.method === 'GET' && /^\/api\/admin\/resources\/[^/]+\/versions$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleAdminResourceVersions(request, env, resourceId);
+    }
+
+    if (request.method === 'GET' && /^\/api\/admin\/resources\/[^/]+$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleAdminResourceGet(request, env, resourceId);
+    }
+
+    if (request.method === 'POST' && /^\/api\/admin\/resources\/[^/]+$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleAdminResourceEdit(request, env, resourceId);
+    }
+
+    if (request.method === 'DELETE' && /^\/api\/admin\/resources\/[^/]+$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleAdminResourceDelete(request, env, resourceId);
+    }
+
+    // ── Admin: collections ───────────────────────────────────────────
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/collections') {
+      return handleCollectionCreate(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/collections') {
+      return handleAdminCollectionList(request, env);
+    }
+
+    if (request.method === 'POST' && /^\/api\/admin\/collections\/[^/]+\/resources$/.test(url.pathname)) {
+      const collectionId = url.pathname.split('/')[4];
+      return handleCollectionResourceEdit(request, env, collectionId);
+    }
+
+    if (request.method === 'POST' && /^\/api\/admin\/collections\/[^/]+$/.test(url.pathname)) {
+      const collectionId = url.pathname.split('/')[4];
+      return handleCollectionEdit(request, env, collectionId);
+    }
+
+    if (request.method === 'DELETE' && /^\/api\/admin\/collections\/[^/]+$/.test(url.pathname)) {
+      const collectionId = url.pathname.split('/')[4];
+      return handleCollectionDelete(request, env, collectionId);
+    }
+
+    // ── User-facing library (published curated resources) ────────────
+
+    if (request.method === 'GET' && url.pathname === '/api/library/collections') {
+      return handlePublicCollectionList(request, env);
+    }
+
+    if (request.method === 'GET' && /^\/api\/library\/collections\/[^/]+$/.test(url.pathname)) {
+      const collectionId = url.pathname.split('/')[4];
+      return handleLibraryCollectionGet(request, env, collectionId);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/library/resources') {
+      return handleLibraryList(request, env);
+    }
+
+    if (request.method === 'POST' && /^\/api\/library\/resources\/[^/]+\/download$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleLibraryDownload(request, env, resourceId);
+    }
+
+    if (request.method === 'GET' && /^\/api\/library\/resources\/[^/]+$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleLibraryGet(request, env, resourceId);
     }
 
     return new Response(JSON.stringify({ error: 'Not found.' }), {
