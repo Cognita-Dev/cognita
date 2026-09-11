@@ -1,28 +1,56 @@
 // worker.js
-// Main Cloudflare Worker entry point. Routes requests to the appropriate
-// handler. Every protected route authenticates independently inside its
-// own handler — this router does no auth itself, just dispatch.
 
 import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
 import { handleImageRequest } from './image-endpoint.js';
 import { handleDocumentRequest } from './document-endpoint.js';
-import { handleResourceGenerate, handleResourceDownload, handleResourceList } from './resources-endpoint.js';
+
+import {
+  handleResourceGenerate,
+  handleResourceDownload,
+  handleResourceList,
+} from './resources-endpoint.js';
+
+import {
+  handleAdminResourceList,
+  handleAdminResourceGet,
+  handleAdminResourceGenerate,
+  handleAdminResourceUpdate,
+  handleAdminResourcePublish,
+  handleAdminResourceArchive,
+  handleAdminJobList,
+  handleAdminJobProcess,
+} from './admin-resources-endpoint.js';
+
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
-import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
+import {
+  handleAccountRequest,
+  handleUsageRequest,
+} from './account-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
-import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
-import { handleFilesList, handleFileGet } from './files-endpoint.js';
 
+import {
+  handleChatSave,
+  handleChatDelete,
+  handleChatList,
+  handleChatGet,
+} from './chat-sync-endpoint.js';
+
+import {
+  handleFilesList,
+  handleFileGet,
+} from './files-endpoint.js';
 
 function _corsPreflight() {
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*', // tighten to your domain in production
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods':
+        'GET, POST, PATCH, OPTIONS',
+      'Access-Control-Allow-Headers':
+        'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400',
     },
   });
@@ -30,101 +58,312 @@ function _corsPreflight() {
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') return _corsPreflight();
-
-    const url = new URL(request.url);
-
-    if (request.method === 'GET' && url.pathname === '/') {
-      return new Response('Cognita Worker is running.', { status: 200 });
+    if (request.method === 'OPTIONS') {
+      return _corsPreflight();
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/plans') {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (
+      request.method === 'GET' &&
+      path === '/'
+    ) {
+      return new Response(
+        'Cognita Worker is running.',
+        { status: 200 }
+      );
+    }
+
+    if (
+      request.method === 'GET' &&
+      path === '/api/plans'
+    ) {
       return handlePlansRequest();
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/account') {
-      return handleAccountRequest(request, env);
+    if (
+      request.method === 'GET' &&
+      path === '/api/account'
+    ) {
+      return handleAccountRequest(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/usage') {
-      return handleUsageRequest(request, env);
+    if (
+      request.method === 'GET' &&
+      path === '/api/usage'
+    ) {
+      return handleUsageRequest(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/chat') {
-      return handleChatRequest(request, env);
+    if (
+      request.method === 'POST' &&
+      path === '/api/chat'
+    ) {
+      return handleChatRequest(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/chat/save') {
+    if (
+      request.method === 'POST' &&
+      path === '/api/chat/save'
+    ) {
       return handleChatSave(request, env);
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/chat/delete') {
+    if (
+      request.method === 'POST' &&
+      path === '/api/chat/delete'
+    ) {
       return handleChatDelete(request, env);
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/chat/list') {
+    if (
+      request.method === 'GET' &&
+      path === '/api/chat/list'
+    ) {
       return handleChatList(request, env);
     }
 
-    // Must come after the /api/chat/list check above, since both match
-    // the same "/api/chat/<segment>" shape.
-    if (request.method === 'GET' && /^\/api\/chat\/[^/]+$/.test(url.pathname)) {
-      const conversationId = url.pathname.split('/')[3];
-      return handleChatGet(request, env, conversationId);
+    if (
+      request.method === 'GET' &&
+      /^\/api\/chat\/[^/]+$/.test(path)
+    ) {
+      const conversationId =
+        path.split('/')[3];
+
+      return handleChatGet(
+        request,
+        env,
+        conversationId
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/image') {
-      return handleImageRequest(request, env);
+    if (
+      request.method === 'POST' &&
+      path === '/api/image'
+    ) {
+      return handleImageRequest(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/document') {
-      return handleDocumentRequest(request, env);
+    if (
+      request.method === 'POST' &&
+      path === '/api/document'
+    ) {
+      return handleDocumentRequest(
+        request,
+        env
+      );
     }
 
-    // GET /api/files/:conversationId  -> list generated files for that chat
-    if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
-      const conversationId = url.pathname.split('/')[3];
-      return handleFilesList(request, env, conversationId);
+    if (
+      request.method === 'GET' &&
+      /^\/api\/files\/[^/]+$/.test(path)
+    ) {
+      const conversationId =
+        path.split('/')[3];
+
+      return handleFilesList(
+        request,
+        env,
+        conversationId
+      );
     }
 
-    // GET /api/files/:conversationId/:fileId?filename=... -> fetch one file's content.
-    // Must come after the single-segment check above, since both match a
-    // "/api/files/<segment>..." shape.
-    if (request.method === 'GET' && /^\/api\/files\/[^/]+\/[^/]+$/.test(url.pathname)) {
-      const parts = url.pathname.split('/');
-      const conversationId = parts[3];
-      const fileId = parts[4];
-      return handleFileGet(request, env, conversationId, fileId);
+    if (
+      request.method === 'GET' &&
+      /^\/api\/files\/[^/]+\/[^/]+$/.test(path)
+    ) {
+      const parts = path.split('/');
+
+      return handleFileGet(
+        request,
+        env,
+        parts[3],
+        parts[4]
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/resources/generate') {
-      return handleResourceGenerate(request, env);
+    // ─────────────────────────────────────
+    // User Resources
+    // ─────────────────────────────────────
+
+    if (
+      request.method === 'POST' &&
+      path === '/api/resources/generate'
+    ) {
+      return handleResourceGenerate(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/resources/list') {
-      return handleResourceList(request, env);
+    if (
+      request.method === 'GET' &&
+      path === '/api/resources/list'
+    ) {
+      return handleResourceList(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/download$/.test(url.pathname)) {
-      const resourceId = url.pathname.split('/')[3];
-      return handleResourceDownload(request, env, resourceId);
+    if (
+      request.method === 'POST' &&
+      /^\/api\/resources\/[^/]+\/download$/.test(path)
+    ) {
+      return handleResourceDownload(
+        request,
+        env,
+        path.split('/')[3]
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/payment/initialize') {
-      return handlePaymentInitialize(request, env);
+    // ─────────────────────────────────────
+    // Admin Resources
+    // ─────────────────────────────────────
+
+    if (
+      request.method === 'GET' &&
+      path === '/api/admin/resources'
+    ) {
+      return handleAdminResourceList(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/payment/webhook') {
-      return handlePaystackWebhook(request, env);
+    if (
+      request.method === 'POST' &&
+      path === '/api/admin/resources/generate'
+    ) {
+      return handleAdminResourceGenerate(
+        request,
+        env
+      );
     }
 
-    if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
-      return handleSubscriptionCancel(request, env);
+    if (
+      request.method === 'GET' &&
+      path === '/api/admin/generation-jobs'
+    ) {
+      return handleAdminJobList(
+        request,
+        env
+      );
     }
 
-    return new Response(JSON.stringify({ error: 'Not found.' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    if (
+      request.method === 'GET' &&
+      /^\/api\/admin\/resources\/[^/]+$/.test(path)
+    ) {
+      return handleAdminResourceGet(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'PATCH' &&
+      /^\/api\/admin\/resources\/[^/]+$/.test(path)
+    ) {
+      return handleAdminResourceUpdate(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      /^\/api\/admin\/resources\/[^/]+\/publish$/.test(path)
+    ) {
+      return handleAdminResourcePublish(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      /^\/api\/admin\/resources\/[^/]+\/archive$/.test(path)
+    ) {
+      return handleAdminResourceArchive(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      /^\/api\/admin\/generation-jobs\/[^/]+\/process$/.test(path)
+    ) {
+      return handleAdminJobProcess(
+        request,
+        env,
+        path.split('/')[4]
+      );
+    }
+
+    // ─────────────────────────────────────
+    // Payments
+    // ─────────────────────────────────────
+
+    if (
+      request.method === 'POST' &&
+      path === '/api/payment/initialize'
+    ) {
+      return handlePaymentInitialize(
+        request,
+        env
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      path === '/api/payment/webhook'
+    ) {
+      return handlePaystackWebhook(
+        request,
+        env
+      );
+    }
+
+    if (
+      request.method === 'POST' &&
+      path === '/api/subscription/cancel'
+    ) {
+      return handleSubscriptionCancel(
+        request,
+        env
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: 'Not found.',
+      }),
+      {
+        status: 404,
+        headers: {
+          'Content-Type':
+            'application/json',
+        },
+      }
+    );
   },
 };
