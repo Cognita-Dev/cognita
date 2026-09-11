@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+>
+<title>Edit Resource · Cognita</title>
+
+<link rel="icon" href="/assets/cognita.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link
+  rel="preconnect"
+  href="https://fonts.gstatic.com"
+  crossorigin
+>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap"
+>
+
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/resource-editor.css">
+<link rel="stylesheet" href="/css/resource-renderers.css">
+
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css"
+>
+</head>
+
+<body class="app-page">
+
+<div class="app-shell">
+
+  <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+  <aside class="app-sidebar" id="appSidebar">
+
+    <div class="sidebar-top">
+
+      <a href="/index.html" class="sidebar-logo">
+        <img src="/assets/cognita.png" alt="Cognita">
+        <span>Cognita</span>
+      </a>
+
+      <div class="sidebar-top-actions">
+
+        <button
+          class="sidebar-collapse-btn"
+          id="sidebarCollapseBtn"
+          aria-label="Collapse sidebar"
+        >
+          <i class="ph ph-sidebar-simple"></i>
+        </button>
+
+        <button
+          class="sidebar-close-btn"
+          id="sidebarCloseBtn"
+          aria-label="Close sidebar"
+        >
+          <i class="ph ph-x"></i>
+        </button>
+
+      </div>
+
+    </div>
+
+    <a href="/resources.html" class="new-chat-btn">
+      <i class="ph ph-arrow-left"></i>
+      <span>Back to resources</span>
+    </a>
+
+    <nav class="sidebar-history" aria-label="Navigation">
+
+      <a
+        href="/app.html"
+        class="sidebar-history-item"
+      >
+        <i class="ph ph-chat-circle"></i>
+        <span>Chat</span>
+      </a>
+
+      <a
+        href="/resources.html"
+        class="sidebar-history-item is-active"
+      >
+        <i class="ph ph-graduation-cap"></i>
+        <span>Resources</span>
+      </a>
+
+      <a
+        href="/collections.html"
+        class="sidebar-history-item"
+      >
+        <i class="ph ph-books"></i>
+        <span>Collections</span>
+      </a>
+
+    </nav>
+
+    <div class="sidebar-bottom">
+
+      <button
+        class="account-btn"
+        id="accountBtn"
+      >
+
+        <span
+          class="account-avatar"
+          id="accountAvatar"
+        >
+          C
+        </span>
+
+        <span class="account-info">
+
+          <span
+            class="account-name skeleton"
+            id="accountEmail"
+          >
+            Loading
+          </span>
+
+          <span
+            class="account-plan skeleton"
+            id="accountPlan"
+          >
+            Loading
+          </span>
+
+        </span>
+
+        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
+
+      </button>
+
+      <div
+        class="account-menu"
+        id="accountMenu"
+        hidden
+      >
+
+        <a href="/account.html">
+          <i class="ph ph-gear"></i>
+          Settings
+        </a>
+
+        <a href="/pricing.html">
+          <i class="ph ph-arrow-up-circle"></i>
+          Plans
+        </a>
+
+        <button id="logOutBtn">
+          <i class="ph ph-sign-out"></i>
+          Sign out
+        </button>
+
+      </div>
+
+    </div>
+
+  </aside>
+
+  <main class="app-main">
+
+    <header class="app-topbar">
+
+      <button
+        class="mobile-sidebar-btn"
+        id="mobileSidebarBtn"
+        aria-label="Open sidebar"
+      >
+        <i class="ph ph-list"></i>
+      </button>
+
+      <div class="editor-topbar-title">
+
+        <div class="editor-breadcrumb">
+          <a href="/resources.html">My Resources</a>
+          <i class="ph ph-caret-right"></i>
+          <span>Edit</span>
+        </div>
+
+        <div class="editor-version" id="editorVersion">
+          Version 1
+        </div>
+
+      </div>
+
+      <div class="topbar-spacer"></div>
+
+      <button
+        class="editor-save-btn"
+        id="saveResourceBtn"
+        disabled
+      >
+        <i class="ph ph-check"></i>
+        <span>Save</span>
+      </button>
+
+    </header>
+
+    <div class="resource-editor-scroll">
+
+      <div
+        class="resource-editor-loading"
+        id="editorLoading"
+      >
+        <div class="editor-loading-spinner"></div>
+        <p>Loading resource…</p>
+      </div>
+
+      <div
+        class="resource-editor-shell"
+        id="editorShell"
+        hidden
+      >
+
+        <section class="editor-main">
+
+          <div class="editor-heading-card">
+
+            <div class="editor-type-line">
+              <span
+                class="editor-type-icon"
+                id="editorTypeIcon"
+              >
+                <i class="ph ph-file-text"></i>
+              </span>
+
+              <span id="editorTypeLabel">
+                Resource
+              </span>
+            </div>
+
+            <input
+              class="editor-title-input"
+              id="resourceTitle"
+              type="text"
+              maxlength="240"
+              placeholder="Resource title"
+            >
+
+            <textarea
+              class="editor-description-input"
+              id="resourceDescription"
+              maxlength="2000"
+              rows="3"
+              placeholder="Add a short description…"
+            ></textarea>
+
+          </div>
+
+          <div class="editor-content-card">
+
+            <div class="editor-card-header">
+
+              <div>
+                <h2>Content</h2>
+                <p>
+                  Edit the structured content of your resource.
+                </p>
+              </div>
+
+              <div class="editor-mode-toggle">
+
+                <button
+                  type="button"
+                  class="editor-mode-btn is-active"
+                  data-mode="visual"
+                >
+                  Visual
+                </button>
+
+                <button
+                  type="button"
+                  class="editor-mode-btn"
+                  data-mode="json"
+                >
+                  JSON
+                </button>
+
+              </div>
+
+            </div>
+
+            <div
+              class="visual-editor"
+              id="visualEditor"
+            ></div>
+
+            <div
+              class="json-editor"
+              id="jsonEditor"
+              hidden
+            >
+
+              <textarea
+                id="resourceJson"
+                spellcheck="false"
+                aria-label="Resource content JSON"
+              ></textarea>
+
+              <div
+                class="json-editor-status"
+                id="jsonEditorStatus"
+              >
+                JSON is valid.
+              </div>
+
+              <button
+                type="button"
+                class="format-json-btn"
+                id="formatJsonBtn"
+              >
+                <i class="ph ph-magic-wand"></i>
+                Format JSON
+              </button>
+
+            </div>
+
+          </div>
+
+          <div class="editor-history-card">
+
+            <div class="editor-card-header">
+
+              <div>
+                <h2>Version history</h2>
+                <p>
+                  Every saved edit creates a new version.
+                </p>
+              </div>
+
+            </div>
+
+            <div
+              class="version-list"
+              id="versionList"
+            ></div>
+
+          </div>
+
+        </section>
+
+        <aside class="editor-preview-column">
+
+          <div class="editor-preview-card">
+
+            <div class="editor-preview-header">
+
+              <div>
+                <span class="editor-preview-eyebrow">
+                  Live preview
+                </span>
+
+                <h2 id="previewTitle">
+                  Resource
+                </h2>
+              </div>
+
+              <span class="editor-live-dot">
+                <span></span>
+                Live
+              </span>
+
+            </div>
+
+            <div
+              class="editor-preview-body"
+              id="previewBody"
+            ></div>
+
+          </div>
+
+          <div class="editor-actions-card">
+
+            <h3>Downloads</h3>
+
+            <p>
+              Save first to regenerate the latest downloadable files.
+            </p>
+
+            <div
+              class="editor-download-actions"
+              id="editorDownloadActions"
+            >
+              <span class="editor-download-empty">
+                No exports available yet.
+              </span>
+            </div>
+
+          </div>
+
+        </aside>
+
+      </div>
+
+      <div
+        class="editor-error"
+        id="editorError"
+        hidden
+      >
+        <div class="editor-error-icon">
+          <i class="ph ph-warning-circle"></i>
+        </div>
+
+        <h2>Couldn’t load this resource</h2>
+
+        <p id="editorErrorMessage">
+          Something went wrong.
+        </p>
+
+        <a href="/resources.html">
+          Back to My Resources
+        </a>
+      </div>
+
+    </div>
+
+  </main>
+
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script src="/js/resource-renderers.js"></script>
+<script type="module" src="/js/resource-editor.js"></script>
+
+</body>
+</html>
