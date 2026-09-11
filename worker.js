@@ -38,6 +38,13 @@ import {
   handleLibraryDownload,
   handleLibraryCollectionGet,
 } from './library-endpoint.js';
+import {
+  handleAdminBootstrap,
+  handleAdminRoleList,
+  handleAdminRoleGrant,
+  handleAdminRoleRevoke,
+  handleAdminRoleLookupEmail,
+} from './admin-roles-endpoint.js';
 
 
 function _corsPreflight() {
@@ -144,6 +151,30 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
       return handleSubscriptionCancel(request, env);
+    }
+
+    // ── One-time first-admin bootstrap ────────────────────────────────
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/bootstrap') {
+      return handleAdminBootstrap(request, env);
+    }
+
+    // ── Admin/moderator role management (requires role: 'admin') ─────
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/roles') {
+      return handleAdminRoleList(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/roles/grant') {
+      return handleAdminRoleGrant(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/roles/revoke') {
+      return handleAdminRoleRevoke(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/admin/roles/lookup-email') {
+      return handleAdminRoleLookupEmail(request, env);
     }
 
     // ── Admin: resources ──────────────────────────────────────────────
