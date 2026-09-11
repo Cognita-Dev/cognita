@@ -1,7 +1,14 @@
+// recipes/rubric.js
+
 export const RUBRIC_RECIPE = {
   resourceType: 'rubric',
+
   requiredFields: ['subject', 'classLevel', 'topic'],
-  optionalFields: ['performanceLevels', 'curriculum', 'educationalLevel'],
+  optionalFields: [
+    'performanceLevels',
+    'curriculum',
+    'educationalLevel',
+  ],
 
   systemPrompt:
     'You are an expert assessment designer creating a grading rubric. ' +
@@ -13,36 +20,186 @@ export const RUBRIC_RECIPE = {
     '  "criteria": [ { "criterion": string, "descriptions": string[] } ]\n' +
     '}\n' +
     'Every "descriptions" array must have exactly the same length as ' +
-    '"performanceLevels", in the same order (descriptions[i] describes ' +
-    'performanceLevels[i] for that criterion). Do not wrap in code fences.',
+    '"performanceLevels", in the same order. Do not wrap in code fences.',
 
   buildUserPrompt(fields) {
-    let p = 'Create a grading rubric.\nSubject: ' + fields.subject + '\nClass: ' + fields.classLevel + '\nTask/topic: ' + fields.topic + '\n';
-    p += 'Performance levels: ' + (fields.performanceLevels || 'Excellent, Good, Satisfactory, Needs Improvement') + '\n';
-    if (fields.curriculum) p += 'Curriculum: ' + fields.curriculum + '\n';
+    let p =
+      'Create a grading rubric.\n' +
+      'Subject: ' +
+      fields.subject +
+      '\n' +
+      'Class: ' +
+      fields.classLevel +
+      '\n' +
+      'Task/topic: ' +
+      fields.topic +
+      '\n';
+
+    p +=
+      'Performance levels: ' +
+      (fields.performanceLevels ||
+        'Excellent, Good, Satisfactory, Needs Improvement') +
+      '\n';
+
+    if (fields.curriculum) {
+      p += 'Curriculum: ' + fields.curriculum + '\n';
+    }
+
+    if (fields.educationalLevel) {
+      p +=
+        'Educational level: ' +
+        fields.educationalLevel +
+        '\n';
+    }
+
     return p;
   },
 
-  validate(c) {
-    if (!c || typeof c !== 'object') return { ok: false, error: 'Invalid object.' };
-    if (!c.title) return { ok: false, error: 'Missing title.' };
-    if (!Array.isArray(c.performanceLevels) || c.performanceLevels.length === 0) return { ok: false, error: 'Missing performanceLevels.' };
-    if (!Array.isArray(c.criteria) || c.criteria.length === 0) return { ok: false, error: 'Missing criteria.' };
-    for (const crit of c.criteria) {
-      if (!crit.criterion) return { ok: false, error: 'A criterion is missing its name.' };
-      if (!Array.isArray(crit.descriptions) || crit.descriptions.length !== c.performanceLevels.length) {
-        return { ok: false, error: 'Criterion "' + crit.criterion + '" descriptions do not match performanceLevels count.' };
+  validate(content, fields) {
+    if (!content || typeof content !== 'object') {
+      return {
+        ok: false,
+        error: 'Generated content was not a valid object.',
+      };
+    }
+
+    if (
+      typeof content.title !== 'string' ||
+      !content.title.trim()
+    ) {
+      return {
+        ok: false,
+        error: 'Missing title.',
+      };
+    }
+
+    if (
+      !Array.isArray(content.performanceLevels) ||
+      content.performanceLevels.length < 2
+    ) {
+      return {
+        ok: false,
+        error:
+          'Missing or invalid performanceLevels.',
+      };
+    }
+
+    const levelNames = content.performanceLevels.map(
+      (level) =>
+        typeof level === 'string'
+          ? level.trim()
+          : ''
+    );
+
+    if (levelNames.some((level) => !level)) {
+      return {
+        ok: false,
+        error:
+          'Performance levels must all be non-empty strings.',
+      };
+    }
+
+    if (
+      fields &&
+      fields.performanceLevels
+    ) {
+      const requested = String(
+        fields.performanceLevels
+      )
+        .split(',')
+        .map((level) => level.trim())
+        .filter(Boolean);
+
+      if (
+        requested.length > 0 &&
+        content.performanceLevels.length !==
+          requested.length
+      ) {
+        return {
+          ok: false,
+          error:
+            'Generated performance level count does not match the requested levels.',
+        };
       }
     }
+
+    if (
+      !Array.isArray(content.criteria) ||
+      content.criteria.length === 0
+    ) {
+      return {
+        ok: false,
+        error: 'Missing criteria.',
+      };
+    }
+
+    for (const criterion of content.criteria) {
+      if (
+        !criterion ||
+        typeof criterion.criterion !== 'string' ||
+        !criterion.criterion.trim()
+      ) {
+        return {
+          ok: false,
+          error:
+            'A criterion is missing its name.',
+        };
+      }
+
+      if (
+        !Array.isArray(criterion.descriptions) ||
+        criterion.descriptions.length !==
+          content.performanceLevels.length
+      ) {
+        return {
+          ok: false,
+          error:
+            'Criterion "' +
+            criterion.criterion +
+            '" descriptions do not match performanceLevels count.',
+        };
+      }
+
+      for (const description of criterion.descriptions) {
+        if (
+          typeof description !== 'string' ||
+          !description.trim()
+        ) {
+          return {
+            ok: false,
+            error:
+              'A rubric description is empty.',
+          };
+        }
+      }
+    }
+
     return { ok: true };
   },
 
-  toPlainTextParagraphs(c) {
-    const lines = [c.title, 'Levels: ' + c.performanceLevels.join(' | '), ''];
-    c.criteria.forEach((crit) => {
-      lines.push(crit.criterion);
-      crit.descriptions.forEach((d, i) => lines.push('  ' + c.performanceLevels[i] + ': ' + d));
+  toPlainTextParagraphs(content) {
+    const lines = [
+      content.title,
+      'Levels: ' +
+        content.performanceLevels.join(' | '),
+      '',
+    ];
+
+    content.criteria.forEach((criterion) => {
+      lines.push(criterion.criterion);
+
+      criterion.descriptions.forEach(
+        (description, i) => {
+          lines.push(
+            '  ' +
+              content.performanceLevels[i] +
+              ': ' +
+              description
+          );
+        }
+      );
     });
+
     return lines.join('\n\n');
   },
 };
