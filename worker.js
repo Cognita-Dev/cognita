@@ -12,6 +12,12 @@ import {
 } from './resources-endpoint.js';
 
 import {
+  handleReadyMadeResourceList,
+  handleReadyMadeResourceGet,
+  handleReadyMadeResourceDownload,
+} from './ready-made-resources-endpoint.js';
+
+import {
   handleAdminResourceList,
   handleAdminResourceGet,
   handleAdminResourceGenerate,
@@ -230,6 +236,42 @@ export default {
       );
     }
 
+    // ─────────────────────────────────────
+// Public Ready-made Resources
+// ─────────────────────────────────────
+
+if (
+  request.method === 'GET' &&
+  path === '/api/ready-made-resources'
+) {
+  return handleReadyMadeResourceList(
+    request,
+    env
+  );
+}
+
+if (
+  request.method === 'GET' &&
+  /^\/api\/ready-made-resources\/[^/]+$/.test(path)
+) {
+  return handleReadyMadeResourceGet(
+    request,
+    env,
+    path.split('/')[3]
+  );
+}
+
+if (
+  request.method === 'POST' &&
+  /^\/api\/ready-made-resources\/[^/]+\/download$/.test(path)
+) {
+  return handleReadyMadeResourceDownload(
+    request,
+    env,
+    path.split('/')[3]
+  );
+}
+    
     // ─────────────────────────────────────
     // Admin Resources
     // ─────────────────────────────────────
