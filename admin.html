@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Cognita Admin</title>
+
+  <link
+    rel="stylesheet"
+    href="/css/admin.css"
+  />
+</head>
+
+<body>
+  <div class="admin-shell">
+
+    <aside class="admin-sidebar">
+      <div class="brand">
+        <div class="brand-mark">C</div>
+        <div>
+          <strong>Cognita</strong>
+          <span>Admin</span>
+        </div>
+      </div>
+
+      <nav>
+        <button
+          class="nav-item active"
+          data-view="dashboard"
+        >
+          <span>⌂</span>
+          Dashboard
+        </button>
+
+        <button
+          class="nav-item"
+          data-view="resources"
+        >
+          <span>▤</span>
+          Ready-made
+        </button>
+
+        <button
+          class="nav-item"
+          data-view="generate"
+        >
+          <span>＋</span>
+          Generate
+        </button>
+
+        <button
+          class="nav-item"
+          data-view="jobs"
+        >
+          <span>◷</span>
+          Generation Jobs
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <a href="/resources.html">
+          ← Back to Cognita
+        </a>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">
+            CONTENT CONTROL CENTER
+          </div>
+          <h1 id="pageTitle">
+            Dashboard
+          </h1>
+        </div>
+
+        <button
+          id="logoutButton"
+          class="ghost-button"
+        >
+          Sign out
+        </button>
+      </header>
+
+      <section
+        id="dashboardView"
+        class="view active"
+      >
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span>Ready-made</span>
+            <strong id="statTotal">—</strong>
+          </div>
+
+          <div class="stat-card">
+            <span>Drafts</span>
+            <strong id="statDrafts">—</strong>
+          </div>
+
+          <div class="stat-card">
+            <span>Published</span>
+            <strong id="statPublished">—</strong>
+          </div>
+
+          <div class="stat-card">
+            <span>Jobs</span>
+            <strong id="statJobs">—</strong>
+          </div>
+        </div>
+
+        <div class="hero-card">
+          <div>
+            <span class="eyebrow">
+              COGNITA AI
+            </span>
+
+            <h2>
+              Build the library your users deserve.
+            </h2>
+
+            <p>
+              Generate classroom-ready resources,
+              review them, refine them and publish
+              only the content that meets your standard.
+            </p>
+          </div>
+
+          <button
+            class="primary-button"
+            data-view="generate"
+          >
+            Generate resource
+          </button>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">
+              REVIEW QUEUE
+            </span>
+            <h2>Drafts</h2>
+          </div>
+        </div>
+
+        <div
+          id="dashboardDrafts"
+          class="resource-grid"
+        ></div>
+      </section>
+
+      <section
+        id="resourcesView"
+        class="view"
+      >
+        <div class="toolbar">
+          <div class="segmented">
+            <button
+              class="filter-button active"
+              data-status=""
+            >
+              All
+            </button>
+
+            <button
+              class="filter-button"
+              data-status="draft"
+            >
+              Drafts
+            </button>
+
+            <button
+              class="filter-button"
+              data-status="published"
+            >
+              Published
+            </button>
+
+            <button
+              class="filter-button"
+              data-status="archived"
+            >
+              Archived
+            </button>
+          </div>
+        </div>
+
+        <div
+          id="resourceGrid"
+          class="resource-grid"
+        ></div>
+      </section>
+
+      <section
+        id="generateView"
+        class="view"
+      >
+        <div class="generate-layout">
+
+          <div class="panel">
+            <div class="panel-header">
+              <span class="eyebrow">
+                AI GENERATOR
+              </span>
+              <h2>Create curated content</h2>
+              <p>
+                Generated content starts as a draft.
+                Nothing becomes public automatically.
+              </p>
+            </div>
+
+            <form id="generateForm">
+
+              <label>
+                Resource type
+
+                <select
+                  id="resourceType"
+                  required
+                >
+                  <option value="lesson_plan">
+                    Lesson Plan
+                  </option>
+                  <option value="worksheet">
+                    Worksheet
+                  </option>
+                  <option value="exam">
+                    Examination
+                  </option>
+                  <option value="scheme_of_work">
+                    Scheme of Work
+                  </option>
+                  <option value="quiz">
+                    Quiz
+                  </option>
+                  <option value="study_guide">
+                    Study Guide
+                  </option>
+                  <option value="teaching_guide">
+                    Teaching Guide
+                  </option>
+                  <option value="classroom_activity">
+                    Classroom Activity
+                  </option>
+                  <option value="assignment">
+                    Assignment
+                  </option>
+                  <option value="marking_scheme">
+                    Marking Scheme
+                  </option>
+                  <option value="rubric">
+                    Rubric
+                  </option>
+                  <option value="flashcards">
+                    Flashcards
+                  </option>
+                  <option value="student_handout">
+                    Student Handout
+                  </option>
+                  <option value="presentation">
+                    Presentation
+                  </option>
+                  <option value="project">
+                    Project
+                  </option>
+                  <option value="test">
+                    Test
+                  </option>
+                </select>
+              </label>
+
+              <div class="two-column">
+                <label>
+                  Subject
+                  <input
+                    id="subject"
+                    placeholder="Biology"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Class / Level
+                  <input
+                    id="classLevel"
+                    placeholder="SS2"
+                  />
+                </label>
+              </div>
+
+              <div class="two-column">
+                <label>
+                  Educational level
+                  <input
+                    id="educationalLevel"
+                    placeholder="Secondary"
+                  />
+                </label>
+
+                <label>
+                  Curriculum
+                  <input
+                    id="curriculum"
+                    placeholder="WAEC"
+                  />
+                </label>
+              </div>
+
+              <label>
+                Topic
+                <input
+                  id="topic"
+                  placeholder="Photosynthesis"
+                  required
+                />
+              </label>
+
+              <label>
+                Generation count
+                <input
+                  id="count"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value="1"
+                />
+                <small>
+                  Batch jobs generate one resource at a
+                  time to avoid long-running requests.
+                </small>
+              </label>
+
+              <label>
+                Design template
+                <input
+                  id="designTemplateId"
+                  value="default"
+                />
+              </label>
+
+              <label>
+                Additional instructions
+                <textarea
+                  id="instructions"
+                  rows="5"
+                  placeholder="Make this highly practical and suitable for Nigerian secondary-school classrooms."
+                ></textarea>
+              </label>
+
+              <button
+                class="primary-button full"
+                type="submit"
+                id="generateButton"
+              >
+                Generate draft
+              </button>
+
+            </form>
+
+            <div
+              id="generateMessage"
+              class="message"
+            ></div>
+          </div>
+
+          <div class="panel tips-panel">
+            <span class="eyebrow">
+              WORKFLOW
+            </span>
+
+            <div class="workflow">
+              <div>
+                <strong>01</strong>
+                <span>Generate</span>
+              </div>
+
+              <div>
+                <strong>02</strong>
+                <span>Review</span>
+              </div>
+
+              <div>
+                <strong>03</strong>
+                <span>Edit</span>
+              </div>
+
+              <div>
+                <strong>04</strong>
+                <span>Validate</span>
+              </div>
+
+              <div>
+                <strong>05</strong>
+                <span>Publish</span>
+              </div>
+            </div>
+
+            <div class="notice">
+              <strong>Publishing is deliberate.</strong>
+              <p>
+                AI output never goes directly into
+                the public library. Admin review is
+                always required.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <section
+        id="jobsView"
+        class="view"
+      >
+        <div
+          id="jobsList"
+          class="jobs-list"
+        ></div>
+      </section>
+
+      <section
+        id="editorView"
+        class="view"
+      >
+        <button
+          class="back-button"
+          id="backToResources"
+        >
+          ← Resources
+        </button>
+
+        <div class="editor-header">
+          <div>
+            <span
+              id="editorStatus"
+              class="status-pill"
+            >
+              Draft
+            </span>
+
+            <h2 id="editorTitle">
+              Resource
+            </h2>
+
+            <p id="editorMeta"></p>
+          </div>
+
+          <div class="editor-actions">
+            <button
+              id="saveButton"
+              class="secondary-button"
+            >
+              Save changes
+            </button>
+
+            <button
+              id="publishButton"
+              class="primary-button"
+            >
+              Publish
+            </button>
+          </div>
+        </div>
+
+        <div class="editor-grid">
+
+          <div class="panel">
+            <label>
+              Title
+              <input id="editTitle" />
+            </label>
+
+            <label>
+              Description
+              <textarea
+                id="editDescription"
+                rows="4"
+              ></textarea>
+            </label>
+
+            <label>
+              Tags
+              <input
+                id="editTags"
+                placeholder="biology, photosynthesis, revision"
+              />
+            </label>
+
+            <div class="two-column">
+              <label>
+                Featured
+                <select id="editFeatured">
+                  <option value="false">
+                    No
+                  </option>
+                  <option value="true">
+                    Yes
+                  </option>
+                </select>
+              </label>
+
+              <label>
+                Recommended
+                <select id="editRecommended">
+                  <option value="false">
+                    No
+                  </option>
+                  <option value="true">
+                    Yes
+                  </option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="panel">
+            <label>
+              Structured content
+              <textarea
+                id="editContent"
+                class="code-editor"
+                spellcheck="false"
+              ></textarea>
+            </label>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script
+    type="module"
+    src="/js/admin.js"
+  ></script>
+</body>
+</html>
