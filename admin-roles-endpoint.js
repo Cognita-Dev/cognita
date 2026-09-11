@@ -1,13 +1,15 @@
 // admin-roles-endpoint.js
 // First-admin bootstrap, and admin/moderator role management.
 //
-// Bootstrap: a one-time-only endpoint that creates the very first admin,
-// gated by a secret set as the ADMIN_BOOTSTRAP_SECRET Worker environment
-// variable (not a code constant — set it via `wrangler secret put
-// ADMIN_BOOTSTRAP_SECRET`). It can only ever succeed once: a singleton
+// Bootstrap: a one-time-only endpoint that creates the very first admin.
+// Gated by a hardcoded allow-list of emails (FIRST_ADMIN_EMAILS below) —
+// no secret, no environment variable, no dashboard access needed. Edit
+// the list in this file and push to GitHub to change who's eligible
+// before bootstrap runs. It can only ever succeed once: a singleton
 // system/bootstrapStatus document is checked first, and set immediately
-// after the first admin is created, so replaying the same request (or
-// anyone else who later learns the secret) gets a 409, not a second admin.
+// after the first admin is created, so replaying the request (or anyone
+// else eligible on the list, after the fact) gets a 409, not a second
+// bootstrap.
 //
 // After bootstrap, all further role changes go through grant/revoke,
 // which require an existing 'admin' (requireSuperAdmin) — moderators
@@ -19,6 +21,14 @@ import { fsGet, fsSet, fsQuery, fsDelete, getGoogleAccessToken } from './firesto
 
 const VALID_ROLES = ['admin', 'moderator'];
 const BOOTSTRAP_DOC_PATH = 'system/bootstrapStatus';
+
+// Whoever signs in with one of these emails is eligible to run bootstrap
+// ONCE. Lowercase, trimmed comparison — edit this list and redeploy to
+// change who's eligible before bootstrap has run. After bootstrap
+// succeeds, this list is never consulted again for anything.
+const FIRST_ADMIN_EMAILS = [
+  'oluwagbemiga5884@gmail.com',
+];
 
 function _corsJsonHeaders() {
   return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
@@ -34,11 +44,8 @@ function _jsonOk(body, status = 200) {
 
 // ── Bootstrap the first admin ─────────────────────────────────────────
 // POST /api/admin/bootstrap
-// Body: { secret }
-// Caller just needs to be signed in (requireAuth) — there's no admin to
-// require yet. The secret is what actually gates this, not the caller's
-// identity. Whoever is signed in when this succeeds becomes the first
-// admin.
+// No body needed — eligibility is based on the signed-in user's email
+// matching FIRST_ADMIN_EMAILS, not anything the client sends.
 export async function handleAdminBootstrap(request, env) {
   let identity;
   try {
@@ -47,19 +54,11 @@ export async function handleAdminBootstrap(request, env) {
     return _jsonError('Not authenticated: ' + e.message, 401);
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
-  }
+  const email = (identity.email || '').trim().toLowerCase();
+  const allowList = FIRST_ADMIN_EMAILS.map((e) => e.trim().toLowerCase());
 
-  if (!env.ADMIN_BOOTSTRAP_SECRET) {
-    return _jsonError('Server misconfiguration: ADMIN_BOOTSTRAP_SECRET is not set.', 500);
-  }
-
-  if (!body.secret || body.secret !== env.ADMIN_BOOTSTRAP_SECRET) {
-    return _jsonError('Incorrect bootstrap secret.', 403);
+  if (!email || !allowList.includes(email)) {
+    return _jsonError('This account is not eligible to bootstrap the first admin.', 403);
   }
 
   let bootstrapDoc;
@@ -84,6 +83,7 @@ export async function handleAdminBootstrap(request, env) {
       completed: true,
       completedAt: now,
       firstAdminUid: identity.uid,
+      firstAdminEmail: email,
     }, env);
 
     await fsSet('admins/' + identity.uid, {
