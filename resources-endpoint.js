@@ -246,7 +246,7 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('The generated content could not be understood. Please try again.', 503);
   }
 
-  const validation = recipe.validate(structuredContent);
+  const validation = recipe.validate(structuredContent, fields);
   if (!validation.ok) {
     console.error('[resources] validation failed:', validation.error);
     await _markFailed(resourceId, baseDoc, env);
