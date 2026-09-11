@@ -1,9 +1,14 @@
 // js/admin.js
 // Admin curation UI. Talks to the same Worker as resources.js. If a
-// signed-in user isn't an admin, every request here comes back 401/403
-// from the server (requireAdmin) — this page has no client-side gate of
-// its own beyond that, since the server check is the only one that
-// actually matters.
+// signed-in user isn't an admin or moderator, every request here comes
+// back 401/403 from the server (requireAdmin) — this page has no
+// client-side gate of its own beyond that, since the server check is the
+// only one that actually matters.
+//
+// The Roles panel is additionally gated to only show for people whose
+// role is 'admin' — moderators can use everything else on this page but
+// the server will reject role-management calls from them, so the panel
+// is hidden for them rather than shown-then-erroring.
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
@@ -31,8 +36,10 @@ let currentDetailResource = null;
   wireCreateForm();
   wireDetailPanel();
   wireCollections();
+  wireRolesPanel();
   await loadResourceList();
   await loadCollections();
+  await tryLoadRolesPanel();
 })();
 
 function populateResourceTypeSelect() {
@@ -452,6 +459,164 @@ async function loadCollections() {
   } catch (e) {
     console.error('[admin] collections load failed:', e.message);
   }
+}
+
+/* ── Roles ──────────────────────────────────────────────────────────── */
+
+// Rather than trusting a client-side guess about the signed-in person's
+// role, this simply TRIES the roles-list call. If it succeeds (200), the
+// person is an 'admin' and the panel is shown and populated. If it comes
+// back 403 (moderator, or somehow not a role-holder at all), the panel
+// just stays hidden — no error shown, since "you're a moderator, not an
+// admin" isn't a failure state worth alarming someone over.
+async function tryLoadRolesPanel() {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles');
+
+    if (res.status === 403) {
+      document.getElementById('rolesPanel').hidden = true;
+      return;
+    }
+
+    if (!res.ok) return;
+
+    document.getElementById('rolesPanel').hidden = false;
+    const data = await res.json();
+    renderRolesList(data.people || []);
+  } catch (e) {
+    console.error('[admin] roles panel load failed:', e.message);
+  }
+}
+
+function renderRolesList(people) {
+  const list = document.getElementById('rolesList');
+
+  if (people.length === 0) {
+    list.innerHTML = '<div class="my-resources-empty">No admins or moderators yet.</div>';
+    return;
+  }
+
+  list.innerHTML = people.map((p) =>
+    '<div class="my-resource-row" style="cursor:default;">' +
+    '<div class="my-resource-info">' +
+    '<div class="my-resource-title">' + escapeHtml(p.uid) + '</div>' +
+    '<div class="my-resource-meta">' + escapeHtml(p.role) + '</div>' +
+    '</div>' +
+    '<button data-uid="' + escapeHtml(p.uid) + '" class="revoke-role-btn resource-download-btn" style="background:#7A2E3A;">Revoke</button>' +
+    '</div>'
+  ).join('');
+
+  list.querySelectorAll('.revoke-role-btn').forEach((btn) => {
+    btn.addEventListener('click', () => revokeRole(btn.dataset.uid));
+  });
+}
+
+async function revokeRole(uid) {
+  if (!confirm('Revoke this person\'s role?')) return;
+
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not revoke.');
+      return;
+    }
+
+    showToast('Revoked.');
+    await tryLoadRolesPanel();
+  } catch (e) {
+    showToast('Could not reach the server.');
+    console.error('[admin] revoke failed:', e.message);
+  }
+}
+
+function wireRolesPanel() {
+  document.querySelectorAll('input[name="grantLookupMode"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const byUid = document.querySelector('input[name="grantLookupMode"]:checked').value === 'uid';
+      document.getElementById('grantEmailWrap').hidden = byUid;
+      document.getElementById('grantUidWrap').hidden = !byUid;
+    });
+  });
+
+  document.getElementById('grantRoleBtn').addEventListener('click', async () => {
+    const lookupMode = document.querySelector('input[name="grantLookupMode"]:checked').value;
+    const role = document.getElementById('grantRoleSelect').value;
+    const resultLine = document.getElementById('grantResultLine');
+
+    let uid = null;
+
+    if (lookupMode === 'uid') {
+      uid = document.getElementById('grantUidInput').value.trim();
+      if (!uid) {
+        resultLine.textContent = 'Enter a uid.';
+        resultLine.style.color = '#7A2E3A';
+        return;
+      }
+    } else {
+      const email = document.getElementById('grantEmailInput').value.trim();
+      if (!email) {
+        resultLine.textContent = 'Enter an email.';
+        resultLine.style.color = '#7A2E3A';
+        return;
+      }
+
+      resultLine.textContent = 'Looking up ' + email + '...';
+      resultLine.style.color = '';
+
+      try {
+        const lookupRes = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles/lookup-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const lookupData = await lookupRes.json();
+
+        if (!lookupRes.ok) {
+          resultLine.textContent = lookupData.error || 'Could not find that user.';
+          resultLine.style.color = '#7A2E3A';
+          return;
+        }
+
+        uid = lookupData.uid;
+      } catch (e) {
+        resultLine.textContent = 'Could not reach the server for lookup.';
+        resultLine.style.color = '#7A2E3A';
+        console.error('[admin] email lookup failed:', e.message);
+        return;
+      }
+    }
+
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles/grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid, role }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        resultLine.textContent = data.error || 'Could not grant role.';
+        resultLine.style.color = '#7A2E3A';
+        return;
+      }
+
+      resultLine.textContent = 'Granted ' + role + ' to ' + uid + '.';
+      resultLine.style.color = '#3F6B5B';
+      document.getElementById('grantEmailInput').value = '';
+      document.getElementById('grantUidInput').value = '';
+      await tryLoadRolesPanel();
+    } catch (e) {
+      resultLine.textContent = 'Could not reach the server.';
+      resultLine.style.color = '#7A2E3A';
+      console.error('[admin] grant failed:', e.message);
+    }
+  });
 }
 
 /* ── Helpers ── */
