@@ -12,6 +12,12 @@ import {
 } from './resources-endpoint.js';
 
 import {
+  handleResourceGet,
+  handleResourceUpdate,
+  handleResourceVersions,
+} from './edit-resource-endpoint.js';
+
+import {
   handleReadyMadeResourceList,
   handleReadyMadeResourceGet,
   handleReadyMadeResourceDownload,
@@ -266,6 +272,47 @@ export default {
       return handleResourceList(
         request,
         env
+      );
+    }
+
+    // Resource editor — single resource.
+    if (
+      request.method === 'GET' &&
+      /^\/api\/resources\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleResourceGet(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
+
+    if (
+      request.method === 'PATCH' &&
+      /^\/api\/resources\/[^/]+$/.test(
+        path
+      )
+    ) {
+      return handleResourceUpdate(
+        request,
+        env,
+        path.split('/')[3]
+      );
+    }
+
+    // Resource editor — version history.
+    if (
+      request.method === 'GET' &&
+      /^\/api\/resources\/[^/]+\/versions$/.test(
+        path
+      )
+    ) {
+      return handleResourceVersions(
+        request,
+        env,
+        path.split('/')[3]
       );
     }
 
