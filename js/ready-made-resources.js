@@ -88,6 +88,8 @@ const READY_MADE_TYPES = [
 
 let allReadyMadeResources = [];
 let activeType = '';
+let searchQuery = '';
+let sortMode = 'recommended';
 
 (async function initReadyMadeResources() {
   const user =
@@ -95,7 +97,9 @@ let activeType = '';
 
   if (!user) return;
 
+  readSearchQueryFromUrl();
   renderReadyMadeTypeFilters();
+  renderReadyMadeToolbar();
 
   await loadReadyMadeResources();
 })();
@@ -176,6 +180,40 @@ async function loadReadyMadeResources() {
         loadReadyMadeResources
       );
   }
+}
+
+function readSearchQueryFromUrl() {
+  const params =
+    new URLSearchParams(
+      window.location.search
+    );
+
+  const query =
+    params.get('q');
+
+  if (query) {
+    searchQuery = query.trim();
+  }
+}
+
+function updateSearchQueryInUrl() {
+  const url =
+    new URL(window.location.href);
+
+  if (searchQuery) {
+    url.searchParams.set(
+      'q',
+      searchQuery
+    );
+  } else {
+    url.searchParams.delete('q');
+  }
+
+  window.history.replaceState(
+    {},
+    '',
+    url.toString()
+  );
 }
 
 async function openResourceFromQuery() {
@@ -287,6 +325,317 @@ function renderReadyMadeTypeFilters() {
     });
 }
 
+function renderReadyMadeToolbar() {
+  const filters =
+    document.getElementById(
+      'readyMadeTypeFilters'
+    );
+
+  if (!filters) return;
+
+  const existing =
+    document.getElementById(
+      'readyMadeToolbar'
+    );
+
+  if (existing) return;
+
+  const toolbar =
+    document.createElement('div');
+
+  toolbar.id =
+    'readyMadeToolbar';
+
+  toolbar.className =
+    'ready-made-toolbar';
+
+  toolbar.innerHTML = `
+    <div class="ready-made-search">
+      <i class="ph ph-magnifying-glass"></i>
+
+      <input
+        id="readyMadeSearch"
+        type="search"
+        autocomplete="off"
+        placeholder="Search resources…"
+        aria-label="Search ready-made resources"
+        value="${escapeHtml(
+          searchQuery
+        )}"
+      />
+
+      <button
+        type="button"
+        class="ready-made-search-clear"
+        id="readyMadeSearchClear"
+        aria-label="Clear search"
+        ${searchQuery ? '' : 'hidden'}
+      >
+        <i class="ph ph-x"></i>
+      </button>
+    </div>
+
+    <div class="ready-made-toolbar-right">
+      <span
+        class="ready-made-result-count"
+        id="readyMadeResultCount"
+      ></span>
+
+      <label class="ready-made-sort">
+        <span>Sort</span>
+
+        <select
+          id="readyMadeSort"
+          aria-label="Sort resources"
+        >
+          <option value="recommended">
+            Recommended
+          </option>
+          <option value="newest">
+            Newest
+          </option>
+          <option value="alphabetical">
+            A–Z
+          </option>
+        </select>
+      </label>
+    </div>
+  `;
+
+  filters.insertAdjacentElement(
+    'afterend',
+    toolbar
+  );
+
+  const input =
+    document.getElementById(
+      'readyMadeSearch'
+    );
+
+  const clear =
+    document.getElementById(
+      'readyMadeSearchClear'
+    );
+
+  const sort =
+    document.getElementById(
+      'readyMadeSort'
+    );
+
+  input?.addEventListener(
+    'input',
+    () => {
+      searchQuery =
+        input.value.trim();
+
+      if (clear) {
+        clear.hidden =
+          !searchQuery;
+      }
+
+      updateSearchQueryInUrl();
+      renderReadyMadeResources();
+    }
+  );
+
+  clear?.addEventListener(
+    'click',
+    () => {
+      searchQuery = '';
+
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+
+      clear.hidden = true;
+
+      updateSearchQueryInUrl();
+      renderReadyMadeResources();
+    }
+  );
+
+  sort?.addEventListener(
+    'change',
+    () => {
+      sortMode =
+        sort.value ||
+        'recommended';
+
+      renderReadyMadeResources();
+    }
+  );
+}
+
+function getSearchableText(resource) {
+  const values = [
+    resource.title,
+    resource.description,
+    resource.subject,
+    resource.educationalLevel,
+    resource.classLevel,
+    resource.curriculum,
+    resource.topic,
+    resource.resourceType,
+    ...(Array.isArray(resource.tags)
+      ? resource.tags
+      : []),
+  ];
+
+  return values
+    .filter(Boolean)
+    .map((value) =>
+      String(value).toLowerCase()
+    )
+    .join(' ');
+}
+
+function matchesSearch(resource) {
+  if (!searchQuery) return true;
+
+  const query =
+    searchQuery.toLowerCase();
+
+  return getSearchableText(
+    resource
+  ).includes(query);
+}
+
+function getResourceTimestamp(resource) {
+  const value =
+    resource.publishedAt ||
+    resource.updatedAt ||
+    resource.createdAt;
+
+  if (!value) return 0;
+
+  if (
+    typeof value === 'object' &&
+    value.seconds
+  ) {
+    return (
+      Number(value.seconds) *
+      1000
+    );
+  }
+
+  const timestamp =
+    new Date(value).getTime();
+
+  return Number.isNaN(timestamp)
+    ? 0
+    : timestamp;
+}
+
+function sortResources(resources) {
+  const sorted =
+    [...resources];
+
+  if (
+    sortMode ===
+    'alphabetical'
+  ) {
+    return sorted.sort(
+      (a, b) =>
+        String(
+          a.title || ''
+        ).localeCompare(
+          String(
+            b.title || ''
+          ),
+          undefined,
+          {
+            sensitivity:
+              'base',
+          }
+        )
+    );
+  }
+
+  if (
+    sortMode ===
+    'newest'
+  ) {
+    return sorted.sort(
+      (a, b) =>
+        getResourceTimestamp(
+          b
+        ) -
+        getResourceTimestamp(
+          a
+        )
+    );
+  }
+
+  return sorted.sort(
+    (a, b) => {
+      const featuredDifference =
+        Number(
+          Boolean(
+            b.featured
+          )
+        ) -
+        Number(
+          Boolean(
+            a.featured
+          )
+        );
+
+      if (
+        featuredDifference !==
+        0
+      ) {
+        return featuredDifference;
+      }
+
+      const recommendedDifference =
+        Number(
+          Boolean(
+            b.recommended
+          )
+        ) -
+        Number(
+          Boolean(
+            a.recommended
+          )
+        );
+
+      if (
+        recommendedDifference !==
+        0
+      ) {
+        return recommendedDifference;
+      }
+
+      const sortOrderDifference =
+        Number(
+          a.sortOrder ??
+            999999
+        ) -
+        Number(
+          b.sortOrder ??
+            999999
+        );
+
+      if (
+        sortOrderDifference !==
+        0
+      ) {
+        return sortOrderDifference;
+      }
+
+      return (
+        getResourceTimestamp(
+          b
+        ) -
+        getResourceTimestamp(
+          a
+        )
+      );
+    }
+  );
+}
+
 function renderReadyMadeResources() {
   const list =
     document.getElementById(
@@ -307,23 +656,24 @@ function renderReadyMadeResources() {
       );
   }
 
+  resources =
+    resources.filter(
+      matchesSearch
+    );
+
+  resources =
+    sortResources(
+      resources
+    );
+
+  updateResultCount(
+    resources.length
+  );
+
   if (!resources.length) {
-    list.innerHTML = `
-      <div class="ready-made-empty">
-
-        <i class="ph ph-books"></i>
-
-        <h3>
-          No resources here yet
-        </h3>
-
-        <p>
-          New curated resources will appear here
-          as Cognita publishes them.
-        </p>
-
-      </div>
-    `;
+    renderEmptyState(
+      list
+    );
 
     return;
   }
@@ -347,7 +697,8 @@ function renderReadyMadeResources() {
         'click',
         () =>
           openReadyMadeResource(
-            card.dataset.readyMadeId
+            card.dataset
+              .readyMadeId
           )
       );
 
@@ -363,12 +714,136 @@ function renderReadyMadeResources() {
             event.preventDefault();
 
             openReadyMadeResource(
-              card.dataset.readyMadeId
+              card.dataset
+                .readyMadeId
             );
           }
         }
       );
     });
+}
+
+function updateResultCount(count) {
+  const element =
+    document.getElementById(
+      'readyMadeResultCount'
+    );
+
+  if (!element) return;
+
+  const total =
+    allReadyMadeResources.length;
+
+  if (
+    searchQuery ||
+    activeType
+  ) {
+    element.textContent =
+      `${count} of ${total} resource${
+        total === 1
+          ? ''
+          : 's'
+      }`;
+    return;
+  }
+
+  element.textContent =
+    `${count} resource${
+      count === 1
+        ? ''
+        : 's'
+    }`;
+}
+
+function renderEmptyState(list) {
+  const hasSearch =
+    Boolean(searchQuery);
+
+  const hasFilter =
+    Boolean(activeType);
+
+  let icon = 'books';
+  let heading =
+    'No resources here yet';
+  let message =
+    'New curated resources will appear here as Cognita publishes them.';
+
+  if (hasSearch) {
+    icon = 'magnifying-glass';
+    heading =
+      'No matching resources';
+    message =
+      `We couldn't find anything matching “${escapeHtml(
+        searchQuery
+      )}”. Try another search or clear the search.`;
+  } else if (hasFilter) {
+    icon = 'folder-simple';
+    heading =
+      'Nothing in this category yet';
+    message =
+      'Try another resource type or browse all resources.';
+  }
+
+  list.innerHTML = `
+    <div class="ready-made-empty">
+      <i class="ph ph-${icon}"></i>
+
+      <h3>
+        ${heading}
+      </h3>
+
+      <p>
+        ${message}
+      </p>
+
+      ${
+        hasSearch
+          ? `
+            <button
+              type="button"
+              class="ready-made-retry"
+              id="readyMadeClearSearch"
+            >
+              Clear search
+            </button>
+          `
+          : ''
+      }
+    </div>
+  `;
+
+  document
+    .getElementById(
+      'readyMadeClearSearch'
+    )
+    ?.addEventListener(
+      'click',
+      () => {
+        searchQuery = '';
+
+        const input =
+          document.getElementById(
+            'readyMadeSearch'
+          );
+
+        const clear =
+          document.getElementById(
+            'readyMadeSearchClear'
+          );
+
+        if (input) {
+          input.value = '';
+          input.focus();
+        }
+
+        if (clear) {
+          clear.hidden = true;
+        }
+
+        updateSearchQueryInUrl();
+        renderReadyMadeResources();
+      }
+    );
 }
 
 function renderResourceCard(
