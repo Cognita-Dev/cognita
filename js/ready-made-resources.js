@@ -86,6 +86,16 @@ const READY_MADE_TYPES = [
   },
 ];
 
+const READY_MADE_TYPE_LABELS =
+  Object.fromEntries(
+    READY_MADE_TYPES.map(
+      (item) => [
+        item.type,
+        item.label,
+      ]
+    )
+  );
+
 let allReadyMadeResources = [];
 let activeType = '';
 let searchQuery = '';
@@ -98,6 +108,7 @@ let sortMode = 'recommended';
   if (!user) return;
 
   readSearchQueryFromUrl();
+
   renderReadyMadeTypeFilters();
   renderReadyMadeToolbar();
 
@@ -141,12 +152,10 @@ async function loadReadyMadeResources() {
         : [];
 
     renderReadyMadeResources();
-
-    await openResourceFromQuery();
-  } catch (e) {
+  } catch (error) {
     console.error(
       '[ready-made] load failed:',
-      e.message
+      error
     );
 
     list.innerHTML = `
@@ -192,13 +201,16 @@ function readSearchQueryFromUrl() {
     params.get('q');
 
   if (query) {
-    searchQuery = query.trim();
+    searchQuery =
+      query.trim();
   }
 }
 
 function updateSearchQueryInUrl() {
   const url =
-    new URL(window.location.href);
+    new URL(
+      window.location.href
+    );
 
   if (searchQuery) {
     url.searchParams.set(
@@ -214,44 +226,6 @@ function updateSearchQueryInUrl() {
     '',
     url.toString()
   );
-}
-
-async function openResourceFromQuery() {
-  const params =
-    new URLSearchParams(
-      window.location.search
-    );
-
-  const resourceId =
-    params.get('resource');
-
-  if (!resourceId) return;
-
-  const resource =
-    allReadyMadeResources.find(
-      (item) =>
-        item.id === resourceId
-    );
-
-  if (!resource) return;
-
-  await openReadyMadeResource(
-    resourceId
-  );
-
-  const panel =
-    document.getElementById(
-      'readyMadePreviewPanel'
-    );
-
-  if (panel) {
-    window.setTimeout(() => {
-      panel.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      });
-    }, 50);
-  }
 }
 
 function renderReadyMadeTypeFilters() {
@@ -341,7 +315,9 @@ function renderReadyMadeToolbar() {
   if (existing) return;
 
   const toolbar =
-    document.createElement('div');
+    document.createElement(
+      'div'
+    );
 
   toolbar.id =
     'readyMadeToolbar';
@@ -376,6 +352,7 @@ function renderReadyMadeToolbar() {
     </div>
 
     <div class="ready-made-toolbar-right">
+
       <span
         class="ready-made-result-count"
         id="readyMadeResultCount"
@@ -391,14 +368,17 @@ function renderReadyMadeToolbar() {
           <option value="recommended">
             Recommended
           </option>
+
           <option value="newest">
             Newest
           </option>
+
           <option value="alphabetical">
             A–Z
           </option>
         </select>
       </label>
+
     </div>
   `;
 
@@ -434,6 +414,7 @@ function renderReadyMadeToolbar() {
       }
 
       updateSearchQueryInUrl();
+
       renderReadyMadeResources();
     }
   );
@@ -451,6 +432,7 @@ function renderReadyMadeToolbar() {
       clear.hidden = true;
 
       updateSearchQueryInUrl();
+
       renderReadyMadeResources();
     }
   );
@@ -467,7 +449,9 @@ function renderReadyMadeToolbar() {
   );
 }
 
-function getSearchableText(resource) {
+function getSearchableText(
+  resource
+) {
   const values = [
     resource.title,
     resource.description,
@@ -477,7 +461,9 @@ function getSearchableText(resource) {
     resource.curriculum,
     resource.topic,
     resource.resourceType,
-    ...(Array.isArray(resource.tags)
+    ...(Array.isArray(
+      resource.tags
+    )
       ? resource.tags
       : []),
   ];
@@ -490,8 +476,12 @@ function getSearchableText(resource) {
     .join(' ');
 }
 
-function matchesSearch(resource) {
-  if (!searchQuery) return true;
+function matchesSearch(
+  resource
+) {
+  if (!searchQuery) {
+    return true;
+  }
 
   const query =
     searchQuery.toLowerCase();
@@ -501,7 +491,9 @@ function matchesSearch(resource) {
   ).includes(query);
 }
 
-function getResourceTimestamp(resource) {
+function getResourceTimestamp(
+  resource
+) {
   const value =
     resource.publishedAt ||
     resource.updatedAt ||
@@ -522,12 +514,16 @@ function getResourceTimestamp(resource) {
   const timestamp =
     new Date(value).getTime();
 
-  return Number.isNaN(timestamp)
+  return Number.isNaN(
+    timestamp
+  )
     ? 0
     : timestamp;
 }
 
-function sortResources(resources) {
+function sortResources(
+  resources
+) {
   const sorted =
     [...resources];
 
@@ -571,14 +567,10 @@ function sortResources(resources) {
     (a, b) => {
       const featuredDifference =
         Number(
-          Boolean(
-            b.featured
-          )
+          Boolean(b.featured)
         ) -
         Number(
-          Boolean(
-            a.featured
-          )
+          Boolean(a.featured)
         );
 
       if (
@@ -590,14 +582,10 @@ function sortResources(resources) {
 
       const recommendedDifference =
         Number(
-          Boolean(
-            b.recommended
-          )
+          Boolean(b.recommended)
         ) -
         Number(
-          Boolean(
-            a.recommended
-          )
+          Boolean(a.recommended)
         );
 
       if (
@@ -681,10 +669,7 @@ function renderReadyMadeResources() {
   list.innerHTML =
     resources
       .map(
-        (resource) =>
-          renderResourceCard(
-            resource
-          )
+        renderResourceCard
       )
       .join('');
 
@@ -693,13 +678,23 @@ function renderReadyMadeResources() {
       '[data-ready-made-id]'
     )
     .forEach((card) => {
+      const openResource =
+        () => {
+          const id =
+            card.dataset
+              .readyMadeId;
+
+          if (!id) return;
+
+          window.location.href =
+            `/ready-made-resource.html?id=${encodeURIComponent(
+              id
+            )}`;
+        };
+
       card.addEventListener(
         'click',
-        () =>
-          openReadyMadeResource(
-            card.dataset
-              .readyMadeId
-          )
+        openResource
       );
 
       card.addEventListener(
@@ -713,17 +708,149 @@ function renderReadyMadeResources() {
           ) {
             event.preventDefault();
 
-            openReadyMadeResource(
-              card.dataset
-                .readyMadeId
-            );
+            openResource();
           }
         }
       );
     });
 }
 
-function updateResultCount(count) {
+function renderResourceCard(
+  resource
+) {
+  const type =
+    READY_MADE_TYPE_LABELS[
+      resource.resourceType
+    ] ||
+    resource.resourceType ||
+    'Resource';
+
+  const icon =
+    READY_MADE_TYPES.find(
+      (item) =>
+        item.type ===
+        resource.resourceType
+    )?.icon ||
+    'file-text';
+
+  const description =
+    resource.description ||
+    resource.topic ||
+    'A classroom-ready resource created and reviewed by Cognita.';
+
+  const meta = [
+    resource.subject,
+    resource.classLevel,
+    resource.educationalLevel,
+  ].filter(Boolean);
+
+  return `
+    <article
+      class="ready-made-resource-card"
+      data-ready-made-id="${escapeHtml(
+        resource.id
+      )}"
+      tabindex="0"
+      role="button"
+      aria-label="Open ${escapeHtml(
+        resource.title ||
+          type
+      )}"
+    >
+
+      <div class="ready-made-resource-card-top">
+
+        <div class="ready-made-resource-icon">
+          <i class="ph ph-${escapeHtml(
+            icon
+          )}"></i>
+        </div>
+
+        <div class="ready-made-resource-badges">
+
+          ${
+            resource.featured
+              ? `
+                <span class="ready-made-resource-badge">
+                  Featured
+                </span>
+              `
+              : ''
+          }
+
+          ${
+            resource.recommended
+              ? `
+                <span class="ready-made-resource-badge recommended">
+                  Recommended
+                </span>
+              `
+              : ''
+          }
+
+        </div>
+
+      </div>
+
+      <div class="ready-made-resource-card-body">
+
+        <span class="ready-made-resource-type">
+          ${escapeHtml(type)}
+        </span>
+
+        <h3>
+          ${escapeHtml(
+            resource.title ||
+              'Untitled resource'
+          )}
+        </h3>
+
+        <p>
+          ${escapeHtml(
+            description
+          )}
+        </p>
+
+        ${
+          meta.length
+            ? `
+              <div class="ready-made-resource-meta">
+                ${meta
+                  .slice(0, 3)
+                  .map(
+                    (item) => `
+                      <span>
+                        ${escapeHtml(
+                          item
+                        )}
+                      </span>
+                    `
+                  )
+                  .join(' · ')}
+              </div>
+            `
+            : ''
+        }
+
+      </div>
+
+      <div class="ready-made-resource-card-footer">
+
+        <span>
+          View resource
+        </span>
+
+        <i class="ph ph-arrow-up-right"></i>
+
+      </div>
+
+    </article>
+  `;
+}
+
+function updateResultCount(
+  count
+) {
   const element =
     document.getElementById(
       'readyMadeResultCount'
@@ -744,6 +871,7 @@ function updateResultCount(count) {
           ? ''
           : 's'
       }`;
+
     return;
   }
 
@@ -755,7 +883,9 @@ function updateResultCount(count) {
     }`;
 }
 
-function renderEmptyState(list) {
+function renderEmptyState(
+  list
+) {
   const hasSearch =
     Boolean(searchQuery);
 
@@ -764,81 +894,103 @@ function renderEmptyState(list) {
 
   let icon = 'books';
   let heading =
-    'No resources here yet';
+    'No resources found';
   let message =
-    'New curated resources will appear here as Cognita publishes them.';
+    'There are no resources matching your current filters.';
 
   if (hasSearch) {
     icon = 'magnifying-glass';
     heading =
       'No matching resources';
     message =
-      `We couldn't find anything matching “${escapeHtml(
-        searchQuery
-      )}”. Try another search or clear the search.`;
+      `Nothing matched “${searchQuery}”. Try a different search.`;
   } else if (hasFilter) {
-    icon = 'folder-simple';
+    icon = 'funnel';
     heading =
-      'Nothing in this category yet';
+      'No resources in this category';
     message =
       'Try another resource type or browse all resources.';
   }
 
   list.innerHTML = `
     <div class="ready-made-empty">
-      <i class="ph ph-${icon}"></i>
+
+      <div class="ready-made-empty-icon">
+        <i class="ph ph-${escapeHtml(
+          icon
+        )}"></i>
+      </div>
 
       <h3>
-        ${heading}
+        ${escapeHtml(
+          heading
+        )}
       </h3>
 
       <p>
-        ${message}
+        ${escapeHtml(
+          message
+        )}
       </p>
 
       ${
-        hasSearch
+        hasSearch ||
+        hasFilter
           ? `
             <button
               type="button"
-              class="ready-made-retry"
-              id="readyMadeClearSearch"
+              class="ready-made-empty-action"
+              id="readyMadeClearFilters"
             >
-              Clear search
+              Clear filters
             </button>
           `
           : ''
       }
+
     </div>
   `;
 
   document
     .getElementById(
-      'readyMadeClearSearch'
+      'readyMadeClearFilters'
     )
     ?.addEventListener(
       'click',
       () => {
         searchQuery = '';
+        activeType = '';
 
-        const input =
+        const search =
           document.getElementById(
             'readyMadeSearch'
           );
+
+        if (search) {
+          search.value = '';
+        }
 
         const clear =
           document.getElementById(
             'readyMadeSearchClear'
           );
 
-        if (input) {
-          input.value = '';
-          input.focus();
-        }
-
         if (clear) {
           clear.hidden = true;
         }
+
+        document
+          .querySelectorAll(
+            '.ready-made-filter'
+          )
+          .forEach(
+            (button) => {
+              button.classList.toggle(
+                'is-active',
+                !button.dataset.type
+              );
+            }
+          );
 
         updateSearchQueryInUrl();
         renderReadyMadeResources();
@@ -846,400 +998,30 @@ function renderEmptyState(list) {
     );
 }
 
-function renderResourceCard(
-  resource
-) {
-  const type =
-    READY_MADE_TYPES.find(
-      (item) =>
-        item.type ===
-        resource.resourceType
-    );
-
-  const meta = [
-    resource.subject,
-    resource.classLevel,
-    resource.curriculum,
-  ].filter(Boolean);
-
-  return `
-    <article
-      class="ready-made-card"
-      data-ready-made-id="${escapeHtml(
-        resource.id
-      )}"
-      tabindex="0"
-      role="button"
-      aria-label="Open ${escapeHtml(
-        resource.title
-      )}"
-    >
-
-      <div class="ready-made-card-top">
-
-        <div class="ready-made-card-icon">
-          <i class="ph ph-${
-            type
-              ? escapeHtml(
-                  type.icon
-                )
-              : 'file-text'
-          }"></i>
-        </div>
-
-        <div class="ready-made-card-badges">
-
-          ${
-            resource.featured
-              ? `
-                <span class="ready-made-badge featured">
-                  Featured
-                </span>
-              `
-              : ''
-          }
-
-          ${
-            resource.recommended
-              ? `
-                <span class="ready-made-badge">
-                  Recommended
-                </span>
-              `
-              : ''
-          }
-
-        </div>
-
-      </div>
-
-      <div class="ready-made-card-content">
-
-        <span class="ready-made-card-type">
-          ${
-            type
-              ? escapeHtml(
-                  type.label
-                )
-              : escapeHtml(
-                  resource.resourceType
-                )
-          }
-        </span>
-
-        <h3>
-          ${escapeHtml(
-            resource.title
-          )}
-        </h3>
-
-        ${
-          resource.description
-            ? `
-              <p>
-                ${escapeHtml(
-                  resource.description
-                )}
-              </p>
-            `
-            : ''
-        }
-
-        ${
-          meta.length
-            ? `
-              <div class="ready-made-card-meta">
-
-                ${meta
-                  .map(
-                    (item) =>
-                      `<span>${escapeHtml(
-                        item
-                      )}</span>`
-                  )
-                  .join('')}
-
-              </div>
-            `
-            : ''
-        }
-
-      </div>
-
-      <div class="ready-made-card-arrow">
-        <i class="ph ph-arrow-up-right"></i>
-      </div>
-
-    </article>
-  `;
-}
-
-async function openReadyMadeResource(
-  resourceId
-) {
-  const resource =
-    allReadyMadeResources.find(
-      (item) =>
-        item.id === resourceId
-    );
-
-  if (!resource) return;
-
-  const panel =
-    document.getElementById(
-      'readyMadePreviewPanel'
-    );
-
-  const body =
-    document.getElementById(
-      'readyMadePreviewBody'
-    );
-
-  const title =
-    document.getElementById(
-      'readyMadePreviewTitle'
-    );
-
-  if (
-    !panel ||
-    !body ||
-    !title
-  ) {
-    return;
-  }
-
-  title.textContent =
-    resource.title;
-
-  panel.hidden = false;
-
-  if (
-    window.ResourceRenderers &&
-    typeof window
-      .ResourceRenderers
-      .render === 'function'
-  ) {
-    body.innerHTML =
-      window.ResourceRenderers.render(
-        resource.resourceType,
-        resource.structuredContent
-      );
-  } else {
-    body.innerHTML =
-      renderFallbackPreview(
-        resource.structuredContent
-      );
-  }
-
-  renderDownloadButtons(
-    resource
-  );
-}
-
-function renderDownloadButtons(
-  resource
-) {
-  const container =
-    document.getElementById(
-      'readyMadeDownloadActions'
-    );
-
-  if (!container) return;
-
-  const refs =
-    resource.fileReferences ||
-    {};
-
-  const formats =
-    [
-      'pdf',
-      'docx',
-      'pptx',
-    ].filter(
-      (format) =>
-        refs[format]
-    );
-
-  if (!formats.length) {
-    container.innerHTML = '';
-
-    return;
-  }
-
-  container.innerHTML =
-    formats
-      .map(
-        (format) => `
-          <button
-            type="button"
-            class="ready-made-download-btn"
-            data-format="${format}"
-          >
-            <i class="ph ph-download-simple"></i>
-            Download ${format.toUpperCase()}
-          </button>
-        `
-      )
-      .join('');
-
-  container
-    .querySelectorAll(
-      '[data-format]'
-    )
-    .forEach((button) => {
-      button.addEventListener(
-        'click',
-        () =>
-          downloadReadyMadeResource(
-            resource.id,
-            button.dataset.format,
-            button
-          )
-      );
-    });
-}
-
-async function downloadReadyMadeResource(
-  resourceId,
-  format,
-  button
-) {
-  const original =
-    button.innerHTML;
-
-  button.disabled = true;
-
-  button.innerHTML =
-    '<i class="ph ph-spinner ph-spin"></i> Preparing…';
-
-  try {
-    const response =
-      await window.Auth.authedFetch(
-        READY_MADE_WORKER_URL +
-          '/api/ready-made-resources/' +
-          encodeURIComponent(
-            resourceId
-          ) +
-          '/download',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type':
-              'application/json',
-          },
-          body: JSON.stringify({
-            format,
-          }),
-        }
-      );
-
-    const data =
-      await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.error ||
-          'Download unavailable.'
-      );
-    }
-
-    window.location.href =
-      data.downloadUrl;
-  } catch (e) {
-    console.error(
-      '[ready-made] download failed:',
-      e.message
-    );
-
-    alert(
-      e.message ||
-        'Could not prepare the download.'
-    );
-  } finally {
-    button.disabled = false;
-    button.innerHTML =
-      original;
-  }
-}
-
-function renderFallbackPreview(
-  content
-) {
-  if (!content) {
-    return `
-      <p>
-        No preview available.
-      </p>
-    `;
-  }
-
-  return Object.entries(
-    content
-  )
-    .filter(
-      ([key]) =>
-        key !== 'title'
-    )
-    .map(
-      ([key, value]) => `
-        <section
-          class="ready-made-fallback-section"
-        >
-
-          <h3>
-            ${escapeHtml(
-              key
-                .replace(
-                  /([A-Z])/g,
-                  ' $1'
-                )
-                .replace(
-                  /^./,
-                  (c) =>
-                    c.toUpperCase()
-                )
-            )}
-          </h3>
-
-          <p>
-            ${escapeHtml(
-              typeof value ===
-                'string'
-                ? value
-                : JSON.stringify(
-                    value
-                  )
-            )}
-          </p>
-
-        </section>
-      `
-    )
-    .join('');
-}
-
 function escapeHtml(value) {
   return String(
-    value ?? ''
+    value == null
+      ? ''
+      : value
   )
-    .replace(
-      /&/g,
+    .replaceAll(
+      '&',
       '&amp;'
     )
-    .replace(
-      /</g,
+    .replaceAll(
+      '<',
       '&lt;'
     )
-    .replace(
-      />/g,
+    .replaceAll(
+      '>',
       '&gt;'
     )
-    .replace(
-      /"/g,
+    .replaceAll(
+      '"',
       '&quot;'
     )
-    .replace(
-      /'/g,
+    .replaceAll(
+      "'",
       '&#039;'
     );
 }
