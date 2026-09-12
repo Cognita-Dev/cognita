@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/auth.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="auth-page">
@@ -51,22 +52,30 @@
       </label>
       <label class="auth-field">
         <span>Password</span>
-        <input type="password" id="password" autocomplete="new-password" minlength="6" required>
+        <div class="auth-password-wrap">
+          <input type="password" id="password" autocomplete="new-password" minlength="6" required>
+          <button type="button" id="passwordToggle" class="auth-password-toggle" aria-label="Show password" aria-pressed="false">
+            <i class="ph ph-eye"></i>
+          </button>
+        </div>
         <div class="strength-meter">
-          <div class="strength-track">
-            <div class="strength-fill" id="strengthFill"></div>
+          <div class="strength-meter-head">
+            <div class="strength-track">
+              <div class="strength-fill" id="strengthFill"></div>
+            </div>
+            <span class="strength-label" id="strengthLabel"></span>
           </div>
           <ul class="strength-checklist" id="strengthChecklist">
             <li data-check="length">6+ characters</li>
-            <li data-check="lower">One lowercase letter</li>
-            <li data-check="upper">One uppercase letter</li>
-            <li data-check="number">One number</li>
-            <li data-check="special">One special character (optional)</li>
+            <li data-check="lower">Lowercase letter</li>
+            <li data-check="upper">Uppercase letter</li>
+            <li data-check="number">Number</li>
+            <li data-check="special" class="is-optional">Special character (optional)</li>
           </ul>
         </div>
         <p id="passwordError" class="field-error" aria-live="polite"></p>
       </label>
-      <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn" disabled>
+      <button type="submit" class="auth-btn auth-btn--primary" id="submitBtn">
         <span class="btn-label">Create account</span>
         <span class="btn-spinner" hidden></span>
       </button>
@@ -89,7 +98,9 @@
   const nameInput = document.getElementById('fullName');
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
+  const passwordToggle = document.getElementById('passwordToggle');
   const strengthFill = document.getElementById('strengthFill');
+  const strengthLabel = document.getElementById('strengthLabel');
   const strengthChecklist = document.getElementById('strengthChecklist');
 
   const WORKER_URL = 'https://cognita.cognitai.workers.dev';
@@ -162,16 +173,17 @@
   let emailValid = false;
   let passwordValid = false;
 
-  function updateSubmitState() {
-    submitBtn.disabled = !(nameValid && emailValid && passwordValid);
-  }
+  // The submit button stays enabled regardless of field validity now —
+  // clicking it with something missing/invalid runs the same inline
+  // error path as before, it just also happens on a direct click. This
+  // follows NN/g's guidance against disabling submit buttons: a
+  // disabled button doesn't tell an unsure user *why* it isn't
+  // responding, so they're left guessing instead of getting feedback.
 
   nameInput.addEventListener('input', () => {
     const value = nameInput.value.trim();
     nameValid = value.length > 0;
-    nameInput.classList.toggle('is-invalid', value !== '' ? false : false);
     errorEls.name.textContent = '';
-    updateSubmitState();
   });
 
   emailInput.addEventListener('input', () => {
@@ -179,7 +191,14 @@
     emailValid = value === '' ? false : Auth.isValidEmail(value);
     emailInput.classList.toggle('is-invalid', value !== '' && !emailValid);
     errorEls.email.textContent = value !== '' && !emailValid ? 'Enter a valid email address.' : '';
-    updateSubmitState();
+  });
+
+  passwordToggle.addEventListener('click', () => {
+    const showing = passwordInput.type === 'text';
+    passwordInput.type = showing ? 'password' : 'text';
+    passwordToggle.setAttribute('aria-pressed', String(!showing));
+    passwordToggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+    passwordToggle.querySelector('i').className = showing ? 'ph ph-eye' : 'ph ph-eye-slash';
   });
 
   passwordInput.addEventListener('input', () => {
@@ -192,12 +211,15 @@
       result.level === 'fair' ? 'var(--warning)' :
       'var(--danger)';
 
+    strengthLabel.textContent = passwordInput.value
+      ? (result.level === 'strong' ? 'Strong' : result.level === 'fair' ? 'Fair' : 'Weak')
+      : '';
+    strengthLabel.dataset.level = result.level;
+
     strengthChecklist.querySelectorAll('li').forEach((li) => {
       const key = li.getAttribute('data-check');
       li.classList.toggle('met', !!result.checks[key]);
     });
-
-    updateSubmitState();
   });
 
   try {
