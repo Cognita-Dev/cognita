@@ -215,6 +215,11 @@
             <input type="text" id="fieldCurriculum" placeholder="e.g. Nigerian Curriculum">
           </label>
 
+          <label class="resource-field">
+            <span>Additional instructions (optional)</span>
+            <textarea id="fieldCustomInstructions" rows="3" placeholder="e.g. Any specific angle, emphasis, or extra requirement for this resource."></textarea>
+          </label>
+
           <button type="submit" class="resource-generate-btn" id="resourceGenerateBtn">
             <span class="btn-label">Generate resource</span>
             <span class="btn-spinner" hidden></span>
@@ -226,11 +231,48 @@
       <section class="resources-result-panel" id="resourcesResultPanel" hidden>
         <div class="resource-result-header">
           <h2 id="resourceResultTitle">Your resource</h2>
-          <button class="resource-result-close" id="resourceResultClose" aria-label="Close preview">
-            <i class="ph ph-x"></i>
+          <div class="resource-result-header-actions">
+            <button class="resource-header-btn" id="resourceEditBtn" title="Edit content directly">
+              <i class="ph ph-pencil-simple"></i>
+              <span>Edit</span>
+            </button>
+            <button class="resource-result-close" id="resourceResultClose" aria-label="Close preview">
+              <i class="ph ph-x"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="resource-result-body" id="resourceResultBody"></div>
+
+        <!-- Direct JSON edit surface — shown instead of the rendered
+             preview while editing, same content underneath. -->
+        <div class="resource-edit-wrap" id="resourceEditWrap" hidden>
+          <p class="resource-edit-hint">
+            Edit the structured content directly. Keep the same field names and shape as shown.
+          </p>
+          <textarea id="resourceEditTextarea" class="resource-edit-textarea" rows="18"></textarea>
+          <div class="resource-edit-actions">
+            <button class="resource-download-btn" id="resourceEditSaveBtn" style="margin-bottom:0;">
+              <span class="btn-label">Save changes</span>
+              <span class="btn-spinner" hidden></span>
+            </button>
+            <button class="resource-form-back" id="resourceEditCancelBtn" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Follow-up prompt / regenerate ── revises the content in
+             place via a real AI call, rather than starting over. -->
+        <div class="resource-regenerate-row">
+          <label class="resource-field" style="flex:1;">
+            <span>Refine with a follow-up instruction</span>
+            <input type="text" id="resourceRegeneratePrompt" placeholder="e.g. Add more worked examples on the formula section.">
+          </label>
+          <button class="resource-download-btn" id="resourceRegenerateBtn" style="margin-bottom:0;width:auto;white-space:nowrap;">
+            <span class="btn-label"><i class="ph ph-arrows-clockwise"></i> Regenerate</span>
+            <span class="btn-spinner" hidden></span>
           </button>
         </div>
-        <div class="resource-result-body" id="resourceResultBody"></div>
+
         <div class="resource-result-actions">
           <button class="resource-download-btn" id="resourceDownloadBtn">
             <i class="ph ph-file-arrow-down"></i>
