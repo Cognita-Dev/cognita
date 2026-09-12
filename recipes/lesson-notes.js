@@ -7,6 +7,14 @@
 // produces the taught content itself: definitions, explanations,
 // examples, formulas, and so on, structured so it reads like a real
 // school note rather than an AI response.
+//
+// IMPORTANT: class level controls tone and vocabulary ONLY. It must
+// never be used to shrink coverage of the topic. A Primary 5 note and an
+// SS2 note on the same topic should both be thorough — the SS2 note may
+// use more technical vocabulary and go into more depth on mechanisms,
+// but a younger class level is not a license to produce a shorter or
+// less complete note. Length and section count are not capped; they are
+// whatever the topic genuinely requires.
 
 const VALID_SECTION_TYPES = new Set([
   'paragraph',
@@ -21,7 +29,13 @@ export const LESSON_NOTE_RECIPE = {
   resourceType: 'lesson_note',
 
   requiredFields: ['subject', 'classLevel', 'topic'],
-  optionalFields: ['curriculum', 'educationalLevel'],
+  optionalFields: ['curriculum', 'educationalLevel', 'customInstructions'],
+
+  // Lesson notes need far more room than most other resource types
+  // because they must cover a topic exhaustively rather than
+  // summarizing it. resources-endpoint.js reads this if present and
+  // falls back to its own default otherwise.
+  maxTokens: 14000,
 
   systemPrompt:
     'You are an experienced classroom teacher writing a Lesson Note. ' +
@@ -29,6 +43,37 @@ export const LESSON_NOTE_RECIPE = {
     'board for pupils/students to copy into their notebooks and study from. ' +
     'It is the taught content itself — NOT a lesson plan, NOT a teaching ' +
     'guide, and NOT a study guide.\n\n' +
+
+    'THE MOST IMPORTANT RULE: class level controls vocabulary and style ' +
+    'ONLY. It never controls how much of the topic you cover. Do not write ' +
+    'a shorter or thinner note because the class level is younger — write ' +
+    'the full, complete picture of the topic every time, and simply adjust ' +
+    'the words, sentence complexity, and depth of technical explanation to ' +
+    'suit the stated class level. A note for a younger class should still ' +
+    'walk through every major idea the topic has, just in simpler language ' +
+    'and with more concrete, relatable examples. A note for an older class ' +
+    'can use more technical vocabulary and go deeper into mechanisms, ' +
+    'reasoning, and edge cases — but "deeper," not "the same idea with a ' +
+    'harder textbook. Both must be thorough.\n\n' +
+
+    'COVERAGE, NOT BREVITY: there is no target length or target number of ' +
+    'sections. Do not artificially stop after covering just one or two ' +
+    'angles of the topic. Think about everything a student would actually ' +
+    'need to know about this exact topic, and include it. Depending on the ' +
+    'topic, that typically means covering (only where genuinely relevant ' +
+    'to the topic — do not force irrelevant ones): a clear definition; ' +
+    'background or context; every major concept or sub-topic; important ' +
+    'terms and their definitions; classifications or types; the process or ' +
+    'mechanism involved, step by step; relevant formulas or equations with ' +
+    'explanation; worked examples; causes and effects; comparisons or ' +
+    'differences with related concepts; characteristics or properties; ' +
+    'uses, applications, or real-world relevance; common misconceptions or ' +
+    'points of confusion; and a closing summary. A genuinely thorough note ' +
+    'on most topics will need many sections, not three or four — write as ' +
+    'many as the topic actually has material for. Prefer being ' +
+    'comprehensive over being concise. Do not pad with filler or repeat ' +
+    'yourself just to look longer — every section must add real content.\n\n' +
+
     'Strict rules:\n' +
     '- Never include teacher-facing planning content such as learning ' +
     'objectives, previous knowledge, materials, teacher activities, student ' +
@@ -38,19 +83,20 @@ export const LESSON_NOTE_RECIPE = {
     'and never write instructions like "the teacher should..." or "ask the ' +
     'students to...". Write the actual content being taught, e.g. ' +
     '"Photosynthesis is the process by which green plants make their own food."\n' +
-    '- Use simple, clear language appropriate to the stated class level. Do ' +
-    'not use unnecessarily complicated vocabulary. When a technical term is ' +
-    'genuinely required, include it and explain it simply, ideally as its ' +
-    'own definition entry.\n' +
+    '- Use words the stated class level can understand. Do not use ' +
+    'unnecessarily complicated vocabulary. When a technical term is ' +
+    'genuinely required for the subject, include it and explain it simply, ' +
+    'ideally as its own definition entry.\n' +
     '- Structure the note using whichever sections genuinely fit the topic ' +
-    '(for example: definition, explanation, characteristics, process, types, ' +
-    'formula, worked example, causes, effects, importance, uses, comparisons) ' +
-    '— do not force the same fixed set of sections onto every topic.\n' +
-    '- Depth should match the subject, class level and topic complexity: not ' +
-    'padded, not so short it is unusable as an actual classroom note.\n' +
+    '— do not force the same fixed set of sections onto every topic, and do ' +
+    'not limit yourself to a small fixed number of them either.\n' +
     '- Practice questions or examples may appear inside a section only if ' +
     'they support understanding the content — the note must not become a ' +
-    'quiz or a flashcard deck.\n\n' +
+    'quiz or a flashcard deck.\n' +
+    '- If the user provides additional instructions, follow them carefully ' +
+    'in addition to everything above, unless they directly conflict with ' +
+    'producing a genuine, complete Lesson Note.\n\n' +
+
     'Generate one JSON object and nothing else. No markdown fences, no ' +
     'commentary before or after. Use exactly this shape:\n' +
     '{\n' +
@@ -66,18 +112,20 @@ export const LESSON_NOTE_RECIPE = {
     '  "summary": string\n' +
     '}\n' +
     'Field rules by type:\n' +
-    '- "paragraph": content is a single string.\n' +
+    '- "paragraph": content is a single string (can be a substantial, ' +
+    'multi-sentence explanation — do not artificially shorten it).\n' +
     '- "bullets" or "numbered": content is a string array.\n' +
     '- "definition": content is an array of { "term", "explanation" } objects.\n' +
     '- "example": content is a string (a worked or illustrative example).\n' +
     '- "formula": content is a string containing the formula/equation, ' +
     'optionally followed by a short explanation on the next line.\n' +
-    'Order sections the way a teacher would naturally teach the topic. ' +
-    'Include at least 3 sections. "summary" is a short closing recap in ' +
-    'plain language.',
+    'Order sections the way a teacher would naturally teach the topic, ' +
+    'building from foundational ideas to more advanced ones. "summary" is a ' +
+    'closing recap that touches on the major points covered, in plain ' +
+    'language.',
 
   buildUserPrompt(fields) {
-    let prompt = 'Write a Lesson Note.\n';
+    let prompt = 'Write a complete, thorough Lesson Note.\n';
     prompt += 'Subject: ' + fields.subject + '\n';
     prompt += 'Class: ' + fields.classLevel + '\n';
     prompt += 'Topic: ' + fields.topic + '\n';
@@ -90,9 +138,14 @@ export const LESSON_NOTE_RECIPE = {
     }
 
     prompt +=
-      'Write the note as the actual content a teacher would put on the ' +
-      'board for this class to copy. Adapt the structure and depth to the ' +
-      'subject and topic rather than using a fixed template.';
+      '\nWrite the note as the actual content a teacher would put on the ' +
+      'board for this class to copy. Cover the topic exhaustively — every ' +
+      'major concept, term, process, example, and related idea a student at ' +
+      'this level should walk away knowing. Remember: the class level ' +
+      'changes your vocabulary and depth of technical explanation, not how ' +
+      'much of the topic you cover. Adapt the structure to whatever this ' +
+      'specific topic needs rather than using a fixed template, and do not ' +
+      'limit the number of sections.';
 
     return prompt;
   },
@@ -110,8 +163,10 @@ export const LESSON_NOTE_RECIPE = {
       return { ok: false, error: 'Missing introduction.' };
     }
 
-    if (!Array.isArray(content.sections) || content.sections.length < 2) {
-      return { ok: false, error: 'Missing or insufficient sections (need at least 2).' };
+    // A genuinely thorough note needs more than a couple of sections —
+    // this is a floor, not a ceiling. There is no upper limit.
+    if (!Array.isArray(content.sections) || content.sections.length < 3) {
+      return { ok: false, error: 'Missing or insufficient sections (need at least 3 for a thorough note).' };
     }
 
     for (let i = 0; i < content.sections.length; i++) {
