@@ -328,6 +328,36 @@
 /* ── Advanced editor (JSON) ── */
 .admin-advanced-editor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: var(--space-2); }
 .admin-advanced-label { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.admin-editor-view-toggle {
+  display: flex;
+  margin-left: auto;
+  margin-right: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+.admin-editor-view-btn {
+  padding: 4px 14px;
+  font-size: var(--text-xs);
+  font-weight: 650;
+  color: var(--text-3);
+  background: var(--bg-elevated);
+  border: none;
+  cursor: pointer;
+}
+.admin-editor-view-btn + .admin-editor-view-btn {
+  border-left: 1px solid var(--border);
+}
+.admin-editor-view-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+.admin-detail-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--bg-subtle);
+}
 .admin-code-textarea {
   width: 100%;
   font-family: var(--font-mono);
