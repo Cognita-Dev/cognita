@@ -20,6 +20,53 @@ const RESOURCE_TYPES = [
 
 const STATUSES = ['draft', 'in_review', 'validated', 'published', 'archived'];
 
+// Skeleton JSON per resource type, matching each recipe's required
+// structure (recipes/*.js on the backend). Placeholder values are meant
+// to be overwritten — they exist so an admin writing content by hand
+// doesn't have to guess field names or the exact shape. Types not listed
+// here fall back to a generic { title, sections } skeleton, which the
+// generic docx/pdf exporter in admin-resources-endpoint.js can still
+// render even if it doesn't exactly match that type's AI-mode recipe
+// structure — flag it to the dev if a specific type needs its own exact
+// template added here.
+const RESOURCE_TEMPLATES = {
+  lesson_plan: {
+    title: '',
+    duration: '',
+    lessonStyle: '',
+    learningObjectives: [''],
+    previousKnowledge: '',
+    materials: [''],
+    introduction: '',
+    teacherActivities: [''],
+    studentActivities: [''],
+    assessment: [''],
+    conclusion: '',
+    homework: '',
+    teacherNotes: '',
+  },
+  flashcards: {
+    title: '',
+    cards: [
+      { number: 1, front: '', back: '', difficulty: 'medium' },
+    ],
+  },
+  presentation: {
+    title: '',
+    slides: [
+      { heading: '', bulletPoints: [''] },
+    ],
+  },
+};
+
+const GENERIC_TEMPLATE = {
+  title: '',
+  sections: [
+    { heading: '', type: 'paragraph', content: '' },
+    { heading: '', type: 'bullets', content: [''] },
+  ],
+};
+
 let currentStatusFilter = 'draft';
 let currentResources = [];
 let currentDetailResource = null;
@@ -77,6 +124,16 @@ function wireCreateForm() {
     const isManual = e.target.value === 'manual';
     document.getElementById('aiFieldsWrap').hidden = isManual;
     document.getElementById('manualContentWrap').hidden = !isManual;
+  });
+
+  document.getElementById('loadTemplateBtn').addEventListener('click', () => {
+    const resourceType = document.getElementById('fieldResourceType').value;
+    const template = RESOURCE_TEMPLATES[resourceType] || GENERIC_TEMPLATE;
+    document.getElementById('fieldManualContent').value = JSON.stringify(template, null, 2);
+
+    if (!RESOURCE_TEMPLATES[resourceType]) {
+      showToast('No exact template for "' + resourceType + '" yet — loaded a generic structure instead.');
+    }
   });
 
   document.getElementById('createSingleBtn').addEventListener('click', async () => {
@@ -463,12 +520,6 @@ async function loadCollections() {
 
 /* ── Roles ──────────────────────────────────────────────────────────── */
 
-// Rather than trusting a client-side guess about the signed-in person's
-// role, this simply TRIES the roles-list call. If it succeeds (200), the
-// person is an 'admin' and the panel is shown and populated. If it comes
-// back 403 (moderator, or somehow not a role-holder at all), the panel
-// just stays hidden — no error shown, since "you're a moderator, not an
-// admin" isn't a failure state worth alarming someone over.
 async function tryLoadRolesPanel() {
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles');
