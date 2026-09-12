@@ -10,6 +10,7 @@
 //   - flashcards
 //   - quiz
 //   - worksheet
+//   - lesson_note
 //
 // Other resource types intentionally fall back to the existing generic
 // renderer in resources.js until their dedicated renderers are implemented.
@@ -34,6 +35,10 @@ const ResourceRenderers = (() => {
 
   function getQuestions(content) {
     return Array.isArray(content && content.questions) ? content.questions : [];
+  }
+
+  function getSections(content) {
+    return Array.isArray(content && content.sections) ? content.sections : [];
   }
 
   /*
@@ -777,6 +782,89 @@ const ResourceRenderers = (() => {
 
   /*
    * ================================================================
+   * LESSON NOTE
+   * ================================================================
+   * A calm, textbook-like reading surface — no interactivity, no cards
+   * per fact, no raw JSON keys. Section "type" drives how content
+   * renders (paragraph / bullets / numbered / definition / example /
+   * formula) but is never shown to the reader.
+   */
+
+  function renderLessonNoteSection(section) {
+    const heading = `<h4 class="lesson-note-heading">${escapeHtml(section.heading)}</h4>`;
+    const content = section.content;
+
+    switch (section.type) {
+      case 'bullets':
+        return heading + '<ul class="lesson-note-bullets">' +
+          (Array.isArray(content) ? content : []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') +
+          '</ul>';
+
+      case 'numbered':
+        return heading + '<ol class="lesson-note-numbered">' +
+          (Array.isArray(content) ? content : []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') +
+          '</ol>';
+
+      case 'definition':
+        return heading + '<dl class="lesson-note-definitions">' +
+          (Array.isArray(content) ? content : [])
+            .map((entry) => `<div class="lesson-note-definition"><dt>${escapeHtml(entry.term)}</dt><dd>${escapeHtml(entry.explanation)}</dd></div>`)
+            .join('') +
+          '</dl>';
+
+      case 'example':
+        return heading +
+          `<div class="lesson-note-example"><span class="lesson-note-example-label">Example</span><p>${escapeHtml(content)}</p></div>`;
+
+      case 'formula':
+        return heading +
+          `<div class="lesson-note-formula">${escapeHtml(content)}</div>`;
+
+      case 'paragraph':
+      default:
+        return heading + `<p class="lesson-note-paragraph">${escapeHtml(content)}</p>`;
+    }
+  }
+
+  function renderLessonNote(content) {
+    const sections = getSections(content);
+
+    if (!sections.length) {
+      return renderEmptyState(
+        'No lesson note content was generated.',
+        'Try generating the resource again.'
+      );
+    }
+
+    const safeTitle = escapeHtml(content.title || 'Lesson Note');
+
+    return `
+      <div class="resource-specialized resource-lesson-note" data-renderer="lesson_note">
+
+        <div class="lesson-note-page">
+          <span class="resource-artifact-kicker">Lesson note</span>
+          <h3 class="lesson-note-title">${safeTitle}</h3>
+
+          ${content.introduction ? `<p class="lesson-note-intro">${escapeHtml(content.introduction)}</p>` : ''}
+
+          <div class="lesson-note-body">
+            ${sections.map(renderLessonNoteSection).join('')}
+          </div>
+
+          ${content.summary ? `
+            <div class="lesson-note-summary">
+              <span class="lesson-note-summary-label">Summary</span>
+              <p>${escapeHtml(content.summary)}</p>
+            </div>
+          ` : ''}
+        </div>
+
+      </div>
+    `;
+  }
+
+  /*
+   * ================================================================
    * FALLBACK
    * ================================================================
    */
@@ -803,6 +891,9 @@ const ResourceRenderers = (() => {
 
       case 'worksheet':
         return renderWorksheet(content);
+
+      case 'lesson_note':
+        return renderLessonNote(content);
 
       default:
         return null;
