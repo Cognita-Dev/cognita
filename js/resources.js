@@ -214,7 +214,9 @@ let activeEditorHandle = null;
   wireSidebar();
   wireAccountMenu();
   wireResultPanel();
+  wireLibraryPreviewPanel();
   await loadMyResources();
+  await loadRecommendedLibrary();
 })();
 
 function renderAccountInfo(user) {
@@ -1048,7 +1050,7 @@ function showResultPanel(resource) {
     resource.fileReferences || {}
   );
 
-  renderDownloadControl(actionsWrap, resource.id, Object.keys(resource.fileReferences || {}));
+  renderDownloadControl(actionsWrap, resource.id, Object.keys(resource.fileReferences || {}), downloadResource);
 
   panel.scrollIntoView({
     behavior: 'smooth',
@@ -1058,8 +1060,11 @@ function showResultPanel(resource) {
 
 // Small download icon that opens a popover listing whichever export
 // formats (docx/pdf/pptx) are actually available for this resource,
-// instead of a stacked full-width button per format.
-function renderDownloadControl(actionsWrap, resourceId, availableFormats) {
+// instead of a stacked full-width button per format. downloadFn lets
+// this be reused for both a user's own resource (/api/resources/...)
+// and a read-only library resource (/api/library/resources/...),
+// which use different download endpoints.
+function renderDownloadControl(actionsWrap, resourceId, availableFormats, downloadFn) {
   if (availableFormats.length === 0) {
     actionsWrap.innerHTML =
       '<p style="color:var(--text-3);font-size:var(--text-sm);text-align:center;">' +
@@ -1107,7 +1112,7 @@ function renderDownloadControl(actionsWrap, resourceId, availableFormats) {
     btn.addEventListener('click', () => {
       menu.hidden = true;
       toggle.setAttribute('aria-expanded', 'false');
-      downloadResource(resourceId, btn.dataset.format, btn);
+      downloadFn(resourceId, btn.dataset.format, btn);
     });
   });
 
@@ -1303,6 +1308,163 @@ async function downloadResource(resourceId, format, btn) {
   if (btn) {
     btn.disabled = false;
   }
+}
+
+/* ════════════════════════════════════════════════════════
+   RECOMMENDED / FEATURED (admin-curated library content)
+   Moved here from library.html since this is the page a user
+   sees first. Read-only — no edit/regenerate, unlike a user's
+   own resources above.
+════════════════════════════════════════════════════════ */
+
+async function loadRecommendedLibrary() {
+  const section = document.getElementById('libraryRecommendedSection');
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/library/resources');
+    if (!res.ok) {
+      section.hidden = true;
+      return;
+    }
+    const data = await res.json();
+    const recommended = (data.resources || []).filter((r) => r.recommended);
+
+    if (recommended.length === 0) {
+      section.hidden = true;
+      return;
+    }
+
+    document.getElementById('libraryRecommendedHeading').textContent =
+      recommended[0].recommendedReason === 'featured' ? 'Featured' : 'Recommended for you';
+
+    section.hidden = false;
+    await renderLibraryRecommendedGrid(recommended);
+  } catch (e) {
+    section.hidden = true;
+    console.error('[resources] recommended library load failed:', e.message);
+  }
+}
+
+// Fetches full content for each (small — at most 3) recommended item
+// so the card can show a real truncated preview instead of a bare
+// title row.
+async function renderLibraryRecommendedGrid(recommended) {
+  const grid = document.getElementById('libraryRecommendedGrid');
+  grid.innerHTML = '<div class="library-recommended-empty">Loading previews...</div>';
+
+  const withDetail = await Promise.all(
+    recommended.map(async (r) => {
+      try {
+        const res = await window.Auth.authedFetch(
+          WORKER_URL + '/api/library/resources/' + r.id
+        );
+        if (!res.ok) return { ...r, structuredContent: null };
+        const data = await res.json();
+        return { ...r, structuredContent: data.resource.structuredContent };
+      } catch (e) {
+        return { ...r, structuredContent: null };
+      }
+    })
+  );
+
+  grid.innerHTML = withDetail
+    .map((r) => {
+      const rt = RESOURCE_TYPES.find((t) => t.type === r.resourceType);
+      const label = rt ? rt.label : r.resourceType;
+      const previewHtml = r.structuredContent
+        ? renderStructuredPreview(r.structuredContent, r.resourceType)
+        : '<p>Preview unavailable.</p>';
+
+      return (
+        '<button type="button" class="library-recommended-card" data-id="' + r.id + '">' +
+        '<div class="library-recommended-card-preview">' + previewHtml + '</div>' +
+        '<div class="library-recommended-card-foot">' +
+        '<div class="library-recommended-card-title">' + escapeHtml(r.title || label) + '</div>' +
+        '<div class="library-recommended-card-meta">' + escapeHtml(label) + '</div>' +
+        '</div>' +
+        '</button>'
+      );
+    })
+    .join('');
+
+  grid.querySelectorAll('.library-recommended-card').forEach((card) => {
+    card.addEventListener('click', () => openLibraryPreview(card.dataset.id));
+  });
+}
+
+function wireLibraryPreviewPanel() {
+  document.getElementById('libraryPreviewClose').addEventListener('click', () => {
+    document.getElementById('libraryPreviewPanel').hidden = true;
+  });
+}
+
+async function openLibraryPreview(resourceId) {
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/library/resources/' + resourceId
+    );
+    if (!res.ok) {
+      showToast('Could not load that resource.');
+      return;
+    }
+    const data = await res.json();
+    const resource = data.resource;
+
+    const panel = document.getElementById('libraryPreviewPanel');
+    const body = document.getElementById('libraryPreviewBody');
+    const actionsWrap = document.getElementById('libraryPreviewActions');
+
+    document.getElementById('libraryPreviewTitle').textContent =
+      resource.structuredContent.title || 'Resource';
+
+    body.innerHTML = renderStructuredPreview(resource.structuredContent, resource.resourceType);
+
+    if (window.ResourceRenderers && typeof window.ResourceRenderers.mount === 'function') {
+      window.ResourceRenderers.mount(resource.resourceType, body, resource.structuredContent);
+    }
+
+    renderDownloadControl(
+      actionsWrap,
+      resource.id,
+      Object.keys(resource.fileReferences || {}),
+      downloadLibraryResource
+    );
+
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    showToast('Could not reach Cognita.');
+    console.error('[resources] library preview load failed:', e.message);
+  }
+}
+
+async function downloadLibraryResource(resourceId, format, btn) {
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/library/resources/' + resourceId + '/download?format=' + encodeURIComponent(format),
+      { method: 'POST' }
+    );
+    const data = await res.json();
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not prepare the download.');
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = data.url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    showToast('Could not reach Cognita. Please try again.');
+    console.error('[resources] library download failed:', e.message);
+  }
+
+  if (btn) btn.disabled = false;
 }
 
 /* ════════════════════════════════════════════════════════
