@@ -684,6 +684,18 @@ window.ResourceEditor = (function () {
         out[linkConfig.linkedKey] = answerKey;
         return out;
       },
+      // Question numbers are positional (assigned by on-screen order in
+      // getValue() above), so the card at index n-1 among the currently
+      // live cards is exactly the one a "question N" validation error
+      // refers to.
+      scrollToIndex: (number) => {
+        const liveCards = cards.filter((c) => list.contains(c.card));
+        const target = liveCards[number - 1];
+        if (!target) return;
+        target.card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.card.classList.add('redit-card-flash');
+        setTimeout(() => target.card.classList.remove('redit-card-flash'), 1600);
+      },
     };
   }
 
@@ -819,6 +831,7 @@ window.ResourceEditor = (function () {
       );
       container.appendChild(linkedField.node);
       fields.__linked = { multi: true, getValue: linkedField.getValue };
+      var linkedScrollToIndex = linkedField.scrollToIndex;
     }
 
     if (derivedKeys.size && config.derivedNote) {
@@ -852,6 +865,9 @@ window.ResourceEditor = (function () {
       },
       isDirty() {
         return dirty;
+      },
+      scrollToQuestion(number) {
+        if (typeof linkedScrollToIndex === 'function') linkedScrollToIndex(number);
       },
       destroy() {
         container.innerHTML = '';
