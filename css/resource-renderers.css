@@ -683,6 +683,28 @@
   background: var(--border);
 }
 
+.worksheet-question-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  margin-top: 14px;
+}
+
+.worksheet-question-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.worksheet-question-option-letter {
+  flex: none;
+  color: var(--text-4);
+  font-weight: 750;
+}
+
 .worksheet-answer-key {
   margin-top: var(--space-6);
   padding: 22px;
