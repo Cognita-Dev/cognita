@@ -101,6 +101,7 @@ let currentStatusFilter = 'draft';
 let currentResources = [];       // resources for the active status filter, unfiltered by search/type
 let currentDetailResource = null;
 let isSuperAdmin = false;
+let activeDetailEditorHandle = null;
 
 (async function init() {
   const user = await window.Auth.requireAuthOrRedirect();
@@ -523,7 +524,23 @@ function renderDetailChrome() {
   const statusBadge = document.getElementById('detailStatusBadge');
   statusBadge.textContent = STATUS_LABELS[r.status] || r.status;
   statusBadge.className = 'admin-badge admin-badge--' + r.status;
-  document.getElementById('detailContentJson').value = JSON.stringify(r.structuredContent, null, 2);
+
+  const saveBtn = document.getElementById('saveEditBtn');
+  saveBtn.disabled = true;
+  if (activeDetailEditorHandle) {
+    activeDetailEditorHandle.destroy();
+    activeDetailEditorHandle = null;
+  }
+  activeDetailEditorHandle = window.ResourceEditor.mount(
+    document.getElementById('detailContentEditor'),
+    r.resourceType,
+    r.structuredContent,
+    {
+      onDirty: () => {
+        saveBtn.disabled = false;
+      },
+    }
+  );
 
   const primary = PRIMARY_ACTION_BY_STATUS[r.status];
   const primaryBtn = document.getElementById('detailPrimaryActionBtn');
@@ -592,9 +609,16 @@ function formatSnapshotReason(reason) {
 
 function wireDetailPanel() {
   const close = () => {
+    if (activeDetailEditorHandle && activeDetailEditorHandle.isDirty()) {
+      if (!window.confirm('You have unsaved changes. Discard them?')) return;
+    }
     document.getElementById('detailPanel').hidden = true;
     document.getElementById('detailScrim').hidden = true;
     currentDetailResource = null;
+    if (activeDetailEditorHandle) {
+      activeDetailEditorHandle.destroy();
+      activeDetailEditorHandle = null;
+    }
   };
   document.getElementById('detailClose').addEventListener('click', close);
   document.getElementById('detailScrim').addEventListener('click', close);
@@ -605,15 +629,9 @@ function wireDetailPanel() {
   });
 
   document.getElementById('saveEditBtn').addEventListener('click', async () => {
-    if (!currentDetailResource) return;
+    if (!currentDetailResource || !activeDetailEditorHandle) return;
 
-    let structuredContent;
-    try {
-      structuredContent = JSON.parse(document.getElementById('detailContentJson').value);
-    } catch (e) {
-      showToast('Content is not valid JSON.');
-      return;
-    }
+    const structuredContent = activeDetailEditorHandle.getValue();
 
     try {
       const res = await window.Auth.authedFetch(
