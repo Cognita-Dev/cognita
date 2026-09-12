@@ -10,32 +10,46 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
-<link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/admin.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
-<body class="app-page">
+<body class="app-page admin-page">
 
-<div class="app-shell">
-  <div class="sidebar-scrim" id="sidebarScrim"></div>
+<div class="admin-shell">
+  <div class="admin-nav-scrim" id="adminNavScrim"></div>
 
-  <aside class="app-sidebar" id="appSidebar">
-    <div class="sidebar-top">
+  <!-- ── Sidebar ── -->
+  <aside class="admin-sidebar" id="adminSidebar">
+    <div class="admin-sidebar-top">
       <a href="/index.html" class="sidebar-logo">
         <img src="/assets/cognita.png" alt="Cognita">
         <span>Cognita Admin</span>
       </a>
+      <button class="admin-nav-close" id="adminNavClose" aria-label="Close menu"><i class="ph ph-x"></i></button>
     </div>
 
-    <nav class="sidebar-history" aria-label="Navigation">
-      <a href="/app.html" class="sidebar-history-item">
-        <i class="ph ph-chat-circle" style="margin-right:8px;"></i><span>Chat</span>
-      </a>
-      <a href="/admin.html" class="sidebar-history-item is-active">
-        <i class="ph ph-shield-check" style="margin-right:8px;"></i><span>Admin</span>
+    <nav class="admin-nav" aria-label="Admin sections">
+      <button class="admin-nav-item is-active" data-section="overview">
+        <i class="ph ph-squares-four"></i><span>Overview</span>
+      </button>
+      <button class="admin-nav-item" data-section="resources">
+        <i class="ph ph-stack"></i><span>Resources</span>
+      </button>
+      <button class="admin-nav-item" data-section="create">
+        <i class="ph ph-plus-circle"></i><span>Create</span>
+      </button>
+      <button class="admin-nav-item" data-section="collections">
+        <i class="ph ph-folders"></i><span>Collections</span>
+      </button>
+      <button class="admin-nav-item" data-section="roles" id="rolesNavItem" hidden>
+        <i class="ph ph-users-three"></i><span>People</span>
+      </button>
+      <a href="/app.html" class="admin-nav-item admin-nav-item--muted">
+        <i class="ph ph-chat-circle"></i><span>Back to chat</span>
       </a>
     </nav>
 
-    <div class="sidebar-bottom">
+    <div class="admin-sidebar-bottom">
       <button class="account-btn" id="accountBtn">
         <span class="account-avatar" id="accountAvatar">C</span>
         <span class="account-info"><span class="account-name" id="accountEmail">Loading</span></span>
@@ -43,174 +57,295 @@
     </div>
   </aside>
 
-  <main class="app-main">
-    <header class="app-topbar">
-      <h1 class="conversation-title">Admin — Resource Curation</h1>
+  <!-- ── Main ── -->
+  <main class="admin-main">
+    <header class="admin-topbar">
+      <button class="admin-nav-open" id="adminNavOpen" aria-label="Open menu"><i class="ph ph-list"></i></button>
+      <div class="admin-topbar-title">
+        <h1 id="sectionTitle">Overview</h1>
+        <p id="sectionSubtitle" class="admin-topbar-subtitle">A quick look at your content pipeline.</p>
+      </div>
+      <div class="admin-topbar-actions" id="topbarActions">
+        <button class="admin-btn admin-btn--primary" id="topbarNewResourceBtn">
+          <i class="ph ph-plus"></i><span>New resource</span>
+        </button>
+      </div>
     </header>
 
-    <div class="resources-scroll">
+    <div class="admin-scroll">
 
-      <!-- ── Status filter tabs ── -->
-      <section class="resources-generate-panel">
-        <div id="statusTabs" class="resource-type-grid" style="grid-template-columns:repeat(6,1fr);"></div>
-      </section>
-
-      <!-- ── Create panel ── -->
-      <section class="resources-generate-panel">
-        <h2 class="resources-heading">Create a resource</h2>
-
-        <div class="resource-field" style="margin-bottom:12px;">
-          <label><input type="radio" name="createMode" value="single" checked> Single</label>
-          &nbsp;&nbsp;
-          <label><input type="radio" name="createMode" value="batch"> Batch</label>
+      <!-- ══════════════════ OVERVIEW ══════════════════ -->
+      <section class="admin-section is-active" id="section-overview">
+        <div class="admin-stat-grid" id="overviewStatGrid">
+          <div class="admin-stat-card skeleton" style="height:88px;"></div>
+          <div class="admin-stat-card skeleton" style="height:88px;"></div>
+          <div class="admin-stat-card skeleton" style="height:88px;"></div>
+          <div class="admin-stat-card skeleton" style="height:88px;"></div>
+          <div class="admin-stat-card skeleton" style="height:88px;"></div>
         </div>
 
-        <div id="singleCreateForm">
-          <label class="resource-field">
-            <span>Resource type</span>
-            <select id="fieldResourceType"></select>
-          </label>
-
-          <label class="resource-field">
-            <span>Mode</span>
-            <select id="fieldCreationMode">
-              <option value="ai">Generate with AI</option>
-              <option value="manual">Write by hand</option>
-            </select>
-          </label>
-
-          <div id="aiFieldsWrap">
-            <label class="resource-field"><span>Subject</span><input type="text" id="fieldSubject"></label>
-            <label class="resource-field"><span>Class</span><input type="text" id="fieldClassLevel"></label>
-            <label class="resource-field"><span>Topic</span><input type="text" id="fieldTopic"></label>
+        <div class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>Needs attention</h2>
+            <p class="admin-panel-sub">Resources currently in review, waiting on a decision.</p>
           </div>
+          <div class="admin-row-list" id="overviewReviewList">
+            <div class="admin-empty">Loading…</div>
+          </div>
+        </div>
 
-          <div id="manualContentWrap" hidden>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-              <span style="font-weight:600;">Content JSON</span>
-              <button type="button" id="loadTemplateBtn" class="resource-download-btn" style="padding:6px 12px;">
-                <i class="ph ph-magic-wand"></i><span>Load template for this type</span>
-              </button>
-            </div>
-            <p style="color:var(--text-3);font-size:var(--text-sm);margin-bottom:8px;">
-              Tap "Load template" to fill in the exact structure this resource type needs, then replace the
-              placeholder values with real content. The title field is always required.
-            </p>
-            <label class="resource-field">
-              <textarea id="fieldManualContent" rows="14" style="width:100%;font-family:monospace;"></textarea>
+        <div class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>Recently updated</h2>
+          </div>
+          <div class="admin-row-list" id="overviewRecentList">
+            <div class="admin-empty">Loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════════ RESOURCES ══════════════════ -->
+      <section class="admin-section" id="section-resources">
+        <div class="admin-toolbar">
+          <div class="admin-search">
+            <i class="ph ph-magnifying-glass"></i>
+            <input type="text" id="resourceSearchInput" placeholder="Search resources by title…">
+          </div>
+          <select id="resourceTypeFilter" class="admin-select">
+            <option value="">All types</option>
+          </select>
+        </div>
+
+        <div id="statusTabs" class="admin-status-tabs"></div>
+
+        <div class="admin-panel">
+          <div class="admin-panel-head admin-panel-head--tight">
+            <h2 id="resourceListHeading">Draft</h2>
+            <span class="admin-count-pill" id="resourceListCount">0</span>
+          </div>
+          <div class="admin-row-list" id="adminResourceList">
+            <div class="admin-empty">No resources in this status.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════════ CREATE ══════════════════ -->
+      <section class="admin-section" id="section-create">
+        <div class="admin-segmented" id="createModeSegmented">
+          <label class="admin-segmented-option is-active">
+            <input type="radio" name="createMode" value="single" checked>
+            <i class="ph ph-file"></i><span>Single resource</span>
+          </label>
+          <label class="admin-segmented-option">
+            <input type="radio" name="createMode" value="batch">
+            <i class="ph ph-stack"></i><span>Batch</span>
+          </label>
+        </div>
+
+        <!-- Single create -->
+        <div id="singleCreateForm" class="admin-panel">
+          <div class="admin-field-row">
+            <label class="admin-field">
+              <span>Resource type</span>
+              <select id="fieldResourceType" class="admin-select"></select>
             </label>
           </div>
 
-          <button type="button" class="resource-generate-btn" id="createSingleBtn">
+          <div class="admin-mode-toggle" id="creationModeToggle">
+            <button type="button" class="admin-mode-card is-active" data-mode="ai">
+              <i class="ph ph-sparkle"></i>
+              <span class="admin-mode-card-title">Generate with AI</span>
+              <span class="admin-mode-card-desc">Give a subject, class and topic — Cognita drafts the content.</span>
+            </button>
+            <button type="button" class="admin-mode-card" data-mode="manual">
+              <i class="ph ph-pencil-simple-line"></i>
+              <span class="admin-mode-card-title">Write by hand</span>
+              <span class="admin-mode-card-desc">Fill in structured content yourself using a JSON template.</span>
+            </button>
+          </div>
+          <select id="fieldCreationMode" hidden>
+            <option value="ai">Generate with AI</option>
+            <option value="manual">Write by hand</option>
+          </select>
+
+          <div id="aiFieldsWrap" class="admin-field-grid">
+            <label class="admin-field"><span>Subject</span><input type="text" id="fieldSubject" placeholder="e.g. Biology"></label>
+            <label class="admin-field"><span>Class</span><input type="text" id="fieldClassLevel" placeholder="e.g. SS2"></label>
+            <label class="admin-field"><span>Topic</span><input type="text" id="fieldTopic" placeholder="e.g. Photosynthesis"></label>
+          </div>
+
+          <div id="manualContentWrap" hidden>
+            <div class="admin-advanced-editor-head">
+              <span class="admin-advanced-label"><i class="ph ph-code"></i> Structured content JSON</span>
+              <button type="button" id="loadTemplateBtn" class="admin-btn admin-btn--ghost admin-btn--sm">
+                <i class="ph ph-magic-wand"></i><span>Load template</span>
+              </button>
+            </div>
+            <p class="admin-hint">
+              Load the template for this resource type, then replace the placeholder values. Title is always required.
+            </p>
+            <label class="admin-field">
+              <textarea id="fieldManualContent" rows="14" class="admin-code-textarea"></textarea>
+            </label>
+          </div>
+
+          <button type="button" class="admin-btn admin-btn--primary admin-btn--block" id="createSingleBtn">
             <span class="btn-label">Create draft</span>
             <span class="btn-spinner" hidden></span>
           </button>
         </div>
 
-        <div id="batchCreateForm" hidden>
-          <label class="resource-field">
-            <span>Batch items (JSON array — each item: resourceType, mode, fields or manualContent, optional clientRequestId)</span>
-            <textarea id="fieldBatchItems" rows="12" style="width:100%;font-family:monospace;"
+        <!-- Batch create -->
+        <div id="batchCreateForm" class="admin-panel" hidden>
+          <div class="admin-advanced-editor-head">
+            <span class="admin-advanced-label"><i class="ph ph-code"></i> Batch items (JSON array)</span>
+          </div>
+          <p class="admin-hint">Each item: <code>resourceType</code>, <code>mode</code>, <code>fields</code> or <code>manualContent</code>, optional <code>clientRequestId</code>.</p>
+          <label class="admin-field">
+            <textarea id="fieldBatchItems" rows="12" class="admin-code-textarea"
               placeholder='[{"resourceType":"lesson_plan","mode":"ai","fields":{"subject":"Biology","classLevel":"SS2","topic":"Photosynthesis"},"clientRequestId":"batch1-item1"}]'></textarea>
           </label>
-          <button type="button" class="resource-generate-btn" id="createBatchBtn">
+          <button type="button" class="admin-btn admin-btn--primary admin-btn--block" id="createBatchBtn">
             <span class="btn-label">Run batch</span>
             <span class="btn-spinner" hidden></span>
           </button>
-          <div id="batchResults" style="margin-top:12px;"></div>
+          <div id="batchResults" class="admin-batch-results"></div>
         </div>
       </section>
 
-      <!-- ── Resource list ── -->
-      <section class="my-resources-panel">
-        <h2 class="resources-heading">Resources</h2>
-        <div class="my-resources-list" id="adminResourceList">
-          <div class="my-resources-empty">No resources in this status.</div>
+      <!-- ══════════════════ COLLECTIONS ══════════════════ -->
+      <section class="admin-section" id="section-collections">
+        <div class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>New collection</h2>
+          </div>
+          <div class="admin-field-row admin-field-row--inline">
+            <label class="admin-field" style="flex:1;">
+              <span class="visually-hidden">Collection name</span>
+              <input type="text" id="newCollectionName" placeholder="Collection name">
+            </label>
+            <button class="admin-btn admin-btn--primary" id="createCollectionBtn">
+              <i class="ph ph-plus"></i><span>Create</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-collection-grid" id="collectionsList">
+          <div class="admin-empty">Loading…</div>
         </div>
       </section>
 
-      <!-- ── Detail / edit panel ── -->
-      <section class="resources-result-panel" id="detailPanel" hidden>
-        <div class="resource-result-header">
-          <h2 id="detailTitle">Resource</h2>
-          <button class="resource-result-close" id="detailClose" aria-label="Close"><i class="ph ph-x"></i></button>
+      <!-- ══════════════════ ROLES ══════════════════ -->
+      <section class="admin-section" id="section-roles">
+        <div class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>Admins &amp; moderators</h2>
+            <p class="admin-panel-sub">People who can manage Cognita's learning content.</p>
+          </div>
+          <div class="admin-people-list" id="rolesList">
+            <div class="admin-empty">Loading…</div>
+          </div>
         </div>
 
-        <div style="margin-bottom:12px;">
-          <span id="detailStatusBadge" class="my-resource-status"></span>
+        <div class="admin-panel">
+          <div class="admin-panel-head">
+            <h2>Grant a role</h2>
+          </div>
+
+          <div class="admin-segmented admin-segmented--sm" id="grantLookupSegmented">
+            <label class="admin-segmented-option is-active">
+              <input type="radio" name="grantLookupMode" value="email" checked>
+              <span>By email</span>
+            </label>
+            <label class="admin-segmented-option">
+              <input type="radio" name="grantLookupMode" value="uid">
+              <span>By uid</span>
+            </label>
+          </div>
+
+          <div class="admin-field-grid">
+            <label class="admin-field" id="grantEmailWrap">
+              <span>User's email</span>
+              <input type="email" id="grantEmailInput" placeholder="person@example.com">
+            </label>
+
+            <label class="admin-field" id="grantUidWrap" hidden>
+              <span>User's uid</span>
+              <input type="text" id="grantUidInput" placeholder="Firebase uid">
+            </label>
+
+            <label class="admin-field">
+              <span>Role</span>
+              <select id="grantRoleSelect" class="admin-select">
+                <option value="moderator">Moderator</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+          </div>
+
+          <button class="admin-btn admin-btn--primary" id="grantRoleBtn">
+            <i class="ph ph-user-plus"></i><span>Grant role</span>
+          </button>
+          <p id="grantResultLine" class="admin-hint" style="margin-top:10px;"></p>
         </div>
-
-        <label class="resource-field">
-          <span>Structured content JSON</span>
-          <textarea id="detailContentJson" rows="14" style="width:100%;font-family:monospace;"></textarea>
-        </label>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
-          <button class="resource-generate-btn" id="saveEditBtn">Save edit</button>
-          <button class="resource-generate-btn" id="submitReviewBtn">Submit for review</button>
-          <button class="resource-generate-btn" id="requestChangesBtn">Request changes</button>
-          <button class="resource-generate-btn" id="validateBtn">Validate</button>
-          <button class="resource-generate-btn" id="publishBtn">Publish</button>
-          <button class="resource-generate-btn" id="archiveBtn">Archive</button>
-          <button class="resource-generate-btn" id="restoreBtn">Restore to draft</button>
-          <button class="resource-generate-btn" id="deleteBtn" style="background:#7A2E3A;">Delete</button>
-        </div>
-
-        <h3>Version history</h3>
-        <div id="versionHistory"></div>
-      </section>
-
-      <!-- ── Collections ── -->
-      <section class="my-resources-panel">
-        <h2 class="resources-heading">Collections</h2>
-        <label class="resource-field">
-          <span>New collection name</span>
-          <input type="text" id="newCollectionName">
-        </label>
-        <button class="resource-generate-btn" id="createCollectionBtn">Create collection</button>
-        <div class="my-resources-list" id="collectionsList" style="margin-top:12px;"></div>
-      </section>
-
-      <!-- ── Roles ── -->
-      <section class="my-resources-panel" id="rolesPanel" hidden>
-        <h2 class="resources-heading">Admins &amp; Moderators</h2>
-
-        <div class="my-resources-list" id="rolesList" style="margin-bottom:16px;">
-          <div class="my-resources-empty">Loading...</div>
-        </div>
-
-        <h3>Grant a role</h3>
-
-        <div class="resource-field" style="margin-bottom:12px;">
-          <label><input type="radio" name="grantLookupMode" value="email" checked> By email</label>
-          &nbsp;&nbsp;
-          <label><input type="radio" name="grantLookupMode" value="uid"> By uid directly</label>
-        </div>
-
-        <label class="resource-field" id="grantEmailWrap">
-          <span>User's email</span>
-          <input type="email" id="grantEmailInput" placeholder="person@example.com">
-        </label>
-
-        <label class="resource-field" id="grantUidWrap" hidden>
-          <span>User's uid</span>
-          <input type="text" id="grantUidInput" placeholder="Firebase uid">
-        </label>
-
-        <label class="resource-field">
-          <span>Role</span>
-          <select id="grantRoleSelect">
-            <option value="moderator">Moderator</option>
-            <option value="admin">Admin</option>
-          </select>
-        </label>
-
-        <button class="resource-generate-btn" id="grantRoleBtn">Grant role</button>
-        <p id="grantResultLine" style="margin-top:8px;"></p>
       </section>
 
     </div>
   </main>
+
+  <!-- ══════════════════ DETAIL SLIDE-OVER ══════════════════ -->
+  <div class="admin-detail-scrim" id="detailScrim" hidden></div>
+  <section class="admin-detail-panel" id="detailPanel" hidden aria-label="Resource detail">
+    <header class="admin-detail-header">
+      <button class="admin-detail-close" id="detailClose" aria-label="Close"><i class="ph ph-x"></i></button>
+      <div class="admin-detail-heading">
+        <h2 id="detailTitle">Resource</h2>
+        <div class="admin-detail-meta">
+          <span id="detailTypeBadge" class="admin-badge admin-badge--type"></span>
+          <span id="detailStatusBadge" class="admin-badge"></span>
+        </div>
+      </div>
+      <button class="admin-btn admin-btn--primary" id="detailPrimaryActionBtn">Submit for review</button>
+    </header>
+
+    <div class="admin-detail-body">
+      <div class="admin-detail-main">
+        <div class="admin-advanced-editor-head">
+          <span class="admin-advanced-label"><i class="ph ph-code"></i> Structured content JSON</span>
+          <button class="admin-btn admin-btn--ghost admin-btn--sm" id="saveEditBtn">
+            <i class="ph ph-floppy-disk"></i><span>Save edit</span>
+          </button>
+        </div>
+        <textarea id="detailContentJson" rows="18" class="admin-code-textarea"></textarea>
+
+        <div class="admin-workflow-actions" id="detailSecondaryActions">
+          <button class="admin-btn admin-btn--ghost" id="requestChangesBtn">Request changes</button>
+          <button class="admin-btn admin-btn--ghost" id="validateBtn">Validate</button>
+          <button class="admin-btn admin-btn--ghost" id="archiveBtn">Archive</button>
+          <button class="admin-btn admin-btn--ghost" id="restoreBtn">Restore to draft</button>
+          <!-- kept for JS compatibility; visually merged into the primary action -->
+          <button id="submitReviewBtn" hidden></button>
+          <button id="publishBtn" hidden></button>
+        </div>
+
+        <div class="admin-danger-zone">
+          <div>
+            <strong>Delete this resource</strong>
+            <p>This permanently removes the resource. It cannot be undone.</p>
+          </div>
+          <button class="admin-btn admin-btn--danger" id="deleteBtn">Delete</button>
+        </div>
+      </div>
+
+      <aside class="admin-detail-side">
+        <h3>Version history</h3>
+        <div id="versionHistory" class="admin-timeline">
+          <p class="admin-hint">No previous versions yet.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
 </div>
 
 <script type="module" src="/js/auth.js"></script>
