@@ -165,6 +165,15 @@ export async function handleResourceGenerate(request, env) {
     curriculum: fields.curriculum || '',
     topic: fields.topic || '',
     customInstructions: fields.customInstructions || '',
+    // The full set of generation fields (questionCount, sectionCount,
+    // weekCount, slideCount, totalMarks, difficulty, etc.) is preserved
+    // here so that editing or regenerating this resource later can pass
+    // the SAME fields back into recipe.validate() — without this, an
+    // edit would validate against each recipe's fallback default count
+    // instead of what was actually requested, and could fail for a
+    // reason invisible in the editor UI. Explicit fields above still win
+    // if a key collides, since they're spread first.
+    ...fields,
     tags: [],
     visibility: 'private',
     status: 'generating',
@@ -272,6 +281,9 @@ export async function handleResourceEdit(request, env, resourceId) {
     return _jsonError('Unknown resource type on this resource: ' + doc.resourceType, 500, env);
   }
 
+  // doc itself now carries the original generation fields (questionCount,
+  // sectionCount, etc. — see baseDoc in handleResourceGenerate), so this
+  // validates against what was actually requested rather than a default.
   const validation = recipe.validate(body.structuredContent, doc);
   if (!validation.ok) {
     return _jsonError('Edited content did not pass validation: ' + validation.error, 422, env);
