@@ -681,6 +681,25 @@ const ResourceRenderers = (() => {
     const questionsHtml = questions
       .map((question, index) => {
         const type = normalizeText(question.type || 'short answer');
+        const options = Array.isArray(question.options) ? question.options : [];
+        const showOptions = type === 'multiple_choice' && options.length > 0;
+
+        const optionsHtml = showOptions
+          ? `
+            <div class="worksheet-question-options">
+              ${options
+                .map(
+                  (option, optIndex) => `
+                    <div class="worksheet-question-option">
+                      <span class="worksheet-question-option-letter">${escapeHtml(String.fromCharCode(65 + optIndex))}</span>
+                      <span>${escapeHtml(option)}</span>
+                    </div>
+                  `
+                )
+                .join('')}
+            </div>
+          `
+          : '';
 
         return `
           <article class="worksheet-question">
@@ -697,11 +716,15 @@ const ResourceRenderers = (() => {
                 ${escapeHtml(question.question || '')}
               </div>
 
-              <div class="worksheet-answer-lines">
-                <div></div>
-                <div></div>
-                <div></div>
-              </div>
+              ${optionsHtml}
+
+              ${showOptions ? '' : `
+                <div class="worksheet-answer-lines">
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                </div>
+              `}
             </div>
           </article>
         `;
