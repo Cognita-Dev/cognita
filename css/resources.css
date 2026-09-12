@@ -195,7 +195,7 @@
 .resource-result-body li { margin-bottom: var(--space-1); }
 .resource-result-body p { margin-bottom: var(--space-2); }
 
-/* ── Direct JSON edit surface ── */
+/* ── Structured content editor (replaces raw JSON textarea) ── */
 .resource-edit-wrap {
   padding: var(--space-5);
   border-bottom: 1px solid var(--border);
@@ -205,26 +205,161 @@
   color: var(--text-3);
   margin-bottom: var(--space-3);
 }
-.resource-edit-textarea {
-  width: 100%;
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  background: #0d1117;
-  color: #e6edf3;
-  border: 1px solid #30363d;
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
-  outline: none;
-  resize: vertical;
-  margin-bottom: var(--space-3);
-}
-.resource-edit-textarea:focus { border-color: var(--accent-2); }
 .resource-edit-actions {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  margin-top: var(--space-4);
 }
+
+.resource-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.redit-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.redit-field-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.redit-input,
+.redit-select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  background: var(--bg-subtle);
+  color: var(--text-1);
+  outline: none;
+  font-family: inherit;
+}
+.redit-input:focus,
+.redit-select:focus,
+.redit-textarea:focus {
+  border-color: var(--accent-2);
+  background: var(--bg-elevated);
+}
+.redit-textarea {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  background: var(--bg-subtle);
+  color: var(--text-1);
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Tag-style string list rows (bullets/numbered) */
+.redit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.redit-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.redit-list-input { flex: 1; }
+
+.redit-drag-handle {
+  cursor: grab;
+  color: var(--text-4);
+  flex-shrink: 0;
+  touch-action: none;
+}
+.redit-icon-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.redit-icon-btn:hover { color: var(--danger); background: var(--danger-subtle); }
+
+.redit-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.redit-add-btn:hover { color: var(--text-1); border-color: var(--accent-2); }
+
+/* Term/definition pairs */
+.redit-termlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.redit-term-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--bg-subtle);
+}
+.redit-term-row-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.redit-term-input { flex: 1; font-weight: 600; }
+.redit-term-explanation { min-height: 40px; }
+
+/* Reorderable sections / object cards (lesson-note sections, slides, etc.) */
+.redit-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.redit-section-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.redit-section-card.is-dragging {
+  opacity: 0.6;
+  border-color: var(--accent-2);
+}
+.redit-section-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.redit-section-heading { flex: 1; font-weight: 600; }
+.redit-section-card-title-spacer { flex: 1; }
+.redit-section-content-slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.redit-sectionlist-field .redit-field-label { margin-bottom: var(--space-1); }
 
 /* ── Follow-up regenerate row ── */
 .resource-regenerate-row {
