@@ -244,15 +244,16 @@
 
         <div class="resource-result-body" id="resourceResultBody"></div>
 
-        <!-- Direct JSON edit surface — shown instead of the rendered
-             preview while editing, same content underneath. -->
+        <!-- Structured content editor — shown instead of the rendered
+             preview while editing. Populated at runtime by
+             resource-editor.js with real form fields; no raw JSON. -->
         <div class="resource-edit-wrap" id="resourceEditWrap" hidden>
           <p class="resource-edit-hint">
-            Edit the structured content directly. Keep the same field names and shape as shown.
+            Edit the content below, then save your changes.
           </p>
-          <textarea id="resourceEditTextarea" class="resource-edit-textarea" rows="18"></textarea>
+          <div id="resourceEditForm"></div>
           <div class="resource-edit-actions">
-            <button class="resource-download-btn" id="resourceEditSaveBtn" style="margin-bottom:0;">
+            <button class="resource-download-btn" id="resourceEditSaveBtn" style="margin-bottom:0;" disabled>
               <span class="btn-label">Save changes</span>
               <span class="btn-spinner" hidden></span>
             </button>
@@ -295,6 +296,7 @@
 
 <script type="module" src="/js/auth.js"></script>
 <script src="/js/resource-renderers.js"></script>
+<script src="/js/resource-editor.js"></script>
 <script type="module" src="/js/resources.js"></script>
 
 </body>
