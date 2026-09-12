@@ -35,6 +35,11 @@ const TYPE_FIELD_CONFIG = {
     objectiveFocus: true,
   },
 
+  // Lesson Note only needs subject/class/topic (already always sent) —
+  // no lesson-plan-specific controls like duration or lesson style. The
+  // AI infers structure and depth from subject/class/topic itself; class
+  // level affects vocabulary only, never how much of the topic is
+  // covered.
   lesson_note: {
     topic: true,
   },
@@ -537,6 +542,20 @@ function openForm(type) {
       : '10';
   }
 
+  // Reset the custom instructions field for the new form session, and
+  // tailor its placeholder to the resource type so it's obvious what
+  // it's for.
+  const customInstructionsInput = document.getElementById(
+    'fieldCustomInstructions'
+  );
+  if (customInstructionsInput) {
+    customInstructionsInput.value = '';
+    customInstructionsInput.placeholder =
+      type === 'lesson_note'
+        ? 'e.g. Focus more on real-world examples, or include a labeled diagram description for each stage.'
+        : 'e.g. Any specific angle, emphasis, or extra requirement for this resource.';
+  }
+
   renderResourceSpecificFields(config);
   renderDesignTemplatePicker();
 }
@@ -681,6 +700,13 @@ function wireForm() {
           .getElementById('fieldCurriculum')
           .value.trim(),
       };
+
+      const customInstructionsInput = document.getElementById(
+        'fieldCustomInstructions'
+      );
+      if (customInstructionsInput && customInstructionsInput.value.trim()) {
+        fields.customInstructions = customInstructionsInput.value.trim();
+      }
 
       const config = TYPE_FIELD_CONFIG[selectedType] || {};
 
@@ -958,6 +984,12 @@ function wireResultPanel() {
 
       currentResource = null;
     });
+
+  document.getElementById('resourceEditBtn').addEventListener('click', toggleEditMode);
+  document.getElementById('resourceEditSaveBtn').addEventListener('click', saveEdit);
+  document.getElementById('resourceEditCancelBtn').addEventListener('click', () => setEditMode(false));
+
+  document.getElementById('resourceRegenerateBtn').addEventListener('click', submitRegenerate);
 }
 
 const FORMAT_LABELS = {
@@ -980,6 +1012,8 @@ function showResultPanel(resource) {
   );
 
   panel.hidden = false;
+  setEditMode(false);
+  document.getElementById('resourceRegeneratePrompt').value = '';
 
   resultTitle.textContent =
     resource.structuredContent.title ||
@@ -1048,6 +1082,113 @@ function showResultPanel(resource) {
     behavior: 'smooth',
     block: 'start',
   });
+}
+
+/* ── Edit (direct structuredContent edit, no AI call) ── */
+
+function setEditMode(isEditing) {
+  document.getElementById('resourceResultBody').hidden = isEditing;
+  document.getElementById('resourceEditWrap').hidden = !isEditing;
+  document.getElementById('resourceEditBtn').hidden = isEditing;
+
+  if (isEditing && currentResource) {
+    document.getElementById('resourceEditTextarea').value =
+      JSON.stringify(currentResource.structuredContent, null, 2);
+  }
+}
+
+function toggleEditMode() {
+  setEditMode(true);
+}
+
+async function saveEdit() {
+  if (!currentResource) return;
+
+  let structuredContent;
+  try {
+    structuredContent = JSON.parse(
+      document.getElementById('resourceEditTextarea').value
+    );
+  } catch (e) {
+    showToast('That content is not valid JSON.');
+    return;
+  }
+
+  const btn = document.getElementById('resourceEditSaveBtn');
+  setBtnLoading(btn, true);
+
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/resources/' + currentResource.id + '/edit',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structuredContent }),
+      }
+    );
+    const data = await res.json();
+    setBtnLoading(btn, false);
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not save your edit.');
+      return;
+    }
+
+    currentResource = data.resource;
+    showResultPanel(currentResource);
+    showToast('Saved.');
+    await loadMyResources();
+  } catch (e) {
+    setBtnLoading(btn, false);
+    showToast('Could not reach Cognita. Please try again.');
+    console.error('[resources] edit save failed:', e.message);
+  }
+}
+
+/* ── Regenerate with a follow-up prompt (real AI call, revises in place) ── */
+
+async function submitRegenerate() {
+  if (!currentResource) return;
+
+  const instruction = document
+    .getElementById('resourceRegeneratePrompt')
+    .value.trim();
+
+  if (!instruction) {
+    showToast('Describe what you would like changed.');
+    return;
+  }
+
+  const btn = document.getElementById('resourceRegenerateBtn');
+  setBtnLoading(btn, true);
+
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/resources/' + currentResource.id + '/regenerate',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      }
+    );
+    const data = await res.json();
+    setBtnLoading(btn, false);
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not regenerate the resource.');
+      return;
+    }
+
+    currentResource = data.resource;
+    showResultPanel(currentResource);
+    showToast('Updated.');
+    await refreshUsage();
+    await loadMyResources();
+  } catch (e) {
+    setBtnLoading(btn, false);
+    showToast('Could not reach Cognita. Please try again.');
+    console.error('[resources] regenerate failed:', e.message);
+  }
 }
 
 async function downloadResource(resourceId, format, btn) {
