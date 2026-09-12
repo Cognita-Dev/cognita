@@ -4,6 +4,7 @@
 // resources-endpoint.js needs to change.
 
 import { LESSON_PLAN_RECIPE } from './lesson-plan.js';
+import { LESSON_NOTE_RECIPE } from './lesson-notes.js';
 import { WORKSHEET_RECIPE } from './worksheet.js';
 import { EXAM_RECIPE } from './exam.js';
 import { SCHEME_OF_WORK_RECIPE } from './scheme-of-work.js';
@@ -22,6 +23,7 @@ import { TEST_RECIPE } from './test.js';
 
 export const RECIPES = {
   lesson_plan: LESSON_PLAN_RECIPE,
+  lesson_note: LESSON_NOTE_RECIPE,
   worksheet: WORKSHEET_RECIPE,
   exam: EXAM_RECIPE,
   scheme_of_work: SCHEME_OF_WORK_RECIPE,
@@ -45,6 +47,7 @@ export function getRecipe(resourceType) {
 
 export const RECIPE_LABELS = {
   lesson_plan: 'Lesson Plan',
+  lesson_note: 'Lesson Note',
   worksheet: 'Worksheet',
   exam: 'Examination',
   scheme_of_work: 'Scheme of Work',
