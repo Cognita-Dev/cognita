@@ -291,8 +291,6 @@ export default {
       return handleLibraryDownload(request, env, resourceId);
     }
 
-    // Must come before the plain "GET /api/library/resources/:id" check
-    // below, since both match a four-segment path.
     if (request.method === 'GET' && /^\/api\/library\/resources\/[^/]+\/file$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[4];
       return handleLibraryFileProxy(request, env, resourceId);
