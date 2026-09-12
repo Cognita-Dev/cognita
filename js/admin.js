@@ -881,6 +881,17 @@ async function runTransition(action) {
 
 /* ── Collections ── */
 
+// Cache of published resources, used to populate the "add resource"
+// pickers inside each collection card. Fetched lazily the first time
+// any collection's manage panel is opened, then reused — a manage
+// click never needs to re-fetch unless the admin asks it to refresh.
+let _publishedResourcesCache = null;
+
+// Which collection's manage panel (if any) is currently expanded, kept
+// so a re-render from loadCollections() (e.g. after add/remove) can
+// restore it open instead of collapsing everything back down.
+let _openManageCollectionId = null;
+
 function wireCollections() {
   document.getElementById('createCollectionBtn').addEventListener('click', async () => {
     const name = document.getElementById('newCollectionName').value.trim();
@@ -926,19 +937,7 @@ async function loadCollections() {
       return;
     }
 
-    list.innerHTML = collections.map((c) =>
-      '<div class="admin-collection-card">' +
-      '<div>' +
-      '<div class="admin-collection-card-title">' + escapeHtml(c.name) + '</div>' +
-      '<div class="admin-collection-card-meta">' + (c.resourceIds || []).length + ' resource(s)</div>' +
-      '</div>' +
-      '<button data-cid="' + c.id + '" data-vis="' + c.visibility + '" class="admin-btn admin-btn--ghost toggle-vis-btn">' +
-      (c.visibility === 'published'
-        ? '<i class="ph ph-eye-slash"></i><span>Unpublish</span>'
-        : '<i class="ph ph-globe"></i><span>Publish</span>') +
-      '</button>' +
-      '</div>'
-    ).join('');
+    list.innerHTML = collections.map((c) => _renderCollectionCard(c)).join('');
 
     list.querySelectorAll('.toggle-vis-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -964,8 +963,144 @@ async function loadCollections() {
         }
       });
     });
+
+    list.querySelectorAll('.manage-resources-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const cid = btn.dataset.cid;
+        _openManageCollectionId = _openManageCollectionId === cid ? null : cid;
+        await loadCollections();
+      });
+    });
+
+    // Only the currently-open card needs its manage panel wired up.
+    if (_openManageCollectionId) {
+      const openCollection = collections.find((c) => c.id === _openManageCollectionId);
+      if (openCollection) await _wireCollectionManagePanel(openCollection);
+    }
   } catch (e) {
     console.error('[admin] collections load failed:', e.message);
+  }
+}
+
+function _renderCollectionCard(c) {
+  const isOpen = _openManageCollectionId === c.id;
+  return (
+    '<div class="admin-collection-card" data-cid="' + c.id + '">' +
+    '<div class="admin-collection-card-head">' +
+    '<div>' +
+    '<div class="admin-collection-card-title">' + escapeHtml(c.name) + '</div>' +
+    '<div class="admin-collection-card-meta">' + (c.resourceIds || []).length + ' resource(s) &middot; ' +
+    (c.visibility === 'published' ? 'Published' : 'Draft') + '</div>' +
+    '</div>' +
+    '<div class="admin-collection-card-actions">' +
+    '<button data-cid="' + c.id + '" class="admin-btn admin-btn--ghost admin-btn--sm manage-resources-btn">' +
+    '<i class="ph ph-stack"></i><span>' + (isOpen ? 'Close' : 'Manage resources') + '</span>' +
+    '</button>' +
+    '<button data-cid="' + c.id + '" data-vis="' + c.visibility + '" class="admin-btn admin-btn--ghost admin-btn--sm toggle-vis-btn">' +
+    (c.visibility === 'published'
+      ? '<i class="ph ph-eye-slash"></i><span>Unpublish</span>'
+      : '<i class="ph ph-globe"></i><span>Publish</span>') +
+    '</button>' +
+    '</div>' +
+    '</div>' +
+    (isOpen ? '<div class="admin-collection-manage" id="manage-' + c.id + '">' +
+      '<div class="admin-collection-resource-list">Loading…</div>' +
+      '</div>' : '') +
+    '</div>'
+  );
+}
+
+// Populates and wires the manage panel for a single (already-open)
+// collection card: the list of resources currently in it (each
+// removable), plus a picker to add any published resource not
+// already in it.
+async function _wireCollectionManagePanel(collection) {
+  const panel = document.getElementById('manage-' + collection.id);
+  if (!panel) return;
+
+  if (!_publishedResourcesCache) {
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/resources?status=published');
+      const data = await res.json();
+      if (!res.ok) {
+        panel.innerHTML = '<div class="admin-collection-manage-empty">' +
+          escapeHtml(data.error || 'Could not load published resources.') + '</div>';
+        return;
+      }
+      _publishedResourcesCache = data.resources || [];
+    } catch (e) {
+      panel.innerHTML = '<div class="admin-collection-manage-empty">Could not reach the server.</div>';
+      console.error('[admin] published resources load failed:', e.message);
+      return;
+    }
+  }
+
+  const currentIds = Array.isArray(collection.resourceIds) ? collection.resourceIds : [];
+  const byId = new Map(_publishedResourcesCache.map((r) => [r.id, r]));
+  const currentResources = currentIds.map((id) => byId.get(id)).filter(Boolean);
+  const availableResources = _publishedResourcesCache.filter((r) => !currentIds.includes(r.id));
+
+  const listHtml = currentResources.length
+    ? '<div class="admin-collection-resource-list">' + currentResources.map((r) =>
+        '<div class="admin-collection-resource-row">' +
+        '<div class="admin-collection-resource-info">' +
+        '<div class="admin-collection-resource-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
+        '<div class="admin-collection-resource-type">' + escapeHtml(r.resourceType) + '</div>' +
+        '</div>' +
+        '<button class="admin-btn admin-btn--ghost admin-btn--sm remove-resource-btn" data-rid="' + r.id + '">' +
+        '<i class="ph ph-x"></i><span>Remove</span>' +
+        '</button>' +
+        '</div>'
+      ).join('') + '</div>'
+    : '<div class="admin-collection-manage-empty">No resources in this collection yet.</div>';
+
+  const addHtml = availableResources.length
+    ? '<div class="admin-collection-add-row">' +
+      '<select class="admin-select add-resource-select">' +
+      availableResources.map((r) =>
+        '<option value="' + r.id + '">' + escapeHtml(r.structuredContent?.title || r.id) +
+        ' (' + escapeHtml(r.resourceType) + ')</option>'
+      ).join('') +
+      '</select>' +
+      '<button class="admin-btn admin-btn--primary admin-btn--sm add-resource-btn">' +
+      '<i class="ph ph-plus"></i><span>Add</span></button>' +
+      '</div>'
+    : '<div class="admin-collection-manage-empty">Every published resource is already in this collection.</div>';
+
+  panel.innerHTML = listHtml + addHtml;
+
+  panel.querySelectorAll('.remove-resource-btn').forEach((btn) => {
+    btn.addEventListener('click', () => _editCollectionResource(collection.id, 'remove', btn.dataset.rid));
+  });
+
+  const addBtn = panel.querySelector('.add-resource-btn');
+  const addSelect = panel.querySelector('.add-resource-select');
+  if (addBtn && addSelect) {
+    addBtn.addEventListener('click', () => _editCollectionResource(collection.id, 'add', addSelect.value));
+  }
+}
+
+async function _editCollectionResource(collectionId, action, resourceId) {
+  if (!resourceId) return;
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/admin/collections/' + collectionId + '/resources',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, resourceId }),
+      }
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not update collection.');
+      return;
+    }
+    showToast(action === 'add' ? 'Resource added.' : 'Resource removed.');
+    await loadCollections();
+  } catch (e) {
+    showToast('Could not reach the server.');
+    console.error('[admin] collection resource edit failed:', e.message);
   }
 }
 
