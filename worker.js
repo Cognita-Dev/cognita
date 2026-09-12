@@ -1,4 +1,7 @@
 // worker.js
+// Main Cloudflare Worker entry point. Routes requests to the appropriate
+// handler. Every protected route authenticates independently inside its
+// own handler — this router does no auth itself, just dispatch.
 
 import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
@@ -43,6 +46,7 @@ import {
   handleAdminRoleRevoke,
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
+
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -159,7 +163,7 @@ export default {
     if (request.method === 'GET' && url.pathname === '/api/admin/whoami') {
       return handleAdminWhoAmI(request, env);
     }
-    
+
     // ── Admin/moderator role management (requires role: 'admin') ─────
 
     if (request.method === 'GET' && url.pathname === '/api/admin/roles') {
