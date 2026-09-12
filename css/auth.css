@@ -1,6 +1,12 @@
 /* css/auth.css
    Login / signup page styling. Builds on shared.css tokens.
+   Rewritten in full — every rule below is intentional, not inherited
+   cruft from an earlier pass.
 */
+
+/* ══════════════════════════════════════════════════════════════
+   Page shell
+   ══════════════════════════════════════════════════════════════ */
 .auth-page {
   background: var(--bg-base);
   min-height: 100vh;
@@ -8,16 +14,19 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
-  /* Status-bar safe area — this is what was actually causing the
-     title to slide up under the clock/signal icons in the screenshot.
-     Token sizes alone don't fix an overlap; this does. */
+  /* Safe-area padding so the title never sits under the status bar /
+     notch on iOS. Requires viewport-fit=cover on the page's <meta
+     viewport> tag — both auth pages set that. */
   padding-top: max(var(--space-6), calc(env(safe-area-inset-top) + var(--space-5)));
+  padding-bottom: max(var(--space-5), calc(env(safe-area-inset-bottom) + var(--space-4)));
 }
+
 .auth-shell {
   width: 100%;
   max-width: 320px;
   animation: fadeInUp var(--duration-slow) var(--ease);
 }
+
 .auth-logo {
   display: flex;
   justify-content: center;
@@ -28,6 +37,7 @@
   width: auto;
   border-radius: 4px;
 }
+
 .auth-header {
   text-align: center;
   margin-bottom: var(--space-5);
@@ -46,6 +56,7 @@
   color: var(--text-3);
   font-size: var(--text-xs);
 }
+
 .auth-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -53,6 +64,10 @@
   padding: var(--space-5) var(--space-4);
   box-shadow: var(--shadow-sm);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Buttons
+   ══════════════════════════════════════════════════════════════ */
 .auth-btn {
   width: 100%;
   display: flex;
@@ -70,16 +85,11 @@
 .auth-btn:active {
   transform: scale(0.98);
 }
+
 .auth-btn--google {
   background: transparent;
   border: 1px solid var(--border-strong);
   color: var(--text-2);
-  /* Google's Sign In branding guidelines call for: a minimum 40px
-     button height, medium- (not bold-) weight text, and clear space
-     around the logo roughly equal to the logo's own width. The values
-     below follow that from memory rather than a byte-for-byte spec
-     check — if pixel-exact brand compliance matters, cross-check
-     against Google's current guidelines page before shipping. */
   min-height: 38px;
   font-weight: 500;
   gap: 10px;
@@ -99,11 +109,6 @@
   background: transparent;
 }
 
-/* ── Google sign-in loader — a small equalizer, not another spinning
-     ring (that treatment is already used everywhere else in the app:
-     the primary sign-in button, resource generation, admin, etc). Four
-     bars bounce out of phase with each other, reading clearly as "still
-     working" without repeating a shape people have already seen. ── */
 .google-btn-content {
   display: inline-flex;
   align-items: center;
@@ -138,6 +143,7 @@
     transform: scaleY(0.7);
   }
 }
+
 .auth-btn--primary {
   background: var(--text-1);
   color: var(--bg-base);
@@ -147,9 +153,10 @@
   opacity: 0.85;
 }
 .auth-btn--primary:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
+
 .auth-divider {
   display: flex;
   align-items: center;
@@ -167,11 +174,16 @@
   height: 1px;
   background: var(--border);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Form fields
+   ══════════════════════════════════════════════════════════════ */
 .auth-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
+
 .auth-field {
   display: flex;
   flex-direction: column;
@@ -185,7 +197,22 @@
   align-items: baseline;
   justify-content: space-between;
 }
+
+/* Every text input in the form — including the one nested inside
+   .auth-password-wrap — gets an explicit width. This matters: a
+   flex container with align-items:stretch (the default, which
+   .auth-field uses) only stretches its DIRECT children. The email
+   and name inputs are direct children of .auth-field, so they
+   stretch for free. The password input is not — it's nested one
+   level deeper inside .auth-password-wrap — so without this rule it
+   falls back to the browser's intrinsic input width (~150-190px)
+   while its wrapper div still stretches to the full card width,
+   leaving a visible gap before the toggle button. Setting width
+   explicitly here removes any dependency on which element happens
+   to be a flex child. */
 .auth-field input {
+  width: 100%;
+  box-sizing: border-box;
   padding: 10px var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -198,10 +225,15 @@
   outline: none;
   border-color: var(--text-1);
 }
+.auth-field input.is-invalid {
+  border-color: var(--danger);
+}
 
-/* ── Password field with a show/hide toggle. The icon sits inside the
-     input's own box (not beside it) so the field keeps its familiar
-     shape — only the padding on the right makes room for the button. ── */
+/* ── Password field with a show/hide toggle, inside the input's own
+     box. The wrapper is position:relative purely to anchor the
+     absolutely-positioned toggle button — it carries no width logic
+     of its own; the input's own width:100% (above) is what actually
+     sizes the field. ── */
 .auth-password-wrap {
   position: relative;
 }
@@ -220,13 +252,26 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-4);
-  font-size: 1rem;
   transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
 .auth-password-toggle:hover {
   color: var(--text-2);
   background: var(--bg-subtle);
 }
+.auth-password-toggle svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+/* Only one of the two icon <svg>s inside the toggle button is shown
+   at a time — toggled via the [data-state] attribute the script
+   sets, rather than swapping an external icon font's class name. No
+   external icon CDN is loaded at all on this page anymore, so the
+   toggle can never render "nothing" while still functioning. */
+.auth-password-toggle .icon-eye-off { display: none; }
+.auth-password-toggle[data-state="visible"] .icon-eye { display: none; }
+.auth-password-toggle[data-state="visible"] .icon-eye-off { display: flex; }
+
 .auth-hint {
   font-size: 0.7rem;
   font-weight: 400;
@@ -244,24 +289,14 @@
 .auth-form .auth-btn--primary {
   margin-top: var(--space-2);
 }
-.auth-field input.is-invalid {
-  border-color: var(--danger);
-}
-.auth-btn--primary:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-/* ── Password strength meter ──────────────────────────────────────
-   Redesigned from a tall, single-column bulleted list (five full-width
-   rows stacked under a thin bar — a lot of vertical weight for a
-   secondary hint, and visually it read as "another form" rather than
-   a quick status check) into a compact wrapped row of chips, the
-   pattern used by Dropbox, GitHub, and Microsoft's signup forms: it
-   scans in one glance instead of five lines, and each requirement's
-   met/unmet state is carried by an icon *and* color together, not
-   color alone (WCAG 1.4.1). The bar keeps its color coding but now
-   also has a text label next to it for the same reason — a red bar by
-   itself doesn't tell a colorblind user anything. */
+
+/* ══════════════════════════════════════════════════════════════
+   Password strength meter — compact wrapped chips (not a tall
+   single-column list). Each requirement's met/unmet state is
+   carried by an icon *and* color together, not color alone
+   (WCAG 1.4.1). The bar keeps its color coding but also has a text
+   label next to it for the same reason.
+   ══════════════════════════════════════════════════════════════ */
 .strength-meter {
   margin-top: var(--space-2);
 }
@@ -315,8 +350,6 @@
   color: var(--text-4);
   transition: color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-/* A fixed-size circle that becomes a filled checkmark once met — sized
-   up front so meeting a requirement doesn't shift any layout. */
 .strength-checklist li::before {
   content: '';
   width: 12px;
@@ -348,6 +381,10 @@
   background: var(--success);
   border-color: var(--success);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Errors, footer links
+   ══════════════════════════════════════════════════════════════ */
 .field-error {
   margin-top: var(--space-1);
   font-size: 0.75rem;
@@ -365,6 +402,7 @@
   animation: fadeIn var(--duration-base) var(--ease);
 }
 .auth-btn-error:empty { display: none; }
+
 .auth-switch {
   margin-top: var(--space-6);
   text-align: center;
