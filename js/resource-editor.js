@@ -21,6 +21,12 @@ window.ResourceEditor = (function () {
     lesson_note: {
       topLevelLabels: { title: 'Title', introduction: 'Introduction', summary: 'Summary' },
       sectionsKey: 'sections',
+      // A Nigerian classroom lesson note is taught/copied as a run of
+      // labelled sub-topics (definitions, explanations, examples) — it
+      // is never presented to a student under a meta-label like
+      // "Sections", which reads like a document-editing artifact rather
+      // than actual lesson content.
+      sectionsLabel: 'Lesson Content',
       sectionTypeOptions: [
         { value: 'paragraph', label: 'Paragraph' },
         { value: 'bullets', label: 'Bullet list' },
@@ -356,7 +362,7 @@ window.ResourceEditor = (function () {
   function buildSectionList(sections, config) {
     const wrap = el('div', 'redit-field redit-sectionlist-field');
     const lab = el('label', 'redit-field-label');
-    lab.textContent = 'Sections';
+    lab.textContent = (config && config.sectionsLabel) || 'Sections';
     const list = el('div', 'redit-sections');
     const cards = [];
 
@@ -749,7 +755,14 @@ window.ResourceEditor = (function () {
     const linked = config.linkedList;
     const derivedKeys = new Set(config.derivedKeys || []);
     const skipTopLevel = new Set(['title']);
-    if (config.sectionsKey) skipTopLevel.add(config.sectionsKey);
+    // NOTE: config.sectionsKey (e.g. lesson_note's "sections") is
+    // intentionally NOT added to skipTopLevel. The loop below already
+    // special-cases key === config.sectionsKey to render it with
+    // buildSectionList, in its natural position among the other fields
+    // (introduction, sections, summary, ...). Skipping it here meant it
+    // was dropped before that check ever ran, so the editor silently
+    // showed only Title/Introduction/Summary and never let anyone edit
+    // the actual lesson content.
     if (linked) {
       skipTopLevel.add(linked.primaryKey);
       skipTopLevel.add(linked.linkedKey);
