@@ -1,13 +1,4 @@
 // admin-resources-endpoint.js
-// Admin resource CRUD: create (AI or hand-written), batch create
-// (idempotent), edit, workflow transitions (Draft -> Review -> Validate ->
-// Publish), listing, single fetch, delete, and version history.
-//
-// Every handler starts with requireAdmin() — a normal user's token is
-// rejected before anything else runs. Failures here are fully isolated
-// from user-facing routes: nothing in this file is imported by
-// resources-endpoint.js, and every exported handler catches its own
-// errors and returns a JSON response rather than throwing.
 
 import { requireAdmin } from './admin-auth.js';
 import { fsSet, fsGet, fsQuery, fsDelete } from './firestore-rest.js';
@@ -21,8 +12,6 @@ import { b2UploadFile } from './b2-client.js';
 
 const RESOURCE_MAX_TOKENS = 6000;
 
-// The only allowed state transitions. Anything not listed here is
-// rejected with a clear error rather than silently no-op'd.
 const ACTION_MAP = {
   submit_review: { from: ['draft'], to: 'in_review' },
   request_changes: { from: ['in_review', 'validated'], to: 'draft' },
@@ -33,6 +22,8 @@ const ACTION_MAP = {
 };
 
 const ALL_STATUSES = ['draft', 'in_review', 'validated', 'published', 'archived'];
+const PPTX_TYPES = new Set(['presentation']);
+const SKIP_KEYS = new Set(['title']);
 
 function _makeId() {
   return (crypto && crypto.randomUUID)
@@ -40,31 +31,25 @@ function _makeId() {
     : 'a-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-function _corsJsonHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-  };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: _corsJsonHeaders(),
-  });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
 
-function _jsonOk(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: _corsJsonHeaders(),
-  });
+function _jsonOk(body, status, env) {
+  return new Response(JSON.stringify(body), { status: status || 200, headers: _corsJsonHeaders(env) });
 }
 
-// Same JSON-parsing/repair logic as resources-endpoint.js, duplicated here
-// on purpose rather than shared, so this file never has to touch or risk
-// breaking the existing user-facing endpoint. If you'd rather share one
-// copy, both can later import from a small json-repair.js util.
+function _base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 function _parseStructuredJson(text) {
   if (!text) return null;
   let clean = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
@@ -74,9 +59,7 @@ function _parseStructuredJson(text) {
   clean = clean.slice(start, end + 1);
   try {
     return JSON.parse(clean);
-  } catch (e) {
-    // fall through to repair attempt
-  }
+  } catch (e) {}
   const repaired = _repairTruncatedJson(clean);
   if (repaired === null) return null;
   try {
@@ -111,21 +94,31 @@ function _repairTruncatedJson(text) {
   return repaired;
 }
 
-// ── Idempotency reservation ──────────────────────────────────────────
-// Reserves a clientRequestId before any AI call or resource write. If the
-// key was already reserved (a retry of the same batch item), returns the
-// resourceId that was reserved the first time instead of a fresh one, so
-// the caller can look up and return the existing resource rather than
-// creating a duplicate.
-//
-// Note: Firestore REST here does a plain read-then-write, not a true
-// transaction, so this closes the window for a client accidentally
-// double-submitting the same request from two tabs at the exact same
-// moment — it does not guarantee atomicity under concurrent identical
-// requests arriving within milliseconds of each other. For a single-admin
-// curation tool this is a reasonable tradeoff; if you ever have multiple
-// admins racing on the same idempotency key, this would need a real
-// Firestore transaction.
+function _structuredContentToSections(content) {
+  const sections = [];
+  for (const key in content) {
+    if (SKIP_KEYS.has(key)) continue;
+    const value = content[key];
+    if (value === null || typeof value === 'undefined') continue;
+    const heading = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      const items = value.map((item) => {
+        if (item && typeof item === 'object') {
+          return Object.values(item).filter((v) => typeof v === 'string' || typeof v === 'number').join(' — ');
+        }
+        return String(item);
+      });
+      sections.push({ heading, type: 'bullets', content: items });
+    } else if (typeof value === 'object') {
+      sections.push({ heading, type: 'paragraph', content: JSON.stringify(value) });
+    } else if (String(value).trim()) {
+      sections.push({ heading, type: 'paragraph', content: String(value) });
+    }
+  }
+  return sections;
+}
+
 async function _reserveIdempotency(adminUid, clientRequestId, env) {
   if (!clientRequestId) return { reserved: true, existingResourceId: null };
 
@@ -147,7 +140,6 @@ async function _reserveIdempotency(adminUid, clientRequestId, env) {
   return { reserved: true, existingResourceId: null, resourceId };
 }
 
-// ── Content generation (AI mode) ─────────────────────────────────────
 async function _generateViaAi(recipe, fields, env) {
   for (const required of recipe.requiredFields) {
     if (!fields[required] || !String(fields[required]).trim()) {
@@ -173,36 +165,29 @@ async function _generateViaAi(recipe, fields, env) {
   return structuredContent;
 }
 
-// ── Single create ─────────────────────────────────────────────────────
-// POST /api/admin/resources
-// Body: { resourceType, mode: 'ai' | 'manual', fields? (ai mode),
-//         manualContent? (manual mode), clientRequestId? }
 export async function handleAdminResourceCreate(request, env) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   try {
     const result = await _createOne(identity.uid, body, env);
-    return _jsonOk({ resource: result.resource }, result.wasExisting ? 200 : 201);
+    return _jsonOk({ resource: result.resource }, result.wasExisting ? 200 : 201, env);
   } catch (e) {
-    return _jsonError(e.message, e.isBadRequest ? 400 : 500);
+    return _jsonError(e.message, e.isBadRequest ? 400 : 500, env);
   }
 }
 
-// Shared logic between single-create and each batch item. Throws on
-// failure with e.isBadRequest set for client-caused errors (so the caller
-// can map it to the right HTTP status / per-item error).
 async function _createOne(adminUid, body, env) {
   const resourceType = body.resourceType;
   const mode = body.mode;
@@ -225,9 +210,6 @@ async function _createOne(adminUid, body, env) {
     if (existing) {
       return { resource: existing, wasExisting: true };
     }
-    // Idempotency record pointed at a resource that no longer exists
-    // (e.g. it was hard-deleted). Fall through and create a fresh one
-    // under a new id rather than returning nothing.
   }
 
   const resourceId = idempotency.resourceId || _makeId();
@@ -268,48 +250,6 @@ async function _createOne(adminUid, body, env) {
   return { resource: doc, wasExisting: false };
 }
 
-const PPTX_TYPES = new Set(['presentation']);
-const SKIP_KEYS = new Set(['title']);
-
-function _base64ToBytes(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-// Same generic structuredContent -> sections walk as resources-endpoint.js
-// uses, kept as its own copy here so this file has no import dependency
-// on that one.
-function _structuredContentToSections(content) {
-  const sections = [];
-  for (const key in content) {
-    if (SKIP_KEYS.has(key)) continue;
-    const value = content[key];
-    if (value === null || typeof value === 'undefined') continue;
-    const heading = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
-    if (Array.isArray(value)) {
-      if (value.length === 0) continue;
-      const items = value.map((item) => {
-        if (item && typeof item === 'object') {
-          return Object.values(item).filter((v) => typeof v === 'string' || typeof v === 'number').join(' — ');
-        }
-        return String(item);
-      });
-      sections.push({ heading, type: 'bullets', content: items });
-    } else if (typeof value === 'object') {
-      sections.push({ heading, type: 'paragraph', content: JSON.stringify(value) });
-    } else if (String(value).trim()) {
-      sections.push({ heading, type: 'paragraph', content: String(value) });
-    }
-  }
-  return sections;
-}
-
-// Renders + uploads publish-time exports for an admin resource. Never
-// throws — any single format's failure is logged and just omitted from
-// the returned fileReferences, so publishing itself always succeeds once
-// the version snapshot is saved.
 async function _buildAndUploadAdminExports(doc, resourceId, env) {
   const fileReferences = {};
   const content = doc.structuredContent;
@@ -373,38 +313,29 @@ async function _buildAndUploadAdminExports(doc, resourceId, env) {
   return fileReferences;
 }
 
-// ── Batch create (idempotent) ─────────────────────────────────────────
-// POST /api/admin/resources/batch
-// Body: { items: [{ resourceType, mode, fields?, manualContent?,
-//                    clientRequestId?, designTemplateId? }, ...] }
-// Always responds 200 with a per-item result array — a partial failure
-// is not a request-level failure.
 export async function handleAdminResourceBatchCreate(request, env) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   if (!Array.isArray(body.items) || body.items.length === 0) {
-    return _jsonError('items must be a non-empty array.', 400);
+    return _jsonError('items must be a non-empty array.', 400, env);
   }
   if (body.items.length > 50) {
-    return _jsonError('A batch is limited to 50 items at a time.', 400);
+    return _jsonError('A batch is limited to 50 items at a time.', 400, env);
   }
 
   const results = [];
-  // Guards against the client accidentally sending the same
-  // clientRequestId twice within one batch payload — the second copy is
-  // treated as a duplicate of the first rather than reserved twice.
   const seenInThisBatch = new Map();
 
   for (let i = 0; i < body.items.length; i++) {
@@ -443,40 +374,36 @@ export async function handleAdminResourceBatchCreate(request, env) {
     }
   }
 
-  return _jsonOk({ results });
+  return _jsonOk({ results }, 200, env);
 }
 
-// ── Edit ───────────────────────────────────────────────────────────────
-// POST /api/admin/resources/:id
-// Body: { structuredContent?, designTemplateId?, collectionIds? }
 export async function handleAdminResourceEdit(request, env, resourceId) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   let doc;
   try {
     doc = await fsGet('adminResources/' + resourceId, env);
   } catch (e) {
-    return _jsonError('Could not load that resource.', 500);
+    return _jsonError('Could not load that resource.', 500, env);
   }
-  if (!doc) return _jsonError('Resource not found.', 404);
+  if (!doc) return _jsonError('Resource not found.', 404, env);
 
   const now = new Date().toISOString();
   const wasReleased = doc.status === 'validated' || doc.status === 'published';
 
   if (wasReleased) {
-    // Preserve what was actually validated/published before it's touched.
     try {
       await fsSet('adminResourceVersions/' + resourceId + '_' + doc.currentVersion, {
         resourceId,
@@ -489,7 +416,7 @@ export async function handleAdminResourceEdit(request, env, resourceId) {
       }, env);
     } catch (e) {
       console.error('[admin-resources] version snapshot failed:', e.message);
-      return _jsonError('Could not preserve the previous version. Edit was not applied.', 500);
+      return _jsonError('Could not preserve the previous version. Edit was not applied.', 500, env);
     }
   }
 
@@ -498,9 +425,6 @@ export async function handleAdminResourceEdit(request, env, resourceId) {
     structuredContent: body.structuredContent !== undefined ? body.structuredContent : doc.structuredContent,
     designTemplateId: body.designTemplateId !== undefined ? body.designTemplateId : doc.designTemplateId,
     collectionIds: Array.isArray(body.collectionIds) ? body.collectionIds : doc.collectionIds,
-    // Editing a released resource sends it back to draft — it must be
-    // re-validated and re-published deliberately, never left "published"
-    // with content that was never checked.
     status: wasReleased ? 'draft' : doc.status,
     currentVersion: wasReleased ? doc.currentVersion + 1 : doc.currentVersion,
     lastEditedBy: identity.uid,
@@ -510,64 +434,57 @@ export async function handleAdminResourceEdit(request, env, resourceId) {
   try {
     await fsSet('adminResources/' + resourceId, updated, env);
   } catch (e) {
-    return _jsonError('Could not save the edit. Please try again.', 500);
+    return _jsonError('Could not save the edit. Please try again.', 500, env);
   }
 
-  return _jsonOk({ resource: updated });
+  return _jsonOk({ resource: updated }, 200, env);
 }
 
-// ── Workflow transitions ─────────────────────────────────────────────
-// POST /api/admin/resources/:id/transition
-// Body: { action: 'submit_review' | 'request_changes' | 'validate' |
-//                  'publish' | 'archive' | 'restore' }
 export async function handleAdminResourceTransition(request, env, resourceId) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const action = body.action;
   const rule = ACTION_MAP[action];
   if (!rule) {
-    return _jsonError('Unknown action: ' + action, 400);
+    return _jsonError('Unknown action: ' + action, 400, env);
   }
 
   let doc;
   try {
     doc = await fsGet('adminResources/' + resourceId, env);
   } catch (e) {
-    return _jsonError('Could not load that resource.', 500);
+    return _jsonError('Could not load that resource.', 500, env);
   }
-  if (!doc) return _jsonError('Resource not found.', 404);
+  if (!doc) return _jsonError('Resource not found.', 404, env);
 
   if (!rule.from.includes(doc.status)) {
     return _jsonError(
       'Cannot ' + action + ' a resource that is currently "' + doc.status + '". ' +
       'Allowed from: ' + rule.from.join(', ') + '.',
-      409
+      409, env
     );
   }
 
-  // "validate" actually checks the content against the recipe's own
-  // validator, not just a status flip. Hand-written content has to pass
-  // the same bar as AI-generated content before it can be published.
   if (action === 'validate') {
     const recipe = getRecipe(doc.resourceType);
     if (!recipe) {
-      return _jsonError('Unknown resource type on this resource: ' + doc.resourceType, 500);
+      return _jsonError('Unknown resource type on this resource: ' + doc.resourceType, 500, env);
     }
     const check = recipe.validate(doc.structuredContent, doc.fields || {});
     if (!check.ok) {
-      return _jsonError('Validation failed: ' + check.error, 422);
+      return _jsonError('Validation failed: ' + check.error, 422, env);
     }
   }
 
@@ -579,9 +496,6 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
     updatedAt: now,
   };
 
-  // Publishing snapshots the exact content being published, so the
-  // library always has a stable, addressable version even if it's edited
-  // again later.
   if (action === 'publish') {
     try {
       await fsSet('adminResourceVersions/' + resourceId + '_' + doc.currentVersion, {
@@ -595,7 +509,7 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
       }, env);
     } catch (e) {
       console.error('[admin-resources] publish snapshot failed:', e.message);
-      return _jsonError('Could not save the published version. Please try again.', 500);
+      return _jsonError('Could not save the published version. Please try again.', 500, env);
     }
     updated.publishedAt = now;
     updated.fileReferences = await _buildAndUploadAdminExports(doc, resourceId, env);
@@ -604,19 +518,17 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
   try {
     await fsSet('adminResources/' + resourceId, updated, env);
   } catch (e) {
-    return _jsonError('Could not save the transition. Please try again.', 500);
+    return _jsonError('Could not save the transition. Please try again.', 500, env);
   }
 
-  return _jsonOk({ resource: updated });
+  return _jsonOk({ resource: updated }, 200, env);
 }
 
-// ── List (admin view — all statuses, not just this admin's own) ────────
-// GET /api/admin/resources?status=draft   (status is optional)
 export async function handleAdminResourceList(request, env) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   const url = new URL(request.url);
@@ -626,86 +538,74 @@ export async function handleAdminResourceList(request, env) {
     let resources;
     if (status) {
       if (!ALL_STATUSES.includes(status)) {
-        return _jsonError('Unknown status filter: ' + status, 400);
+        return _jsonError('Unknown status filter: ' + status, 400, env);
       }
       resources = await fsQuery('adminResources', 'status', status, 'updatedAt', 100, env);
     } else {
-      // No single-filter option in fsQuery for "everything" — run one
-      // query per status and merge, since Firestore's REST query API here
-      // only supports one equality filter at a time.
       const batches = await Promise.all(
         ALL_STATUSES.map((s) => fsQuery('adminResources', 'status', s, 'updatedAt', 100, env))
       );
       resources = batches.flat().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     }
-    return _jsonOk({ resources });
+    return _jsonOk({ resources }, 200, env);
   } catch (e) {
     console.error('[admin-resources] list failed:', e.message);
-    return _jsonError('Could not load resources.', 500);
+    return _jsonError('Could not load resources.', 500, env);
   }
 }
 
-// ── Get single ────────────────────────────────────────────────────────
-// GET /api/admin/resources/:id
 export async function handleAdminResourceGet(request, env, resourceId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   try {
     const doc = await fsGet('adminResources/' + resourceId, env);
-    if (!doc) return _jsonError('Resource not found.', 404);
-    return _jsonOk({ resource: doc });
+    if (!doc) return _jsonError('Resource not found.', 404, env);
+    return _jsonOk({ resource: doc }, 200, env);
   } catch (e) {
-    return _jsonError('Could not load that resource.', 500);
+    return _jsonError('Could not load that resource.', 500, env);
   }
 }
 
-// ── Version history ──────────────────────────────────────────────────
-// GET /api/admin/resources/:id/versions
 export async function handleAdminResourceVersions(request, env, resourceId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   try {
     const versions = await fsQuery('adminResourceVersions', 'resourceId', resourceId, 'version', 100, env);
-    return _jsonOk({ versions });
+    return _jsonOk({ versions }, 200, env);
   } catch (e) {
     console.error('[admin-resources] versions fetch failed:', e.message);
-    return _jsonError('Could not load version history.', 500);
+    return _jsonError('Could not load version history.', 500, env);
   }
 }
 
-// ── Delete ────────────────────────────────────────────────────────────
-// DELETE /api/admin/resources/:id
-// Only draft or archived resources can be hard-deleted — anything that
-// was ever validated/published keeps its version history and must be
-// archived instead, never erased outright.
 export async function handleAdminResourceDelete(request, env, resourceId) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let doc;
   try {
     doc = await fsGet('adminResources/' + resourceId, env);
   } catch (e) {
-    return _jsonError('Could not load that resource.', 500);
+    return _jsonError('Could not load that resource.', 500, env);
   }
-  if (!doc) return _jsonOk({ deleted: true }); // already gone — idempotent delete
+  if (!doc) return _jsonOk({ deleted: true }, 200, env);
 
   if (doc.status !== 'draft' && doc.status !== 'archived') {
     return _jsonError(
       'Cannot delete a resource in status "' + doc.status + '". Archive it first.',
-      409
+      409, env
     );
   }
 
@@ -713,8 +613,8 @@ export async function handleAdminResourceDelete(request, env, resourceId) {
     await fsDelete('adminResources/' + resourceId, env);
   } catch (e) {
     console.error('[admin-resources] delete failed:', e.message);
-    return _jsonError('Could not delete that resource. Please try again.', 500);
+    return _jsonError('Could not delete that resource. Please try again.', 500, env);
   }
 
-  return _jsonOk({ deleted: true });
+  return _jsonOk({ deleted: true }, 200, env);
 }
