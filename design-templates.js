@@ -33,6 +33,7 @@ export const DESIGN_TEMPLATES = [
     colors: { accent: '3F6B5B', accentSoft: '8DB7A5', ink: '171717', muted: '8C8C86', rule: 'D9D9D6' },
     pdfFont: 'helvetica',
     pptxFont: 'Calibri',
+    docxFont: 'Calibri',
   },
   {
     id: 'midnight',
@@ -127,4 +128,12 @@ export function resolveEntitledTemplate(planId, requestedTemplateId, planSatisfi
 export function getPdfFontFamily(templateId) {
   const template = getTemplate(templateId) || getDefaultTemplate();
   return PDF_FONT_FAMILIES[template.pdfFont] || PDF_FONT_FAMILIES.helvetica;
+}
+
+// DOCX font-family lookup. Word substitutes font names the same way
+// PowerPoint does (no embedding needed), so templates that haven't been
+// given an explicit docxFont just reuse their pptxFont.
+export function getDocxFontFamily(templateId) {
+  const template = getTemplate(templateId) || getDefaultTemplate();
+  return template.docxFont || template.pptxFont || 'Calibri';
 }
