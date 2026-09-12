@@ -5,8 +5,8 @@ import { fsSet, fsGet, fsQuery, fsDelete } from './firestore-rest.js';
 import { getRecipe } from './recipes/index.js';
 import { callWithFallback } from './providers.js';
 import { MODEL_TIERS } from './entitlements.js';
-import { buildStructuredDocx } from './docx-builder.js';
-import { buildStructuredPdf } from './pdf-builder.js';
+import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
+import { buildStructuredPdf, buildSimplePdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile } from './b2-client.js';
 
@@ -350,6 +350,36 @@ async function _buildAndUploadAdminExports(doc, resourceId, env) {
     return fileReferences;
   }
 
+  const recipe = getRecipe(doc.resourceType);
+
+  if (recipe && typeof recipe.toPlainTextParagraphs === 'function') {
+    const plainText = recipe.toPlainTextParagraphs(content);
+    try {
+      const pdfBase64 = await buildSimplePdf(plainText, title, templateId);
+      const pdfKey = basePrefix + doc.resourceType + '.pdf';
+      const pdfUpload = await b2UploadFile(env, pdfKey, _base64ToBytes(pdfBase64), 'application/pdf');
+      fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+    } catch (e) {
+      console.error('[admin-resources] pdf export/upload failed:', e.message);
+    }
+
+    try {
+      const docxBase64 = await buildSimpleDocx(plainText, title, templateId);
+      const docxKey = basePrefix + doc.resourceType + '.docx';
+      const docxUpload = await b2UploadFile(
+        env, docxKey, _base64ToBytes(docxBase64),
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+    } catch (e) {
+      console.error('[admin-resources] docx export/upload failed:', e.message);
+    }
+
+    return fileReferences;
+  }
+
+  // Fallback for any resource type that doesn't (yet) provide its own
+  // toPlainTextParagraphs formatter.
   const structuredForExport = { title, sections: _structuredContentToSections(content) };
 
   try {
@@ -362,7 +392,7 @@ async function _buildAndUploadAdminExports(doc, resourceId, env) {
   }
 
   try {
-    const docxBase64 = await buildStructuredDocx(structuredForExport, title);
+    const docxBase64 = await buildStructuredDocx(structuredForExport, title, templateId);
     const docxKey = basePrefix + doc.resourceType + '.docx';
     const docxUpload = await b2UploadFile(
       env, docxKey, _base64ToBytes(docxBase64),
