@@ -134,7 +134,15 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  overflow: hidden;
+  /* Intentionally no overflow:hidden here. The download button inside
+     .resource-result-actions opens a popover menu (see
+     renderDownloadControl in js/resources.js) that's appended straight to
+     <body> as a fixed-position element so it can never be clipped by an
+     ancestor's overflow. Keeping overflow:hidden on this panel used to
+     clip that popover down to nothing, which is why the download menu
+     wasn't showing. The rounded corners this used to provide are
+     recreated on the header and actions row directly below instead, so
+     the panel still looks the same. */
 }
 .resource-result-header {
   display: flex;
@@ -142,6 +150,8 @@
   justify-content: space-between;
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
 }
 .resource-result-header h2 { font-size: var(--text-lg); font-weight: 600; }
 
@@ -389,6 +399,8 @@
 .resource-result-actions {
   padding: var(--space-4) var(--space-5);
   border-top: 1px solid var(--border);
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
 }
 .resource-download-btn {
   display: flex;
@@ -405,6 +417,53 @@
 }
 .resource-download-btn:hover:not(:disabled) { background: var(--accent-hover); }
 .resource-download-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Small round icon variant used by renderDownloadControl in
+   js/resources.js and js/library.js, as opposed to the full-width
+   .resource-download-btn styled above. */
+.resource-download-control { display: inline-block; }
+.resource-download-btn.resource-download-toggle {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The popover menu itself is appended directly to <body> and positioned
+   with JS (position: fixed, coordinates computed from the toggle
+   button's bounding rect) rather than nested + absolutely positioned
+   inside the result panel. That's deliberate: it's what lets the menu
+   escape any ancestor's clipping and z-index/stacking context, so it
+   always shows fully on top of everything, on both mobile and desktop,
+   regardless of where the download button happens to sit on the page. */
+.resource-download-menu {
+  position: fixed;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  min-width: 180px;
+  max-width: calc(100vw - var(--space-4) * 2);
+  z-index: 1000;
+  overflow: hidden;
+}
+.resource-download-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.resource-download-option:hover { background: var(--bg-subtle); }
 
 /* ── My Resources list ── */
 .my-resources-list {
