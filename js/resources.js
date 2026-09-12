@@ -1048,45 +1048,79 @@ function showResultPanel(resource) {
     resource.fileReferences || {}
   );
 
-  if (availableFormats.length === 0) {
-    actionsWrap.innerHTML =
-      '<p style="color:var(--text-3);font-size:var(--text-sm);text-align:center;">' +
-      'No export is available for this resource yet.' +
-      '</p>';
-  } else {
-    actionsWrap.innerHTML = availableFormats
-      .map(
-        (format) =>
-          '<button class="resource-download-btn" ' +
-          'data-format="' +
-          format +
-          '" style="margin-bottom:8px;">' +
-          '<i class="ph ph-file-arrow-down"></i>' +
-          '<span>Download ' +
-          (FORMAT_LABELS[format] ||
-            format.toUpperCase()) +
-          '</span>' +
-          '</button>'
-      )
-      .join('');
-
-    actionsWrap
-      .querySelectorAll('.resource-download-btn')
-      .forEach((btn) => {
-        btn.addEventListener('click', () =>
-          downloadResource(
-            resource.id,
-            btn.dataset.format,
-            btn
-          )
-        );
-      });
-  }
+  renderDownloadControl(actionsWrap, resource.id, Object.keys(resource.fileReferences || {}));
 
   panel.scrollIntoView({
     behavior: 'smooth',
     block: 'start',
   });
+}
+
+// Small download icon that opens a popover listing whichever export
+// formats (docx/pdf/pptx) are actually available for this resource,
+// instead of a stacked full-width button per format.
+function renderDownloadControl(actionsWrap, resourceId, availableFormats) {
+  if (availableFormats.length === 0) {
+    actionsWrap.innerHTML =
+      '<p style="color:var(--text-3);font-size:var(--text-sm);text-align:center;">' +
+      'No export is available for this resource yet.' +
+      '</p>';
+    return;
+  }
+
+  actionsWrap.innerHTML =
+    '<div class="resource-download-control" style="position:relative;display:inline-block;">' +
+    '<button type="button" class="resource-download-btn resource-download-toggle" ' +
+    'aria-haspopup="true" aria-expanded="false" title="Download" ' +
+    'style="width:36px;height:36px;padding:0;border-radius:50%;display:inline-flex;' +
+    'align-items:center;justify-content:center;">' +
+    '<i class="ph ph-download-simple" style="font-size:18px;"></i>' +
+    '</button>' +
+    '<div class="resource-download-menu" hidden style="position:absolute;bottom:44px;right:0;' +
+    'background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);' +
+    'box-shadow:var(--shadow-lg);min-width:180px;z-index:20;overflow:hidden;">' +
+    availableFormats
+      .map(
+        (format) =>
+          '<button type="button" class="resource-download-option" data-format="' + format + '" ' +
+          'style="display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;' +
+          'background:none;border:none;text-align:left;cursor:pointer;font-size:var(--text-sm);">' +
+          '<i class="ph ph-file-arrow-down"></i><span>' +
+          (FORMAT_LABELS[format] || format.toUpperCase()) +
+          '</span></button>'
+      )
+      .join('') +
+    '</div>' +
+    '</div>';
+
+  const menu = actionsWrap.querySelector('.resource-download-menu');
+  const toggle = actionsWrap.querySelector('.resource-download-toggle');
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !menu.hidden;
+    menu.hidden = isOpen;
+    toggle.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  actionsWrap.querySelectorAll('.resource-download-option').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      menu.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+      downloadResource(resourceId, btn.dataset.format, btn);
+    });
+  });
+
+  // Close the popover on any click outside it. Attached once per render
+  // and self-removed so repeated result panels don't stack listeners.
+  const closeOnOutsideClick = (e) => {
+    if (!actionsWrap.contains(e.target)) {
+      menu.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', closeOnOutsideClick);
+    }
+  };
+  document.addEventListener('click', closeOnOutsideClick);
 }
 
 /* ── Edit (structured form editor, no AI call) ── */
