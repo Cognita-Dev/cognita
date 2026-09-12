@@ -497,23 +497,40 @@ function renderResourceRows() {
 /* ── Detail / edit / transitions ── */
 
 async function openDetail(resourceId) {
+  let data;
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/resources/' + resourceId);
     if (!res.ok) {
       showToast('Could not load resource.');
       return;
     }
-    const data = await res.json();
-    currentDetailResource = data.resource;
-
-    document.getElementById('detailScrim').hidden = false;
-    document.getElementById('detailPanel').hidden = false;
-    renderDetailChrome();
-
-    await loadVersionHistory(resourceId);
+    data = await res.json();
   } catch (e) {
     showToast('Could not reach the server.');
     console.error('[admin] detail load failed:', e.message);
+    return;
+  }
+
+  currentDetailResource = data.resource;
+  document.getElementById('detailScrim').hidden = false;
+  document.getElementById('detailPanel').hidden = false;
+
+  // Rendering/mounting the editor is a separate step from the network
+  // call above. If it throws (e.g. content shaped in a way the editor
+  // doesn't expect), that must never look identical to a dead network
+  // request — it needs its own toast, and the Edit/Preview toggle must
+  // stay usable instead of being left pointed at a half-built editor.
+  try {
+    renderDetailChrome();
+  } catch (e) {
+    showToast('Could not load the editor for this resource: ' + e.message);
+    console.error('[admin] renderDetailChrome failed:', e);
+  }
+
+  try {
+    await loadVersionHistory(resourceId);
+  } catch (e) {
+    console.error('[admin] version history load failed:', e.message);
   }
 }
 
@@ -531,17 +548,33 @@ function renderDetailChrome() {
     activeDetailEditorHandle.destroy();
     activeDetailEditorHandle = null;
   }
-  activeDetailEditorHandle = window.ResourceEditor.mount(
-    document.getElementById('detailContentEditor'),
-    r.resourceType,
-    r.structuredContent,
-    {
-      onDirty: () => {
-        saveBtn.disabled = false;
-        if (!document.getElementById('detailContentPreview').hidden) renderDetailPreview();
-      },
-    }
-  );
+
+  // If mount() throws on this particular resource's content shape, fall
+  // back to a plain JSON textarea rather than leaving
+  // activeDetailEditorHandle null — a null handle is what made Preview
+  // silently show "Nothing to preview yet" with no indication anything
+  // had gone wrong.
+  try {
+    activeDetailEditorHandle = window.ResourceEditor.mount(
+      document.getElementById('detailContentEditor'),
+      r.resourceType,
+      r.structuredContent,
+      {
+        onDirty: () => {
+          saveBtn.disabled = false;
+          if (!document.getElementById('detailContentPreview').hidden) renderDetailPreview();
+        },
+      }
+    );
+  } catch (e) {
+    console.error('[admin] editor mount failed, falling back to raw JSON:', e);
+    activeDetailEditorHandle = mountFallbackJsonEditor(
+      document.getElementById('detailContentEditor'),
+      r.structuredContent,
+      saveBtn
+    );
+    showToast('This resource\u2019s content could not be loaded into the normal editor, so raw JSON is shown instead.');
+  }
   setDetailView('edit');
 
   const primary = PRIMARY_ACTION_BY_STATUS[r.status];
@@ -569,6 +602,37 @@ function renderDetailChrome() {
     const legalFrom = ACTION_LEGAL_FROM[action] || [];
     btn.hidden = isPrimary || !legalFrom.includes(r.status);
   });
+}
+
+// Minimal handle-shaped fallback used only when ResourceEditor.mount()
+// throws. Keeps the Edit/Preview toggle and Save button functional
+// instead of leaving activeDetailEditorHandle null.
+function mountFallbackJsonEditor(container, structuredContent, saveBtn) {
+  container.innerHTML = '';
+  const textarea = document.createElement('textarea');
+  textarea.className = 'admin-code-textarea';
+  textarea.style.minHeight = '320px';
+  textarea.value = JSON.stringify(structuredContent, null, 2);
+  textarea.addEventListener('input', () => { saveBtn.disabled = false; });
+  container.appendChild(textarea);
+
+  return {
+    getValue() {
+      try {
+        return JSON.parse(textarea.value);
+      } catch (e) {
+        showToast('That JSON is not valid, so it was not applied.');
+        return structuredContent;
+      }
+    },
+    isDirty() {
+      return textarea.value !== JSON.stringify(structuredContent, null, 2);
+    },
+    scrollToQuestion() {},
+    destroy() {
+      container.innerHTML = '';
+    },
+  };
 }
 
 // Shows the content exactly the way a real user would see it (same
