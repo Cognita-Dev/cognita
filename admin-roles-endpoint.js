@@ -27,7 +27,7 @@ const BOOTSTRAP_DOC_PATH = 'system/bootstrapStatus';
 // change who's eligible before bootstrap has run. After bootstrap
 // succeeds, this list is never consulted again for anything.
 const FIRST_ADMIN_EMAILS = [
-  'oluwagbemiga5884@gmail.com',
+  'hellogbemiga@gmail.com',
 ];
 
 function _corsJsonHeaders() {
