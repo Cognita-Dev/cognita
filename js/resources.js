@@ -1032,6 +1032,10 @@ function showResultPanel(resource) {
     resource.structuredContent,
     resource.resourceType
   );
+  // Always start the preview scrolled to the top, so the title/intro
+  // is what's visible first — not wherever a previous resource's
+  // scroll position happened to be left.
+  resultBody.scrollTop = 0;
 
   if (
     window.ResourceRenderers &&
@@ -1044,9 +1048,7 @@ function showResultPanel(resource) {
     );
   }
 
-  const actionsWrap = document.querySelector(
-    '.resource-result-actions'
-  );
+  const actionsWrap = document.getElementById('resourceResultActions');
 
   const availableFormats = Object.keys(
     resource.fileReferences || {}
@@ -1468,6 +1470,7 @@ async function openLibraryPreview(resourceId) {
       resource.structuredContent.title || 'Resource';
 
     body.innerHTML = renderStructuredPreview(resource.structuredContent, resource.resourceType);
+    body.scrollTop = 0;
 
     if (window.ResourceRenderers && typeof window.ResourceRenderers.mount === 'function') {
       window.ResourceRenderers.mount(resource.resourceType, body, resource.structuredContent);
