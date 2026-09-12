@@ -8,6 +8,7 @@ import { handleDocumentRequest } from './document-endpoint.js';
 import {
   handleResourceGenerate,
   handleResourceDownload,
+  handleResourceFileProxy,
   handleResourceList,
   handleResourceEdit,
   handleResourceRegenerate,
@@ -40,6 +41,7 @@ import {
   handleLibraryList,
   handleLibraryGet,
   handleLibraryDownload,
+  handleLibraryFileProxy,
   handleLibraryCollectionGet,
 } from './library-endpoint.js';
 import {
@@ -143,6 +145,14 @@ export default {
     if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/download$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[3];
       return handleResourceDownload(request, env, resourceId);
+    }
+
+    // GET, not POST: this is the URL the browser actually navigates to
+    // (the download link handed back by /download above), so it has to
+    // be a plain fetchable GET route, not something requiring a header.
+    if (request.method === 'GET' && /^\/api\/resources\/[^/]+\/file$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[3];
+      return handleResourceFileProxy(request, env, resourceId);
     }
 
     if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/edit$/.test(url.pathname)) {
@@ -279,6 +289,13 @@ export default {
     if (request.method === 'POST' && /^\/api\/library\/resources\/[^/]+\/download$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[4];
       return handleLibraryDownload(request, env, resourceId);
+    }
+
+    // Must come before the plain "GET /api/library/resources/:id" check
+    // below, since both match a four-segment path.
+    if (request.method === 'GET' && /^\/api\/library\/resources\/[^/]+\/file$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[4];
+      return handleLibraryFileProxy(request, env, resourceId);
     }
 
     if (request.method === 'GET' && /^\/api\/library\/resources\/[^/]+$/.test(url.pathname)) {
