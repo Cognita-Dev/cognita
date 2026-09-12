@@ -282,6 +282,11 @@ export async function handleResourceGenerate(request, env) {
   const finalDoc = {
     ...baseDoc,
     status: 'ready',
+    // Types like scheme_of_work don't collect a "topic" field, so
+    // baseDoc.title falls back to 'Untitled' at creation time. Once the
+    // AI has actually generated content, prefer its own title (e.g.
+    // "First Term — Living Things...") over that placeholder.
+    title: (structuredContent.title && structuredContent.title.trim()) || baseDoc.title,
     structuredContent,
     fileReferences,
     updatedAt: new Date().toISOString(),
