@@ -13,6 +13,7 @@
    Not from unnecessary font switching.
 */
 :root {
+  color-scheme: light dark;
   /* ── Color — Light ── */
   --bg-base:       #f7f7f5;
   --bg-subtle:     #f1f1ee;
