@@ -80,6 +80,51 @@
   width: 16px;
   height: 16px;
 }
+.auth-btn--google:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* ── Google sign-in loader — a small equalizer, not another spinning
+     ring (that treatment is already used everywhere else in the app:
+     the primary sign-in button, resource generation, admin, etc). Four
+     bars bounce out of phase with each other, reading clearly as "still
+     working" without repeating a shape people have already seen. ── */
+.google-btn-content {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.google-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 16px;
+}
+.google-loader span {
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+  background: currentColor;
+  color: var(--text-3);
+  animation: google-loader-bounce 900ms ease-in-out infinite;
+}
+.google-loader span:nth-child(1) { animation-delay: 0ms; }
+.google-loader span:nth-child(2) { animation-delay: 120ms; }
+.google-loader span:nth-child(3) { animation-delay: 240ms; }
+.google-loader span:nth-child(4) { animation-delay: 360ms; }
+@keyframes google-loader-bounce {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .google-loader span {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}
 .auth-btn--primary {
   background: var(--text-1);
   color: var(--bg-base);
