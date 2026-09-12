@@ -70,6 +70,15 @@
   background: transparent;
   border: 1px solid var(--border-strong);
   color: var(--text-2);
+  /* Google's Sign In branding guidelines call for: a minimum 40px
+     button height, medium- (not bold-) weight text, and clear space
+     around the logo roughly equal to the logo's own width. The values
+     below follow that from memory rather than a byte-for-byte spec
+     check — if pixel-exact brand compliance matters, cross-check
+     against Google's current guidelines page before shipping. */
+  min-height: 40px;
+  font-weight: 500;
+  gap: 12px;
 }
 .auth-btn--google:hover {
   background: var(--bg-subtle);
@@ -77,8 +86,8 @@
 }
 .auth-btn--google svg {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 .auth-btn--google:disabled {
   opacity: 0.65;
@@ -94,7 +103,7 @@
 .google-btn-content {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 12px;
 }
 .google-loader {
   display: inline-flex;
@@ -185,6 +194,35 @@
   outline: none;
   border-color: var(--text-1);
 }
+
+/* ── Password field with a show/hide toggle. The icon sits inside the
+     input's own box (not beside it) so the field keeps its familiar
+     shape — only the padding on the right makes room for the button. ── */
+.auth-password-wrap {
+  position: relative;
+}
+.auth-password-wrap input {
+  padding-right: 40px;
+}
+.auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-4);
+  font-size: 1rem;
+  transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+.auth-password-toggle:hover {
+  color: var(--text-2);
+  background: var(--bg-subtle);
+}
 .auth-hint {
   font-size: 0.7rem;
   font-weight: 400;
@@ -209,10 +247,27 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* ── Password strength meter ──────────────────────────────────────
+   Redesigned from a tall, single-column bulleted list (five full-width
+   rows stacked under a thin bar — a lot of vertical weight for a
+   secondary hint, and visually it read as "another form" rather than
+   a quick status check) into a compact wrapped row of chips, the
+   pattern used by Dropbox, GitHub, and Microsoft's signup forms: it
+   scans in one glance instead of five lines, and each requirement's
+   met/unmet state is carried by an icon *and* color together, not
+   color alone (WCAG 1.4.1). The bar keeps its color coding but now
+   also has a text label next to it for the same reason — a red bar by
+   itself doesn't tell a colorblind user anything. */
 .strength-meter {
   margin-top: var(--space-2);
 }
+.strength-meter-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 .strength-track {
+  flex: 1;
   height: 4px;
   border-radius: var(--radius-full);
   background: var(--bg-subtle);
@@ -225,37 +280,69 @@
   background: var(--danger);
   transition: width var(--duration-base) var(--ease), background var(--duration-base) var(--ease);
 }
-.strength-checklist {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.strength-checklist li {
+.strength-label {
   font-size: 0.7rem;
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text-4);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  min-width: 32px;
+  text-align: right;
   transition: color var(--duration-fast) var(--ease);
 }
+.strength-label[data-level="fair"] { color: var(--warning); }
+.strength-label[data-level="strong"] { color: var(--success); }
+
+.strength-checklist {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.strength-checklist li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-4);
+  transition: color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+}
+/* A fixed-size circle that becomes a filled checkmark once met — sized
+   up front so meeting a requirement doesn't shift any layout. */
 .strength-checklist li::before {
   content: '';
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--text-4);
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
-  transition: background var(--duration-fast) var(--ease);
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  box-sizing: border-box;
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+}
+.strength-checklist li.is-optional {
+  border-style: dashed;
 }
 .strength-checklist li.met {
-  color: var(--text-2);
+  color: var(--text-1);
+  border-color: var(--success);
+}
+.strength-checklist li.is-optional.met {
+  border-style: solid;
 }
 .strength-checklist li.met::before {
+  content: '✓';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  line-height: 1;
+  color: #fff;
   background: var(--success);
+  border-color: var(--success);
 }
 .field-error {
   margin-top: var(--space-1);
