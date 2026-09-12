@@ -1229,23 +1229,44 @@ function renderConversation() {
    KaTeX math and code-copy buttons are wired only once, after the
    full text has been revealed, via the onDone callback. */
 function typewriterReveal(contentEl, fullText, sources, onDone) {
-  if (!fullText) { onDone && onDone(); return; }
+  if (!fullText) {
+    onDone && onDone();
+    return;
+  }
 
   const totalChars = fullText.length;
-  // Slower, steadier pace than a first pass at this: ~28ms of "thinking
-  // time" per character, floored so short replies don't feel instant and
-  // capped so very long replies don't take forever to finish.
-  const totalDurationMs = Math.min(Math.max(totalChars * 28, 600), 9000);
+
+  // Calm, steady reveal speed:
+  // ~35ms per character, with sensible limits for very short/long responses.
+  const totalDurationMs = Math.min(
+    Math.max(totalChars * 35, 700),
+    10000
+  );
+
   const tickMs = 40;
-  const charsPerTick = Math.max(1, Math.round(totalChars / (totalDurationMs / tickMs)));
+
+  const charsPerTick = Math.max(
+    1,
+    Math.round(totalChars / (totalDurationMs / tickMs))
+  );
 
   contentEl.classList.add('is-typing');
+
   let revealed = 0;
 
   const interval = setInterval(() => {
-    revealed = Math.min(totalChars, revealed + charsPerTick);
-    contentEl.innerHTML = renderMarkdownLite(fullText.slice(0, revealed), sources);
+    revealed = Math.min(
+      totalChars,
+      revealed + charsPerTick
+    );
+
+    contentEl.innerHTML = renderMarkdownLite(
+      fullText.slice(0, revealed),
+      sources
+    );
+
     scrollToBottom();
+
     if (revealed >= totalChars) {
       clearInterval(interval);
       contentEl.classList.remove('is-typing');
