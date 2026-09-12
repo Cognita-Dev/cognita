@@ -1,20 +1,22 @@
 // js/resource-editor.js
 //
 // Generic, schema-driven editor for a resource's structuredContent.
-// Renders plain-language form controls (text fields, list editors,
-// term/explanation pairs, reorderable section/card lists) instead of
-// raw JSON. Works across every resource type by inferring the shape
-// of each field, with small per-resourceType configs for labels and
-// section "type" choices where it helps.
+// Renders plain-language form controls (text fields, number fields,
+// list editors, term/explanation pairs, reorderable section/card lists)
+// instead of raw JSON. Works across every resource type by inferring
+// the shape of each field, with small per-resourceType configs for
+// labels, section "type" choices, linked arrays (e.g. worksheet
+// questions + answerKey), and derived fields (e.g. exam markingScheme)
+// where the generic inference isn't enough on its own.
 //
 // Public API:
 //   ResourceEditor.mount(container, resourceType, structuredContent, opts)
 //     -> returns a handle: { getValue(), isDirty(), destroy() }
 
 window.ResourceEditor = (function () {
-  // ── Per-resource-type customization (labels + which section "type"
-  // values are offered). Falls back to sane generic defaults for any
-  // resourceType not listed here — nothing breaks for future recipes. ──
+  // ── Per-resource-type customization. Falls back to sane generic
+  // defaults for any resourceType not listed here — nothing breaks for
+  // future recipes; it just won't get the extra polish below. ──
   const RECIPE_EDITOR_CONFIG = {
     lesson_note: {
       topLevelLabels: { title: 'Title', introduction: 'Introduction', summary: 'Summary' },
@@ -28,8 +30,69 @@ window.ResourceEditor = (function () {
         { value: 'formula', label: 'Formula' },
       ],
     },
+
     presentation: {
       topLevelLabels: { title: 'Title' },
+    },
+
+    // Backend requires questions.length === answerKey.length and every
+    // answerKey.marks to equal the matching question's marks. Editing
+    // these as two independent lists risks breaking that in ways that
+    // are invisible until save fails — so they're merged into one
+    // question+answer card, and both arrays are rebuilt in sync from it.
+    worksheet: {
+      linkedList: {
+        primaryKey: 'questions',
+        linkedKey: 'answerKey',
+        answerFields: ['answer', 'marks'], // copied/paired per question, marks mirrors the question's own marks
+        questionFieldOrder: ['question', 'type', 'options', 'marks'],
+        typeSelectField: {
+          key: 'type',
+          options: [
+            { value: 'short_answer', label: 'Short answer' },
+            { value: 'multiple_choice', label: 'Multiple choice' },
+            { value: 'fill_blank', label: 'Fill in the blank' },
+          ],
+        },
+      },
+    },
+
+    test: {
+      linkedList: {
+        primaryKey: 'questions',
+        linkedKey: 'answerKey',
+        answerFields: ['answer'], // test's answerKey has no marks field of its own
+        questionFieldOrder: ['question', 'marks'],
+      },
+    },
+
+    // Exam nests questions inside sections, and separately requires a
+    // markingScheme entry per question with matching number + marks.
+    // Asking a teacher to hand-sync three structures is a trap, so
+    // markingScheme is treated as derived: it's rebuilt from the
+    // sections' questions on every save (existing "answer" text is kept,
+    // matched by position), and isn't shown as its own editable list.
+    exam: {
+      derivedKeys: ['markingScheme'],
+      derivedNote:
+        'The marking scheme is generated automatically from the questions below, and stays in sync with their numbers and marks.',
+      postProcess(value) {
+        let n = 1;
+        const flatQuestions = [];
+        (value.sections || []).forEach((section) => {
+          (section.questions || []).forEach((q) => {
+            q.number = n++;
+            flatQuestions.push(q);
+          });
+        });
+        const oldScheme = Array.isArray(value.markingScheme) ? value.markingScheme : [];
+        value.markingScheme = flatQuestions.map((q, i) => ({
+          number: q.number,
+          marks: q.marks,
+          answer: (oldScheme[i] && oldScheme[i].answer) || '',
+        }));
+        return value;
+      },
     },
   };
 
@@ -57,6 +120,7 @@ window.ResourceEditor = (function () {
   // Decide how to render a given value so every recipe's shape is covered
   // without a bespoke renderer per type.
   function classify(value) {
+    if (typeof value === 'number') return 'number';
     if (typeof value === 'string') {
       return value.length > 140 || value.includes('\n') ? 'longtext' : 'shorttext';
     }
@@ -78,7 +142,6 @@ window.ResourceEditor = (function () {
       if (first && typeof first === 'object') return 'objectlist'; // slides, questions, etc.
       return 'stringlist';
     }
-    if (typeof value === 'number') return 'number';
     return 'shorttext';
   }
 
@@ -93,6 +156,42 @@ window.ResourceEditor = (function () {
     wrap.appendChild(lab);
     wrap.appendChild(input);
     return { node: wrap, getValue: () => input.value };
+  }
+
+  // Numeric fields (marks, totals, counts, indices). The backend does
+  // strict typeof === 'number' checks in validate(), so this must return
+  // an actual Number, never the input's raw string value.
+  function buildNumberField(value, label) {
+    const wrap = el('div', 'redit-field');
+    const lab = el('label', 'redit-field-label');
+    lab.textContent = label;
+    const input = el('input', 'redit-input', { type: 'number', step: 'any' });
+    input.value = value == null || Number.isNaN(value) ? '' : String(value);
+    wrap.appendChild(lab);
+    wrap.appendChild(input);
+    return {
+      node: wrap,
+      getValue: () => {
+        const n = Number(input.value);
+        return Number.isFinite(n) ? n : 0;
+      },
+    };
+  }
+
+  function buildSelectField(value, label, options) {
+    const wrap = el('div', 'redit-field');
+    const lab = el('label', 'redit-field-label');
+    lab.textContent = label;
+    const select = el('select', 'redit-select');
+    options.forEach((opt) => {
+      const o = el('option', null, { value: opt.value });
+      o.textContent = opt.label;
+      select.appendChild(o);
+    });
+    if (value) select.value = value;
+    wrap.appendChild(lab);
+    wrap.appendChild(select);
+    return { node: wrap, getValue: () => select.value };
   }
 
   function autoGrow(textarea) {
@@ -117,7 +216,7 @@ window.ResourceEditor = (function () {
     return { node: wrap, getValue: () => textarea.value };
   }
 
-  // Tag-style list editor for string arrays (bullets, numbered, etc.)
+  // Tag-style list editor for string arrays (bullets, numbered, options, etc.)
   function buildStringList(values, label) {
     const wrap = el('div', 'redit-field');
     const lab = el('label', 'redit-field-label');
@@ -352,9 +451,42 @@ window.ResourceEditor = (function () {
     };
   }
 
-  // Generic reorderable list of plain objects (slides, questions, cards...)
-  // whose own primitive fields are each rendered recursively.
-  function buildObjectList(items, label) {
+  // Builds the right control for one sub-field inside an object-list card,
+  // recursing into nested arrays/objects (e.g. exam's sections[].questions).
+  function buildSubField(value, key, opts) {
+    opts = opts || {};
+    const label = (opts.labels && opts.labels[key]) || prettyLabel(key);
+
+    if (opts.selectFields && opts.selectFields[key]) {
+      return buildSelectField(value, label, opts.selectFields[key]);
+    }
+
+    const kind = classify(value);
+    switch (kind) {
+      case 'number':
+        return buildNumberField(value, label);
+      case 'longtext':
+        return buildLongText(value, label);
+      case 'stringlist':
+        return buildStringList(value, label);
+      case 'termlist':
+        return buildTermList(value, label);
+      case 'sectionlist':
+        return buildSectionList(value, {});
+      case 'objectlist':
+        return buildObjectList(value, label);
+      default:
+        return buildShortText(value, label);
+    }
+  }
+
+  // Generic reorderable list of plain objects (slides, questions, cards,
+  // criteria...) whose own fields are each rendered recursively. Any item
+  // that has a "number" field gets it auto-renumbered sequentially on
+  // save, matching the "sequential starting at 1" rule most recipes need
+  // — removing a common source of manual renumbering mistakes.
+  function buildObjectList(items, label, opts) {
+    opts = opts || {};
     const wrap = el('div', 'redit-field redit-sectionlist-field');
     const lab = el('label', 'redit-field-label');
     lab.textContent = label;
@@ -362,6 +494,7 @@ window.ResourceEditor = (function () {
     const cards = [];
 
     const keys = items && items.length ? Object.keys(items[0]) : ['text'];
+    const hasNumberField = keys.includes('number');
 
     function addCard(item) {
       item = item || {};
@@ -378,11 +511,8 @@ window.ResourceEditor = (function () {
       const body = el('div', 'redit-section-content-slot');
       const subFields = {};
       keys.forEach((k) => {
-        const kind = classify(item[k]);
-        let f;
-        if (kind === 'stringlist') f = buildStringList(item[k], prettyLabel(k));
-        else if (kind === 'longtext') f = buildLongText(item[k], prettyLabel(k));
-        else f = buildShortText(item[k], prettyLabel(k));
+        if (k === 'number') return; // auto-managed, not shown
+        const f = buildSubField(item[k], k, opts);
         body.appendChild(f.node);
         subFields[k] = f;
       });
@@ -395,7 +525,10 @@ window.ResourceEditor = (function () {
         card,
         getValue: () => {
           const out = {};
-          keys.forEach((k) => (out[k] = subFields[k].getValue()));
+          keys.forEach((k) => {
+            if (k === 'number') return;
+            out[k] = subFields[k].getValue();
+          });
           return out;
         },
       };
@@ -422,7 +555,129 @@ window.ResourceEditor = (function () {
 
     return {
       node: wrap,
-      getValue: () => cards.filter((c) => list.contains(c.card)).map((c) => c.getValue()),
+      getValue: () =>
+        cards
+          .filter((c) => list.contains(c.card))
+          .map((c, i) => {
+            const v = c.getValue();
+            if (hasNumberField) v.number = i + 1;
+            return v;
+          }),
+    };
+  }
+
+  // ── Linked question + answer editor (worksheet, test) ──
+  // Renders one card per question that shows the question's own fields
+  // plus its paired answer fields together, so a teacher edits one
+  // coherent thing instead of two arrays that must stay in sync by hand.
+  // getValue() returns { [primaryKey]: [...], [linkedKey]: [...] },
+  // always the same length, always sequentially numbered, with any
+  // "marks" the answer needs mirrored from the question automatically.
+  function buildLinkedQuestionList(primaryItems, linkedItems, linkConfig) {
+    const wrap = el('div', 'redit-field redit-sectionlist-field');
+    const lab = el('label', 'redit-field-label');
+    lab.textContent = 'Questions & Answers';
+    const list = el('div', 'redit-sections');
+    const cards = [];
+
+    const questionKeys = linkConfig.questionFieldOrder ||
+      (primaryItems && primaryItems.length
+        ? Object.keys(primaryItems[0]).filter((k) => k !== 'number')
+        : ['question']);
+
+    const selectFields = {};
+    if (linkConfig.typeSelectField) {
+      selectFields[linkConfig.typeSelectField.key] = linkConfig.typeSelectField.options;
+    }
+
+    function addCard(question, answer) {
+      question = question || {};
+      answer = answer || {};
+
+      const card = el('div', 'redit-section-card redit-linked-card');
+      const headerRow = el('div', 'redit-section-card-header');
+      const handle = el('span', 'redit-drag-handle');
+      handle.innerHTML = '<i class="ph ph-dots-six-vertical"></i>';
+      const removeBtn = el('button', 'redit-icon-btn', { type: 'button', title: 'Remove' });
+      removeBtn.innerHTML = '<i class="ph ph-trash"></i>';
+      headerRow.appendChild(handle);
+      headerRow.appendChild(el('span', 'redit-section-card-title-spacer'));
+      headerRow.appendChild(removeBtn);
+
+      const body = el('div', 'redit-section-content-slot');
+      const qFields = {};
+      questionKeys.forEach((k) => {
+        const f = buildSubField(question[k], k, { selectFields });
+        body.appendChild(f.node);
+        qFields[k] = f;
+      });
+
+      const answerDivider = el('div', 'redit-linked-answer-divider');
+      answerDivider.textContent = 'Answer';
+      body.appendChild(answerDivider);
+
+      const answerField = buildLongText(answer.answer, 'Correct answer');
+      body.appendChild(answerField.node);
+
+      card.appendChild(headerRow);
+      card.appendChild(body);
+      list.appendChild(card);
+
+      const cardRef = {
+        card,
+        getQuestion: () => {
+          const out = {};
+          questionKeys.forEach((k) => (out[k] = qFields[k].getValue()));
+          return out;
+        },
+        getAnswerText: () => answerField.getValue(),
+      };
+
+      removeBtn.addEventListener('click', () => {
+        list.removeChild(card);
+        const idx = cards.indexOf(cardRef);
+        if (idx !== -1) cards.splice(idx, 1);
+      });
+
+      cards.push(cardRef);
+      wireDrag(card, list);
+      return cardRef;
+    }
+
+    const count = Math.max((primaryItems || []).length, (linkedItems || []).length);
+    for (let i = 0; i < count; i++) {
+      addCard((primaryItems || [])[i], (linkedItems || [])[i]);
+    }
+
+    const addBtn = el('button', 'redit-add-btn', { type: 'button' });
+    addBtn.innerHTML = '<i class="ph ph-plus"></i><span>Add question</span>';
+    addBtn.addEventListener('click', () => addCard(null, null));
+
+    wrap.appendChild(lab);
+    wrap.appendChild(list);
+    wrap.appendChild(addBtn);
+
+    return {
+      node: wrap,
+      getValue: () => {
+        const liveCards = cards.filter((c) => list.contains(c.card));
+        const questions = liveCards.map((c, i) => {
+          const q = c.getQuestion();
+          q.number = i + 1;
+          return q;
+        });
+        const answerKey = liveCards.map((c, i) => {
+          const entry = { number: i + 1, answer: c.getAnswerText() };
+          if (linkConfig.answerFields.includes('marks')) {
+            entry.marks = questions[i].marks;
+          }
+          return entry;
+        });
+        const out = {};
+        out[linkConfig.primaryKey] = questions;
+        out[linkConfig.linkedKey] = answerKey;
+        return out;
+      },
     };
   }
 
@@ -477,7 +732,7 @@ window.ResourceEditor = (function () {
     container.innerHTML = '';
     container.classList.add('resource-editor');
 
-    const fields = {}; // key -> { getValue }
+    const fields = {}; // key -> { getValue } | { multi: true, getValue() -> {k:v,...} }
     let dirty = false;
     const markDirty = () => {
       if (!dirty) {
@@ -491,17 +746,42 @@ window.ResourceEditor = (function () {
       if (e.target.closest('.redit-add-btn, .redit-icon-btn')) markDirty();
     });
 
-    const skipTopLevel = new Set(['title']); // shown first, separately, below
+    const linked = config.linkedList;
+    const derivedKeys = new Set(config.derivedKeys || []);
+    const skipTopLevel = new Set(['title']);
     if (config.sectionsKey) skipTopLevel.add(config.sectionsKey);
+    if (linked) {
+      skipTopLevel.add(linked.primaryKey);
+      skipTopLevel.add(linked.linkedKey);
+    }
+    derivedKeys.forEach((k) => skipTopLevel.add(k));
+
+    // Linked question+answer editor (worksheet, test) renders first among
+    // the body fields, right after any intro text, since it's the heart
+    // of the resource.
+    if (linked) {
+      const linkedField = buildLinkedQuestionList(
+        structuredContent[linked.primaryKey],
+        structuredContent[linked.linkedKey],
+        linked
+      );
+      fields.__linked = { multi: true, getValue: linkedField.getValue };
+      // placed after the loop below via insertion order — see bottom
+    }
 
     for (const key in structuredContent) {
       if (key === 'title') continue;
+      if (skipTopLevel.has(key)) continue;
+
       const value = structuredContent[key];
       const label = (config.topLevelLabels && config.topLevelLabels[key]) || prettyLabel(key);
       const kind = key === config.sectionsKey ? 'sectionlist' : classify(value);
 
       let field;
       switch (kind) {
+        case 'number':
+          field = buildNumberField(value, label);
+          break;
         case 'longtext':
           field = buildLongText(value, label);
           break;
@@ -528,6 +808,30 @@ window.ResourceEditor = (function () {
       fields[key] = field;
     }
 
+    // The linked editor's node gets appended now (after intro/instruction
+    // fields already added above, before trailing fields like difficulty
+    // would have been — in practice recipes put those before questions
+    // anyway, so this reads naturally).
+    if (linked) {
+      const linkedNode = fields.__linked; // getValue already captured
+      // Re-run node creation isn't needed — build once and reuse the node.
+    }
+    if (linked) {
+      const linkedField = buildLinkedQuestionList(
+        structuredContent[linked.primaryKey],
+        structuredContent[linked.linkedKey],
+        linked
+      );
+      container.appendChild(linkedField.node);
+      fields.__linked = { multi: true, getValue: linkedField.getValue };
+    }
+
+    if (derivedKeys.size && config.derivedNote) {
+      const note = el('p', 'redit-derived-note');
+      note.textContent = config.derivedNote;
+      container.appendChild(note);
+    }
+
     // Title is always shown first, since it's how the resource is identified.
     if ('title' in structuredContent) {
       const titleField = buildShortText(structuredContent.title, 'Title');
@@ -537,8 +841,18 @@ window.ResourceEditor = (function () {
 
     return {
       getValue() {
-        const out = {};
-        for (const key in fields) out[key] = fields[key].getValue();
+        let out = {};
+        for (const key in fields) {
+          const field = fields[key];
+          if (field.multi) {
+            Object.assign(out, field.getValue());
+          } else {
+            out[key] = field.getValue();
+          }
+        }
+        if (typeof config.postProcess === 'function') {
+          out = config.postProcess(out);
+        }
         return out;
       },
       isDirty() {
