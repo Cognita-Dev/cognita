@@ -16,7 +16,7 @@
 // cannot use these endpoints.
 
 import { requireAuth } from './auth-middleware.js';
-import { requireSuperAdmin } from './admin-auth.js';
+import { requireAdmin, requireSuperAdmin } from './admin-auth.js';
 import { fsGet, fsSet, fsQuery, fsDelete, getGoogleAccessToken } from './firestore-rest.js';
 
 const VALID_ROLES = ['admin', 'moderator'];
@@ -98,6 +98,21 @@ export async function handleAdminBootstrap(request, env) {
   }
 
   return _jsonOk({ uid: identity.uid, role: 'admin' }, 201);
+}
+
+// ── Who am I (staff check) ────────────────────────────────────────────
+// GET /api/admin/whoami
+// Lightweight check used right after sign-in to decide whether to route
+// someone to /admin.html instead of /app.html. Accepts either role
+// (admin or moderator) — unlike role management, deciding where to land
+// after login isn't a superadmin-only concern.
+export async function handleAdminWhoAmI(request, env) {
+  try {
+    const identity = await requireAdmin(request, env);
+    return _jsonOk({ role: identity.role });
+  } catch (e) {
+    return _jsonError('Not staff: ' + e.message, e.isForbidden ? 403 : 401);
+  }
 }
 
 // ── List current admins/moderators ────────────────────────────────────
