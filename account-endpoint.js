@@ -15,14 +15,14 @@ export async function handleAccountRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
   } catch (e) {
     console.error('[account] resolution failed:', e.message);
-    return _jsonError('Could not load your account. Please try again.', 500);
+    return _jsonError('Could not load your account. Please try again.', 500, env);
   }
   const plan = getPlan(account.planId);
   return new Response(JSON.stringify({
@@ -45,7 +45,7 @@ export async function handleAccountRequest(request, env) {
     },
   }), {
     status: 200,
-    headers: _corsJsonHeaders(),
+    headers: _corsJsonHeaders(env),
   });
 }
 
@@ -54,14 +54,14 @@ export async function handleUsageRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
   } catch (e) {
     console.error('[usage] account resolution failed:', e.message);
-    return _jsonError('Could not load your usage. Please try again.', 500);
+    return _jsonError('Could not load your usage. Please try again.', 500, env);
   }
   const plan = getPlan(account.planId);
   const used = await getUsageBatch(identity.uid, [
@@ -82,13 +82,13 @@ export async function handleUsageRequest(request, env) {
     },
   }), {
     status: 200,
-    headers: _corsJsonHeaders(),
+    headers: _corsJsonHeaders(env),
   });
 }
 
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
