@@ -199,6 +199,7 @@ let currentResource = null;
 let selectedDesignTemplateId = 'classic';
 let currentAccountPlanId = 'free';
 let currentAccountHasDesignTemplates = false;
+let activeEditorHandle = null;
 
 (async function init() {
   const user = await window.Auth.requireAuthOrRedirect();
@@ -978,6 +979,8 @@ function wireResultPanel() {
   document
     .getElementById('resourceResultClose')
     .addEventListener('click', () => {
+      if (!_confirmDiscardIfDirty()) return;
+
       document.getElementById(
         'resourcesResultPanel'
       ).hidden = true;
@@ -987,7 +990,9 @@ function wireResultPanel() {
 
   document.getElementById('resourceEditBtn').addEventListener('click', toggleEditMode);
   document.getElementById('resourceEditSaveBtn').addEventListener('click', saveEdit);
-  document.getElementById('resourceEditCancelBtn').addEventListener('click', () => setEditMode(false));
+  document.getElementById('resourceEditCancelBtn').addEventListener('click', () => {
+    if (_confirmDiscardIfDirty()) setEditMode(false);
+  });
 
   document.getElementById('resourceRegenerateBtn').addEventListener('click', submitRegenerate);
 }
@@ -1084,16 +1089,33 @@ function showResultPanel(resource) {
   });
 }
 
-/* ── Edit (direct structuredContent edit, no AI call) ── */
+/* ── Edit (structured form editor, no AI call) ── */
 
 function setEditMode(isEditing) {
   document.getElementById('resourceResultBody').hidden = isEditing;
   document.getElementById('resourceEditWrap').hidden = !isEditing;
   document.getElementById('resourceEditBtn').hidden = isEditing;
 
+  const saveBtn = document.getElementById('resourceEditSaveBtn');
+
   if (isEditing && currentResource) {
-    document.getElementById('resourceEditTextarea').value =
-      JSON.stringify(currentResource.structuredContent, null, 2);
+    const mountEl = document.getElementById('resourceEditForm');
+
+    saveBtn.disabled = true;
+
+    activeEditorHandle = window.ResourceEditor.mount(
+      mountEl,
+      currentResource.resourceType,
+      currentResource.structuredContent,
+      {
+        onDirty: () => {
+          saveBtn.disabled = false;
+        },
+      }
+    );
+  } else if (activeEditorHandle) {
+    activeEditorHandle.destroy();
+    activeEditorHandle = null;
   }
 }
 
@@ -1101,18 +1123,17 @@ function toggleEditMode() {
   setEditMode(true);
 }
 
-async function saveEdit() {
-  if (!currentResource) return;
-
-  let structuredContent;
-  try {
-    structuredContent = JSON.parse(
-      document.getElementById('resourceEditTextarea').value
-    );
-  } catch (e) {
-    showToast('That content is not valid JSON.');
-    return;
+function _confirmDiscardIfDirty() {
+  if (activeEditorHandle && activeEditorHandle.isDirty()) {
+    return window.confirm('You have unsaved changes. Discard them?');
   }
+  return true;
+}
+
+async function saveEdit() {
+  if (!currentResource || !activeEditorHandle) return;
+
+  const structuredContent = activeEditorHandle.getValue();
 
   const btn = document.getElementById('resourceEditSaveBtn');
   setBtnLoading(btn, true);
@@ -1130,7 +1151,10 @@ async function saveEdit() {
     setBtnLoading(btn, false);
 
     if (!res.ok) {
-      showToast(data.error || 'Could not save your edit.');
+      showToast(
+        data.error ||
+          'Could not save your changes. Check that every section has the details it needs.'
+      );
       return;
     }
 
