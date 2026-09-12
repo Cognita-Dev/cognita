@@ -5,10 +5,11 @@
 // client-side gate of its own beyond that, since the server check is the
 // only one that actually matters.
 //
-// The Roles panel is additionally gated to only show for people whose
-// role is 'admin' — moderators can use everything else on this page but
-// the server will reject role-management calls from them, so the panel
-// is hidden for them rather than shown-then-erroring.
+// The People (roles) section is additionally gated to only show for
+// people whose role is 'admin' — moderators can use everything else on
+// this page but the server will reject role-management calls from them,
+// so the nav item + section are hidden for them rather than
+// shown-then-erroring.
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
@@ -19,6 +20,25 @@ const RESOURCE_TYPES = [
 ];
 
 const STATUSES = ['draft', 'in_review', 'validated', 'published', 'archived'];
+
+const STATUS_LABELS = {
+  draft: 'Draft',
+  in_review: 'In review',
+  validated: 'Validated',
+  published: 'Published',
+  archived: 'Archived',
+};
+
+// The single obvious "next step" action per status, shown as the primary
+// button in the detail panel. Anything else available from that status
+// stays in the secondary row.
+const PRIMARY_ACTION_BY_STATUS = {
+  draft: { action: 'submit_review', label: 'Submit for review' },
+  in_review: { action: 'validate', label: 'Validate' },
+  validated: { action: 'publish', label: 'Publish' },
+  published: { action: 'archive', label: 'Archive' },
+  archived: { action: 'restore', label: 'Restore to draft' },
+};
 
 // Skeleton JSON per resource type, matching each recipe's required
 // structure (recipes/*.js on the backend). Placeholder values are meant
@@ -68,8 +88,9 @@ const GENERIC_TEMPLATE = {
 };
 
 let currentStatusFilter = 'draft';
-let currentResources = [];
+let currentResources = [];       // resources for the active status filter, unfiltered by search/type
 let currentDetailResource = null;
+let isSuperAdmin = false;
 
 (async function init() {
   const user = await window.Auth.requireAuthOrRedirect();
@@ -79,34 +100,185 @@ let currentDetailResource = null;
   document.getElementById('accountAvatar').textContent = (user.email || 'A').charAt(0).toUpperCase();
 
   populateResourceTypeSelect();
+  populateResourceTypeFilter();
   renderStatusTabs();
+  wireSectionNav();
+  wireMobileNav();
   wireCreateForm();
   wireDetailPanel();
   wireCollections();
   wireRolesPanel();
+  wireResourceToolbar();
+
   await loadResourceList();
   await loadCollections();
   await tryLoadRolesPanel();
+  await loadOverview();
 })();
+
+/* ── Section navigation ── */
+
+function wireSectionNav() {
+  document.querySelectorAll('.admin-nav-item[data-section]').forEach((btn) => {
+    btn.addEventListener('click', () => switchSection(btn.dataset.section));
+  });
+
+  document.getElementById('topbarNewResourceBtn').addEventListener('click', () => switchSection('create'));
+
+  document.querySelectorAll('.admin-stat-card[data-status]').forEach((card) => {
+    card.addEventListener('click', () => {
+      switchSection('resources');
+      currentStatusFilter = card.dataset.status;
+      syncStatusTabsUI();
+      loadResourceList();
+    });
+  });
+}
+
+const SECTION_META = {
+  overview: { title: 'Overview', subtitle: "A quick look at your content pipeline." },
+  resources: { title: 'Resources', subtitle: 'Browse, filter and manage every learning resource.' },
+  create: { title: 'Create', subtitle: 'Generate a new resource with AI, or write one by hand.' },
+  collections: { title: 'Collections', subtitle: 'Group published resources for learners to browse.' },
+  roles: { title: 'People', subtitle: 'Manage who can curate content as an admin or moderator.' },
+};
+
+function switchSection(section) {
+  document.querySelectorAll('.admin-section').forEach((el) => el.classList.remove('is-active'));
+  document.getElementById('section-' + section).classList.add('is-active');
+
+  document.querySelectorAll('.admin-nav-item[data-section]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.section === section);
+  });
+
+  const meta = SECTION_META[section] || SECTION_META.overview;
+  document.getElementById('sectionTitle').textContent = meta.title;
+  document.getElementById('sectionSubtitle').textContent = meta.subtitle;
+  document.getElementById('topbarActions').hidden = section === 'create';
+
+  closeMobileNav();
+}
+
+function wireMobileNav() {
+  const sidebar = document.getElementById('adminSidebar');
+  const scrim = document.getElementById('adminNavScrim');
+
+  document.getElementById('adminNavOpen').addEventListener('click', () => {
+    sidebar.classList.add('is-open');
+    scrim.classList.add('is-visible');
+  });
+  document.getElementById('adminNavClose').addEventListener('click', closeMobileNav);
+  scrim.addEventListener('click', closeMobileNav);
+}
+
+function closeMobileNav() {
+  document.getElementById('adminSidebar').classList.remove('is-open');
+  document.getElementById('adminNavScrim').classList.remove('is-visible');
+}
+
+/* ── Overview ── */
+
+async function loadOverview() {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/resources');
+    if (!res.ok) return;
+    const data = await res.json();
+    const all = data.resources || [];
+
+    const counts = {};
+    STATUSES.forEach((s) => { counts[s] = 0; });
+    all.forEach((r) => { if (counts[r.status] !== undefined) counts[r.status]++; });
+
+    const grid = document.getElementById('overviewStatGrid');
+    grid.innerHTML = STATUSES.map((s) =>
+      '<div class="admin-stat-card" data-status="' + s + '">' +
+      '<div class="admin-stat-card-label">' + escapeHtml(STATUS_LABELS[s]) + '</div>' +
+      '<div class="admin-stat-card-value">' + counts[s] + '</div>' +
+      '</div>'
+    ).join('');
+    grid.querySelectorAll('.admin-stat-card[data-status]').forEach((card) => {
+      card.addEventListener('click', () => {
+        switchSection('resources');
+        currentStatusFilter = card.dataset.status;
+        syncStatusTabsUI();
+        loadResourceList();
+      });
+    });
+
+    const inReview = all.filter((r) => r.status === 'in_review').slice(0, 6);
+    document.getElementById('overviewReviewList').innerHTML = inReview.length === 0
+      ? '<div class="admin-empty">Nothing waiting on review right now.</div>'
+      : inReview.map(renderOverviewRow).join('');
+    document.getElementById('overviewReviewList').querySelectorAll('[data-open-id]').forEach((row) => {
+      row.addEventListener('click', () => openDetail(row.dataset.openId));
+    });
+
+    const recent = [...all].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 6);
+    document.getElementById('overviewRecentList').innerHTML = recent.length === 0
+      ? '<div class="admin-empty">No resources yet.</div>'
+      : recent.map(renderOverviewRow).join('');
+    document.getElementById('overviewRecentList').querySelectorAll('[data-open-id]').forEach((row) => {
+      row.addEventListener('click', () => openDetail(row.dataset.openId));
+    });
+  } catch (e) {
+    console.error('[admin] overview load failed:', e.message);
+  }
+}
+
+function renderOverviewRow(r) {
+  return '<button class="admin-row" data-open-id="' + r.id + '">' +
+    '<span class="admin-row-icon"><i class="ph ph-file-text"></i></span>' +
+    '<div class="admin-row-info">' +
+    '<div class="admin-row-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
+    '<div class="admin-row-meta">' + escapeHtml(r.resourceType) + '<span class="dot"></span>' + relativeTime(r.updatedAt) + '</div>' +
+    '</div>' +
+    '<span class="admin-badge admin-badge--' + r.status + '">' + escapeHtml(STATUS_LABELS[r.status] || r.status) + '</span>' +
+    '</button>';
+}
+
+/* ── Resource type selects ── */
 
 function populateResourceTypeSelect() {
   const select = document.getElementById('fieldResourceType');
   select.innerHTML = RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + t + '</option>').join('');
 }
 
+function populateResourceTypeFilter() {
+  const select = document.getElementById('resourceTypeFilter');
+  select.insertAdjacentHTML('beforeend', RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + t + '</option>').join(''));
+}
+
+/* ── Status tabs ── */
+
 function renderStatusTabs() {
   const wrap = document.getElementById('statusTabs');
   wrap.innerHTML = STATUSES.map((s) =>
-    '<button type="button" class="resource-type-card" data-status="' + s + '" style="padding:10px;">' +
-    '<span>' + s + '</span></button>'
+    '<button type="button" class="admin-status-tab' + (s === currentStatusFilter ? ' is-active' : '') + '" data-status="' + s + '">' +
+    '<span>' + escapeHtml(STATUS_LABELS[s]) + '</span>' +
+    '</button>'
   ).join('');
 
   wrap.querySelectorAll('[data-status]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       currentStatusFilter = btn.dataset.status;
+      syncStatusTabsUI();
       await loadResourceList();
     });
   });
+}
+
+function syncStatusTabsUI() {
+  document.querySelectorAll('.admin-status-tab').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.status === currentStatusFilter);
+  });
+  document.getElementById('resourceListHeading').textContent = STATUS_LABELS[currentStatusFilter] || currentStatusFilter;
+}
+
+/* ── Toolbar: search + type filter (client-side over the loaded status page) ── */
+
+function wireResourceToolbar() {
+  document.getElementById('resourceSearchInput').addEventListener('input', renderResourceRows);
+  document.getElementById('resourceTypeFilter').addEventListener('change', renderResourceRows);
 }
 
 /* ── Create ── */
@@ -117,13 +289,21 @@ function wireCreateForm() {
       const isBatch = document.querySelector('input[name="createMode"]:checked').value === 'batch';
       document.getElementById('singleCreateForm').hidden = isBatch;
       document.getElementById('batchCreateForm').hidden = !isBatch;
+      document.querySelectorAll('#createModeSegmented .admin-segmented-option').forEach((opt) => {
+        opt.classList.toggle('is-active', opt.querySelector('input').checked);
+      });
     });
   });
 
-  document.getElementById('fieldCreationMode').addEventListener('change', (e) => {
-    const isManual = e.target.value === 'manual';
-    document.getElementById('aiFieldsWrap').hidden = isManual;
-    document.getElementById('manualContentWrap').hidden = !isManual;
+  document.querySelectorAll('#creationModeToggle .admin-mode-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const mode = card.dataset.mode;
+      document.getElementById('fieldCreationMode').value = mode;
+      document.querySelectorAll('#creationModeToggle .admin-mode-card').forEach((c) => c.classList.toggle('is-active', c === card));
+      const isManual = mode === 'manual';
+      document.getElementById('aiFieldsWrap').hidden = isManual;
+      document.getElementById('manualContentWrap').hidden = !isManual;
+    });
   });
 
   document.getElementById('loadTemplateBtn').addEventListener('click', () => {
@@ -175,7 +355,11 @@ function wireCreateForm() {
       }
 
       showToast('Draft created.');
+      currentStatusFilter = 'draft';
+      syncStatusTabsUI();
       await loadResourceList();
+      await loadOverview();
+      switchSection('resources');
     } catch (e) {
       setBtnLoading(btn, false);
       showToast('Could not reach the server.');
@@ -216,6 +400,7 @@ function wireCreateForm() {
 
       renderBatchResults(data.results);
       await loadResourceList();
+      await loadOverview();
     } catch (e) {
       setBtnLoading(btn, false);
       showToast('Could not reach the server.');
@@ -228,11 +413,11 @@ function renderBatchResults(results) {
   const wrap = document.getElementById('batchResults');
   wrap.innerHTML = results.map((r) => {
     if (r.ok) {
-      return '<div style="color:#3F6B5B;">#' + r.index + ' ok — ' +
+      return '<div style="color:var(--success);">#' + r.index + ' ok — ' +
         escapeHtml(r.resource?.structuredContent?.title || r.resource?.id || '') +
         (r.wasExisting ? ' (already existed — idempotent replay)' : '') + '</div>';
     }
-    return '<div style="color:#7A2E3A;">#' + r.index + ' failed — ' + escapeHtml(r.error) + '</div>';
+    return '<div style="color:var(--danger);">#' + r.index + ' failed — ' + escapeHtml(r.error) + '</div>';
   }).join('');
 }
 
@@ -249,28 +434,53 @@ async function loadResourceList() {
 
     const data = await res.json();
     currentResources = data.resources || [];
-
-    if (currentResources.length === 0) {
-      list.innerHTML = '<div class="my-resources-empty">No resources in this status.</div>';
-      return;
-    }
-
-    list.innerHTML = currentResources.map((r) =>
-      '<button class="my-resource-row" data-id="' + r.id + '">' +
-      '<div class="my-resource-info">' +
-      '<div class="my-resource-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
-      '<div class="my-resource-meta">' + escapeHtml(r.resourceType) + ' · ' + escapeHtml(r.createdMode) + '</div>' +
-      '</div>' +
-      '<span class="my-resource-status">' + r.status + '</span>' +
-      '</button>'
-    ).join('');
-
-    list.querySelectorAll('.my-resource-row').forEach((row) => {
-      row.addEventListener('click', () => openDetail(row.dataset.id));
-    });
+    syncStatusTabsUI();
+    renderResourceRows();
   } catch (e) {
     console.error('[admin] list load failed:', e.message);
+    list.innerHTML = '<div class="admin-empty">Could not load resources. Please try again.</div>';
   }
+}
+
+function renderResourceRows() {
+  const list = document.getElementById('adminResourceList');
+  const query = (document.getElementById('resourceSearchInput').value || '').trim().toLowerCase();
+  const typeFilter = document.getElementById('resourceTypeFilter').value;
+
+  const filtered = currentResources.filter((r) => {
+    if (typeFilter && r.resourceType !== typeFilter) return false;
+    if (!query) return true;
+    const title = (r.structuredContent?.title || r.id || '').toLowerCase();
+    return title.includes(query);
+  });
+
+  document.getElementById('resourceListCount').textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="admin-empty">' +
+      (currentResources.length === 0 ? 'No resources in this status.' : 'No resources match your search.') +
+      '</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map((r) =>
+    '<button class="admin-row" data-id="' + r.id + '">' +
+    '<span class="admin-row-icon"><i class="ph ph-file-text"></i></span>' +
+    '<div class="admin-row-info">' +
+    '<div class="admin-row-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
+    '<div class="admin-row-meta">' +
+    escapeHtml(r.resourceType) + '<span class="dot"></span>' +
+    (r.createdMode === 'ai' ? 'Generated with AI' : 'Written by hand') + '<span class="dot"></span>' +
+    'Updated ' + relativeTime(r.updatedAt) +
+    '</div>' +
+    '</div>' +
+    '<span class="admin-badge admin-badge--' + r.status + '">' + escapeHtml(STATUS_LABELS[r.status] || r.status) + '</span>' +
+    '</button>'
+  ).join('');
+
+  list.querySelectorAll('.admin-row[data-id]').forEach((row) => {
+    row.addEventListener('click', () => openDetail(row.dataset.id));
+  });
 }
 
 /* ── Detail / edit / transitions ── */
@@ -285,18 +495,63 @@ async function openDetail(resourceId) {
     const data = await res.json();
     currentDetailResource = data.resource;
 
+    document.getElementById('detailScrim').hidden = false;
     document.getElementById('detailPanel').hidden = false;
-    document.getElementById('detailTitle').textContent = currentDetailResource.structuredContent?.title || resourceId;
-    document.getElementById('detailStatusBadge').textContent = currentDetailResource.status;
-    document.getElementById('detailContentJson').value = JSON.stringify(currentDetailResource.structuredContent, null, 2);
+    renderDetailChrome();
 
     await loadVersionHistory(resourceId);
-    document.getElementById('detailPanel').scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
     showToast('Could not reach the server.');
     console.error('[admin] detail load failed:', e.message);
   }
 }
+
+function renderDetailChrome() {
+  const r = currentDetailResource;
+  document.getElementById('detailTitle').textContent = r.structuredContent?.title || r.id;
+  document.getElementById('detailTypeBadge').textContent = r.resourceType;
+  const statusBadge = document.getElementById('detailStatusBadge');
+  statusBadge.textContent = STATUS_LABELS[r.status] || r.status;
+  statusBadge.className = 'admin-badge admin-badge--' + r.status;
+  document.getElementById('detailContentJson').value = JSON.stringify(r.structuredContent, null, 2);
+
+  const primary = PRIMARY_ACTION_BY_STATUS[r.status];
+  const primaryBtn = document.getElementById('detailPrimaryActionBtn');
+  if (primary) {
+    primaryBtn.hidden = false;
+    primaryBtn.textContent = primary.label;
+    primaryBtn.dataset.action = primary.action;
+  } else {
+    primaryBtn.hidden = true;
+  }
+
+  // Secondary row shows every other transition still legal from this
+  // status, so nothing is hidden — it just isn't the visually dominant
+  // action.
+  const secondaryMap = {
+    requestChangesBtn: 'request_changes',
+    validateBtn: 'validate',
+    archiveBtn: 'archive',
+    restoreBtn: 'restore',
+  };
+  Object.entries(secondaryMap).forEach(([btnId, action]) => {
+    const btn = document.getElementById(btnId);
+    const isPrimary = primary && primary.action === action;
+    const legalFrom = ACTION_LEGAL_FROM[action] || [];
+    btn.hidden = isPrimary || !legalFrom.includes(r.status);
+  });
+}
+
+// Mirrors ACTION_MAP.from on the backend, so the UI only ever offers an
+// action the server will actually accept.
+const ACTION_LEGAL_FROM = {
+  submit_review: ['draft'],
+  request_changes: ['in_review', 'validated'],
+  validate: ['in_review'],
+  publish: ['validated'],
+  archive: ['published'],
+  restore: ['archived'],
+};
 
 async function loadVersionHistory(resourceId) {
   const wrap = document.getElementById('versionHistory');
@@ -307,19 +562,36 @@ async function loadVersionHistory(resourceId) {
     const versions = data.versions || [];
 
     wrap.innerHTML = versions.length === 0
-      ? '<p>No previous versions yet.</p>'
-      : versions.map((v) =>
-          '<div>v' + v.version + ' — ' + v.snapshotReason + ' — ' + new Date(v.createdAt).toLocaleString() + '</div>'
+      ? '<p class="admin-hint">No previous versions yet.</p>'
+      : versions.slice().reverse().map((v) =>
+          '<div class="admin-timeline-item">' +
+          '<div class="admin-timeline-version">Version ' + v.version + '</div>' +
+          '<div class="admin-timeline-reason">' + escapeHtml(formatSnapshotReason(v.snapshotReason)) + '</div>' +
+          '<div class="admin-timeline-date">' + new Date(v.createdAt).toLocaleString() + '</div>' +
+          '</div>'
         ).join('');
   } catch (e) {
     console.error('[admin] version history load failed:', e.message);
   }
 }
 
+function formatSnapshotReason(reason) {
+  if (!reason) return '';
+  return String(reason).replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
 function wireDetailPanel() {
-  document.getElementById('detailClose').addEventListener('click', () => {
+  const close = () => {
     document.getElementById('detailPanel').hidden = true;
+    document.getElementById('detailScrim').hidden = true;
     currentDetailResource = null;
+  };
+  document.getElementById('detailClose').addEventListener('click', close);
+  document.getElementById('detailScrim').addEventListener('click', close);
+
+  document.getElementById('detailPrimaryActionBtn').addEventListener('click', (e) => {
+    const action = e.currentTarget.dataset.action;
+    if (action) runTransition(action);
   });
 
   document.getElementById('saveEditBtn').addEventListener('click', async () => {
@@ -351,7 +623,7 @@ function wireDetailPanel() {
 
       showToast('Saved.' + (data.resource.status === 'draft' ? ' Sent back to draft for re-review.' : ''));
       currentDetailResource = data.resource;
-      document.getElementById('detailStatusBadge').textContent = currentDetailResource.status;
+      renderDetailChrome();
       await loadResourceList();
       await loadVersionHistory(currentDetailResource.id);
     } catch (e) {
@@ -391,8 +663,10 @@ function wireDetailPanel() {
 
       showToast('Deleted.');
       document.getElementById('detailPanel').hidden = true;
+      document.getElementById('detailScrim').hidden = true;
       currentDetailResource = null;
       await loadResourceList();
+      await loadOverview();
     } catch (e) {
       showToast('Could not reach the server.');
       console.error('[admin] delete failed:', e.message);
@@ -420,10 +694,11 @@ async function runTransition(action) {
     }
 
     currentDetailResource = data.resource;
-    document.getElementById('detailStatusBadge').textContent = currentDetailResource.status;
-    showToast('Now: ' + currentDetailResource.status);
+    renderDetailChrome();
+    showToast('Now: ' + (STATUS_LABELS[currentDetailResource.status] || currentDetailResource.status));
     await loadResourceList();
     await loadVersionHistory(currentDetailResource.id);
+    await loadOverview();
   } catch (e) {
     showToast('Could not reach the server.');
     console.error('[admin] transition failed:', e.message);
@@ -473,18 +748,20 @@ async function loadCollections() {
     const collections = data.collections || [];
 
     if (collections.length === 0) {
-      list.innerHTML = '<div class="my-resources-empty">No collections yet.</div>';
+      list.innerHTML = '<div class="admin-empty">No collections yet. Create one above.</div>';
       return;
     }
 
     list.innerHTML = collections.map((c) =>
-      '<div class="my-resource-row" style="cursor:default;">' +
-      '<div class="my-resource-info">' +
-      '<div class="my-resource-title">' + escapeHtml(c.name) + '</div>' +
-      '<div class="my-resource-meta">' + (c.resourceIds || []).length + ' resource(s)</div>' +
+      '<div class="admin-collection-card">' +
+      '<div>' +
+      '<div class="admin-collection-card-title">' + escapeHtml(c.name) + '</div>' +
+      '<div class="admin-collection-card-meta">' + (c.resourceIds || []).length + ' resource(s)</div>' +
       '</div>' +
-      '<button data-cid="' + c.id + '" data-vis="' + c.visibility + '" class="toggle-vis-btn resource-download-btn">' +
-      (c.visibility === 'published' ? 'Unpublish' : 'Publish') +
+      '<button data-cid="' + c.id + '" data-vis="' + c.visibility + '" class="admin-btn admin-btn--ghost toggle-vis-btn">' +
+      (c.visibility === 'published'
+        ? '<i class="ph ph-eye-slash"></i><span>Unpublish</span>'
+        : '<i class="ph ph-globe"></i><span>Publish</span>') +
       '</button>' +
       '</div>'
     ).join('');
@@ -525,13 +802,14 @@ async function tryLoadRolesPanel() {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles');
 
     if (res.status === 403) {
-      document.getElementById('rolesPanel').hidden = true;
+      document.getElementById('rolesNavItem').hidden = true;
       return;
     }
 
     if (!res.ok) return;
 
-    document.getElementById('rolesPanel').hidden = false;
+    isSuperAdmin = true;
+    document.getElementById('rolesNavItem').hidden = false;
     const data = await res.json();
     renderRolesList(data.people || []);
   } catch (e) {
@@ -543,17 +821,18 @@ function renderRolesList(people) {
   const list = document.getElementById('rolesList');
 
   if (people.length === 0) {
-    list.innerHTML = '<div class="my-resources-empty">No admins or moderators yet.</div>';
+    list.innerHTML = '<div class="admin-empty">No admins or moderators yet.</div>';
     return;
   }
 
   list.innerHTML = people.map((p) =>
-    '<div class="my-resource-row" style="cursor:default;">' +
-    '<div class="my-resource-info">' +
-    '<div class="my-resource-title">' + escapeHtml(p.uid) + '</div>' +
-    '<div class="my-resource-meta">' + escapeHtml(p.role) + '</div>' +
+    '<div class="admin-person-row">' +
+    '<span class="admin-person-avatar">' + escapeHtml((p.uid || '?').charAt(0).toUpperCase()) + '</span>' +
+    '<div class="admin-person-info">' +
+    '<div class="admin-person-uid">' + escapeHtml(p.uid) + '</div>' +
     '</div>' +
-    '<button data-uid="' + escapeHtml(p.uid) + '" class="revoke-role-btn resource-download-btn" style="background:#7A2E3A;">Revoke</button>' +
+    '<span class="admin-role-badge admin-role-badge--' + p.role + '">' + escapeHtml(p.role) + '</span>' +
+    '<button data-uid="' + escapeHtml(p.uid) + '" class="admin-btn admin-btn--danger revoke-role-btn">Revoke</button>' +
     '</div>'
   ).join('');
 
@@ -592,6 +871,9 @@ function wireRolesPanel() {
       const byUid = document.querySelector('input[name="grantLookupMode"]:checked').value === 'uid';
       document.getElementById('grantEmailWrap').hidden = byUid;
       document.getElementById('grantUidWrap').hidden = !byUid;
+      document.querySelectorAll('#grantLookupSegmented .admin-segmented-option').forEach((opt) => {
+        opt.classList.toggle('is-active', opt.querySelector('input').checked);
+      });
     });
   });
 
@@ -606,14 +888,14 @@ function wireRolesPanel() {
       uid = document.getElementById('grantUidInput').value.trim();
       if (!uid) {
         resultLine.textContent = 'Enter a uid.';
-        resultLine.style.color = '#7A2E3A';
+        resultLine.style.color = 'var(--danger)';
         return;
       }
     } else {
       const email = document.getElementById('grantEmailInput').value.trim();
       if (!email) {
         resultLine.textContent = 'Enter an email.';
-        resultLine.style.color = '#7A2E3A';
+        resultLine.style.color = 'var(--danger)';
         return;
       }
 
@@ -630,14 +912,14 @@ function wireRolesPanel() {
 
         if (!lookupRes.ok) {
           resultLine.textContent = lookupData.error || 'Could not find that user.';
-          resultLine.style.color = '#7A2E3A';
+          resultLine.style.color = 'var(--danger)';
           return;
         }
 
         uid = lookupData.uid;
       } catch (e) {
         resultLine.textContent = 'Could not reach the server for lookup.';
-        resultLine.style.color = '#7A2E3A';
+        resultLine.style.color = 'var(--danger)';
         console.error('[admin] email lookup failed:', e.message);
         return;
       }
@@ -653,18 +935,18 @@ function wireRolesPanel() {
 
       if (!res.ok) {
         resultLine.textContent = data.error || 'Could not grant role.';
-        resultLine.style.color = '#7A2E3A';
+        resultLine.style.color = 'var(--danger)';
         return;
       }
 
       resultLine.textContent = 'Granted ' + role + ' to ' + uid + '.';
-      resultLine.style.color = '#3F6B5B';
+      resultLine.style.color = 'var(--success)';
       document.getElementById('grantEmailInput').value = '';
       document.getElementById('grantUidInput').value = '';
       await tryLoadRolesPanel();
     } catch (e) {
       resultLine.textContent = 'Could not reach the server.';
-      resultLine.style.color = '#7A2E3A';
+      resultLine.style.color = 'var(--danger)';
       console.error('[admin] grant failed:', e.message);
     }
   });
@@ -682,6 +964,19 @@ function setBtnLoading(btn, isLoading) {
 
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function relativeTime(iso) {
+  if (!iso) return '';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  const days = Math.floor(hours / 24);
+  if (days < 30) return days + 'd ago';
+  return new Date(iso).toLocaleDateString();
 }
 
 function showToast(message) {
