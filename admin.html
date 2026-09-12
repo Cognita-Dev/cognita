@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/admin.css">
 <link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/resource-renderers.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body class="app-page admin-page">
@@ -313,11 +314,16 @@
       <div class="admin-detail-main">
         <div class="admin-advanced-editor-head">
           <span class="admin-advanced-label"><i class="ph ph-pencil-simple"></i> Content</span>
+          <div class="admin-editor-view-toggle" id="detailViewToggle">
+            <button type="button" class="admin-editor-view-btn is-active" id="detailViewEditBtn">Edit</button>
+            <button type="button" class="admin-editor-view-btn" id="detailViewPreviewBtn">Preview</button>
+          </div>
           <button class="admin-btn admin-btn--ghost admin-btn--sm" id="saveEditBtn" disabled>
             <i class="ph ph-floppy-disk"></i><span>Save edit</span>
           </button>
         </div>
         <div id="detailContentEditor" class="resource-editor"></div>
+        <div id="detailContentPreview" class="admin-detail-preview" hidden></div>
 
         <div class="admin-workflow-actions" id="detailSecondaryActions">
           <button class="admin-btn admin-btn--ghost" id="requestChangesBtn">Request changes</button>
@@ -350,6 +356,7 @@
 </div>
 
 <script src="/js/resource-editor.js"></script>
+<script src="/js/resource-renderers.js"></script>
 <script type="module" src="/js/auth.js"></script>
 <script type="module" src="/js/admin.js"></script>
 </body>
