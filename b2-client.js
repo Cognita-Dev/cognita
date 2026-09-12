@@ -332,3 +332,34 @@ export async function b2DownloadFileByName(env, fileName) {
 
   return res.text();
 }
+
+/**
+ * Downloads a file's raw content by its exact name/key and returns the
+ * still-open fetch Response so the caller can stream `res.body` straight
+ * through (e.g. as a Worker Response body) without ever buffering the
+ * whole file in memory or touching text/base64 encoding — the only
+ * binary-safe way to re-serve a docx/pdf/pptx file through a proxy route.
+ * Returns null on a 404, same as b2DownloadFileByName.
+ *
+ * @param {object} env
+ * @param {string} key - the file's full key/path
+ * @returns {Promise<Response|null>}
+ */
+export async function b2DownloadFileBytes(env, key) {
+  const auth = await _authorize(env);
+  const url = auth.downloadUrl + '/file/' + env.B2_BUCKET_NAME + '/' +
+    encodeURIComponent(key).replace(/%2F/g, '/');
+
+  const res = await fetch(url, {
+    headers: { Authorization: auth.authorizationToken },
+  });
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error('B2 download failed (' + res.status + '): ' + text);
+  }
+
+  return res;
+}
