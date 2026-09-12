@@ -1,15 +1,4 @@
 // chat-endpoint.js
-// POST /api/chat
-// The frontend sends a Bearer token, a conversation history, an optional
-// "quality" hint ('standard' | 'advanced' | 'thorough'), and — for plans
-// with vision access only — an optional "images" array of
-// { base64, mimeType }. It never sends a provider or model name; that's
-// resolved entirely here.
-//
-// Image understanding uses Cloudflare Workers AI's free vision model
-// (VISION_MODEL, from entitlements.js). It's gated by plan.models.vision
-// and metered by its own daily quota (plan.limits.visionPerDay), so it
-// never touches the paid Groq/OpenRouter usage this app relies on for text.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
@@ -18,12 +7,8 @@ import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision } fr
 import { callWithFallback, callVisionModel } from './providers.js';
 
 const MAX_IMAGES_PER_REQUEST = 4;
-const HARD_MAX_IMAGE_BASE64_CHARS = 8_000_000; // ~6MB decoded, absolute ceiling
+const HARD_MAX_IMAGE_BASE64_CHARS = 8_000_000;
 
-// Built fresh per-request so "today" is always accurate. userFirstName is
-// read from the caller's own verified security token (see
-// auth-middleware.js) — it is never taken from anything the frontend
-// sends directly, so it can't be spoofed.
 function _systemPrompt(userFirstName) {
   const today = new Date().toISOString().slice(0, 10);
   const addressLine = userFirstName
@@ -109,10 +94,6 @@ function _validateImages(images, plan) {
   return { ok: true, images };
 }
 
-// Pulls a usable first name out of the verified token's "name" claim.
-// This claim is populated by Firebase itself (from the Google profile,
-// or from updateProfile() on sign-up) — never from anything the request
-// body contains — so there is nothing here for a client to spoof.
 function _firstNameFromClaims(claims) {
   const raw = claims && claims.name ? String(claims.name).trim() : '';
   if (!raw) return null;
@@ -121,50 +102,44 @@ function _firstNameFromClaims(claims) {
 }
 
 export async function handleChatRequest(request, env) {
-  // 1) Authenticate — independent of anything in the request body.
   let identity;
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
-  // 2) Parse body.
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const history = Array.isArray(body.messages) ? body.messages : null;
   if (!history || history.length === 0) {
-    return _jsonError('Missing messages.', 400);
+    return _jsonError('Missing messages.', 400, env);
   }
 
-  // 3) Resolve the user's ACTUAL plan from Firestore — never from the request.
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
   } catch (e) {
     console.error('[chat] account resolution failed:', e.message);
-    return _jsonError('Could not verify your account. Please try again.', 500);
+    return _jsonError('Could not verify your account. Please try again.', 500, env);
   }
 
   const plan = getPlan(account.planId);
 
-  // 4) Check and consume daily quota — server-side, KV-backed.
   const quota = await checkAndIncrement(identity.uid, 'messages', plan.limits.messagesPerDay, env);
   if (!quota.allowed) {
     return _jsonError(
       'You have reached your daily message limit for the ' + plan.name + ' plan (' + quota.limit + ' per day). ' +
       'It resets at midnight UTC, or you can upgrade for a higher limit.',
-      429
+      429, env
     );
   }
 
-  // 5) Handle image attachments, if any — gated by plan.models.vision,
-  //    separately metered via plan.limits.visionPerDay.
   const hasImages = Array.isArray(body.images) && body.images.length > 0;
   let images = [];
 
@@ -172,13 +147,13 @@ export async function handleChatRequest(request, env) {
     if (!planHasVision(account.planId)) {
       return _jsonError(
         'Image understanding is available on ' + getPlan('plus').name + ' and above. Upgrade to attach images.',
-        403
+        403, env
       );
     }
 
     const validated = _validateImages(body.images, plan);
     if (!validated.ok) {
-      return _jsonError(validated.error, 400);
+      return _jsonError(validated.error, 400, env);
     }
     images = validated.images;
 
@@ -187,13 +162,11 @@ export async function handleChatRequest(request, env) {
       return _jsonError(
         'You have reached your daily image-understanding limit for the ' + plan.name + ' plan (' +
         visionQuota.limit + ' per day). It resets at midnight UTC.',
-        429
+        429, env
       );
     }
   }
 
-  // 6) Resolve requested "quality" against what the plan is actually
-  //    entitled to.
   const requestedTier = _tierForQualityHint(body.quality);
   let actualTier = 'fast';
 
@@ -203,7 +176,7 @@ export async function handleChatRequest(request, env) {
       return _jsonError(
         'The "' + (body.quality || 'advanced') + '" quality level isn\'t available on the ' + plan.name +
         ' plan. Upgrade to unlock it, or switch to Standard quality.',
-        403
+        403, env
       );
     }
 
@@ -213,7 +186,7 @@ export async function handleChatRequest(request, env) {
         return _jsonError(
           'You\'ve reached your daily limit for Advanced/Thorough quality on the ' + plan.name + ' plan (' +
           advQuota.limit + ' per day). It resets at midnight UTC — switch to Standard quality to keep chatting, or upgrade for a higher limit.',
-          429
+          429, env
         );
       }
     }
@@ -221,10 +194,6 @@ export async function handleChatRequest(request, env) {
     actualTier = requestedTier;
   }
 
-  // 7) Trim history to what the plan allows, and prepend the system prompt.
-  //    The person's first name (if we have one) comes from their verified
-  //    token claims — see _firstNameFromClaims — so it lets the AI greet
-  //    them naturally without any extra database lookups.
   const userFirstName = _firstNameFromClaims(identity.claims);
 
   const trimmedHistory = history
@@ -234,7 +203,6 @@ export async function handleChatRequest(request, env) {
 
   const messages = [{ role: 'system', content: _systemPrompt(userFirstName) }, ...trimmedHistory];
 
-  // 8) Call the model.
   let result;
   try {
     if (hasImages) {
@@ -245,10 +213,9 @@ export async function handleChatRequest(request, env) {
     }
   } catch (e) {
     console.error('[chat] model call failed:', e.message);
-    return _jsonError('Cognita is temporarily unavailable. Please try again shortly.', 503);
+    return _jsonError('Cognita is temporarily unavailable. Please try again shortly.', 503, env);
   }
 
-  // 9) Split out the thought process, whichever form the model returned it in.
   let thinking = result.reasoning || null;
   let reply = result.text || '';
   if (!thinking) {
@@ -263,20 +230,14 @@ export async function handleChatRequest(request, env) {
     remainingToday: plan.limits.messagesPerDay - quota.used,
   }), {
     status: 200,
-    headers: _corsJsonHeaders(),
+    headers: _corsJsonHeaders(env),
   });
 }
 
-function _corsJsonHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*', // tighten to your domain in production
-  };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: _corsJsonHeaders(),
-  });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
