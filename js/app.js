@@ -60,6 +60,7 @@ let conversationMeta = [];
 let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
+let freshAssistantIndex = -1; // index of the just-received assistant reply to type out; -1 = none pending
 
 let placeholderIndex = 0;
 let placeholderTimeoutId = null;
@@ -1153,6 +1154,7 @@ async function sendMessage(text) {
       sources: data.sources || null,
       elapsedMs,
     };
+    freshAssistantIndex = conversation.length - 1;
     renderConversation();
     refreshUsage();
     persistCurrentConversation();
@@ -1188,6 +1190,82 @@ function renderConversation() {
   wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
   renderMathInElement(list);
+
+  // Type out only the reply that was just received, once, then clear the
+  // flag so later re-renders (edits, resizes, unrelated updates) don't
+  // replay the animation on old messages.
+  if (freshAssistantIndex !== -1 && conversation[freshAssistantIndex] && conversation[freshAssistantIndex].role === 'assistant') {
+    const idx = freshAssistantIndex;
+    freshAssistantIndex = -1;
+    const messageEls = list.querySelectorAll('.message.is-assistant');
+    const targetEl = messageEls[messageEls.length - 1];
+    const contentEl = targetEl ? targetEl.querySelector('.message-content') : null;
+    if (contentEl) typewriterReveal(contentEl);
+  } else {
+    freshAssistantIndex = -1;
+  }
+}
+
+/* ── Typewriter reveal ─────────────────────────────────────────────
+   The reply arrives as one finished block (the backend is not
+   streamed), so this simulates a human-typed response purely on the
+   client: the full, already-rendered HTML is left in place — links,
+   code blocks, lists, tables all keep their real structure — and only
+   the *text* is walked and revealed a few characters at a time. Math
+   rendered by KaTeX is left untouched since it isn't built from plain
+   text nodes. Nothing here changes what is stored in `conversation`,
+   so copy/regenerate/persist all keep working on the real content. */
+function typewriterReveal(contentEl) {
+  const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const nodes = [];
+  let totalChars = 0;
+  let n;
+  while ((n = walker.nextNode())) {
+    nodes.push({ node: n, full: n.nodeValue });
+    totalChars += n.nodeValue.length;
+  }
+  if (totalChars === 0) return;
+
+  nodes.forEach((entry) => { entry.node.nodeValue = ''; });
+  contentEl.classList.add('is-typing');
+
+  // Cap the total animation length so long replies don't take forever,
+  // while short ones still feel deliberately "typed" rather than instant.
+  const totalDurationMs = Math.min(Math.max(totalChars * 8, 250), 3500);
+  const tickMs = 16;
+  const charsPerTick = Math.max(1, Math.ceil(totalChars / (totalDurationMs / tickMs)));
+
+  let nodeIdx = 0;
+  let charIdx = 0;
+  let revealed = 0;
+
+  const interval = setInterval(() => {
+    let toReveal = charsPerTick;
+    while (toReveal > 0 && nodeIdx < nodes.length) {
+      const entry = nodes[nodeIdx];
+      const remaining = entry.full.length - charIdx;
+      const take = Math.min(remaining, toReveal);
+      entry.node.nodeValue = entry.full.slice(0, charIdx + take);
+      charIdx += take;
+      toReveal -= take;
+      revealed += take;
+      if (charIdx >= entry.full.length) {
+        nodeIdx += 1;
+        charIdx = 0;
+      }
+    }
+    scrollToBottom();
+    if (nodeIdx >= nodes.length) {
+      clearInterval(interval);
+      contentEl.classList.remove('is-typing');
+    }
+  }, tickMs);
 }
 
 function renderMessage(msg, index) {
@@ -1230,7 +1308,10 @@ function renderMessage(msg, index) {
     const secs = meta.elapsedMs ? (meta.elapsedMs / 1000).toFixed(1) : null;
     thoughtHtml =
       '<details class="thought-block">' +
-        '<summary>' + (secs ? 'Thought for ' + secs + 's' : 'Thought process') + '</summary>' +
+        '<summary>' +
+          '<i class="ph ph-caret-right thought-caret"></i>' +
+          '<span>' + (secs ? 'Thought for ' + secs + 's' : 'Thought process') + '</span>' +
+        '</summary>' +
         '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>' +
       '</details>';
   }
