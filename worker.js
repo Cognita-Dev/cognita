@@ -44,11 +44,11 @@ import {
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
 
-function _corsPreflight() {
+function _corsPreflight(env) {
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*', // tighten to your domain in production
+      'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400',
@@ -58,7 +58,7 @@ function _corsPreflight() {
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') return _corsPreflight();
+    if (request.method === 'OPTIONS') return _corsPreflight(env);
 
     const url = new URL(request.url);
 
