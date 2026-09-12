@@ -94,6 +94,22 @@ function _structuredContentToSections(content) {
   return sections;
 }
 
+// Builds the messages array sent to the model for a fresh generation.
+// customInstructions is supported generically across every resource type
+// — a recipe doesn't need to know about it — it's simply appended to
+// whatever prompt the recipe already builds.
+function _buildGenerateMessages(recipe, fields) {
+  const basePrompt = recipe.buildUserPrompt(fields);
+  const userContent = fields.customInstructions && String(fields.customInstructions).trim()
+    ? basePrompt + '\n\nAdditional instructions from the user (follow these carefully, in addition to everything above): ' + String(fields.customInstructions).trim()
+    : basePrompt;
+
+  return [
+    { role: 'system', content: recipe.systemPrompt },
+    { role: 'user', content: userContent },
+  ];
+}
+
 export async function handleResourceGenerate(request, env) {
   let identity;
   try {
@@ -148,6 +164,7 @@ export async function handleResourceGenerate(request, env) {
     classLevel: fields.classLevel || '',
     curriculum: fields.curriculum || '',
     topic: fields.topic || '',
+    customInstructions: fields.customInstructions || '',
     tags: [],
     visibility: 'private',
     status: 'generating',
@@ -164,14 +181,12 @@ export async function handleResourceGenerate(request, env) {
     console.error('[resources] initial write failed:', e.message);
     return _jsonError('Could not start generation. Please try again.', 500, env);
   }
-  const messages = [
-    { role: 'system', content: recipe.systemPrompt },
-    { role: 'user', content: recipe.buildUserPrompt(fields) },
-  ];
+  const messages = _buildGenerateMessages(recipe, fields);
+  const maxTokens = recipe.maxTokens || RESOURCE_MAX_TOKENS;
   let structuredContent;
   try {
     const result = await callWithFallback(MODEL_TIERS.advanced, messages, env, {
-      maxTokens: RESOURCE_MAX_TOKENS,
+      maxTokens,
       jsonMode: true,
     });
     structuredContent = _parseStructuredJson(result.text);
@@ -205,6 +220,7 @@ export async function handleResourceGenerate(request, env) {
       version: 1,
       structuredContent,
       designTemplateId: resolvedTemplate.id,
+      snapshotReason: 'generated',
       createdAt: finalDoc.updatedAt,
     }, env);
   } catch (e) {
@@ -212,6 +228,220 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('The resource was generated but could not be saved. Please try again.', 500, env);
   }
   return new Response(JSON.stringify({ resource: finalDoc }), {
+    status: 200,
+    headers: _corsJsonHeaders(env),
+  });
+}
+
+// ── Edit: the owner directly edits structuredContent (e.g. via the
+//    "Edit" control on the result preview) — no AI call involved. ──
+// POST /api/resources/:id/edit
+// Body: { structuredContent }
+export async function handleResourceEdit(request, env, resourceId) {
+  let identity;
+  try {
+    identity = await requireAuth(request, env);
+  } catch (e) {
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400, env);
+  }
+
+  if (!body.structuredContent || typeof body.structuredContent !== 'object') {
+    return _jsonError('structuredContent is required and must be an object.', 400, env);
+  }
+
+  let doc;
+  try {
+    doc = await fsGet('resources/' + resourceId, env);
+  } catch (e) {
+    return _jsonError('Could not load that resource.', 500, env);
+  }
+  if (!doc) return _jsonError('Resource not found.', 404, env);
+  if (doc.ownerId !== identity.uid) {
+    return _jsonError('Not authorized to edit this resource.', 403, env);
+  }
+
+  const recipe = getRecipe(doc.resourceType);
+  if (!recipe) {
+    return _jsonError('Unknown resource type on this resource: ' + doc.resourceType, 500, env);
+  }
+
+  const validation = recipe.validate(body.structuredContent, doc);
+  if (!validation.ok) {
+    return _jsonError('Edited content did not pass validation: ' + validation.error, 422, env);
+  }
+
+  const now = new Date().toISOString();
+  const nextVersion = (doc.currentVersion || 1) + 1;
+
+  const fileReferences = await _buildAndUploadExports(
+    recipe, body.structuredContent, doc, resourceId, doc.designTemplateId, env
+  );
+
+  const updated = {
+    ...doc,
+    structuredContent: body.structuredContent,
+    fileReferences,
+    currentVersion: nextVersion,
+    updatedAt: now,
+  };
+
+  try {
+    await fsSet('resources/' + resourceId, updated, env);
+    await fsSet('resourceVersions/' + resourceId + '_' + nextVersion, {
+      resourceId,
+      version: nextVersion,
+      structuredContent: body.structuredContent,
+      designTemplateId: doc.designTemplateId,
+      snapshotReason: 'edited',
+      createdAt: now,
+    }, env);
+  } catch (e) {
+    console.error('[resources] edit save failed:', e.message);
+    return _jsonError('Could not save your edit. Please try again.', 500, env);
+  }
+
+  return new Response(JSON.stringify({ resource: updated }), {
+    status: 200,
+    headers: _corsJsonHeaders(env),
+  });
+}
+
+// ── Regenerate: the owner gives a follow-up instruction and the model
+//    revises the existing content, keeping the same schema. Counts
+//    against the same daily resourceGen quota as a fresh generation,
+//    since it is a real model call. ──
+// POST /api/resources/:id/regenerate
+// Body: { instruction }
+export async function handleResourceRegenerate(request, env, resourceId) {
+  let identity;
+  try {
+    identity = await requireAuth(request, env);
+  } catch (e) {
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return _jsonError('Invalid JSON body.', 400, env);
+  }
+
+  const instruction = String(body.instruction || '').trim();
+  if (!instruction) {
+    return _jsonError('instruction is required.', 400, env);
+  }
+
+  let doc;
+  try {
+    doc = await fsGet('resources/' + resourceId, env);
+  } catch (e) {
+    return _jsonError('Could not load that resource.', 500, env);
+  }
+  if (!doc) return _jsonError('Resource not found.', 404, env);
+  if (doc.ownerId !== identity.uid) {
+    return _jsonError('Not authorized to modify this resource.', 403, env);
+  }
+  if (!doc.structuredContent) {
+    return _jsonError('This resource has no content yet to revise.', 409, env);
+  }
+
+  const recipe = getRecipe(doc.resourceType);
+  if (!recipe) {
+    return _jsonError('Unknown resource type on this resource: ' + doc.resourceType, 500, env);
+  }
+
+  let account;
+  try {
+    account = await resolveAccount(identity.uid, env);
+  } catch (e) {
+    console.error('[resources] account resolution failed:', e.message);
+    return _jsonError('Could not verify your account. Please try again.', 500, env);
+  }
+  const plan = getPlan(account.planId);
+  const quota = await checkAndIncrement(identity.uid, 'resourceGen', plan.limits.resourceGenPerDay, env);
+  if (!quota.allowed) {
+    return _jsonError(
+      'You have reached your daily resource generation limit for the ' + plan.name + ' plan (' + quota.limit + ' per day).',
+      429, env
+    );
+  }
+
+  const revisionPrompt =
+    'Here is the current content as JSON, following the required schema:\n' +
+    JSON.stringify(doc.structuredContent) +
+    '\n\nRevise it according to this instruction from the user, while keeping ' +
+    'the exact same JSON schema described in the system prompt. Keep any ' +
+    'existing content the instruction does not ask you to change, unless it ' +
+    'is factually wrong. Do not shorten or remove unrelated content just ' +
+    'because you are revising one part.\n\nInstruction: ' + instruction;
+
+  const messages = [
+    { role: 'system', content: recipe.systemPrompt },
+    { role: 'user', content: revisionPrompt },
+  ];
+  const maxTokens = recipe.maxTokens || RESOURCE_MAX_TOKENS;
+
+  let revisedContent;
+  try {
+    const result = await callWithFallback(MODEL_TIERS.advanced, messages, env, {
+      maxTokens,
+      jsonMode: true,
+    });
+    revisedContent = _parseStructuredJson(result.text);
+  } catch (e) {
+    console.error('[resources] regenerate call failed:', e.message);
+    return _jsonError('Could not regenerate the resource. Please try again.', 503, env);
+  }
+  if (!revisedContent) {
+    return _jsonError('The revised content could not be understood. Please try again.', 503, env);
+  }
+
+  const validation = recipe.validate(revisedContent, doc);
+  if (!validation.ok) {
+    console.error('[resources] regenerate validation failed:', validation.error);
+    return _jsonError('The revised resource did not meet quality checks. Please try again.', 503, env);
+  }
+
+  const now = new Date().toISOString();
+  const nextVersion = (doc.currentVersion || 1) + 1;
+
+  const fileReferences = await _buildAndUploadExports(
+    recipe, revisedContent, doc, resourceId, doc.designTemplateId, env
+  );
+
+  const updated = {
+    ...doc,
+    structuredContent: revisedContent,
+    fileReferences,
+    currentVersion: nextVersion,
+    lastInstruction: instruction,
+    updatedAt: now,
+  };
+
+  try {
+    await fsSet('resources/' + resourceId, updated, env);
+    await fsSet('resourceVersions/' + resourceId + '_' + nextVersion, {
+      resourceId,
+      version: nextVersion,
+      structuredContent: revisedContent,
+      designTemplateId: doc.designTemplateId,
+      snapshotReason: 'regenerated: ' + instruction.slice(0, 120),
+      createdAt: now,
+    }, env);
+  } catch (e) {
+    console.error('[resources] regenerate save failed:', e.message);
+    return _jsonError('The resource was revised but could not be saved. Please try again.', 500, env);
+  }
+
+  return new Response(JSON.stringify({ resource: updated }), {
     status: 200,
     headers: _corsJsonHeaders(env),
   });
