@@ -230,28 +230,10 @@ function renderResourceList() {
     ? allLibraryResources.filter((r) => r.resourceType === currentTypeFilter)
     : allLibraryResources;
 
-  // A type filter is a deliberate narrow query — show it as one flat
-  // list rather than imposing a Recommended/rest split on it.
-  const recommended = currentTypeFilter ? [] : filtered.filter((r) => r.recommended);
-  const rest = currentTypeFilter ? filtered : filtered.filter((r) => !r.recommended);
-
-  if (!recommended.length) {
-    renderResourceRows(container, filtered);
-    return;
-  }
-
-  const heading = recommended[0].recommendedReason === 'featured' ? 'Featured' : 'Recommended for you';
-
-  container.innerHTML =
-    '<div class="library-group-heading">' + escapeHtml(heading) + '</div>' +
-    '<div class="library-group" data-group="recommended"></div>' +
-    (rest.length ? '<div class="library-group-heading">All resources</div>' : '') +
-    '<div class="library-group" data-group="rest"></div>';
-
-  renderResourceRows(container.querySelector('[data-group="recommended"]'), recommended);
-  if (rest.length) {
-    renderResourceRows(container.querySelector('[data-group="rest"]'), rest);
-  }
+  // Recommended/Featured now lives on resources.html (the page a user
+  // sees first) — here it's always one flat browsable list, regardless
+  // of the `recommended` flag the backend still attaches per item.
+  renderResourceRows(container, filtered);
 }
 
 function renderResourceRows(container, resources) {
