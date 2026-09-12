@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Library · Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/resource-renderers.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="app-page">
+
+<div class="app-shell">
+
+  <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+  <aside class="app-sidebar" id="appSidebar">
+    <div class="sidebar-top">
+      <a href="/index.html" class="sidebar-logo">
+        <img src="/assets/cognita.png" alt="Cognita">
+        <span>Cognita</span>
+      </a>
+      <div class="sidebar-top-actions">
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Collapse sidebar">
+          <i class="ph ph-sidebar-simple"></i>
+        </button>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" aria-label="Close sidebar">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+    </div>
+
+    <a href="/app.html" class="new-chat-btn">
+      <i class="ph ph-chat-circle"></i>
+      <span>Back to chat</span>
+    </a>
+
+    <nav class="sidebar-history" aria-label="Navigation">
+      <a href="/app.html" class="sidebar-history-item">
+        <i class="ph ph-chat-circle" style="margin-right:8px;"></i>
+        <span>Chat</span>
+      </a>
+      <a href="/resources.html" class="sidebar-history-item">
+        <i class="ph ph-graduation-cap" style="margin-right:8px;"></i>
+        <span>Resources</span>
+      </a>
+      <a href="/library.html" class="sidebar-history-item is-active">
+        <i class="ph ph-books" style="margin-right:8px;"></i>
+        <span>Library</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <button class="account-btn" id="accountBtn">
+        <span class="account-avatar" id="accountAvatar">C</span>
+        <span class="account-info">
+          <span class="account-name skeleton" id="accountEmail">Loading</span>
+          <span class="account-plan skeleton" id="accountPlan">Loading</span>
+        </span>
+        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
+      </button>
+
+      <div class="account-menu" id="accountMenu" hidden>
+        <a href="/account.html"><i class="ph ph-gear"></i> Settings</a>
+        <a href="/pricing.html"><i class="ph ph-arrow-up-circle"></i> Plans</a>
+        <button id="logOutBtn"><i class="ph ph-sign-out"></i> Sign out</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main Library area ── -->
+  <main class="app-main">
+
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" id="mobileSidebarBtn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Library</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+
+    <div class="resources-scroll">
+
+      <!-- ── Collections row ── -->
+      <section class="resources-generate-panel" id="collectionsSection">
+        <h2 class="resources-heading">Collections</h2>
+        <p class="resources-subheading">Curated sets of ready-made resources, put together by the Cognita team.</p>
+        <div class="resource-type-grid" id="libraryCollectionsGrid">
+          <div class="my-resources-empty">Loading collections...</div>
+        </div>
+      </section>
+
+      <!-- ── Collection detail (shown when a collection is opened) ── -->
+      <section class="resources-generate-panel" id="collectionDetailSection" hidden>
+        <button type="button" class="resource-form-back" id="collectionDetailBack">
+          <i class="ph ph-arrow-left"></i> Back to collections
+        </button>
+        <h2 class="resources-heading" id="collectionDetailTitle">Collection</h2>
+        <p class="resources-subheading" id="collectionDetailDescription"></p>
+        <div class="my-resources-list" id="collectionDetailList"></div>
+      </section>
+
+      <!-- ── Browse all / filter by type ── -->
+      <section class="resources-generate-panel">
+        <h2 class="resources-heading">Browse all resources</h2>
+        <label class="resource-field" style="max-width:280px;">
+          <span>Filter by type</span>
+          <select id="typeFilterSelect">
+            <option value="">All types</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="my-resources-panel">
+        <div class="my-resources-list" id="libraryResourceList">
+          <div class="my-resources-empty">Loading library...</div>
+        </div>
+      </section>
+
+      <!-- ── Result preview (same shape as resources.html) ── -->
+      <section class="resources-result-panel" id="resourcesResultPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="resourceResultTitle">Resource</h2>
+          <button class="resource-result-close" id="resourceResultClose" aria-label="Close preview">
+            <i class="ph ph-x"></i>
+          </button>
+        </div>
+        <div class="resource-result-body" id="resourceResultBody"></div>
+        <div class="resource-result-actions" id="resourceResultActions"></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script type="module" src="/js/auth.js"></script>
+<script src="/js/resource-renderers.js"></script>
+<script type="module" src="/js/library.js"></script>
+
+</body>
+</html>
