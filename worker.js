@@ -1,7 +1,5 @@
 // worker.js
-// Main Cloudflare Worker entry point. Routes requests to the appropriate
-// handler. Every protected route authenticates independently inside its
-// own handler — this router does no auth itself, just dispatch.
+// Main Cloudflare Worker entry point. 
 
 import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
