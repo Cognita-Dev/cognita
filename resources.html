@@ -96,6 +96,29 @@
 
     <div class="resources-scroll">
 
+      <!-- ── Recommended/Featured (admin-curated library content) ──
+           Moved here from library.html since Resources is the page a
+           user sees first. Each card shows a real preview of the
+           content, not just a title, so a user can tell what's inside
+           before opening it. ── -->
+      <section class="resources-generate-panel" id="libraryRecommendedSection" hidden>
+        <h2 class="resources-heading" id="libraryRecommendedHeading">Recommended for you</h2>
+        <p class="resources-subheading">Curated by the Cognita team — tap one to see what's inside.</p>
+        <div class="library-recommended-grid" id="libraryRecommendedGrid"></div>
+      </section>
+
+      <!-- ── Read-only preview of a Recommended/Featured item ── -->
+      <section class="resources-result-panel" id="libraryPreviewPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="libraryPreviewTitle">Resource</h2>
+          <button class="resource-result-close" id="libraryPreviewClose" aria-label="Close preview">
+            <i class="ph ph-x"></i>
+          </button>
+        </div>
+        <div class="resource-result-body" id="libraryPreviewBody"></div>
+        <div class="resource-result-actions" id="libraryPreviewActions"></div>
+      </section>
+
       <!-- ── Generation panel ── -->
       <section class="resources-generate-panel" id="resourcesGeneratePanel">
         <h2 class="resources-heading">What do you need to create?</h2>
