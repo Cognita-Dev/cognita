@@ -98,7 +98,8 @@
   color: var(--text-1);
 }
 .resource-field input,
-.resource-field textarea {
+.resource-field textarea,
+.resource-field select {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-3);
@@ -111,7 +112,22 @@
   transition: border-color var(--duration-fast) var(--ease);
 }
 .resource-field input:focus,
-.resource-field textarea:focus { border-color: var(--accent-2); background: var(--bg-elevated); }
+.resource-field textarea:focus,
+.resource-field select:focus { border-color: var(--accent-2); background: var(--bg-elevated); }
+
+/* <select> has no `resize` and needs its own cursor + a themed
+   chevron — without this it was falling through to the browser's
+   default white-box appearance (this was the "All types" filter on
+   Library, and every generation-options dropdown on Resources). */
+.resource-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: var(--space-7);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238c8c86' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+}
 
 .resource-generate-btn {
   display: flex;
@@ -256,6 +272,15 @@
 .redit-textarea:focus {
   border-color: var(--accent-2);
   background: var(--bg-elevated);
+}
+.redit-select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: var(--space-7);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238c8c86' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
 }
 .redit-textarea {
   border: 1px solid var(--border);
