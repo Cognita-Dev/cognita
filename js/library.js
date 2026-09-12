@@ -9,6 +9,7 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 // dependency on that file loading first.
 const RESOURCE_TYPES = [
   { type: 'lesson_plan', label: 'Lesson Plan', icon: 'chalkboard-teacher' },
+  { type: 'lesson_note', label: 'Lesson Note', icon: 'notebook' },
   { type: 'worksheet', label: 'Worksheet', icon: 'note-pencil' },
   { type: 'exam', label: 'Examination', icon: 'exam' },
   { type: 'scheme_of_work', label: 'Scheme of Work', icon: 'calendar-check' },
