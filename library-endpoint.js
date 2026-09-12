@@ -3,6 +3,16 @@
 import { requireAuth } from './auth-middleware.js';
 import { fsGet, fsQuery } from './firestore-rest.js';
 import { b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
+import {
+  buildResourceSnapshot,
+  buildIndexEntry,
+  readResourceSnapshot,
+  writeResourceSnapshot,
+  readIndex,
+  writeIndex,
+  matchResourceEdgeCache,
+  putResourceEdgeCache,
+} from './library-cache.js';
 
 function _corsJsonHeaders(env) {
   return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
@@ -25,29 +35,31 @@ export async function handleLibraryList(request, env) {
   }
 
   try {
-    const published = await fsQuery('adminResources', 'status', 'published', 'updatedAt', 200, env);
-
     const url = new URL(request.url);
     const resourceType = url.searchParams.get('resourceType');
-    const filtered = resourceType
-      ? published.filter((r) => r.resourceType === resourceType)
-      : published;
 
-    const publicShape = filtered.map((r) => ({
-      id: r.id,
-      resourceType: r.resourceType,
-      title: r.structuredContent?.title || 'Untitled',
-      designTemplateId: r.designTemplateId,
-      publishedAt: r.publishedAt,
-      updatedAt: r.updatedAt,
-    }));
+    // The published list itself is identical for every user — reuse
+    // the small precomputed index (kept current by every
+    // publish/edit/archive/restore/delete) instead of querying
+    // Firestore's `adminResources` collection on every page load.
+    let publicShape = await readIndex(env);
+    if (!publicShape) {
+      const published = await fsQuery('adminResources', 'status', 'published', 'updatedAt', 200, env);
+      publicShape = published.map(buildIndexEntry);
+      await writeIndex(env, publicShape);
+    }
+
+    const filtered = resourceType
+      ? publicShape.filter((r) => r.resourceType === resourceType)
+      : publicShape;
 
     // Only rank/label when browsing the full list — a type-filtered
     // request is already a deliberate, narrow query and doesn't need a
-    // "Recommended" split imposed on top of it.
+    // "Recommended" split imposed on top of it. This part is genuinely
+    // per-user, so it still runs live rather than being cached.
     const ordered = resourceType
-      ? publicShape
-      : await _withRecommendations(publicShape, identity.uid, env);
+      ? filtered
+      : await _withRecommendations(filtered, identity.uid, env);
 
     return _jsonOk({ resources: ordered }, 200, env);
   } catch (e) {
@@ -103,34 +115,50 @@ async function _withRecommendations(list, uid, env) {
   return list;
 }
 
-export async function handleLibraryGet(request, env, resourceId) {
+export async function handleLibraryGet(request, env, resourceId, ctx) {
   try {
     await requireAuth(request, env);
   } catch (e) {
     return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
-  let doc;
-  try {
-    doc = await fsGet('adminResources/' + resourceId, env);
-  } catch (e) {
-    return _jsonError('Could not load that resource.', 500, env);
+  // A published resource's content is identical for every user, so a
+  // hit here skips KV and Firestore entirely — most repeat reads never
+  // reach any storage layer at all.
+  const cached = await matchResourceEdgeCache(resourceId);
+  if (cached) return cached;
+
+  // Edge miss — try the small precomputed KV snapshot next (written
+  // once when the resource was published/edited), before falling back
+  // to a live Firestore read.
+  let resource = await readResourceSnapshot(env, resourceId);
+
+  if (!resource) {
+    let doc;
+    try {
+      doc = await fsGet('adminResources/' + resourceId, env);
+    } catch (e) {
+      return _jsonError('Could not load that resource.', 500, env);
+    }
+
+    if (!doc || doc.status !== 'published') {
+      return _jsonError('Resource not found.', 404, env);
+    }
+
+    resource = buildResourceSnapshot(doc);
+    // Backfills the KV snapshot for anything published before this
+    // cache existed, so the next miss won't need Firestore either.
+    const backfill = writeResourceSnapshot(env, doc);
+    if (ctx) ctx.waitUntil(backfill); else await backfill;
   }
 
-  if (!doc || doc.status !== 'published') {
-    return _jsonError('Resource not found.', 404, env);
-  }
+  const response = _jsonOk({ resource }, 200, env);
+  response.headers.set('Cache-Control', 'public, max-age=300');
 
-  return _jsonOk({
-    resource: {
-      id: doc.id,
-      resourceType: doc.resourceType,
-      structuredContent: doc.structuredContent,
-      designTemplateId: doc.designTemplateId,
-      fileReferences: doc.fileReferences,
-      publishedAt: doc.publishedAt,
-    },
-  }, 200, env);
+  const cachePut = putResourceEdgeCache(resourceId, response.clone());
+  if (ctx) ctx.waitUntil(cachePut); else await cachePut;
+
+  return response;
 }
 
 export async function handleLibraryDownload(request, env, resourceId) {
