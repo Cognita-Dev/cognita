@@ -1,25 +1,4 @@
 // chat-sync-endpoint.js
-// POST /api/chat/save   { conversationId, conversation }  -> stores the
-//   conversation JSON in B2 under the caller's uid. Returns serverUpdatedAt
-//   (B2's own upload timestamp) so the client can track "as of when" this
-//   save is authoritative, for later sync reconciliation.
-// POST /api/chat/delete { conversationId }                -> hides the
-//   conversation's file in B2, and also deletes any AI-generated files
-//   (docx/pdf/pptx) that were created inside that conversation (handled
-//   inside chat-storage.js's deleteConversationFromB2, so this file
-//   doesn't need to know about that layer).
-// GET  /api/chat/list                                     -> lightweight
-//   list of every conversation (live or deleted) with its current state's
-//   timestamp — used to reconcile against a device's local cache.
-// GET  /api/chat/:id                                      -> full
-//   conversation body, fetched lazily when a device opens a chat it
-//   doesn't have cached locally.
-//
-// All of these are best-effort mirrors of the client's localStorage
-// history — a failure here never blocks the chat itself, so the frontend
-// fires these and logs/ignores errors rather than surfacing them to the
-// user (except the explicit /list and /:id reads, which the UI does need
-// to react to — but still never mutates local state on a failed read).
 
 import { requireAuth } from './auth-middleware.js';
 import {
@@ -34,31 +13,31 @@ export async function handleChatSave(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const conversationId = (body.conversationId || '').trim();
-  if (!conversationId) return _jsonError('Missing conversationId.', 400);
+  if (!conversationId) return _jsonError('Missing conversationId.', 400, env);
   if (!body.conversation || typeof body.conversation !== 'object') {
-    return _jsonError('Missing conversation payload.', 400);
+    return _jsonError('Missing conversation payload.', 400, env);
   }
 
   try {
     const result = await saveConversationToB2(env, identity.uid, conversationId, body.conversation);
     return new Response(JSON.stringify({ ok: true, serverUpdatedAt: result.uploadTimestamp }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   } catch (e) {
     console.error('[chat-sync] save failed:', e.message);
-    return _jsonError('Could not save the conversation.', 502);
+    return _jsonError('Could not save the conversation.', 502, env);
   }
 }
 
@@ -67,25 +46,25 @@ export async function handleChatDelete(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const conversationId = (body.conversationId || '').trim();
-  if (!conversationId) return _jsonError('Missing conversationId.', 400);
+  if (!conversationId) return _jsonError('Missing conversationId.', 400, env);
 
   try {
     await deleteConversationFromB2(env, identity.uid, conversationId);
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: _corsJsonHeaders() });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: _corsJsonHeaders(env) });
   } catch (e) {
     console.error('[chat-sync] delete failed:', e.message);
-    return _jsonError('Could not delete the conversation.', 502);
+    return _jsonError('Could not delete the conversation.', 502, env);
   }
 }
 
@@ -94,15 +73,15 @@ export async function handleChatList(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   try {
     const conversations = await listConversationsForUser(env, identity.uid);
-    return new Response(JSON.stringify({ conversations }), { status: 200, headers: _corsJsonHeaders() });
+    return new Response(JSON.stringify({ conversations }), { status: 200, headers: _corsJsonHeaders(env) });
   } catch (e) {
     console.error('[chat-sync] list failed:', e.message);
-    return _jsonError('Could not list conversations.', 502);
+    return _jsonError('Could not list conversations.', 502, env);
   }
 }
 
@@ -111,25 +90,25 @@ export async function handleChatGet(request, env, conversationId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
-  if (!conversationId) return _jsonError('Missing conversation id.', 400);
+  if (!conversationId) return _jsonError('Missing conversation id.', 400, env);
 
   try {
     const conversation = await getConversationFromB2(env, identity.uid, conversationId);
-    if (!conversation) return _jsonError('Conversation not found.', 404);
-    return new Response(JSON.stringify({ conversation }), { status: 200, headers: _corsJsonHeaders() });
+    if (!conversation) return _jsonError('Conversation not found.', 404, env);
+    return new Response(JSON.stringify({ conversation }), { status: 200, headers: _corsJsonHeaders(env) });
   } catch (e) {
     console.error('[chat-sync] get failed:', e.message);
-    return _jsonError('Could not load the conversation.', 502);
+    return _jsonError('Could not load the conversation.', 502, env);
   }
 }
 
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
