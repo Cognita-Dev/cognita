@@ -17,8 +17,9 @@ function _jsonOk(body, status, env) {
 }
 
 export async function handleLibraryList(request, env) {
+  let identity;
   try {
-    await requireAuth(request, env);
+    identity = await requireAuth(request, env);
   } catch (e) {
     return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
@@ -41,11 +42,65 @@ export async function handleLibraryList(request, env) {
       updatedAt: r.updatedAt,
     }));
 
-    return _jsonOk({ resources: publicShape }, 200, env);
+    // Only rank/label when browsing the full list — a type-filtered
+    // request is already a deliberate, narrow query and doesn't need a
+    // "Recommended" split imposed on top of it.
+    const ordered = resourceType
+      ? publicShape
+      : await _withRecommendations(publicShape, identity.uid, env);
+
+    return _jsonOk({ resources: ordered }, 200, env);
   } catch (e) {
     console.error('[library] list failed:', e.message);
     return _jsonError('Could not load the library. Please try again.', 500, env);
   }
+}
+
+// Surfaces admin-curated content the user is likely to actually want,
+// using a simple, explainable signal: whichever resourceType the user
+// generates most often themselves is the type of admin content they're
+// recommended first. This is a real, if modest, personalization —
+// deliberately not a black-box score, so it's easy to reason about and
+// to explain to a user or teammate later.
+//
+// A brand-new user has no generation history to match against, so
+// instead of showing an empty "Recommended" section, the most recently
+// published admin items are labeled "Featured" — publishedList is
+// already ordered by updatedAt, so the first few are the newest.
+async function _withRecommendations(list, uid, env) {
+  let topType = null;
+  try {
+    const own = await fsQuery('resources', 'ownerId', uid, 'createdAt', 200, env);
+    const counts = {};
+    own.forEach((r) => {
+      if (!r.resourceType) return;
+      counts[r.resourceType] = (counts[r.resourceType] || 0) + 1;
+    });
+    let topCount = 0;
+    for (const type in counts) {
+      if (counts[type] > topCount) {
+        topType = type;
+        topCount = counts[type];
+      }
+    }
+  } catch (e) {
+    console.error('[library] could not resolve top resource type:', e.message);
+  }
+
+  if (topType) {
+    const matching = list.filter((r) => r.resourceType === topType);
+    const rest = list.filter((r) => r.resourceType !== topType);
+    if (matching.length) {
+      matching.forEach((r) => { r.recommended = true; r.recommendedReason = 'activity'; });
+      return [...matching, ...rest];
+    }
+  }
+
+  if (list.length) {
+    const featured = list.slice(0, 3);
+    featured.forEach((r) => { r.recommended = true; r.recommendedReason = 'featured'; });
+  }
+  return list;
 }
 
 export async function handleLibraryGet(request, env, resourceId) {
