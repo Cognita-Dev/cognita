@@ -9,6 +9,7 @@ const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 // If a new recipe is added server-side, add its label + icon here too.
 const RESOURCE_TYPES = [
   { type: 'lesson_plan', label: 'Lesson Plan', icon: 'chalkboard-teacher' },
+  { type: 'lesson_note', label: 'Lesson Note', icon: 'notebook' },
   { type: 'worksheet', label: 'Worksheet', icon: 'note-pencil' },
   { type: 'exam', label: 'Examination', icon: 'exam' },
   { type: 'scheme_of_work', label: 'Scheme of Work', icon: 'calendar-check' },
@@ -32,6 +33,10 @@ const TYPE_FIELD_CONFIG = {
     duration: true,
     lessonStyle: true,
     objectiveFocus: true,
+  },
+
+  lesson_note: {
+    topic: true,
   },
 
   worksheet: {
