@@ -71,7 +71,7 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/plans') {
-      return handlePlansRequest();
+      return handlePlansRequest(env);
     }
 
     if (request.method === 'GET' && url.pathname === '/api/account') {
