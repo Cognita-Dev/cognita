@@ -7,9 +7,9 @@ main { overflow-x: hidden; }
 ═══════════════════════════════════════════════ */
 
 .hero {
-  max-width: 680px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: var(--space-7) var(--space-5) var(--space-6);
+  padding: var(--space-8) var(--space-5) var(--space-6);
   text-align: center;
   position: relative;
 }
@@ -26,12 +26,12 @@ main { overflow-x: hidden; }
 }
 
 .hero-title {
-  font-size: clamp(1.9rem, 4.2vw, 3rem);
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
   font-weight: 600;
   letter-spacing: -0.03em;
-  line-height: 1.1;
+  line-height: 1.08;
   color: var(--text-1);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .hero-subtitle {
@@ -90,7 +90,7 @@ main { overflow-x: hidden; }
   position: relative;
   display: flex;
   flex-direction: column;
-  height: 440px;
+  height: 500px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -607,7 +607,7 @@ main { overflow-x: hidden; }
 }
 
 @media (max-width: 620px) {
-  .hero-preview-window { height: 460px; }
+  .hero-preview-window { height: 520px; }
 }
 
 @media (max-width: 380px) {
@@ -692,7 +692,7 @@ main { overflow-x: hidden; }
 
 .story-visual {
   position: relative;
-  height: 190px;
+  height: 220px;
   background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -799,7 +799,7 @@ main { overflow-x: hidden; }
 .ev-ring {
   position: absolute;
   left: 50%; top: 50%;
-  width: 140px; height: 140px;
+  width: 164px; height: 164px;
   transform: translate(-50%, -50%);
   border: 1px dashed var(--border-strong);
   border-radius: 50%;
@@ -912,7 +912,7 @@ main { overflow-x: hidden; }
    cleanly. Options stay at matching scale; the picked option is only
    distinguished by colour/weight, never a larger font-size. ── */
 .story-visual--think {
-  height: 220px;
+  height: 250px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -1321,7 +1321,7 @@ main { overflow-x: hidden; }
   content: '';
   position: absolute;
   top: -50%; left: 50%;
-  width: 560px; height: 300px;
+  width: 640px; height: 340px;
   transform: translate(-50%, 0);
   background: radial-gradient(closest-side, var(--accent-subtle), transparent 70%);
   opacity: 0.9;
