@@ -69,7 +69,70 @@ function _repairTruncatedJson(text) {
   return repaired;
 }
 
+const WELL_FORMED_SECTION_TYPES = new Set([
+  'paragraph', 'bullets', 'numbered', 'definition', 'example', 'formula',
+]);
+
+// True when `value` is already a proper { heading, type, content }[]
+// array — e.g. a Lesson Note's "sections" — rather than some arbitrary
+// array field that happens to be named "sections".
+function _isWellFormedSections(value) {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (s) => s && typeof s === 'object' && typeof s.heading === 'string' && WELL_FORMED_SECTION_TYPES.has(s.type)
+    )
+  );
+}
+
+// Normalizes one already-typed section into the plain
+// { heading, type: 'paragraph' | 'bullets', content } shape the
+// docx/pdf builders render natively. "definition" and "numbered"
+// sections don't have a direct equivalent in the builders, so they're
+// turned into readable bullet lines instead of being dropped.
+function _normalizeWellFormedSection(section) {
+  if (section.type === 'definition') {
+    const items = (Array.isArray(section.content) ? section.content : []).map((entry) =>
+      entry && typeof entry === 'object' ? String(entry.term || '') + ': ' + String(entry.explanation || '') : String(entry)
+    );
+    return { heading: section.heading, type: 'bullets', content: items };
+  }
+  if (section.type === 'numbered') {
+    const items = (Array.isArray(section.content) ? section.content : []).map(
+      (item, i) => (i + 1) + '. ' + item
+    );
+    return { heading: section.heading, type: 'bullets', content: items };
+  }
+  if (section.type === 'bullets') {
+    return { heading: section.heading, type: 'bullets', content: Array.isArray(section.content) ? section.content : [] };
+  }
+  // paragraph, example, formula all already carry a plain string.
+  return { heading: section.heading, type: 'paragraph', content: String(section.content || '') };
+}
+
 function _structuredContentToSections(content) {
+  // Recipes like Lesson Note already produce a well-formed sections
+  // array — one real sub-topic per entry, with its own heading and
+  // full content. Running that through the generic key-flattening
+  // logic below collapsed each section into a single summary line
+  // (e.g. "Definition of Whole Numbers — definition") under one
+  // meta-heading literally called "Sections", discarding the actual
+  // taught content. When the shape is already well-formed, use it
+  // directly instead, keeping introduction/summary as their own
+  // untitled/"Summary" paragraphs around it.
+  if (_isWellFormedSections(content.sections)) {
+    const out = [];
+    if (typeof content.introduction === 'string' && content.introduction.trim()) {
+      out.push({ heading: '', type: 'paragraph', content: content.introduction });
+    }
+    content.sections.forEach((s) => out.push(_normalizeWellFormedSection(s)));
+    if (typeof content.summary === 'string' && content.summary.trim()) {
+      out.push({ heading: 'Summary', type: 'paragraph', content: content.summary });
+    }
+    return out;
+  }
+
   const sections = [];
   for (const key in content) {
     if (SKIP_KEYS.has(key)) continue;
