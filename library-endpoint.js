@@ -2,7 +2,8 @@
 
 import { requireAuth } from './auth-middleware.js';
 import { fsGet, fsQuery } from './firestore-rest.js';
-import { b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
+import { b2DownloadFileBytes } from './b2-client.js';
+import { signDownloadToken, verifyDownloadToken } from './download-proxy.js';
 import {
   buildResourceSnapshot,
   buildIndexEntry,
@@ -197,14 +198,93 @@ export async function handleLibraryDownload(request, env, resourceId) {
   }
 
   try {
-    const prefix = 'adminGenerated/' + resourceId + '/exports/';
-    const authToken = await b2GetDownloadAuthorization(env, prefix, 3600);
-    const downloadUrl = await b2BuildPrivateDownloadUrl(env, doc.fileReferences[format].key, authToken);
+    // Same own-domain proxy pattern as handleResourceDownload in
+    // resources-endpoint.js — see handleLibraryFileProxy below and
+    // download-proxy.js for why.
+    const token = await signDownloadToken(env, { scope: 'library', resourceId, format }, 3600);
+    const origin = new URL(request.url).origin;
+    const filename = _downloadFilename(doc, format);
+    const downloadUrl = origin + '/api/library/resources/' + resourceId + '/file' +
+      '?token=' + encodeURIComponent(token) +
+      '&filename=' + encodeURIComponent(filename);
     return _jsonOk({ url: downloadUrl, format, expiresInSeconds: 3600 }, 200, env);
   } catch (e) {
     console.error('[library] download authorization failed:', e.message);
     return _jsonError('Could not prepare the download. Please try again.', 503, env);
   }
+}
+
+// GET /api/library/resources/:id/file?token=...&filename=...
+// Byte-streaming counterpart to handleLibraryDownload above — see
+// handleResourceFileProxy in resources-endpoint.js for the full
+// explanation of why this exists (a plain <a href> navigation can't carry
+// an Authorization header, so a signed token stands in for it here).
+export async function handleLibraryFileProxy(request, env, resourceId) {
+  const url = new URL(request.url);
+  const token = url.searchParams.get('token');
+
+  let payload;
+  try {
+    payload = await verifyDownloadToken(env, token);
+  } catch (e) {
+    return _jsonError('This download link is invalid or has expired. Please download again.', 401, env);
+  }
+
+  if (payload.scope !== 'library' || payload.resourceId !== resourceId) {
+    return _jsonError('This download link is invalid.', 401, env);
+  }
+
+  let doc;
+  try {
+    doc = await fsGet('adminResources/' + resourceId, env);
+  } catch (e) {
+    console.error('[library] file proxy lookup failed:', e.message);
+    return _jsonError('Could not load that resource.', 500, env);
+  }
+  if (!doc || doc.status !== 'published') {
+    return _jsonError('Resource not found.', 404, env);
+  }
+
+  const format = payload.format;
+  const ref = doc.fileReferences && doc.fileReferences[format];
+  if (!ref) {
+    return _jsonError('No export file is available for this resource yet.', 404, env);
+  }
+
+  try {
+    const upstream = await b2DownloadFileBytes(env, ref.key);
+    if (!upstream) {
+      return _jsonError('That file could not be found. Please try downloading again.', 404, env);
+    }
+
+    const requestedFilename = url.searchParams.get('filename');
+    const filename = requestedFilename || _downloadFilename(doc, format);
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': _mimeTypeForFormat(format),
+        'Content-Disposition': 'attachment; filename="' + filename.replace(/"/g, '') + '"',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
+      },
+    });
+  } catch (e) {
+    console.error('[library] file proxy fetch failed:', e.message);
+    return _jsonError('Could not prepare the download. Please try again.', 503, env);
+  }
+}
+
+function _downloadFilename(doc, format) {
+  const base = (doc.structuredContent && doc.structuredContent.title) || doc.title || 'resource';
+  const clean = base.replace(/[^a-z0-9]+/gi, '_').toLowerCase().replace(/^_+|_+$/g, '');
+  return (clean || 'resource') + '.' + format;
+}
+
+function _mimeTypeForFormat(format) {
+  if (format === 'pdf') return 'application/pdf';
+  if (format === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
 export async function handleLibraryCollectionGet(request, env, collectionId) {
