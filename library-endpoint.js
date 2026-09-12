@@ -13,6 +13,7 @@ import {
   matchResourceEdgeCache,
   putResourceEdgeCache,
 } from './library-cache.js';
+import { buildExcerpt } from './excerpt-builder.js';
 
 function _corsJsonHeaders(env) {
   return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
@@ -42,8 +43,15 @@ export async function handleLibraryList(request, env) {
     // the small precomputed index (kept current by every
     // publish/edit/archive/restore/delete) instead of querying
     // Firestore's `adminResources` collection on every page load.
+    // A cached index written before excerpts existed has entries with
+    // no `excerpt` key at all (as opposed to one that's legitimately
+    // '' for a resource that's still generating). That distinction is
+    // what tells a stale pre-excerpt cache apart from a normal one, so
+    // it can self-heal on the next read instead of showing a blank
+    // preview for every already-published resource until it happens
+    // to be re-edited.
     let publicShape = await readIndex(env);
-    if (!publicShape) {
+    if (!publicShape || publicShape.some((e) => !('excerpt' in e))) {
       const published = await fsQuery('adminResources', 'status', 'published', 'updatedAt', 200, env);
       publicShape = published.map(buildIndexEntry);
       await writeIndex(env, publicShape);
@@ -225,6 +233,7 @@ export async function handleLibraryCollectionGet(request, env, collectionId) {
       id: r.id,
       resourceType: r.resourceType,
       title: r.structuredContent?.title || 'Untitled',
+      excerpt: buildExcerpt(r.structuredContent),
       designTemplateId: r.designTemplateId,
       publishedAt: r.publishedAt,
     }));
