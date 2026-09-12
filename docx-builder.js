@@ -130,15 +130,18 @@ function _rootRelsXml() {
     '</Relationships>';
 }
 
-function _documentXml(title, bodyParagraphs) {
+function _documentXml(title, bodyParagraphs, theme) {
+  const { font, accent, ink } = theme;
   const titleXml =
-    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t xml:space="preserve">' +
-    _xmlEscape(title) + '</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr>' +
+    _fontRunProps(font, '<w:b/><w:color w:val="' + accent + '"/><w:sz w:val="32"/>') +
+    '</w:rPr><w:t xml:space="preserve">' + _xmlEscape(title) + '</w:t></w:r></w:p>' +
     '<w:p/>'; // blank spacer paragraph
 
   const bodyXml = bodyParagraphs.map(p => {
     if (!p.trim()) return '<w:p/>';
-    return '<w:p><w:r><w:t xml:space="preserve">' + _xmlEscape(p) + '</w:t></w:r></w:p>';
+    return '<w:p><w:r><w:rPr>' + _fontRunProps(font, '<w:color w:val="' + ink + '"/><w:sz w:val="22"/>') +
+      '</w:rPr><w:t xml:space="preserve">' + _xmlEscape(p) + '</w:t></w:r></w:p>';
   }).join('');
 
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -149,13 +152,23 @@ function _documentXml(title, bodyParagraphs) {
 }
 
 /**
- * Builds a .docx file from plain text content and a title.
- * Returns a base64 string ready to send to the frontend for download.
+ * Builds a .docx file from plain text content and a title, in the given
+ * design template's palette and font — matching buildSimplePdf and the
+ * on-screen preview.
  *
  * @param {string} content - plain text, paragraphs separated by blank lines
  * @param {string} title - document title, rendered as a centered heading
+ * @param {string} [templateId] - a design-templates.js id; defaults to
+ *   'classic' if omitted or unrecognized.
  */
-export async function buildSimpleDocx(content, title) {
+export async function buildSimpleDocx(content, title, templateId) {
+  const template = getTemplate(templateId) || getDefaultTemplate();
+  const theme = {
+    font: getDocxFontFamily(templateId),
+    accent: template.colors.accent,
+    ink: template.colors.ink,
+  };
+
   const paragraphs = content
     .split(/\n\s*\n/)
     .map(p => p.replace(/\n/g, ' ').trim());
@@ -163,7 +176,7 @@ export async function buildSimpleDocx(content, title) {
   const files = [
     { name: '[Content_Types].xml', data: ENCODER.encode(_contentTypesXml()) },
     { name: '_rels/.rels', data: ENCODER.encode(_rootRelsXml()) },
-    { name: 'word/document.xml', data: ENCODER.encode(_documentXml(title, paragraphs)) },
+    { name: 'word/document.xml', data: ENCODER.encode(_documentXml(title, paragraphs, theme)) },
   ];
 
   const zipBytes = _assembleZip(files);
