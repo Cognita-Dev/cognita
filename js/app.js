@@ -21,9 +21,9 @@ const PLACEHOLDERS = [
   "What's on your mind?",
 ];
 
-const TYPE_SPEED_MS = 45;     // per character while typing
-const DELETE_SPEED_MS = 25;   // per character while deleting
-const HOLD_AFTER_TYPE_MS = 1400; // pause once a phrase is fully typed
+const TYPE_SPEED_MS = 65;      // per character while typing
+const DELETE_SPEED_MS = 35;    // per character while deleting
+const HOLD_AFTER_TYPE_MS = 1800; // pause once a phrase is fully typed
 const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 
 // Image types we'll try to send to the vision model. Anything else (pdf,
@@ -1200,7 +1200,17 @@ function renderConversation() {
     const messageEls = list.querySelectorAll('.message.is-assistant');
     const targetEl = messageEls[messageEls.length - 1];
     const contentEl = targetEl ? targetEl.querySelector('.message-content') : null;
-    if (contentEl) typewriterReveal(contentEl);
+    if (contentEl) {
+      const fullText = conversation[idx].content || '';
+      const sources = (conversationMeta[idx] || {}).sources || null;
+      typewriterReveal(contentEl, fullText, sources, () => {
+        // Copy/code-copy/math only need to run once, against the final,
+        // fully-revealed HTML — re-wiring on every in-progress frame
+        // would be wasteful and would re-render KaTeX repeatedly.
+        wireCodeCopyButtons(targetEl);
+        renderMathInElement(targetEl);
+      });
+    }
   } else {
     freshAssistantIndex = -1;
   }
@@ -1209,61 +1219,37 @@ function renderConversation() {
 /* ── Typewriter reveal ─────────────────────────────────────────────
    The reply arrives as one finished block (the backend is not
    streamed), so this simulates a human-typed response purely on the
-   client: the full, already-rendered HTML is left in place — links,
-   code blocks, lists, tables all keep their real structure — and only
-   the *text* is walked and revealed a few characters at a time. Math
-   rendered by KaTeX is left untouched since it isn't built from plain
-   text nodes. Nothing here changes what is stored in `conversation`,
-   so copy/regenerate/persist all keep working on the real content. */
-function typewriterReveal(contentEl) {
-  const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (node.parentElement && node.parentElement.closest('.katex')) return NodeFilter.FILTER_REJECT;
-      return node.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-    },
-  });
+   client. Unlike revealing text inside an already-fully-built DOM
+   (which reserves the final height up front and makes the bottom of
+   the message sit empty while the top fills in), this grows the
+   message from nothing: each tick it re-renders a slightly longer
+   slice of the *raw* markdown, so the bubble grows downward exactly
+   like real typing — paragraphs, list items, code fences and table
+   rows appear as they're completed, not as pre-sized empty space.
+   KaTeX math and code-copy buttons are wired only once, after the
+   full text has been revealed, via the onDone callback. */
+function typewriterReveal(contentEl, fullText, sources, onDone) {
+  if (!fullText) { onDone && onDone(); return; }
 
-  const nodes = [];
-  let totalChars = 0;
-  let n;
-  while ((n = walker.nextNode())) {
-    nodes.push({ node: n, full: n.nodeValue });
-    totalChars += n.nodeValue.length;
-  }
-  if (totalChars === 0) return;
+  const totalChars = fullText.length;
+  // Slower, steadier pace than a first pass at this: ~28ms of "thinking
+  // time" per character, floored so short replies don't feel instant and
+  // capped so very long replies don't take forever to finish.
+  const totalDurationMs = Math.min(Math.max(totalChars * 28, 600), 9000);
+  const tickMs = 40;
+  const charsPerTick = Math.max(1, Math.round(totalChars / (totalDurationMs / tickMs)));
 
-  nodes.forEach((entry) => { entry.node.nodeValue = ''; });
   contentEl.classList.add('is-typing');
-
-  // Cap the total animation length so long replies don't take forever,
-  // while short ones still feel deliberately "typed" rather than instant.
-  const totalDurationMs = Math.min(Math.max(totalChars * 8, 250), 3500);
-  const tickMs = 16;
-  const charsPerTick = Math.max(1, Math.ceil(totalChars / (totalDurationMs / tickMs)));
-
-  let nodeIdx = 0;
-  let charIdx = 0;
   let revealed = 0;
 
   const interval = setInterval(() => {
-    let toReveal = charsPerTick;
-    while (toReveal > 0 && nodeIdx < nodes.length) {
-      const entry = nodes[nodeIdx];
-      const remaining = entry.full.length - charIdx;
-      const take = Math.min(remaining, toReveal);
-      entry.node.nodeValue = entry.full.slice(0, charIdx + take);
-      charIdx += take;
-      toReveal -= take;
-      revealed += take;
-      if (charIdx >= entry.full.length) {
-        nodeIdx += 1;
-        charIdx = 0;
-      }
-    }
+    revealed = Math.min(totalChars, revealed + charsPerTick);
+    contentEl.innerHTML = renderMarkdownLite(fullText.slice(0, revealed), sources);
     scrollToBottom();
-    if (nodeIdx >= nodes.length) {
+    if (revealed >= totalChars) {
       clearInterval(interval);
       contentEl.classList.remove('is-typing');
+      onDone && onDone();
     }
   }, tickMs);
 }
@@ -1355,7 +1341,11 @@ function renderMessage(msg, index) {
       '<div class="message-body">' +
         thoughtHtml +
         attachmentsHtml +
-        (msg.content ? '<div class="message-content">' + renderMarkdownLite(msg.content, isUser ? null : meta.sources) + '</div>' : '') +
+        // The freshly-received reply starts as an empty content div —
+        // typewriterReveal (called from renderConversation right after
+        // this HTML is inserted) fills it in. This avoids a flash of the
+        // full text before the typing animation takes over.
+        (msg.content ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         documentFileHtml +
         sourcesHtml +
         (isUser ? '' :
