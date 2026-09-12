@@ -37,12 +37,12 @@ import {
 } from './library-endpoint.js';
 import {
   handleAdminBootstrap,
+  handleAdminWhoAmI,
   handleAdminRoleList,
   handleAdminRoleGrant,
   handleAdminRoleRevoke,
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
-
 
 function _corsPreflight() {
   return new Response(null, {
@@ -156,6 +156,10 @@ export default {
       return handleAdminBootstrap(request, env);
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/admin/whoami') {
+      return handleAdminWhoAmI(request, env);
+    }
+    
     // ── Admin/moderator role management (requires role: 'admin') ─────
 
     if (request.method === 'GET' && url.pathname === '/api/admin/roles') {
