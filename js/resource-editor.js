@@ -756,19 +756,6 @@ window.ResourceEditor = (function () {
     }
     derivedKeys.forEach((k) => skipTopLevel.add(k));
 
-    // Linked question+answer editor (worksheet, test) renders first among
-    // the body fields, right after any intro text, since it's the heart
-    // of the resource.
-    if (linked) {
-      const linkedField = buildLinkedQuestionList(
-        structuredContent[linked.primaryKey],
-        structuredContent[linked.linkedKey],
-        linked
-      );
-      fields.__linked = { multi: true, getValue: linkedField.getValue };
-      // placed after the loop below via insertion order — see bottom
-    }
-
     for (const key in structuredContent) {
       if (key === 'title') continue;
       if (skipTopLevel.has(key)) continue;
@@ -808,14 +795,9 @@ window.ResourceEditor = (function () {
       fields[key] = field;
     }
 
-    // The linked editor's node gets appended now (after intro/instruction
-    // fields already added above, before trailing fields like difficulty
-    // would have been — in practice recipes put those before questions
-    // anyway, so this reads naturally).
-    if (linked) {
-      const linkedNode = fields.__linked; // getValue already captured
-      // Re-run node creation isn't needed — build once and reuse the node.
-    }
+    // The linked question+answer editor (worksheet, test) is appended
+    // after the intro/instruction fields already added above, since in
+    // practice recipes put those before questions anyway.
     if (linked) {
       const linkedField = buildLinkedQuestionList(
         structuredContent[linked.primaryKey],
