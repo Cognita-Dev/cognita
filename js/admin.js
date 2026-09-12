@@ -629,35 +629,7 @@ function wireDetailPanel() {
   });
 
   document.getElementById('saveEditBtn').addEventListener('click', async () => {
-    if (!currentDetailResource || !activeDetailEditorHandle) return;
-
-    const structuredContent = activeDetailEditorHandle.getValue();
-
-    try {
-      const res = await window.Auth.authedFetch(
-        WORKER_URL + '/api/admin/resources/' + currentDetailResource.id,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ structuredContent }),
-        }
-      );
-      const data = await res.json();
-
-      if (!res.ok) {
-        showToast(data.error || 'Could not save edit.');
-        return;
-      }
-
-      showToast('Saved.' + (data.resource.status === 'draft' ? ' Sent back to draft for re-review.' : ''));
-      currentDetailResource = data.resource;
-      renderDetailChrome();
-      await loadResourceList();
-      await loadVersionHistory(currentDetailResource.id);
-    } catch (e) {
-      showToast('Could not reach the server.');
-      console.error('[admin] edit failed:', e.message);
-    }
+    await saveCurrentEdit();
   });
 
   const transitionButtons = {
@@ -702,8 +674,64 @@ function wireDetailPanel() {
   });
 }
 
+// Saves whatever is currently in the editor. Returns true on success,
+// false on failure (a toast is already shown either way, so callers
+// just need to know whether it's safe to proceed).
+async function saveCurrentEdit() {
+  if (!currentDetailResource || !activeDetailEditorHandle) return true;
+
+  const structuredContent = activeDetailEditorHandle.getValue();
+
+  try {
+    const res = await window.Auth.authedFetch(
+      WORKER_URL + '/api/admin/resources/' + currentDetailResource.id,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structuredContent }),
+      }
+    );
+    const data = await res.json();
+
+    if (!res.ok) {
+      showToast(data.error || 'Could not save edit.');
+      return false;
+    }
+
+    showToast('Saved.' + (data.resource.status === 'draft' ? ' Sent back to draft for re-review.' : ''));
+    currentDetailResource = data.resource;
+    renderDetailChrome();
+    await loadResourceList();
+    await loadVersionHistory(currentDetailResource.id);
+    return true;
+  } catch (e) {
+    showToast('Could not reach the server.');
+    console.error('[admin] edit failed:', e.message);
+    return false;
+  }
+}
+
+// A validation error names the affected question as "question N" or
+// "Question N" — pulling that number out lets the failure jump straight
+// to the offending card instead of leaving the admin to hunt for it.
+function _extractQuestionNumber(message) {
+  const match = /question\s+(\d+)/i.exec(message || '');
+  return match ? Number(match[1]) : null;
+}
+
 async function runTransition(action) {
   if (!currentDetailResource) return;
+
+  // Validating (or any other transition) against whatever was last
+  // saved is wrong if the admin just fixed something in the editor and
+  // clicked the action directly — the server would re-check the old
+  // content and report the exact same failure again, with nothing
+  // telling the admin that their fix was never actually sent. Save
+  // first so the transition always checks the content on screen.
+  if (activeDetailEditorHandle && activeDetailEditorHandle.isDirty()) {
+    const saved = await saveCurrentEdit();
+    if (!saved) return;
+  }
 
   try {
     const res = await window.Auth.authedFetch(
@@ -718,6 +746,10 @@ async function runTransition(action) {
 
     if (!res.ok) {
       showToast(data.error || 'Transition failed.');
+      const questionNumber = _extractQuestionNumber(data.error);
+      if (questionNumber && activeDetailEditorHandle && typeof activeDetailEditorHandle.scrollToQuestion === 'function') {
+        activeDetailEditorHandle.scrollToQuestion(questionNumber);
+      }
       return;
     }
 
