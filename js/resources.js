@@ -3,6 +3,8 @@
 // through window.Auth.authedFetch — never touches AI providers or B2
 // directly.
 
+import { buildExcerpt } from '../excerpt-builder.js';
+
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
 // Kept in sync with recipes/index.js's RECIPE_LABELS on the backend.
@@ -1344,39 +1346,23 @@ async function loadRecommendedLibrary() {
   }
 }
 
-// Fetches full content for each (small — at most 3) recommended item
-// so the card can show a real truncated preview instead of a bare
-// title row.
-async function renderLibraryRecommendedGrid(recommended) {
+// Each entry from /api/library/resources already carries an `excerpt`
+// (built once, server-side, by the shared excerpt builder, and cached
+// alongside the rest of the index entry) — so the card can show a
+// real preview synchronously, with no per-card fetch and no
+// "Loading previews..." step.
+function renderLibraryRecommendedGrid(recommended) {
   const grid = document.getElementById('libraryRecommendedGrid');
-  grid.innerHTML = '<div class="library-recommended-empty">Loading previews...</div>';
 
-  const withDetail = await Promise.all(
-    recommended.map(async (r) => {
-      try {
-        const res = await window.Auth.authedFetch(
-          WORKER_URL + '/api/library/resources/' + r.id
-        );
-        if (!res.ok) return { ...r, structuredContent: null };
-        const data = await res.json();
-        return { ...r, structuredContent: data.resource.structuredContent };
-      } catch (e) {
-        return { ...r, structuredContent: null };
-      }
-    })
-  );
-
-  grid.innerHTML = withDetail
+  grid.innerHTML = recommended
     .map((r) => {
       const rt = RESOURCE_TYPES.find((t) => t.type === r.resourceType);
       const label = rt ? rt.label : r.resourceType;
-      const previewHtml = r.structuredContent
-        ? renderStructuredPreview(r.structuredContent, r.resourceType)
-        : '<p>Preview unavailable.</p>';
+      const previewText = r.excerpt ? escapeHtml(r.excerpt) : 'Preview unavailable.';
 
       return (
         '<button type="button" class="library-recommended-card" data-id="' + r.id + '">' +
-        '<div class="library-recommended-card-preview">' + previewHtml + '</div>' +
+        '<div class="library-recommended-card-preview">' + previewText + '</div>' +
         '<div class="library-recommended-card-foot">' +
         '<div class="library-recommended-card-title">' + escapeHtml(r.title || label) + '</div>' +
         '<div class="library-recommended-card-meta">' + escapeHtml(label) + '</div>' +
@@ -1508,6 +1494,14 @@ async function loadMyResources() {
           ? rt.label
           : r.resourceType;
 
+        // Already have the full resource here (handleResourceList
+        // returns full docs, not a summary), so the excerpt is just
+        // built locally — no extra fetch per row.
+        const excerpt =
+          r.status === 'ready' && r.structuredContent
+            ? buildExcerpt(r.structuredContent)
+            : '';
+
         return (
           '<button class="my-resource-row" data-id="' +
           r.id +
@@ -1525,6 +1519,9 @@ async function loadMyResources() {
             ? ' · ' + escapeHtml(r.subject)
             : '') +
           '</div>' +
+          (excerpt
+            ? '<div class="my-resource-excerpt">' + escapeHtml(excerpt) + '</div>'
+            : '') +
           '</div>' +
           '<span class="my-resource-status status-' +
           r.status +
