@@ -1,17 +1,4 @@
 // document-endpoint.js
-// POST /api/document
-// Frontend sends { topic, docType: 'letter'|'report'|'essay'|'memo', format: 'docx'|'pdf'|'pptx', conversationId }.
-// The Worker asks the model for a structured JSON representation of the
-// document (title + sections, each either a paragraph or a bullet list),
-// then builds the actual file server-side from that structure.
-// This endpoint is plan-gated: Free users get plain text only, no file export.
-//
-// Generated files (docx/pdf/pptx) are also saved to B2, scoped to the
-// conversation they were created in, so they can be re-downloaded later
-// via /api/files instead of only existing as a one-time blob in the
-// browser. If conversationId isn't provided (e.g. the very first message
-// in a brand-new chat that hasn't been persisted yet), the file is still
-// generated and returned normally, it just isn't saved for later retrieval.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
@@ -24,12 +11,6 @@ import { buildSimplePptx } from './pptx-builder.js';
 import { saveGeneratedFileToB2 } from './chat-storage.js';
 
 const DOC_FORMATS = ['docx', 'pdf', 'pptx'];
-
-// Long structured documents (a full report with several sections, each
-// with headings and bullet lists) routinely need more than the app-wide
-// chat default of 2048 tokens. Too low a budget here is what was causing
-// generations to cut off mid-JSON, which then failed to parse and fell
-// back to dumping the raw, broken JSON text as the document's content.
 const DOCUMENT_MAX_TOKENS = 6000;
 
 const DOC_SYSTEM_PROMPT =
@@ -51,29 +32,29 @@ export async function handleDocumentRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const topic = (body.topic || '').trim();
   const docType = ['letter', 'report', 'essay', 'memo'].includes(body.docType) ? body.docType : 'report';
   const format = DOC_FORMATS.includes(body.format) ? body.format : 'docx';
   const conversationId = typeof body.conversationId === 'string' ? body.conversationId.trim() : '';
-  if (!topic) return _jsonError('Missing topic.', 400);
-  if (topic.length > 800) return _jsonError('Topic description is too long (max 800 characters).', 400);
+  if (!topic) return _jsonError('Missing topic.', 400, env);
+  if (topic.length > 800) return _jsonError('Topic description is too long (max 800 characters).', 400, env);
 
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
   } catch (e) {
     console.error('[document] account resolution failed:', e.message);
-    return _jsonError('Could not verify your account. Please try again.', 500);
+    return _jsonError('Could not verify your account. Please try again.', 500, env);
   }
 
   const plan = getPlan(account.planId);
@@ -82,11 +63,10 @@ export async function handleDocumentRequest(request, env) {
   if (!quota.allowed) {
     return _jsonError(
       'You have reached your daily document generation limit for the ' + plan.name + ' plan (' + quota.limit + ' per day).',
-      429
+      429, env
     );
   }
 
-  // Generate the structured content.
   const messages = [
     { role: 'system', content: DOC_SYSTEM_PROMPT },
     { role: 'user', content: 'Write a ' + docType + ' about: ' + topic },
@@ -104,20 +84,18 @@ export async function handleDocumentRequest(request, env) {
     generationDegraded = parsed.degraded;
   } catch (e) {
     console.error('[document] generation failed:', e.message);
-    return _jsonError('Could not generate the document. Please try again.', 503);
+    return _jsonError('Could not generate the document. Please try again.', 503, env);
   }
 
   const title = structured.title || _titleFor(docType, topic);
 
-  // Free plan: return plain text only, no file export, nothing to persist.
   if (!plan.features.documentExport) {
     return new Response(JSON.stringify({ format: 'text', content: _flattenToPlainText(structured) }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   }
 
-  // Paid plans: build the actual file server-side, in the requested format.
   try {
     const filenameBase = title.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
     let fileBase64;
@@ -137,11 +115,6 @@ export async function handleDocumentRequest(request, env) {
     const filename = filenameBase + '.' + extension;
     const mimeType = _mimeTypeFor(extension);
 
-    // Persist to B2 so this file can be re-downloaded later from the
-    // conversation, instead of only existing as this one response's
-    // base64 payload. Best-effort: if it fails, the person still gets
-    // their file this one time via the direct download below — they just
-    // won't be able to re-fetch it after a page reload.
     let fileId;
     if (conversationId) {
       try {
@@ -161,15 +134,13 @@ export async function handleDocumentRequest(request, env) {
       degraded: generationDegraded || undefined,
     }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   } catch (e) {
     console.error('[document] file build failed:', e.message);
-    // Fall back to plain text rather than failing outright — the user still
-    // gets their content even if the file wrapper fails.
     return new Response(JSON.stringify({ format: 'text', content: _flattenToPlainText(structured) }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   }
 }
@@ -180,15 +151,6 @@ function _mimeTypeFor(extension) {
   return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
-// Parses the model's JSON response into { structured: { title, sections }, degraded }.
-// Tries, in order:
-//   1. Parse as-is.
-//   2. Strip code fences / leading-trailing junk, parse again.
-//   3. Attempt a structural repair (close an unterminated string, close
-//      any open braces/brackets, drop a dangling trailing comma) and parse.
-//   4. Only if all of that fails, degrade to a single plain-text paragraph
-//      section — and flag `degraded: true` so the caller can tell this
-//      happened, instead of silently shipping a broken document.
 function _parseStructuredDocument(rawText, topic) {
   const cleaned = String(rawText || '').trim()
     .replace(/^```json\s*/i, '')
@@ -210,9 +172,6 @@ function _parseStructuredDocument(rawText, topic) {
     return { structured: { title: typeof parsed.title === 'string' ? parsed.title : '', sections }, degraded: false };
   }
 
-  // Last-resort fallback: treat the raw response as plain text paragraphs.
-  // (This still triggers if the model returned genuinely non-JSON prose
-  // instead of ignoring the system prompt's JSON instruction outright.)
   const paragraphs = String(rawText || '').split(/\n\s*\n/).map((p) => p.replace(/\n/g, ' ').trim()).filter(Boolean);
   return {
     structured: {
@@ -225,15 +184,10 @@ function _parseStructuredDocument(rawText, topic) {
   };
 }
 
-// Attempts JSON.parse; on failure, attempts a structural repair of
-// truncated JSON (the common case: the model's output got cut off by the
-// token budget mid-string or mid-object) and retries once.
 function _tryParseJsonWithRepair(text) {
   try {
     return JSON.parse(text);
-  } catch (e) {
-    // fall through to repair attempt
-  }
+  } catch (e) {}
 
   const repaired = _repairTruncatedJson(text);
   if (repaired === null) return null;
@@ -245,12 +199,6 @@ function _tryParseJsonWithRepair(text) {
   }
 }
 
-// Walks the text tracking string/escape state and open-bracket depth.
-// If the text ends mid-string, closes the string. Strips a dangling
-// trailing comma. Then closes any still-open braces/brackets in the
-// correct (reverse) order. This recovers the common truncation shape —
-// a complete-enough JSON document cut off partway through its last
-// value — without attempting anything more elaborate.
 function _repairTruncatedJson(text) {
   if (!text) return null;
 
@@ -271,7 +219,7 @@ function _repairTruncatedJson(text) {
     else if (ch === '}' || ch === ']') stack.pop();
   }
 
-  if (stack.length === 0 && !inString) return null; // nothing to repair — parse just failed for another reason
+  if (stack.length === 0 && !inString) return null;
 
   let repaired = text;
   if (inString) repaired += '"';
@@ -296,10 +244,6 @@ function _flattenToPlainText(structured) {
   return parts.join('\n\n');
 }
 
-// Converts the structured doc/report/letter/memo shape into slides for
-// pptx export: a title slide, then one slide per section (bullets used
-// as-is; a paragraph section becomes a single-bullet slide so it still
-// reads reasonably on a slide rather than as a dense paragraph).
 function _structuredToSlides(structured, title) {
   const slides = [{ heading: title, bulletPoints: [] }];
   structured.sections.forEach((s) => {
@@ -316,10 +260,10 @@ function _titleFor(docType, topic) {
   return docType.charAt(0).toUpperCase() + docType.slice(1) + ' - ' + words;
 }
 
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
