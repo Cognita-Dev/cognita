@@ -7,7 +7,13 @@ import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
 import { handleImageRequest } from './image-endpoint.js';
 import { handleDocumentRequest } from './document-endpoint.js';
-import { handleResourceGenerate, handleResourceDownload, handleResourceList } from './resources-endpoint.js';
+import {
+  handleResourceGenerate,
+  handleResourceDownload,
+  handleResourceList,
+  handleResourceEdit,
+  handleResourceRegenerate,
+} from './resources-endpoint.js';
 import { handlePaymentInitialize } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
@@ -140,6 +146,16 @@ export default {
     if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/download$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[3];
       return handleResourceDownload(request, env, resourceId);
+    }
+
+    if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/edit$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[3];
+      return handleResourceEdit(request, env, resourceId);
+    }
+
+    if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/regenerate$/.test(url.pathname)) {
+      const resourceId = url.pathname.split('/')[3];
+      return handleResourceRegenerate(request, env, resourceId);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/payment/initialize') {
