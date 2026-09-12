@@ -253,6 +253,9 @@ function renderResourceRows(container, resources) {
       '<div class="my-resource-info">' +
       '<div class="my-resource-title">' + escapeHtml(r.title || label) + '</div>' +
       '<div class="my-resource-meta">' + escapeHtml(label) + '</div>' +
+      (r.excerpt
+        ? '<div class="my-resource-excerpt">' + escapeHtml(r.excerpt) + '</div>'
+        : '') +
       '</div>' +
       '</button>'
     );
