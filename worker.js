@@ -66,7 +66,7 @@ function _corsPreflight(env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return _corsPreflight(env);
 
     const url = new URL(request.url);
@@ -285,7 +285,7 @@ export default {
 
     if (request.method === 'GET' && /^\/api\/library\/resources\/[^/]+$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[4];
-      return handleLibraryGet(request, env, resourceId);
+      return handleLibraryGet(request, env, resourceId, ctx);
     }
 
     return new Response(JSON.stringify({ error: 'Not found.' }), {
