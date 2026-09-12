@@ -378,6 +378,7 @@
 
 /* ── Collections ── */
 .admin-collection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); }
+.admin-collection-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .admin-collection-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -387,8 +388,40 @@
   flex-direction: column;
   gap: var(--space-3);
 }
+.admin-collection-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .admin-collection-card-title { font-size: var(--text-sm); font-weight: 700; color: var(--text-1); }
 .admin-collection-card-meta { font-size: var(--text-xs); color: var(--text-3); }
+.admin-collection-card-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.admin-collection-manage {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.admin-collection-manage-empty { font-size: var(--text-xs); color: var(--text-3); }
+.admin-collection-resource-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.admin-collection-resource-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+.admin-collection-resource-info { flex: 1; min-width: 0; }
+.admin-collection-resource-title {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-collection-resource-type { font-size: var(--text-xs); color: var(--text-3); }
+.admin-collection-add-row { display: flex; gap: var(--space-2); }
+.admin-collection-add-row .admin-select { flex: 1; }
 
 /* ── Roles / people ── */
 .admin-people-list { display: flex; flex-direction: column; gap: var(--space-2); }
