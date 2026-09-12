@@ -1066,6 +1066,24 @@ function showResultPanel(resource) {
 // this be reused for both a user's own resource (/api/resources/...)
 // and a read-only library resource (/api/library/resources/...),
 // which use different download endpoints.
+//
+// The popover itself is appended straight to <body> and positioned with
+// fixed coordinates computed from the toggle button's bounding rect (see
+// _openDownloadMenu below), instead of being absolutely positioned inside
+// the result panel. That's what makes it show up reliably on both mobile
+// and desktop: nested + absolutely positioned, it used to get clipped
+// down to nothing by an ancestor panel's overflow:hidden, which is why
+// the menu (and the download options inside it) looked like they weren't
+// working at all.
+let _openDownloadMenuState = null; // { menu, toggle, cleanup }
+
+function _closeOpenDownloadMenu() {
+  if (_openDownloadMenuState) {
+    _openDownloadMenuState.cleanup();
+    _openDownloadMenuState = null;
+  }
+}
+
 function renderDownloadControl(actionsWrap, resourceId, availableFormats, downloadFn) {
   if (availableFormats.length === 0) {
     actionsWrap.innerHTML =
@@ -1076,58 +1094,105 @@ function renderDownloadControl(actionsWrap, resourceId, availableFormats, downlo
   }
 
   actionsWrap.innerHTML =
-    '<div class="resource-download-control" style="position:relative;display:inline-block;">' +
+    '<div class="resource-download-control">' +
     '<button type="button" class="resource-download-btn resource-download-toggle" ' +
-    'aria-haspopup="true" aria-expanded="false" title="Download" ' +
-    'style="width:36px;height:36px;padding:0;border-radius:50%;display:inline-flex;' +
-    'align-items:center;justify-content:center;">' +
+    'aria-haspopup="true" aria-expanded="false" title="Download">' +
     '<i class="ph ph-download-simple" style="font-size:18px;"></i>' +
     '</button>' +
-    '<div class="resource-download-menu" hidden style="position:absolute;bottom:44px;right:0;' +
-    'background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);' +
-    'box-shadow:var(--shadow-lg);min-width:180px;z-index:20;overflow:hidden;">' +
-    availableFormats
-      .map(
-        (format) =>
-          '<button type="button" class="resource-download-option" data-format="' + format + '" ' +
-          'style="display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;' +
-          'background:none;border:none;text-align:left;cursor:pointer;font-size:var(--text-sm);">' +
-          '<i class="ph ph-file-arrow-down"></i><span>' +
-          (FORMAT_LABELS[format] || format.toUpperCase()) +
-          '</span></button>'
-      )
-      .join('') +
-    '</div>' +
     '</div>';
 
-  const menu = actionsWrap.querySelector('.resource-download-menu');
   const toggle = actionsWrap.querySelector('.resource-download-toggle');
 
   toggle.addEventListener('click', (e) => {
     e.stopPropagation();
-    const isOpen = !menu.hidden;
-    menu.hidden = isOpen;
-    toggle.setAttribute('aria-expanded', String(!isOpen));
-  });
 
-  actionsWrap.querySelectorAll('.resource-download-option').forEach((btn) => {
+    // Clicking the same toggle again closes it; clicking a different
+    // resource's toggle closes whichever menu was open and opens this one.
+    if (_openDownloadMenuState && _openDownloadMenuState.toggle === toggle) {
+      _closeOpenDownloadMenu();
+      return;
+    }
+    _closeOpenDownloadMenu();
+    _openDownloadMenu(toggle, resourceId, availableFormats, downloadFn);
+  });
+}
+
+function _openDownloadMenu(toggle, resourceId, availableFormats, downloadFn) {
+  const menu = document.createElement('div');
+  menu.className = 'resource-download-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = availableFormats
+    .map(
+      (format) =>
+        '<button type="button" class="resource-download-option" data-format="' + format + '" role="menuitem">' +
+        '<i class="ph ph-file-arrow-down"></i><span>' +
+        (FORMAT_LABELS[format] || format.toUpperCase()) +
+        '</span></button>'
+    )
+    .join('');
+
+  document.body.appendChild(menu);
+  toggle.setAttribute('aria-expanded', 'true');
+
+  function position() {
+    const rect = toggle.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gap = 8;
+
+    let left = rect.right - menuRect.width;
+    left = Math.max(gap, Math.min(left, window.innerWidth - menuRect.width - gap));
+
+    // Prefer opening upward (the button usually sits at the bottom of a
+    // result panel), but flip below the button if there isn't room above
+    // — important on short mobile viewports.
+    let top = rect.top - menuRect.height - gap;
+    if (top < gap) {
+      top = Math.min(rect.bottom + gap, window.innerHeight - menuRect.height - gap);
+    }
+
+    menu.style.left = left + 'px';
+    menu.style.top = Math.max(gap, top) + 'px';
+  }
+
+  position();
+  // The menu's real size can shift slightly after first paint (icon
+  // fonts loading in); re-measure once more on the next frame.
+  requestAnimationFrame(position);
+
+  window.addEventListener('resize', position);
+  window.addEventListener('scroll', position, true);
+
+  const onOutsideClick = (e) => {
+    if (!menu.contains(e.target) && e.target !== toggle) {
+      _closeOpenDownloadMenu();
+    }
+  };
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') _closeOpenDownloadMenu();
+  };
+  document.addEventListener('click', onOutsideClick);
+  document.addEventListener('keydown', onKeydown);
+
+  menu.querySelectorAll('.resource-download-option').forEach((btn) => {
     btn.addEventListener('click', () => {
-      menu.hidden = true;
-      toggle.setAttribute('aria-expanded', 'false');
-      downloadFn(resourceId, btn.dataset.format, btn);
+      const format = btn.dataset.format;
+      _closeOpenDownloadMenu();
+      downloadFn(resourceId, format, toggle);
     });
   });
 
-  // Close the popover on any click outside it. Attached once per render
-  // and self-removed so repeated result panels don't stack listeners.
-  const closeOnOutsideClick = (e) => {
-    if (!actionsWrap.contains(e.target)) {
-      menu.hidden = true;
+  _openDownloadMenuState = {
+    menu,
+    toggle,
+    cleanup: () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      document.removeEventListener('click', onOutsideClick);
+      document.removeEventListener('keydown', onKeydown);
       toggle.setAttribute('aria-expanded', 'false');
-      document.removeEventListener('click', closeOnOutsideClick);
-    }
+      menu.remove();
+    },
   };
-  document.addEventListener('click', closeOnOutsideClick);
 }
 
 /* ── Edit (structured form editor, no AI call) ── */
