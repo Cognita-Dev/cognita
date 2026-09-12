@@ -1,7 +1,4 @@
 // image-endpoint.js
-// POST /api/image
-// Frontend sends { prompt, kind: 'diagram' | 'illustration' }.
-// It never sees which model or provider actually renders it.
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
@@ -22,50 +19,46 @@ export async function handleImageRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const prompt = (body.prompt || '').trim();
   const kind = body.kind === 'illustration' ? 'illustration' : 'diagram';
-  if (!prompt) return _jsonError('Missing prompt.', 400);
-  if (prompt.length > 500) return _jsonError('Prompt is too long (max 500 characters).', 400);
+  if (!prompt) return _jsonError('Missing prompt.', 400, env);
+  if (prompt.length > 500) return _jsonError('Prompt is too long (max 500 characters).', 400, env);
 
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
   } catch (e) {
     console.error('[image] account resolution failed:', e.message);
-    return _jsonError('Could not verify your account. Please try again.', 500);
+    return _jsonError('Could not verify your account. Please try again.', 500, env);
   }
 
   const plan = getPlan(account.planId);
 
-  // Diagrams are cheap (text-only) and don't need vision/image entitlement,
-  // but they still count against the plan's document/image allowance so a
-  // Free user can't generate unlimited SVGs as a workaround.
   if (kind === 'diagram') {
     const quota = await checkAndIncrement(identity.uid, 'imageGen', plan.limits.imageGenPerDay, env);
     if (!quota.allowed) {
       return _jsonError(
         'You have reached your daily visual generation limit for the ' + plan.name + ' plan (' + quota.limit + ' per day).',
-        429
+        429, env
       );
     }
     return _generateDiagram(prompt, env);
   }
 
-  // Realistic illustrations require vision-tier plan access.
   if (!plan.models.vision) {
     return _jsonError(
       'Realistic image generation requires the Cognita Plus plan or higher.',
-      403
+      403, env
     );
   }
 
@@ -73,7 +66,7 @@ export async function handleImageRequest(request, env) {
   if (!quota.allowed) {
     return _jsonError(
       'You have reached your daily image generation limit for the ' + plan.name + ' plan (' + quota.limit + ' per day).',
-      429
+      429, env
     );
   }
 
@@ -92,16 +85,16 @@ async function _generateDiagram(prompt, env) {
     if (!svg) throw new Error('No valid SVG in response.');
     return new Response(JSON.stringify({ type: 'svg', content: svg }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   } catch (e) {
     console.error('[image] diagram generation failed:', e.message);
-    return _jsonError('Could not generate the diagram. Please try again.', 503);
+    return _jsonError('Could not generate the diagram. Please try again.', 503, env);
   }
 }
 
 async function _generateIllustration(prompt, env) {
-  if (!env.AI) return _jsonError('Image generation is temporarily unavailable.', 503);
+  if (!env.AI) return _jsonError('Image generation is temporarily unavailable.', 503, env);
 
   try {
     const response = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
@@ -114,11 +107,11 @@ async function _generateIllustration(prompt, env) {
 
     return new Response(JSON.stringify({ type: 'image', content: base64 }), {
       status: 200,
-      headers: _corsJsonHeaders(),
+      headers: _corsJsonHeaders(env),
     });
   } catch (e) {
     console.error('[image] illustration generation failed:', e.message);
-    return _jsonError('Could not generate the image. Please try again.', 503);
+    return _jsonError('Could not generate the image. Please try again.', 503, env);
   }
 }
 
@@ -154,10 +147,10 @@ async function _extractImageBase64(response) {
   return null;
 }
 
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
