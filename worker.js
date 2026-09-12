@@ -53,7 +53,6 @@ import {
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
 
-
 function _corsPreflight(env) {
   return new Response(null, {
     status: 204,
@@ -119,7 +118,7 @@ export default {
       return handleDocumentRequest(request, env);
     }
 
-    // GET /api/files/:conversationId  -> list generated files for that chat
+    // GET /api/files/:conversationId -> list generated files for that chat
     if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
       const conversationId = url.pathname.split('/')[3];
       return handleFilesList(request, env, conversationId);
