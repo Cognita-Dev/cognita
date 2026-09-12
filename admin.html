@@ -86,9 +86,18 @@
           </div>
 
           <div id="manualContentWrap" hidden>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-weight:600;">Content JSON</span>
+              <button type="button" id="loadTemplateBtn" class="resource-download-btn" style="padding:6px 12px;">
+                <i class="ph ph-magic-wand"></i><span>Load template for this type</span>
+              </button>
+            </div>
+            <p style="color:var(--text-3);font-size:var(--text-sm);margin-bottom:8px;">
+              Tap "Load template" to fill in the exact structure this resource type needs, then replace the
+              placeholder values with real content. The title field is always required.
+            </p>
             <label class="resource-field">
-              <span>Content JSON (must match the recipe's structure — see title field required)</span>
-              <textarea id="fieldManualContent" rows="10" style="width:100%;font-family:monospace;"></textarea>
+              <textarea id="fieldManualContent" rows="14" style="width:100%;font-family:monospace;"></textarea>
             </label>
           </div>
 
@@ -162,10 +171,7 @@
         <div class="my-resources-list" id="collectionsList" style="margin-top:12px;"></div>
       </section>
 
-      <!-- ── Roles (admin/moderator management) — hidden entirely for
-           moderators, since the server rejects these calls for them
-           anyway; wiring shows/hides this based on the signed-in
-           person's own role. ── -->
+      <!-- ── Roles ── -->
       <section class="my-resources-panel" id="rolesPanel" hidden>
         <h2 class="resources-heading">Admins &amp; Moderators</h2>
 
