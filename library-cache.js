@@ -19,6 +19,8 @@
 // created), every function here degrades to a no-op / cache-miss —
 // the endpoints fall back to Firestore exactly as before.
 
+import { buildExcerpt } from './excerpt-builder.js';
+
 const RESOURCE_PREFIX = 'resource:';
 const INDEX_KEY = 'index';
 
@@ -41,11 +43,16 @@ export function buildResourceSnapshot(doc) {
 }
 
 // The exact shape handleLibraryList returns per item in the browse list.
+// `excerpt` is computed once here — at publish/edit time, the same
+// moment the rest of this entry is computed — rather than on every
+// read, and rather than requiring a browsing user's client to fetch
+// each resource's full content just to show a preview.
 export function buildIndexEntry(doc) {
   return {
     id: doc.id,
     resourceType: doc.resourceType,
     title: doc.structuredContent?.title || 'Untitled',
+    excerpt: buildExcerpt(doc.structuredContent),
     designTemplateId: doc.designTemplateId,
     publishedAt: doc.publishedAt,
     updatedAt: doc.updatedAt,
