@@ -9,6 +9,7 @@ import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
 import { buildStructuredPdf, buildSimplePdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile } from './b2-client.js';
+import { invalidatePublished, refreshPublished } from './library-cache.js';
 
 const RESOURCE_MAX_TOKENS = 6000;
 
@@ -530,6 +531,14 @@ export async function handleAdminResourceEdit(request, env, resourceId) {
     return _jsonError('Could not save the edit. Please try again.', 500, env);
   }
 
+  // Editing a resource that was validated/published resets it to
+  // draft (above) — if it had been published, it must stop being
+  // servable from the library cache the instant that happens, not
+  // whenever the cache would otherwise have expired.
+  if (doc.status === 'published') {
+    await invalidatePublished(env, resourceId);
+  }
+
   return _jsonOk({ resource: updated }, 200, env);
 }
 
@@ -612,6 +621,15 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
     await fsSet('adminResources/' + resourceId, updated, env);
   } catch (e) {
     return _jsonError('Could not save the transition. Please try again.', 500, env);
+  }
+
+  // Keep the library cache in lockstep with what just changed, right
+  // here at the moment of change — not on a timer, so a user can never
+  // be served a stale cached copy after a publish/archive/restore.
+  if (action === 'publish') {
+    await refreshPublished(env, updated);
+  } else if (action === 'archive' || action === 'restore') {
+    await invalidatePublished(env, resourceId);
   }
 
   return _jsonOk({ resource: updated }, 200, env);
@@ -708,6 +726,8 @@ export async function handleAdminResourceDelete(request, env, resourceId) {
     console.error('[admin-resources] delete failed:', e.message);
     return _jsonError('Could not delete that resource. Please try again.', 500, env);
   }
+
+  await invalidatePublished(env, resourceId);
 
   return _jsonOk({ deleted: true }, 200, env);
 }
