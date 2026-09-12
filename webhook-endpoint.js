@@ -1,9 +1,4 @@
 // webhook-endpoint.js
-// POST /api/payment/webhook
-// Receives events FROM Paystack, not from the browser. This is the only
-// place in the entire app where a subscription is ever marked 'active' —
-// the browser redirect after checkout is purely cosmetic and never grants
-// access on its own (see payment-success.html in the frontend chunk).
 
 import { fsGet, fsSet, fsUpdate } from './firestore-rest.js';
 import { PLAN_HIERARCHY } from './entitlements.js';
@@ -21,7 +16,6 @@ async function _verifyPaystackSignature(rawBody, signatureHeader, secretKey) {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 
-  // Constant-time-ish comparison (length-equal strings, XOR all bytes).
   if (computedHex.length !== signatureHeader.length) return false;
   let diff = 0;
   for (let i = 0; i < computedHex.length; i++) {
@@ -59,8 +53,6 @@ export async function handlePaystackWebhook(request, env) {
     return new Response('Missing event identifiers.', { status: 400 });
   }
 
-  // Replay protection: Paystack may resend the same event on retry.
-  // We record every event id we've processed and skip duplicates.
   const seenKey = 'webhookEvents/' + eventType.replace(/\./g, '_') + '_' + eventId;
   const alreadySeen = await fsGet(seenKey, env);
   if (alreadySeen) {
@@ -78,13 +70,8 @@ export async function handlePaystackWebhook(request, env) {
     } else if (eventType === 'invoice.update' && event.data?.status === 'success') {
       await _handleRenewalSuccess(event.data, env);
     }
-    // Unhandled event types are acknowledged but ignored — Paystack sends
-    // many event types we don't need to act on.
   } catch (e) {
     console.error('[webhook] handler error for ' + eventType + ':', e.message);
-    // Still return 200 — we've recorded the event as seen, and Paystack
-    // will not retry on 200. Errors here should alert via logs, not cause
-    // Paystack to hammer retries which could cause other issues.
   }
 
   return new Response('OK', { status: 200 });
@@ -100,8 +87,6 @@ async function _handleChargeSuccess(data, env) {
   const metadata = data.metadata || {};
   const attempt = await _resolvePaymentAttempt(reference, env);
 
-  // Prefer the uid/planId we recorded ourselves at initialize time over
-  // metadata echoed back by Paystack — our own record is what we trust.
   const uid = attempt?.uid || metadata.uid;
   const planId = attempt?.planId || metadata.planId;
 
@@ -110,16 +95,14 @@ async function _handleChargeSuccess(data, env) {
     return;
   }
 
-  // Verify the amount actually paid matches what we expected for this plan —
-  // guards against a tampered checkout session charging less than the plan costs.
   const expectedAmount = attempt?.amountKobo;
   if (expectedAmount != null && data.amount !== expectedAmount) {
     console.error('[webhook] Amount mismatch for reference ' + reference + ': expected ' + expectedAmount + ', got ' + data.amount);
-    return; // do NOT grant access on a mismatched amount
+    return;
   }
 
   const periodEnd = new Date();
-  periodEnd.setDate(periodEnd.getDate() + 30); // monthly billing cycle
+  periodEnd.setDate(periodEnd.getDate() + 30);
 
   await fsSet('accounts/' + uid, {
     uid,
@@ -169,7 +152,6 @@ async function _handleSubscriptionCancelled(data, env) {
   const account = await fsGet('accounts/' + uid, env);
   await fsUpdate('accounts/' + uid, {
     status: 'cancelled',
-    // Access continues until periodEnd already on file — do not shorten it.
     periodEnd: account?.periodEnd || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }, env);
@@ -188,16 +170,7 @@ async function _handlePaymentFailed(data, env) {
   }, env);
 }
 
-// Firestore REST doesn't give us a convenient "query by field" helper in
-// firestore-rest.js yet (it's a minimal client), so subscription lookups by
-// customer code go through a small index document we maintain ourselves,
-// written at charge.success time. This avoids needing full Firestore query
-// support just for this one lookup.
 async function _findUidByCustomerCode(customerCode, env) {
   const indexDoc = await fsGet('customerCodeIndex/' + customerCode, env);
   return indexDoc?.uid || null;
-}
-
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
 }
