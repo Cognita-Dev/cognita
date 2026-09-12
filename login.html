@@ -69,14 +69,30 @@
 
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
-  const postAuthDestination = planId
-    ? '/payment.html?plan=' + encodeURIComponent(planId)
-    : '/app.html';
+  const nextPath = params.get('next');
+  // "next" (e.g. from bootstrap.html sending someone here to sign in)
+  // takes priority over the plan-based redirect, since it's an explicit
+  // "come back to this exact page" instruction. Only accept a same-site
+  // relative path (starts with a single "/") — never redirect to an
+  // absolute or protocol-relative URL from a query param, since that
+  // would let a crafted link send a signed-in session somewhere else.
+  const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
+  const postAuthDestination = isSafeNextPath
+    ? nextPath
+    : planId
+      ? '/payment.html?plan=' + encodeURIComponent(planId)
+      : '/app.html';
 
-  // Preserve the intended plan when bouncing to the signup page instead.
+  // Preserve the intended destination (next) or plan when bouncing to
+  // the signup page instead, so someone who lands here without an
+  // account yet doesn't lose where they were headed.
   const signupLink = document.querySelector('.auth-switch a[href="/signup.html"]');
-  if (signupLink && planId) {
-    signupLink.href = '/signup.html?plan=' + encodeURIComponent(planId);
+  if (signupLink) {
+    if (isSafeNextPath) {
+      signupLink.href = '/signup.html?next=' + encodeURIComponent(nextPath);
+    } else if (planId) {
+      signupLink.href = '/signup.html?plan=' + encodeURIComponent(planId);
+    }
   }
 
   const errorEls = {
