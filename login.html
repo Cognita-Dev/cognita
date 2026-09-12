@@ -67,21 +67,37 @@
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
 
+  const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
   const nextPath = params.get('next');
   // "next" (e.g. from bootstrap.html sending someone here to sign in)
-  // takes priority over the plan-based redirect, since it's an explicit
-  // "come back to this exact page" instruction. Only accept a same-site
+  // takes priority over everything else, since it's an explicit "come
+  // back to this exact page" instruction. Only accept a same-site
   // relative path (starts with a single "/") — never redirect to an
   // absolute or protocol-relative URL from a query param, since that
   // would let a crafted link send a signed-in session somewhere else.
   const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
-  const postAuthDestination = isSafeNextPath
-    ? nextPath
-    : planId
-      ? '/payment.html?plan=' + encodeURIComponent(planId)
-      : '/app.html';
+
+  // Only auto-route to the admin dashboard when there's no explicit
+  // destination already requested (next or plan) — those instructions
+  // win regardless of whether the signed-in account happens to be staff.
+  async function resolvePostAuthDestination() {
+    if (isSafeNextPath) return nextPath;
+    if (planId) return '/payment.html?plan=' + encodeURIComponent(planId);
+
+    try {
+      const res = await Auth.authedFetch(WORKER_URL + '/api/admin/whoami');
+      if (res.ok) return '/admin.html';
+    } catch (e) {
+      // Network hiccup checking staff status shouldn't block a normal
+      // sign-in — fall through to the default destination.
+      console.error('[login] staff check failed, defaulting to /app.html:', e.message);
+    }
+
+    return '/app.html';
+  }
 
   // Preserve the intended destination (next) or plan when bouncing to
   // the signup page instead, so someone who lands here without an
@@ -126,7 +142,7 @@
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
-      window.location.href = postAuthDestination;
+      window.location.href = await resolvePostAuthDestination();
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -146,7 +162,7 @@
       setLoading(true);
       try {
         await Auth.signInWithEmail(email, passwordInput.value);
-        window.location.href = postAuthDestination;
+        window.location.href = await resolvePostAuthDestination();
       } catch (err) {
         showError(err);
         setLoading(false);
@@ -156,7 +172,7 @@
       clearErrors();
       try {
         await Auth.signInWithGoogle();
-        window.location.href = postAuthDestination;
+        window.location.href = await resolvePostAuthDestination();
       } catch (err) {
         showError(err);
       }
