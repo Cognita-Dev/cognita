@@ -468,6 +468,61 @@
   flex-shrink: 0;
 }
 .my-resource-status.status-ready { background: var(--accent-subtle); color: var(--accent); }
+
+/* ── Recommended/Featured library cards (resources.html) — each card
+   shows an actual truncated preview of the content, not just a title
+   row, so a user can see what's inside before opening it. ── */
+.library-recommended-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+.library-recommended-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
+}
+.library-recommended-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.library-recommended-card-preview {
+  position: relative;
+  max-height: 150px;
+  overflow: hidden;
+  padding: var(--space-3) var(--space-4) 0;
+  pointer-events: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.library-recommended-card-preview::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, var(--bg-elevated));
+}
+.library-recommended-card-foot {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.library-recommended-card-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-recommended-card-meta { font-size: var(--text-xs); color: var(--text-3); margin-top: 2px; }
+.library-recommended-empty {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--text-4);
+  font-size: var(--text-sm);
+}
 .my-resource-status.status-generating { background: var(--bg-subtle); color: var(--text-3); }
 .my-resource-status.status-failed { background: var(--danger-subtle); color: var(--danger); }
 
