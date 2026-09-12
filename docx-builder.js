@@ -6,6 +6,8 @@
 // Trade-off: slightly larger files than DEFLATE would produce. Acceptable
 // for generated text documents, which are small.
 
+import { getTemplate, getDefaultTemplate, getDocxFontFamily } from './design-templates.js';
+
 const ENCODER = new TextEncoder();
 
 /* ── CRC32 (required by the ZIP format for each entry) ── */
@@ -171,29 +173,43 @@ export async function buildSimpleDocx(content, title) {
   return btoa(binary);
 }
 
-/* ── Structured builder — used by document-endpoint.js so AI-generated
-   documents get real headings and bullet lists instead of one flat wall
-   of text. ── */
+/* ── Structured builder — used by document-endpoint.js and
+   resources-endpoint.js so AI-generated documents get real headings and
+   bullet lists instead of one flat wall of text, styled to match the
+   same design template (colors + font) already used by the PDF and
+   PPTX exports and shown in the on-screen preview. ── */
 
-function _structuredBodyXml(structured) {
+// Shared run-properties fragment: every run gets the template's font
+// and ink color unless it overrides color itself (e.g. a heading).
+function _fontRunProps(font, extra) {
+  return '<w:rFonts w:ascii="' + _xmlEscape(font) + '" w:hAnsi="' + _xmlEscape(font) +
+    '" w:cs="' + _xmlEscape(font) + '"/>' + (extra || '');
+}
+
+function _structuredBodyXml(structured, theme) {
+  const { font, ink, accent } = theme;
   const parts = [];
   structured.sections.forEach((s) => {
     if (s.heading) {
       parts.push(
         '<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>' +
-        '<w:r><w:rPr><w:b/><w:sz w:val="26"/></w:rPr><w:t xml:space="preserve">' +
-        _xmlEscape(s.heading) + '</w:t></w:r></w:p>'
+        '<w:r><w:rPr>' + _fontRunProps(font, '<w:b/><w:color w:val="' + accent + '"/><w:sz w:val="26"/>') +
+        '</w:rPr><w:t xml:space="preserve">' + _xmlEscape(s.heading) + '</w:t></w:r></w:p>'
       );
     }
     if (s.type === 'bullets') {
       s.content.forEach((item) => {
         parts.push(
           '<w:p><w:pPr><w:ind w:left="360"/></w:pPr>' +
-          '<w:r><w:t xml:space="preserve">• ' + _xmlEscape(item) + '</w:t></w:r></w:p>'
+          '<w:r><w:rPr>' + _fontRunProps(font, '<w:color w:val="' + ink + '"/><w:sz w:val="22"/>') +
+          '</w:rPr><w:t xml:space="preserve">• ' + _xmlEscape(item) + '</w:t></w:r></w:p>'
         );
       });
     } else if (s.content && s.content.trim()) {
-      parts.push('<w:p><w:r><w:t xml:space="preserve">' + _xmlEscape(s.content) + '</w:t></w:r></w:p>');
+      parts.push(
+        '<w:p><w:r><w:rPr>' + _fontRunProps(font, '<w:color w:val="' + ink + '"/><w:sz w:val="22"/>') +
+        '</w:rPr><w:t xml:space="preserve">' + _xmlEscape(s.content) + '</w:t></w:r></w:p>'
+      );
     } else {
       parts.push('<w:p/>');
     }
@@ -201,33 +217,46 @@ function _structuredBodyXml(structured) {
   return parts.join('');
 }
 
-function _structuredDocumentXml(title, structured) {
+function _structuredDocumentXml(title, structured, theme) {
+  const { font, accent } = theme;
   const titleXml =
-    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t xml:space="preserve">' +
-    _xmlEscape(title) + '</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr>' +
+    _fontRunProps(font, '<w:b/><w:color w:val="' + accent + '"/><w:sz w:val="32"/>') +
+    '</w:rPr><w:t xml:space="preserve">' + _xmlEscape(title) + '</w:t></w:r></w:p>' +
     '<w:p/>';
 
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-    '<w:body>' + titleXml + _structuredBodyXml(structured) +
+    '<w:body>' + titleXml + _structuredBodyXml(structured, theme) +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>' +
     '</w:body></w:document>';
 }
 
 /**
- * Builds a .docx file from the structured { title, sections } shape used
- * by the document-generation endpoint (headings rendered bold, "bullets"
+ * Builds a .docx file from the structured { title, sections } shape
+ * (headings rendered bold in the template's accent color, "bullets"
  * sections rendered as a bulleted list, "paragraph" sections as plain
- * text). Returns a base64 string ready to send to the frontend.
+ * text) — all in the same color palette and font as the given design
+ * template, so the exported Word doc matches the on-screen preview and
+ * the PDF/PPTX exports of the same resource. Returns a base64 string
+ * ready to send to the frontend.
  *
  * @param {{title: string, sections: Array<{heading: string, type: 'paragraph'|'bullets', content: string|string[]}>}} structured
  * @param {string} title - document title, rendered as a centered heading
+ * @param {string} [templateId] - design template id from design-templates.js; falls back to the default template if omitted or unrecognized
  */
-export async function buildStructuredDocx(structured, title) {
+export async function buildStructuredDocx(structured, title, templateId) {
+  const template = getTemplate(templateId) || getDefaultTemplate();
+  const theme = {
+    font: getDocxFontFamily(templateId),
+    accent: template.colors.accent,
+    ink: template.colors.ink,
+  };
+
   const files = [
     { name: '[Content_Types].xml', data: ENCODER.encode(_contentTypesXml()) },
     { name: '_rels/.rels', data: ENCODER.encode(_rootRelsXml()) },
-    { name: 'word/document.xml', data: ENCODER.encode(_structuredDocumentXml(title, structured)) },
+    { name: 'word/document.xml', data: ENCODER.encode(_structuredDocumentXml(title, structured, theme)) },
   ];
 
   const zipBytes = _assembleZip(files);
