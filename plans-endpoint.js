@@ -1,12 +1,8 @@
 // plans-endpoint.js
-// Public endpoint: GET /api/plans
-// Safe for the frontend to call unauthenticated — returns only what's
-// needed to render the pricing page. No secrets, no provider names,
-// no internal model identifiers ever leave this function.
 
 import { PLANS } from './entitlements.js';
 
-export function handlePlansRequest() {
+export function handlePlansRequest(env) {
   const publicPlans = Object.values(PLANS).map(p => ({
     id: p.id,
     name: p.name,
@@ -27,7 +23,7 @@ export function handlePlansRequest() {
     status: 200,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*',
       'Cache-Control': 'public, max-age=300',
     },
   });
