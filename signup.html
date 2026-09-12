@@ -89,14 +89,23 @@
 
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
-  const postAuthDestination = planId
-    ? '/payment.html?plan=' + encodeURIComponent(planId)
-    : '/app.html';
+  const nextPath = params.get('next');
+  const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
+  const postAuthDestination = isSafeNextPath
+    ? nextPath
+    : planId
+      ? '/payment.html?plan=' + encodeURIComponent(planId)
+      : '/app.html';
 
-  // Preserve the intended plan when bouncing to the login page instead.
+  // Preserve the intended destination (next) or plan when bouncing to
+  // the login page instead.
   const loginLink = document.querySelector('.auth-switch a[href="/login.html"]');
-  if (loginLink && planId) {
-    loginLink.href = '/login.html?plan=' + encodeURIComponent(planId);
+  if (loginLink) {
+    if (isSafeNextPath) {
+      loginLink.href = '/login.html?next=' + encodeURIComponent(nextPath);
+    } else if (planId) {
+      loginLink.href = '/login.html?plan=' + encodeURIComponent(planId);
+    }
   }
 
   const errorEls = {
