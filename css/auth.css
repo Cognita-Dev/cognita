@@ -8,45 +8,49 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
+  /* Status-bar safe area — this is what was actually causing the
+     title to slide up under the clock/signal icons in the screenshot.
+     Token sizes alone don't fix an overlap; this does. */
+  padding-top: max(var(--space-6), calc(env(safe-area-inset-top) + var(--space-5)));
 }
 .auth-shell {
   width: 100%;
-  max-width: 360px;
+  max-width: 320px;
   animation: fadeInUp var(--duration-slow) var(--ease);
 }
 .auth-logo {
   display: flex;
   justify-content: center;
-  margin-bottom: var(--space-7);
+  margin-bottom: var(--space-6);
 }
 .auth-logo img {
-  height: 22px;
+  height: 20px;
   width: auto;
   border-radius: 4px;
 }
 .auth-header {
   text-align: center;
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-5);
 }
 .auth-title {
   font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
   font-style: italic;
   font-weight: 400;
-  font-size: 1.875rem;
+  font-size: 1.375rem;
   letter-spacing: -0.01em;
-  line-height: 1.25;
+  line-height: 1.3;
   color: var(--text-1);
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 .auth-subtitle {
   color: var(--text-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
 }
 .auth-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-6) var(--space-5);
+  padding: var(--space-5) var(--space-4);
   box-shadow: var(--shadow-sm);
 }
 .auth-btn {
@@ -55,7 +59,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: 10px var(--space-3);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -76,9 +80,9 @@
      below follow that from memory rather than a byte-for-byte spec
      check — if pixel-exact brand compliance matters, cross-check
      against Google's current guidelines page before shipping. */
-  min-height: 40px;
+  min-height: 38px;
   font-weight: 500;
-  gap: 12px;
+  gap: 10px;
 }
 .auth-btn--google:hover {
   background: var(--bg-subtle);
@@ -137,7 +141,7 @@
 .auth-btn--primary {
   background: var(--text-1);
   color: var(--bg-base);
-  padding: var(--space-3);
+  padding: 10px var(--space-3);
 }
 .auth-btn--primary:hover {
   opacity: 0.85;
@@ -150,9 +154,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin: var(--space-5) 0;
+  margin: var(--space-4) 0;
   color: var(--text-4);
-  font-size: var(--text-xs);
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -166,13 +170,13 @@
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  font-size: 0.75rem;
+  gap: 6px;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--text-3);
 }
@@ -182,7 +186,7 @@
   justify-content: space-between;
 }
 .auth-field input {
-  padding: var(--space-3) var(--space-3);
+  padding: 10px var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
