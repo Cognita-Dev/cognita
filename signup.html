@@ -87,15 +87,30 @@
   const strengthFill = document.getElementById('strengthFill');
   const strengthChecklist = document.getElementById('strengthChecklist');
 
+  const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
   const nextPath = params.get('next');
   const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
-  const postAuthDestination = isSafeNextPath
-    ? nextPath
-    : planId
-      ? '/payment.html?plan=' + encodeURIComponent(planId)
-      : '/app.html';
+
+  // A brand-new signup will essentially never be staff, but this stays
+  // consistent with login.html's logic in case someone reaches signup
+  // while already signed in under a staff account (Auth.getCurrentUser()
+  // check below) with no explicit next/plan.
+  async function resolvePostAuthDestination() {
+    if (isSafeNextPath) return nextPath;
+    if (planId) return '/payment.html?plan=' + encodeURIComponent(planId);
+
+    try {
+      const res = await Auth.authedFetch(WORKER_URL + '/api/admin/whoami');
+      if (res.ok) return '/admin.html';
+    } catch (e) {
+      console.error('[signup] staff check failed, defaulting to /app.html:', e.message);
+    }
+
+    return '/app.html';
+  }
 
   // Preserve the intended destination (next) or plan when bouncing to
   // the login page instead.
@@ -177,7 +192,7 @@
   try {
     await Auth.ready();
     if (Auth.getCurrentUser()) {
-      window.location.href = postAuthDestination;
+      window.location.href = await resolvePostAuthDestination();
     }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -200,7 +215,7 @@
       setLoading(true);
       try {
         await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value, name);
-        window.location.href = postAuthDestination;
+        window.location.href = await resolvePostAuthDestination();
       } catch (err) {
         showError(err);
         setLoading(false);
@@ -210,7 +225,7 @@
       clearErrors();
       try {
         await Auth.signInWithGoogle();
-        window.location.href = postAuthDestination;
+        window.location.href = await resolvePostAuthDestination();
       } catch (err) {
         showError(err);
       }
