@@ -566,7 +566,7 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
     console.error('[resources] pdf export/upload failed:', e.message);
   }
   try {
-    const docxBase64 = await buildStructuredDocx(structuredForExport, title);
+    const docxBase64 = await buildStructuredDocx(structuredForExport, title, templateId);
     const docxBytes = _base64ToBytes(docxBase64);
     const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
     const docxUpload = await b2UploadFile(
