@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/admin.css">
+<link rel="stylesheet" href="/css/resources.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 </head>
 <body class="app-page admin-page">
@@ -311,12 +312,12 @@
     <div class="admin-detail-body">
       <div class="admin-detail-main">
         <div class="admin-advanced-editor-head">
-          <span class="admin-advanced-label"><i class="ph ph-code"></i> Structured content JSON</span>
-          <button class="admin-btn admin-btn--ghost admin-btn--sm" id="saveEditBtn">
+          <span class="admin-advanced-label"><i class="ph ph-pencil-simple"></i> Content</span>
+          <button class="admin-btn admin-btn--ghost admin-btn--sm" id="saveEditBtn" disabled>
             <i class="ph ph-floppy-disk"></i><span>Save edit</span>
           </button>
         </div>
-        <textarea id="detailContentJson" rows="18" class="admin-code-textarea"></textarea>
+        <div id="detailContentEditor" class="resource-editor"></div>
 
         <div class="admin-workflow-actions" id="detailSecondaryActions">
           <button class="admin-btn admin-btn--ghost" id="requestChangesBtn">Request changes</button>
@@ -348,6 +349,7 @@
 
 </div>
 
+<script src="/js/resource-editor.js"></script>
 <script type="module" src="/js/auth.js"></script>
 <script type="module" src="/js/admin.js"></script>
 </body>
