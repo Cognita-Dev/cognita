@@ -538,9 +538,11 @@ function renderDetailChrome() {
     {
       onDirty: () => {
         saveBtn.disabled = false;
+        if (!document.getElementById('detailContentPreview').hidden) renderDetailPreview();
       },
     }
   );
+  setDetailView('edit');
 
   const primary = PRIMARY_ACTION_BY_STATUS[r.status];
   const primaryBtn = document.getElementById('detailPrimaryActionBtn');
@@ -567,6 +569,51 @@ function renderDetailChrome() {
     const legalFrom = ACTION_LEGAL_FROM[action] || [];
     btn.hidden = isPrimary || !legalFrom.includes(r.status);
   });
+}
+
+// Shows the content exactly the way a real user would see it (same
+// renderer resources.js/library.js use), built from whatever is
+// currently in the editor — including unsaved edits — so an admin can
+// check their change looks right before saving, not just after.
+function renderDetailPreview() {
+  const previewEl = document.getElementById('detailContentPreview');
+  if (!currentDetailResource || !activeDetailEditorHandle) {
+    previewEl.innerHTML = '<p class="admin-hint">Nothing to preview yet.</p>';
+    return;
+  }
+
+  const content = activeDetailEditorHandle.getValue();
+  const resourceType = currentDetailResource.resourceType;
+
+  let html = '';
+  if (window.ResourceRenderers && typeof window.ResourceRenderers.render === 'function') {
+    html = window.ResourceRenderers.render(resourceType, content) || '';
+  }
+
+  if (!html) {
+    html = '<p class="admin-hint">No preview is available for this resource type yet — it will still export normally.</p>';
+  }
+
+  previewEl.innerHTML = html;
+
+  if (window.ResourceRenderers && typeof window.ResourceRenderers.mount === 'function') {
+    window.ResourceRenderers.mount(resourceType, previewEl, content);
+  }
+}
+
+function setDetailView(view) {
+  const editEl = document.getElementById('detailContentEditor');
+  const previewEl = document.getElementById('detailContentPreview');
+  const editBtn = document.getElementById('detailViewEditBtn');
+  const previewBtn = document.getElementById('detailViewPreviewBtn');
+
+  const showPreview = view === 'preview';
+  editEl.hidden = showPreview;
+  previewEl.hidden = !showPreview;
+  editBtn.classList.toggle('is-active', !showPreview);
+  previewBtn.classList.toggle('is-active', showPreview);
+
+  if (showPreview) renderDetailPreview();
 }
 
 // Mirrors ACTION_MAP.from on the backend, so the UI only ever offers an
@@ -622,6 +669,9 @@ function wireDetailPanel() {
   };
   document.getElementById('detailClose').addEventListener('click', close);
   document.getElementById('detailScrim').addEventListener('click', close);
+
+  document.getElementById('detailViewEditBtn').addEventListener('click', () => setDetailView('edit'));
+  document.getElementById('detailViewPreviewBtn').addEventListener('click', () => setDetailView('preview'));
 
   document.getElementById('detailPrimaryActionBtn').addEventListener('click', (e) => {
     const action = e.currentTarget.dataset.action;
