@@ -6,8 +6,8 @@ import { checkAndIncrement } from './usage.js';
 import { getPlan, planSatisfies, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
-import { buildStructuredDocx } from './docx-builder.js';
-import { buildStructuredPdf } from './pdf-builder.js';
+import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
+import { buildStructuredPdf, buildSimplePdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2GetDownloadAuthorization, b2BuildPrivateDownloadUrl } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
@@ -554,6 +554,35 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
     }
     return fileReferences;
   }
+  if (typeof recipe.toPlainTextParagraphs === 'function') {
+    const plainText = recipe.toPlainTextParagraphs(structuredContent);
+    try {
+      const pdfBase64 = await buildSimplePdf(plainText, title, templateId);
+      const pdfBytes = _base64ToBytes(pdfBase64);
+      const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
+      const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
+      fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+    } catch (e) {
+      console.error('[resources] pdf export/upload failed:', e.message);
+    }
+    try {
+      const docxBase64 = await buildSimpleDocx(plainText, title, templateId);
+      const docxBytes = _base64ToBytes(docxBase64);
+      const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
+      const docxUpload = await b2UploadFile(
+        env, docxKey, docxBytes,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
+      fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+    } catch (e) {
+      console.error('[resources] docx export/upload failed:', e.message);
+    }
+    return fileReferences;
+  }
+
+  // Fallback for any recipe that doesn't (yet) provide its own
+  // toPlainTextParagraphs formatter — generic key-flattening so export
+  // still produces something rather than nothing.
   const sections = _structuredContentToSections(structuredContent);
   const structuredForExport = { title, sections };
   try {
