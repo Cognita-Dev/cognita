@@ -136,7 +136,7 @@ body.nav-open .site-nav-overlay {
   gap: var(--space-5);
 }
 .site-nav-overlay-links a {
-  font-size: clamp(1.5rem, 7vw, 2.1rem);
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-1);
@@ -154,7 +154,7 @@ body.nav-open .site-nav-overlay-links a:nth-child(2) { transition-delay: 140ms; 
 body.nav-open .site-nav-overlay-links a:nth-child(3) { transition-delay: 200ms; }
 
 .site-nav-overlay-cta {
-  padding: 12px 24px;
+  padding: 14px 30px;
   background: var(--text-1);
   color: var(--bg-base);
   border-radius: var(--radius-full);
@@ -199,8 +199,8 @@ body.nav-open { overflow: hidden; }
 .site-footer {
   position: relative;
   max-width: 1100px;
-  margin: var(--space-7) auto 0;
-  padding: var(--space-6) var(--space-6) 0;
+  margin: var(--space-8) auto 0;
+  padding: var(--space-7) var(--space-6) 0;
   border-top: 1px solid var(--border);
   overflow: hidden;
 }
@@ -230,7 +230,7 @@ body.nav-open { overflow: hidden; }
   padding-right: 0.04em; 
   line-height: 0.72;
   color: var(--text-1);
-  font-size: clamp(4.5rem, 16vw, 10.5rem);
+  font-size: clamp(5.5rem, 19vw, 13rem);
   margin-bottom: -0.18em;
   opacity: 0.08;
   user-select: none;
@@ -242,5 +242,5 @@ body.nav-open { overflow: hidden; }
 
 @media (max-width: 640px) {
   .site-footer-row { flex-direction: column; gap: var(--space-3); text-align: center; }
-  .site-footer-mark { font-size: clamp(2.5rem, 15vw, 5rem); }
+  .site-footer-mark { font-size: clamp(3rem, 18vw, 6rem); }
 }
