@@ -684,6 +684,27 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   }
 }
 
+/* ── Typewriter reveal — a thin blinking caret shown at the end of an
+     assistant message while its text is still being typed out. Removed
+     once the reveal finishes. ── */
+.message-content.is-typing::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--text-3);
+  animation: typing-caret-blink 0.85s step-end infinite;
+}
+@keyframes typing-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-content.is-typing::after { animation: none; }
+}
+
 .md-table { table-layout: auto; }
 .md-table th, .md-table td {
   white-space: nowrap;
@@ -709,14 +730,15 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   list-style: none;
 }
 .thought-block summary::-webkit-details-marker { display: none; }
-.thought-block summary::before {
-  content: '';
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: var(--accent-2);
+.thought-caret {
+  font-size: 0.65rem;
   flex-shrink: 0;
+  color: var(--text-4);
+  transition: transform var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
+.thought-block[open] .thought-caret { transform: rotate(90deg); }
 .thought-block summary:hover { color: var(--text-2); }
+.thought-block summary:hover .thought-caret { color: var(--text-2); }
 .thought-content {
   margin-top: var(--space-2);
   padding: var(--space-1) 0 var(--space-2) var(--space-3);
@@ -807,8 +829,36 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   0%, 100% { opacity: 0.35; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1); }
 }
-.thinking-word { font-weight: 450; }
+.thinking-word {
+  font-weight: 450;
+  background: linear-gradient(
+    90deg,
+    var(--text-3) 0%,
+    var(--text-3) 35%,
+    var(--text-1) 50%,
+    var(--text-3) 65%,
+    var(--text-3) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-word-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes thinking-word-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 .thinking-timer { color: var(--text-4); font-variant-numeric: tabular-nums; font-size: 0.625rem; } /* 10px — was var(--text-xs) / 12px */
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-word {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--text-3);
+    color: var(--text-3);
+  }
+}
 
 /* ── Composer — the most polished surface in the app: a soft
      elevated panel with a thin inner highlight, not a plain box ── */
