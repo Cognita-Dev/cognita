@@ -73,6 +73,19 @@ const WIN_ANSI_MAP = {
   0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94,
   0x2013: 0x96, 0x2014: 0x97, 0x2022: 0x95, 0x2026: 0x85,
   0x00a0: 0x20, 0x2039: 0x8b, 0x203a: 0x9b,
+  // AI-generated text ("thirty-four", "step-by-step") frequently uses
+  // Unicode hyphen/dash/minus variants instead of the plain ASCII
+  // hyphen-minus (0x2D, already < 0x80 and passed through untouched).
+  // None of these have a WinAnsi/cp1252 code point, so without an
+  // explicit mapping they fell through to the '?' fallback below —
+  // this is the "hyphen turns into a question mark in the PDF" bug.
+  // Mapping them to a plain ASCII hyphen keeps the text correct and
+  // renders identically to what a reader expects.
+  0x2010: 0x2d, // hyphen
+  0x2011: 0x2d, // non-breaking hyphen
+  0x2012: 0x2d, // figure dash
+  0x2015: 0x97, // horizontal bar -> em dash glyph
+  0x2212: 0x2d, // minus sign
 };
 
 function _sanitizeForWinAnsi(str) {
