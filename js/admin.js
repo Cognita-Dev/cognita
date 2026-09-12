@@ -14,7 +14,7 @@
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
 const RESOURCE_TYPES = [
-  'lesson_plan', 'worksheet', 'exam', 'scheme_of_work', 'quiz', 'study_guide',
+  'lesson_plan', 'lesson_note', 'worksheet', 'exam', 'scheme_of_work', 'quiz', 'study_guide',
   'teaching_guide', 'classroom_activity', 'assignment', 'marking_scheme',
   'rubric', 'flashcards', 'student_handout', 'presentation', 'project', 'test',
 ];
@@ -64,6 +64,16 @@ const RESOURCE_TEMPLATES = {
     conclusion: '',
     homework: '',
     teacherNotes: '',
+  },
+  lesson_note: {
+    title: '',
+    introduction: '',
+    sections: [
+      { heading: '', type: 'paragraph', content: '' },
+      { heading: '', type: 'bullets', content: [''] },
+      { heading: '', type: 'definition', content: [{ term: '', explanation: '' }] },
+    ],
+    summary: '',
   },
   flashcards: {
     title: '',
