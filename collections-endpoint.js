@@ -1,9 +1,4 @@
 // collections-endpoint.js
-// Admin management of Collections — named groupings of published
-// adminResources for the user-facing library. A collection tracks its
-// own member resource ids directly (resourceIds: string[]) rather than
-// relying on a Firestore array-contains query, since the REST client in
-// firestore-rest.js only supports single equality filters.
 
 import { requireAdmin } from './admin-auth.js';
 import { requireAuth } from './auth-middleware.js';
@@ -15,38 +10,35 @@ function _makeId() {
     : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-function _corsJsonHeaders() {
-  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
+function _corsJsonHeaders(env) {
+  return { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*' };
 }
 
-function _jsonError(message, status) {
-  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders() });
+function _jsonError(message, status, env) {
+  return new Response(JSON.stringify({ error: message }), { status, headers: _corsJsonHeaders(env) });
 }
 
-function _jsonOk(body, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: _corsJsonHeaders() });
+function _jsonOk(body, status, env) {
+  return new Response(JSON.stringify(body), { status: status || 200, headers: _corsJsonHeaders(env) });
 }
 
-// ── Admin: create ─────────────────────────────────────────────────────
-// POST /api/admin/collections
-// Body: { name, description? }
 export async function handleCollectionCreate(request, env) {
   let identity;
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const name = String(body.name || '').trim();
-  if (!name) return _jsonError('name is required.', 400);
+  if (!name) return _jsonError('name is required.', 400, env);
 
   const id = _makeId();
   const now = new Date().toISOString();
@@ -54,7 +46,7 @@ export async function handleCollectionCreate(request, env) {
     id,
     name,
     description: String(body.description || '').trim(),
-    visibility: 'draft', // draft | published
+    visibility: 'draft',
     resourceIds: [],
     createdBy: identity.uid,
     createdAt: now,
@@ -65,39 +57,36 @@ export async function handleCollectionCreate(request, env) {
     await fsSet('collections/' + id, doc, env);
   } catch (e) {
     console.error('[collections] create failed:', e.message);
-    return _jsonError('Could not create the collection.', 500);
+    return _jsonError('Could not create the collection.', 500, env);
   }
 
-  return _jsonOk({ collection: doc }, 201);
+  return _jsonOk({ collection: doc }, 201, env);
 }
 
-// ── Admin: edit (name/description/visibility) ────────────────────────
-// POST /api/admin/collections/:id
-// Body: { name?, description?, visibility? }
 export async function handleCollectionEdit(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   let doc;
   try {
     doc = await fsGet('collections/' + collectionId, env);
   } catch (e) {
-    return _jsonError('Could not load that collection.', 500);
+    return _jsonError('Could not load that collection.', 500, env);
   }
-  if (!doc) return _jsonError('Collection not found.', 404);
+  if (!doc) return _jsonError('Collection not found.', 404, env);
 
   if (body.visibility !== undefined && !['draft', 'published'].includes(body.visibility)) {
-    return _jsonError('visibility must be "draft" or "published".', 400);
+    return _jsonError('visibility must be "draft" or "published".', 400, env);
   }
 
   const updated = {
@@ -111,60 +100,52 @@ export async function handleCollectionEdit(request, env, collectionId) {
   try {
     await fsSet('collections/' + collectionId, updated, env);
   } catch (e) {
-    return _jsonError('Could not save the collection.', 500);
+    return _jsonError('Could not save the collection.', 500, env);
   }
 
-  return _jsonOk({ collection: updated });
+  return _jsonOk({ collection: updated }, 200, env);
 }
 
-// ── Admin: add/remove a resource from a collection ───────────────────
-// POST /api/admin/collections/:id/resources
-// Body: { action: 'add' | 'remove', resourceId }
-// Idempotent: adding an already-present id, or removing an already-absent
-// id, both succeed without error — the end state is what matters.
 export async function handleCollectionResourceEdit(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   let body;
   try {
     body = await request.json();
   } catch (e) {
-    return _jsonError('Invalid JSON body.', 400);
+    return _jsonError('Invalid JSON body.', 400, env);
   }
 
   const { action, resourceId } = body;
   if (!['add', 'remove'].includes(action)) {
-    return _jsonError('action must be "add" or "remove".', 400);
+    return _jsonError('action must be "add" or "remove".', 400, env);
   }
   if (!resourceId) {
-    return _jsonError('resourceId is required.', 400);
+    return _jsonError('resourceId is required.', 400, env);
   }
 
   let collectionDoc;
   try {
     collectionDoc = await fsGet('collections/' + collectionId, env);
   } catch (e) {
-    return _jsonError('Could not load that collection.', 500);
+    return _jsonError('Could not load that collection.', 500, env);
   }
-  if (!collectionDoc) return _jsonError('Collection not found.', 404);
+  if (!collectionDoc) return _jsonError('Collection not found.', 404, env);
 
   if (action === 'add') {
-    // Only published resources belong in a collection users can see —
-    // but the collection itself may still be draft, so this only checks
-    // the resource's own status, not the collection's visibility.
     let resourceDoc;
     try {
       resourceDoc = await fsGet('adminResources/' + resourceId, env);
     } catch (e) {
-      return _jsonError('Could not load that resource.', 500);
+      return _jsonError('Could not load that resource.', 500, env);
     }
-    if (!resourceDoc) return _jsonError('Resource not found.', 404);
+    if (!resourceDoc) return _jsonError('Resource not found.', 404, env);
     if (resourceDoc.status !== 'published') {
-      return _jsonError('Only published resources can be added to a collection.', 409);
+      return _jsonError('Only published resources can be added to a collection.', 409, env);
     }
   }
 
@@ -183,19 +164,17 @@ export async function handleCollectionResourceEdit(request, env, collectionId) {
     await fsSet('collections/' + collectionId, updated, env);
   } catch (e) {
     console.error('[collections] resource edit failed:', e.message);
-    return _jsonError('Could not update the collection.', 500);
+    return _jsonError('Could not update the collection.', 500, env);
   }
 
-  return _jsonOk({ collection: updated });
+  return _jsonOk({ collection: updated }, 200, env);
 }
 
-// ── Admin: list all collections (any visibility) ─────────────────────
-// GET /api/admin/collections
 export async function handleAdminCollectionList(request, env) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   try {
@@ -206,48 +185,42 @@ export async function handleAdminCollectionList(request, env) {
     const collections = [...drafts, ...published].sort(
       (a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')
     );
-    return _jsonOk({ collections });
+    return _jsonOk({ collections }, 200, env);
   } catch (e) {
     console.error('[collections] admin list failed:', e.message);
-    return _jsonError('Could not load collections.', 500);
+    return _jsonError('Could not load collections.', 500, env);
   }
 }
 
-// ── Admin: delete a collection ────────────────────────────────────────
-// DELETE /api/admin/collections/:id
-// Deleting a collection never deletes its member resources — it only
-// removes the grouping.
 export async function handleCollectionDelete(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401);
+    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
   }
 
   try {
     await fsDelete('collections/' + collectionId, env);
   } catch (e) {
     console.error('[collections] delete failed:', e.message);
-    return _jsonError('Could not delete the collection.', 500);
+    return _jsonError('Could not delete the collection.', 500, env);
   }
 
-  return _jsonOk({ deleted: true });
+  return _jsonOk({ deleted: true }, 200, env);
 }
 
-// ── User-facing: list published collections ──────────────────────────
-// GET /api/library/collections
 export async function handlePublicCollectionList(request, env) {
   try {
     await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401);
+    return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
   try {
     const collections = await fsQuery('collections', 'visibility', 'published', 'updatedAt', 100, env);
-    return _jsonOk({ collections });
+    return _jsonOk({ collections }, 200, env);
   } catch (e) {
     console.error('[collections] public list failed:', e.message);
-    return _jsonError('Could not load collections.', 500);
+    return _jsonError('Could not load collections.', 500, env);
   }
 }
