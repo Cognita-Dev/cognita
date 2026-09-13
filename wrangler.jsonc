@@ -24,14 +24,12 @@
       "id": "05f7fb2e0a7c47a68986c119fb5e5346"
     },
     {
-      // Precomputed snapshots of published library content, so reads
-      // don't have to hit Firestore on every request. Create this
-      // namespace once with:
-      //   wrangler kv namespace create COGNITA_LIBRARY_CACHE
-      // then replace REPLACE_WITH_YOUR_NAMESPACE_ID below with the id
-      // it prints.
       "binding": "COGNITA_LIBRARY_CACHE",
       "id": "4b681c464cb84e8ca2c6ec148dad2067"
+    },
+    {
+      "binding": "COGNITA_OAUTH_STATE",
+      "id": "110124e1fcf8439a91509e56547c25c3"
     }
   ],
 
