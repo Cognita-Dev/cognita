@@ -104,7 +104,10 @@
   // (connector-providers.js). This is purely "what icon and one-line
   // description to show," never trusted for anything else.
   const CONNECTOR_META = {
-    github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
+    github: {
+      label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.',
+      hint: 'You need to be signed in to GitHub in this browser to connect it.',
+    },
     google: { label: 'Google', icon: 'ph-google-logo', desc: 'Save to Drive, check your calendar.' },
     figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
     canva: { label: 'Canva', icon: 'ph-image-square', desc: 'Read and create designs.' },
@@ -121,6 +124,9 @@
           '<span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">' +
             (connected ? 'Connected' : meta.desc) +
           '</span>' +
+          (!connected && meta.hint
+            ? '<span style="display:block; font-size: var(--text-xs); color: var(--text-3); margin-top: 2px;">' + meta.hint + '</span>'
+            : '') +
         '</div>' +
         (connected
           ? '<button class="settings-row-cta settings-row--danger connector-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
@@ -202,13 +208,16 @@
     const params = new URLSearchParams(window.location.search);
     const provider = params.get('connector');
     const status = params.get('status');
+    const reason = params.get('reason');
     if (!provider || !status) return;
 
     const label = CONNECTOR_META[provider] ? CONNECTOR_META[provider].label : provider;
     const messages = {
       connected: label + ' connected.',
       denied: label + ' connection was cancelled.',
-      error: 'Something went wrong connecting ' + label + '. Please try again.',
+      error: reason === 'session_expired'
+        ? 'Your sign-in session with ' + label + ' expired before the connection finished. This happens if ' + label + ' asked for extra verification and it took a while to complete. Try connecting again, and stay in the same tab until it is done.'
+        : 'Something went wrong connecting ' + label + '. Please try again.',
     };
     const footnote = document.getElementById('connectionsFootnote');
     if (footnote && messages[status]) {
