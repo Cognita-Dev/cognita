@@ -23,6 +23,7 @@
 // provider integrations on top.
 
 import { fsGet, fsSet, fsDelete } from './firestore-rest.js';
+import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken } from './connector-providers.js';
 
 // The only six providers this app knows about. Kept as a single exported
 // list so routing, the account-page UI data, and validation all check
@@ -198,4 +199,130 @@ export async function generateCodeChallenge(codeVerifier) {
   let binary = '';
   for (let i = 0; i < digestBytes.length; i++) binary += String.fromCharCode(digestBytes[i]);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ── Orchestration: ties storage + PKCE + provider protocol together ──
+// Everything below is what connectors-endpoint.js actually calls. It
+// never talks to fsGet/fsSet, KV, or connector-providers.js directly —
+// this file is the only seam between "an HTTP route fired" and "a token
+// got read, refreshed, or written."
+
+/**
+ * Starts a connector's OAuth flow for an already-authenticated uid.
+ * Returns the URL to redirect the user's browser to.
+ */
+export async function startAuth(uid, provider, env) {
+  _assertKnownProvider(provider);
+
+  let codeVerifier;
+  let codeChallenge;
+  if (provider === 'canva') {
+    codeVerifier = generateCodeVerifier();
+    codeChallenge = await generateCodeChallenge(codeVerifier);
+  }
+
+  const state = await createOAuthState(uid, provider, env, codeVerifier ? { codeVerifier } : {});
+  return buildAuthorizeUrl(provider, env, { state, codeChallenge });
+}
+
+/**
+ * Handles a provider's redirect back to /auth/:provider/callback.
+ * Validates `state` (rejects missing/expired/mismatched-provider —
+ * see consumeOAuthState's one-time-use guarantee), exchanges the code,
+ * and persists the resulting token. Returns the uid that was connected,
+ * so the route handler knows who to redirect and what to log.
+ *
+ * Throws on any failure. Callers must not redirect the user to a
+ * "connected!" page unless this resolves successfully.
+ */
+export async function handleCallback(provider, code, state, env) {
+  _assertKnownProvider(provider);
+  if (!code) throw new Error('Missing authorization code.');
+
+  const stateData = await consumeOAuthState(state, env);
+  if (!stateData) throw new Error('Invalid or expired authorization state — please try connecting again.');
+  if (stateData.provider !== provider) {
+    // Someone hit provider A's callback URL with a state minted for
+    // provider B — either a bug in the redirect URI configuration or a
+    // deliberate mismatch attempt. Reject outright either way.
+    throw new Error('State/provider mismatch.');
+  }
+
+  const tokenData = await exchangeCodeForToken(provider, env, { code, codeVerifier: stateData.codeVerifier });
+  await saveConnectorToken(stateData.uid, provider, tokenData, env);
+
+  return stateData.uid;
+}
+
+// Refresh a bit before the actual expiry, not exactly at it — avoids a
+// request landing in the few-second window where the token is technically
+// still valid by timestamp but the provider has already started rejecting it.
+const EXPIRY_SAFETY_MARGIN_MS = 60_000;
+
+/**
+ * Returns a currently-valid access token for uid/provider, transparently
+ * refreshing first if needed. Throws if there's no connection at all, or
+ * if refresh fails (revoked/expired refresh token) — either case means
+ * "the user needs to reconnect," and callers (the tool-execution layer)
+ * must surface that distinctly rather than as a generic error, and should
+ * delete the now-useless local record via disconnectProvider so the UI
+ * stops showing this as connected.
+ */
+export async function getValidToken(uid, provider, env) {
+  _assertKnownProvider(provider);
+
+  const record = await getConnectorToken(uid, provider, env);
+  if (!record || !record.accessToken) {
+    throw new Error('NOT_CONNECTED');
+  }
+
+  const isExpired = typeof record.expiresAt === 'number' && Date.now() > record.expiresAt - EXPIRY_SAFETY_MARGIN_MS;
+  if (!isExpired) {
+    return record.accessToken;
+  }
+
+  // Expired and no way to refresh (GitHub never expires so never reaches
+  // here; Slack without token rotation also has no refresh token, but
+  // also never sets expiresAt, so it never reaches here either).
+  if (!record.refreshToken) {
+    throw new Error('NEEDS_RECONNECT');
+  }
+
+  let refreshed;
+  try {
+    refreshed = await refreshAccessToken(provider, env, record.refreshToken);
+  } catch (e) {
+    throw new Error('NEEDS_RECONNECT');
+  }
+
+  await saveConnectorToken(uid, provider, {
+    ...refreshed,
+    connectedAt: record.connectedAt, // preserve original connection date
+    providerAccountId: refreshed.providerAccountId || record.providerAccountId,
+  }, env);
+
+  return refreshed.accessToken;
+}
+
+/**
+ * Disconnects a provider: best-effort revokes the token with the
+ * provider (failure here is swallowed — see revokeToken's own comment),
+ * then always deletes the local Firestore record regardless of whether
+ * the revoke succeeded. "Disconnected in Cognita" must be true even if
+ * the provider's revoke endpoint is down.
+ */
+export async function disconnectProvider(uid, provider, env) {
+  _assertKnownProvider(provider);
+
+  const record = await getConnectorToken(uid, provider, env);
+  if (record && record.accessToken) {
+    try {
+      await revokeToken(provider, env, record.accessToken);
+    } catch (e) {
+      console.warn('[connectors] revoke failed for', provider, '— deleting local record anyway:', e.message);
+    }
+  }
+
+  await deleteConnectorToken(uid, provider, env);
+  return true;
 }
