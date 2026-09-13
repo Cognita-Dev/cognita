@@ -32,6 +32,18 @@
     flex-direction: column;
     min-height: 0;
   }
+  .connectors-modal-banner {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: var(--text-sm, 0.875rem);
+    font-weight: 600;
+    background: var(--surface-2, #f4f4f5);
+    color: var(--text-1, #111);
+  }
+  .connectors-modal-banner.is-error {
+    color: var(--danger, #d33);
+  }
 </style>
 </head>
 <body class="app-page">
@@ -326,6 +338,7 @@
       </button>
     </div>
     <div class="modal-body">
+      <p class="connectors-modal-banner" id="connectorsBanner" hidden></p>
       <div class="connector-list" id="connectorsList">
         <div class="connector-row skeleton" style="height:56px;"></div>
         <div class="connector-row skeleton" style="height:56px;"></div>
