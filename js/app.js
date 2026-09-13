@@ -110,6 +110,7 @@ const THINKING_WORDS = [
   wireVisualModal();
   wireDocumentModal();
   wireConnectorsModal();
+  showConnectorRedirectBanner();
   wireSuggestionCards();
   startPlaceholderTypewriter();
 
@@ -1365,7 +1366,7 @@ function renderMessage(msg, index) {
       '</button>';
   }
 
-  // A write action (e.g. "open a GitHub issue", "post to Slack") the
+  // A write action (e.g. "open a GitHub issue", "create a Canva design") the
   // model proposed but hasn't run yet — see the confirmToolCall flow in
   // chat-endpoint.js. Rendered as a small card with Confirm/Cancel;
   // status flips to 'confirmed'/'cancelled' once acted on so it doesn't
@@ -2118,12 +2119,10 @@ function insertDocumentIntoConversation(data, topicText, docType, conversationId
 const CONNECTOR_META = {
   github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
   google: { label: 'Google', icon: 'ph-google-logo', desc: 'Check your calendar, save to Drive.' },
-  slack: { label: 'Slack', icon: 'ph-slack-logo', desc: 'List channels, post messages.' },
   figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
-  dropbox: { label: 'Dropbox', icon: 'ph-dropbox-logo', desc: 'List files, save new files.' },
   canva: { label: 'Canva', icon: 'ph-image-square', desc: 'List and create designs.' },
 };
-const CONNECTOR_ORDER = ['github', 'google', 'slack', 'figma', 'dropbox', 'canva'];
+const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
 
 function connectorRowHtml(provider, connected) {
   const meta = CONNECTOR_META[provider];
@@ -2182,13 +2181,15 @@ function wireConnectorsModal() {
       connectBtn.disabled = true;
       connectBtn.textContent = 'Connecting…';
       try {
-        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start');
+        // returnTo=chat: this modal was opened from the chat page, so the
+        // provider's callback should send the user back here (app.html),
+        // not to account.html — see connectors-endpoint.js.
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start?returnTo=chat');
         const data = await res.json();
         if (!res.ok || !data.url) throw new Error(data.error || 'Could not start connection.');
         // Full-page navigation — the provider's consent screen redirects
-        // back to Account Settings when done (not back to this chat), so
-        // leaving mid-conversation is expected; the conversation is saved
-        // and will still be here afterward.
+        // back to this same chat page when done; the conversation is
+        // saved and will still be here afterward.
         window.location.href = data.url;
       } catch (err) {
         showToast('Could not connect ' + CONNECTOR_META[provider].label + ': ' + err.message);
@@ -2218,6 +2219,56 @@ function wireConnectorsModal() {
     }
   });
 }
+
+// Landed here from a provider's OAuth redirect (returnTo=chat)? Show a
+// one-line result banner inside the Connected Apps modal and open the
+// modal so it's actually visible, then strip the query params so a
+// refresh doesn't re-show it. Mirrors account.html's banner for the
+// three outcomes connectors-endpoint.js can redirect back with:
+// connected, denied (user cancelled — not an error), and error.
+function showConnectorRedirectBanner() {
+  const params = new URLSearchParams(window.location.search);
+  const provider = params.get('connector');
+  const status = params.get('status');
+  if (!provider || !status) return;
+
+  const label = CONNECTOR_META[provider] ? CONNECTOR_META[provider].label : provider;
+  const messages = {
+    connected: label + ' connected.',
+    denied: label + ' connection was cancelled.',
+    error: 'Something went wrong connecting ' + label + '. Please try again.',
+  };
+
+  const banner = document.getElementById('connectorsBanner');
+  if (banner && messages[status]) {
+    banner.textContent = messages[status];
+    banner.classList.toggle('is-error', status === 'error');
+    banner.hidden = false;
+  }
+
+  openConnectorsModal();
+
+  // Clean the URL so refreshing doesn't re-show the banner or re-open
+  // the modal.
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
+// ── Recover from a stuck "Connecting…"/"Disconnecting…" button ──────
+// Same bfcache issue as account.html: window.location.href leaves this
+// page's state untouched until the browser actually navigates away, so
+// a back-button return or interrupted navigation can restore this page
+// from bfcache with a button still stuck disabled mid-label. `pageshow`
+// with event.persisted fires exactly on that restore (never on a normal
+// fresh load), so this can't clobber a click that's genuinely about to
+// navigate away. Re-running loadConnectorsList() rebuilds every row from
+// real, freshly-fetched status, which never renders a "Connecting…" /
+// "Disconnecting…" state — only "Connect" or "Disconnect" — so this
+// covers both button kinds and any number of connector rows at once.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && !document.getElementById('connectorsModal').hidden) {
+    loadConnectorsList();
+  }
+});
 
 /* ════════════════════════════════════════════════════════
    TOAST
