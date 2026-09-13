@@ -1308,12 +1308,15 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .tool-confirm-btn--cancel:hover:not(:disabled) { background: var(--bg-elevated); }
 .tool-confirm-card-status { font-size: var(--text-xs); color: var(--text-3); font-style: italic; }
 
-/* Action Trace: a one-line record that a tool action ran — either a
-   silently-executed read (list/get/search) or a write the user just
-   confirmed. Deliberately lighter-weight than .tool-confirm-card (no
-   padding/border box) since it's a passive log line, not a prompt. */
+/* Action Trace: an ordered record of the steps the agent loop actually
+   ran — either silently-executed reads (list/get/search) or writes the
+   user already confirmed. Deliberately lighter-weight than
+   .tool-confirm-card (no padding/border box) since it's a passive log,
+   not a prompt. .tool-trace-list stacks multiple steps from one turn
+   with a tighter gap than the default message spacing. */
+.tool-trace-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .tool-trace-card {
-  margin-top: var(--space-2);
+  margin-top: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1324,6 +1327,8 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .tool-trace-card--ok i.ph { color: var(--accent, var(--text-2)); }
 .tool-trace-card--error { color: var(--text-2); }
 .tool-trace-card--error i.ph { color: #d0645a; }
+.tool-trace-card--blocked { color: var(--text-2); }
+.tool-trace-card--blocked i.ph { color: #c8952f; }
 
 
 /* ── Responsive ── */
