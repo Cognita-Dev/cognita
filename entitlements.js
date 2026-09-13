@@ -104,8 +104,7 @@ export const PLANS = {
   },
 };
 
-// Can this plan use connected-app tools (GitHub/Google/Slack/Figma/
-// Dropbox/Canva) from inside chat?
+// Can this plan use connected-app tools (GitHub/Google/Figma/Canva)
 export function planHasConnectorTools(planId) {
   return !!getPlan(planId).features.connectorTools;
 }
