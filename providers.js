@@ -273,37 +273,64 @@ async function _dispatchWithTools(providerName, messages, model, tools, env, max
 }
 
 /**
+ * Unrolls a tierConfig's { provider, model, fallback: {...} } chain (of any
+ * length — fallback.fallback.fallback... is fine) into a flat, ordered
+ * array of { provider, model } steps. This is the single place that knows
+ * how to read a tier's chain, so callWithFallback and callWithTools always
+ * see and exhaust the exact same list of providers, in the exact same
+ * order, however many levels deep it goes.
+ */
+function _stepsFromTierConfig(tierConfig) {
+  const steps = [{ provider: tierConfig.provider, model: tierConfig.model }];
+  let next = tierConfig.fallback;
+  while (next) {
+    steps.push({ provider: next.provider, model: next.model });
+    next = next.fallback;
+  }
+  return steps;
+}
+
+/**
  * Same shape as callWithFallback, but offers the model a set of callable
  * tools (OpenAI-compatible `tools` array — see connector-tools.js for how
  * these are built). Returns { text, finishReason, reasoning, toolCalls }
  * where toolCalls is either null (model just replied normally) or an
  * array of { id, name, args } the caller should act on.
  *
- * Throws 'tools_unsupported' (as the error message prefix) if neither the
- * primary nor fallback provider for this tier can do tool-calling at all —
- * chat-endpoint.js catches this specifically and re-runs the turn through
- * plain callWithFallback() instead of failing the request.
+ * Walks the tier's full fallback chain (not just one hop) before giving
+ * up, so a single rate-limited or down provider never takes the whole
+ * request with it as long as any later step in the chain is healthy.
+ *
+ * Throws 'tools_unsupported' (as the error message prefix) only if EVERY
+ * step in the chain failed specifically because that provider doesn't do
+ * tool-calling — chat-endpoint.js catches that specifically and re-runs
+ * the turn through plain callWithFallback() instead of failing the
+ * request. Any other mix of failures throws a generic outage error.
  */
 export async function callWithTools(tierConfig, messages, tools, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+  const steps = _stepsFromTierConfig(tierConfig);
 
-  try {
-    return await _dispatchWithTools(tierConfig.provider, messages, tierConfig.model, tools, env, maxTokens);
-  } catch (primaryErr) {
-    console.warn('[providers] tool-call primary failed:', primaryErr.message);
-    if (!tierConfig.fallback) throw primaryErr;
+  let lastErr = null;
+  let allToolsUnsupported = true;
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     try {
-      return await _dispatchWithTools(tierConfig.fallback.provider, messages, tierConfig.fallback.model, tools, env, maxTokens);
-    } catch (fallbackErr) {
-      console.error('[providers] tool-call fallback also failed:', fallbackErr.message);
-      // If both legs failed specifically because tools aren't supported,
-      // surface that distinctly; otherwise it's a real outage.
-      if (primaryErr.message.startsWith('tools_unsupported') && fallbackErr.message.startsWith('tools_unsupported')) {
-        throw new Error('tools_unsupported: no provider in this tier supports tool-calling.');
-      }
-      throw new Error('All providers unavailable.');
+      return await _dispatchWithTools(step.provider, messages, step.model, tools, env, maxTokens);
+    } catch (err) {
+      lastErr = err;
+      if (!String(err.message).startsWith('tools_unsupported')) allToolsUnsupported = false;
+      const label = i === 0 ? 'primary' : 'fallback #' + i;
+      console.warn('[providers] tool-call ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
     }
   }
+
+  if (allToolsUnsupported) {
+    throw new Error('tools_unsupported: no provider in this tier supports tool-calling.');
+  }
+  console.error('[providers] tool-call chain exhausted, last error:', lastErr && lastErr.message);
+  throw new Error('All providers unavailable.');
 }
 
 /**
@@ -320,30 +347,33 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
  * @param {object} [options] - { maxTokens: number } — raise this for
  *   long-form structured generation (documents, resources) where the
  *   default 2048 tokens truncates mid-JSON and corrupts the whole output.
+ *
+ * Walks the tier's full fallback chain (however many levels deep it is
+ * defined in entitlements.js) rather than stopping after a single
+ * fallback, so one down/rate-limited provider can't take the whole
+ * request with it as long as a later step in the chain still works.
  */
 export async function callWithFallback(tierConfig, messages, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+  const steps = _stepsFromTierConfig(tierConfig);
 
-  try {
-    const result = await _dispatch(tierConfig.provider, messages, tierConfig.model, env, maxTokens);
-    if (result.finishReason === 'length') {
-      return await _continueIfTruncated(tierConfig.provider, tierConfig.model, messages, result, env, maxTokens, options);
-    }
-    return result;
-  } catch (primaryErr) {
-    console.warn('[providers] primary failed:', primaryErr.message);
-    if (!tierConfig.fallback) throw primaryErr;
+  let lastErr = null;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     try {
-      const result = await _dispatch(tierConfig.fallback.provider, messages, tierConfig.fallback.model, env, maxTokens);
+      const result = await _dispatch(step.provider, messages, step.model, env, maxTokens);
       if (result.finishReason === 'length') {
-        return await _continueIfTruncated(tierConfig.fallback.provider, tierConfig.fallback.model, messages, result, env, maxTokens, options);
+        return await _continueIfTruncated(step.provider, step.model, messages, result, env, maxTokens, options);
       }
       return result;
-    } catch (fallbackErr) {
-      console.error('[providers] fallback also failed:', fallbackErr.message);
-      throw new Error('All providers unavailable.');
+    } catch (err) {
+      lastErr = err;
+      const label = i === 0 ? 'primary' : 'fallback #' + i;
+      console.warn('[providers] ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
     }
   }
+  console.error('[providers] chain exhausted, last error:', lastErr && lastErr.message);
+  throw new Error('All providers unavailable.');
 }
 
 // If a response got cut off by max_tokens, ask the same provider to continue
