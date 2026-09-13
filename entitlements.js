@@ -111,21 +111,53 @@ export function planHasConnectorTools(planId) {
 
 // Internal model tier -> actual provider/model mapping.
 // Changing a provider or model string only ever happens here.
+//
+// Each tier is a CHAIN: primary, then `fallback`, then `fallback.fallback`,
+// and so on (as many levels deep as needed). providers.js walks this chain
+// in order and only gives up once every step has failed. Every step in a
+// chain should be able to carry tool-calls EXCEPT the very last "dumb"
+// catch-all step, which exists purely so plain chat never goes fully dark
+// even if every real provider is down — Workers AI never supports tools
+// and must always be the final link, never the only fallback.
 export const MODEL_TIERS = {
   fast: {
     provider: 'groq',
     model: 'openai/gpt-oss-20b',
-    fallback: { provider: 'workersai', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+    fallback: {
+      // OpenRouter's free router still supports tool-calling, so a Groq
+      // rate limit (this tier's most common failure) no longer kills the
+      // whole request — it lands here instead of failing outright.
+      provider: 'openrouter',
+      model: 'openrouter/free',
+      fallback: {
+        // Last resort only: no tool support, but keeps plain chat alive.
+        provider: 'workersai',
+        model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      },
+    },
   },
   advanced: {
     provider: 'groq',
     model: 'openai/gpt-oss-120b',
-    fallback: { provider: 'openrouter', model: 'openrouter/free' },
+    fallback: {
+      provider: 'openrouter',
+      model: 'openrouter/free',
+      fallback: {
+        // Still tool-capable and still "same tier" in spirit — much better
+        // last resort than dropping straight to Workers AI.
+        provider: 'groq',
+        model: 'openai/gpt-oss-20b',
+      },
+    },
   },
   reasoning: {
     provider: 'openrouter',
     model: 'deepseek/deepseek-r1:free',
-    fallback: { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    fallback: {
+      provider: 'groq',
+      model: 'openai/gpt-oss-120b',
+      fallback: { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    },
   },
 };
 
