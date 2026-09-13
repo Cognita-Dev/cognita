@@ -534,61 +534,68 @@ export const REQUIRES_CONFIRMATION = [
   'github_create_pull_request_review',
 ];
 
+// describe() renders BOTH the confirm-card summary and the Action Trace
+// line (see connector-tools.js / chat-endpoint.js), i.e. this is what the
+// user actually reads. It must describe the outcome for the user's
+// project, never the underlying mechanism — no "commit," "branch,"
+// "repo," no raw owner/repo slugs (use just the repo name unless the user
+// themselves typed the full slug), no tool names, no HTTP/API verbs. A
+// call missing the args it needs to describe itself cleanly (e.g. no path
+// yet) should never reach here at all — see validateToolArgs() in
+// connector-tools.js, which the agent loop runs first.
+function _repoLabel(args) {
+  return (args && args.repo) ? args.repo : 'that repository';
+}
+
 export function describe(name, args) {
   args = args || {};
-  if (name === 'github_list_repos') return 'List your GitHub repositories.';
-  if (name === 'github_get_repo') return 'Get details on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_search_repositories') return 'Search GitHub repositories for "' + (args.query || '') + '".';
-  if (name === 'github_get_file_contents') {
-    return 'Read "' + (args.path || '?') + '" from ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_search_code') return 'Search GitHub code for "' + (args.query || '') + '".';
-  if (name === 'github_list_branches') return 'List branches on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_list_commits') return 'List recent commits on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_commit') return 'Get commit ' + (args.sha || '?').slice(0, 12) + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_list_issues') return 'List issues on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_issue') return 'Get issue #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_create_issue') {
-    return 'Open a GitHub issue titled "' + (args.title || '') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_update_issue') {
-    return 'Update issue #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_add_issue_comment') {
-    return 'Comment on #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_list_pull_requests') return 'List pull requests on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_pull_request') return 'Get pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_pull_request_diff') return 'Get the diff for pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_create_pull_request') {
-    return 'Open a pull request "' + (args.title || '') + '" from "' + (args.head || '?') + '" into "' +
-      (args.base || 'the default branch') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
+  const repo = _repoLabel(args);
+  if (name === 'github_list_repos') return 'Looking at your GitHub repositories.';
+  if (name === 'github_get_repo') return 'Checking ' + repo + "'s details.";
+  if (name === 'github_search_repositories') return 'Searching GitHub for "' + (args.query || '') + '".';
+  if (name === 'github_get_file_contents') return 'Looking at ' + (args.path || 'a file') + ' in ' + repo + '.';
+  if (name === 'github_search_code') return 'Searching ' + repo + "'s code for \"" + (args.query || '') + '".';
+  if (name === 'github_list_branches') return 'Looking at ' + repo + "'s branches.";
+  if (name === 'github_list_commits') return 'Looking at ' + repo + "'s recent history.";
+  if (name === 'github_get_commit') return 'Looking at a recent change in ' + repo + '.';
+  if (name === 'github_list_issues') return 'Checking open issues on ' + repo + '.';
+  if (name === 'github_get_issue') return 'Looking at issue #' + (args.number || '?') + ' on ' + repo + '.';
+  if (name === 'github_create_issue') return 'Opening an issue on ' + repo + ': "' + (args.title || '') + '".';
+  if (name === 'github_update_issue') return 'Updating issue #' + (args.number || '?') + ' on ' + repo + '.';
+  if (name === 'github_add_issue_comment') return 'Adding a comment on ' + repo + '.';
+  if (name === 'github_list_pull_requests') return 'Checking pull requests on ' + repo + '.';
+  if (name === 'github_get_pull_request') return 'Looking at pull request #' + (args.number || '?') + ' on ' + repo + '.';
+  if (name === 'github_get_pull_request_diff') return 'Looking at the changes in pull request #' + (args.number || '?') + ' on ' + repo + '.';
+  if (name === 'github_create_pull_request') return 'Opening a pull request on ' + repo + ': "' + (args.title || '') + '".';
   if (name === 'github_create_pull_request_review') {
-    return (args.event === 'APPROVE' ? 'Approve' : args.event === 'REQUEST_CHANGES' ? 'Request changes on' : 'Comment on') +
-      ' pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+    const verb = args.event === 'APPROVE' ? 'Approving' : args.event === 'REQUEST_CHANGES' ? 'Requesting changes on' : 'Commenting on';
+    return verb + ' pull request #' + (args.number || '?') + ' on ' + repo + '.';
   }
-  if (name === 'github_create_branch') {
-    return 'Create branch "' + (args.branch || '?') + '" from "' + (args.from || 'the default branch') + '" on ' +
-      (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_create_or_update_file') {
-    return 'Commit "' + (args.path || '?') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') +
-      ' (branch "' + (args.branch || 'default') + '"): ' + (args.message || 'no commit message given') + '.';
-  }
+  if (name === 'github_create_branch') return 'Setting up a new line of work ("' + (args.branch || '') + '") in ' + repo + '.';
+  if (name === 'github_create_or_update_file') return 'Updating ' + (args.path || 'a file') + ' in ' + repo + '.';
   if (name === 'github_create_or_update_files') {
     const n = Array.isArray(args.files) ? args.files.length : 0;
-    return 'Commit ' + n + ' file(s) on ' + (args.owner || '?') + '/' + (args.repo || '?') +
-      ' (branch "' + (args.branch || 'default') + '"): ' + (args.message || 'no commit message given') + '.';
+    return 'Updating ' + n + ' file' + (n === 1 ? '' : 's') + ' in ' + repo + '.';
   }
-  if (name === 'github_compare_refs') {
-    return 'Compare "' + (args.base || '?') + '" with "' + (args.head || '?') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  }
-  if (name === 'github_list_workflows') return 'List workflows on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_list_workflow_runs') return 'List workflow runs on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_workflow_run') return 'Get workflow run ' + (args.run_id || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  if (name === 'github_get_workflow_run_logs') return 'Get the logs download link for workflow run ' + (args.run_id || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
-  return 'Perform a GitHub action.';
+  if (name === 'github_compare_refs') return 'Comparing two versions of ' + repo + '.';
+  if (name === 'github_list_workflows') return 'Checking ' + repo + "'s automated workflows.";
+  if (name === 'github_list_workflow_runs') return 'Checking recent workflow runs on ' + repo + '.';
+  if (name === 'github_get_workflow_run') return 'Looking at a workflow run on ' + repo + '.';
+  if (name === 'github_get_workflow_run_logs') return 'Getting the logs for a workflow run on ' + repo + '.';
+  return 'Working in ' + repo + '.';
+}
+
+/**
+ * What a write to this tool is scoped to, for the session/conversation-
+ * scoped approval check (Bug 4 fix — see isToolApproved in
+ * connector-tools.js). GitHub writes are always scoped to one repo, so
+ * approving commits on one repo never silently approves anything on a
+ * different one.
+ */
+export function approvalScope(name, args) {
+  args = args || {};
+  if (!args.owner || !args.repo) return 'unscoped';
+  return args.owner + '/' + args.repo;
 }
 
 async function _githubFetch(token, path, options = {}, fetchOpts = {}) {
