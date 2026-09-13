@@ -210,6 +210,33 @@ function _extractThinking(text) {
   return { thinking, reply };
 }
 
+// Human-readable names for the "Looking at your ___" heading below — kept
+// in sync with the provider keys used across connector-tools.js.
+const _PROVIDER_LABELS = {
+  github: 'GitHub repositories',
+  google: 'Google account',
+  figma: 'Figma files',
+  canva: 'Canva designs',
+};
+
+// A short, one-line heading for the collapsed "Thought for Xs" box on
+// turns where the agent loop actually used tools. Deliberately NOT an
+// extra LLM call (that would add latency and cost to every tool-using
+// turn) — just a cheap, deterministic summary of which provider(s) the
+// recorded `steps` touched. When tools are used, the frontend shows only
+// this heading in the thought box, never the model's raw reasoning (see
+// _extractThinking / result.reasoning) — that raw chain-of-thought is
+// reserved for turns with no tool use at all.
+function _thinkingHeadingFromSteps(steps) {
+  if (!steps || steps.length === 0) return null;
+  const providers = [...new Set(steps.map((s) => s.provider).filter(Boolean))];
+  if (providers.length === 0) return 'Working on your request';
+  if (providers.length === 1) {
+    return 'Looking at your ' + (_PROVIDER_LABELS[providers[0]] || providers[0]);
+  }
+  return 'Working across your connected tools';
+}
+
 function _validateImages(images, plan) {
   if (!Array.isArray(images)) return { ok: false, error: 'images must be an array.' };
   if (images.length === 0) return { ok: true, images: [] };
@@ -662,6 +689,16 @@ export async function handleChatRequest(request, env) {
     reply = extracted.reply;
   }
 
+  // Turns that used tools get a short deterministic heading instead of the
+  // model's raw reasoning in the thought box — see _thinkingHeadingFromSteps
+  // above for why. `thinking` is intentionally cleared in that case so a
+  // frontend reading this payload naively (or an old cached shape) never
+  // ends up showing both.
+  const thinkingHeading = _thinkingHeadingFromSteps(steps);
+  if (thinkingHeading) {
+    thinking = null;
+  }
+
   // When a write action is pending confirmation, prefer a clear
   // yes/no-shaped prompt over whatever (possibly empty, since some models
   // return no content at all alongside a tool_calls response) text the
@@ -674,6 +711,7 @@ export async function handleChatRequest(request, env) {
   return new Response(JSON.stringify({
     reply,
     thinking,
+    thinkingHeading,
     remainingToday: plan.limits.messagesPerDay - quota.used,
     pendingToolCall,
     // `steps` is the full recorded chain for this turn (possibly empty).
