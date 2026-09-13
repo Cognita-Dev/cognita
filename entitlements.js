@@ -28,6 +28,7 @@ export const PLANS = {
       maxFileSizeMB: 5,
       maxContextMessages: 8,       // how much conversation history is sent
       visionPerDay: 0,             // no image-understanding on Starter
+      toolCallsPerDay: 0,          // no connector tool-use on Starter
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -38,6 +39,7 @@ export const PLANS = {
       prioritySupport: false,
       longContext: false,
       designTemplates: false,
+      connectorTools: false,       // chat cannot call connected-app tools
     },
   },
   plus: {
@@ -56,6 +58,7 @@ export const PLANS = {
       maxFileSizeMB: 20,
       maxContextMessages: 24,
       visionPerDay: 15,
+      toolCallsPerDay: 30,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -66,6 +69,7 @@ export const PLANS = {
       prioritySupport: false,
       longContext: true,
       designTemplates: true,
+      connectorTools: true,
     },
   },
   studio: {
@@ -84,6 +88,7 @@ export const PLANS = {
       maxFileSizeMB: 50,
       maxContextMessages: 60,
       visionPerDay: 60,
+      toolCallsPerDay: 150,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -94,9 +99,16 @@ export const PLANS = {
       prioritySupport: true,
       longContext: true,
       designTemplates: true,
+      connectorTools: true,
     },
   },
 };
+
+// Can this plan use connected-app tools (GitHub/Google/Slack/Figma/
+// Dropbox/Canva) from inside chat?
+export function planHasConnectorTools(planId) {
+  return !!getPlan(planId).features.connectorTools;
+}
 
 // Internal model tier -> actual provider/model mapping.
 // Changing a provider or model string only ever happens here.
