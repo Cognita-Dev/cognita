@@ -290,6 +290,57 @@ function _stepsFromTierConfig(tierConfig) {
   return steps;
 }
 
+// ── Sticky rate-limit memory ──
+// Without this, every single call in a multi-step task (e.g. a tool-use
+// loop that hits the model 4-5 times in a row) restarts at the chain's
+// primary step, even if the previous call *just* found out that step is
+// rate-limited. That wastes a doomed request and adds latency on every
+// step until the limit clears, even though the task itself never fails.
+//
+// This is a small in-memory (per Worker isolate) note of which
+// provider/model combos were recently rate-limited. When building the
+// order to try for a new call, anything still "cooling down" is moved to
+// the back of the line — tried last, as a final resort — instead of
+// first. It's never removed from the chain entirely, so the request still
+// succeeds if every "healthy" option also happens to fail.
+//
+// This resets whenever the Worker isolate recycles, which is fine: it's a
+// latency optimization, not something correctness depends on.
+const RATE_LIMIT_COOLDOWN_MS = 20000; // comfortably longer than a typical burst TPM window
+const _rateLimitedUntil = new Map(); // key: "provider::model" -> epoch ms when cooldown ends
+
+function _stepKey(step) {
+  return step.provider + '::' + step.model;
+}
+
+function _isCoolingDown(step) {
+  const until = _rateLimitedUntil.get(_stepKey(step));
+  return typeof until === 'number' && Date.now() < until;
+}
+
+function _markRateLimited(step) {
+  _rateLimitedUntil.set(_stepKey(step), Date.now() + RATE_LIMIT_COOLDOWN_MS);
+}
+
+// A 429 (or a message that otherwise says "rate limit") is the only
+// failure type worth remembering here — a one-off network blip or a
+// content-related 400 tells us nothing about whether the NEXT call to
+// that same provider/model will also fail, so those aren't cached.
+function _isRateLimitError(err) {
+  return /_429\b|rate.?limit/i.test(String(err && err.message));
+}
+
+// Same steps, reordered so anything currently cooling down from a recent
+// rate limit sinks to the end instead of being tried first.
+function _orderStepsByHealth(steps) {
+  const ready = [];
+  const cooling = [];
+  for (const step of steps) {
+    (_isCoolingDown(step) ? cooling : ready).push(step);
+  }
+  return ready.concat(cooling);
+}
+
 /**
  * Same shape as callWithFallback, but offers the model a set of callable
  * tools (OpenAI-compatible `tools` array — see connector-tools.js for how
@@ -309,7 +360,7 @@ function _stepsFromTierConfig(tierConfig) {
  */
 export async function callWithTools(tierConfig, messages, tools, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
-  const steps = _stepsFromTierConfig(tierConfig);
+  const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
   let allToolsUnsupported = true;
@@ -320,6 +371,7 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
       return await _dispatchWithTools(step.provider, messages, step.model, tools, env, maxTokens);
     } catch (err) {
       lastErr = err;
+      if (_isRateLimitError(err)) _markRateLimited(step);
       if (!String(err.message).startsWith('tools_unsupported')) allToolsUnsupported = false;
       const label = i === 0 ? 'primary' : 'fallback #' + i;
       console.warn('[providers] tool-call ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
@@ -355,7 +407,7 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
  */
 export async function callWithFallback(tierConfig, messages, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
-  const steps = _stepsFromTierConfig(tierConfig);
+  const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
   for (let i = 0; i < steps.length; i++) {
@@ -368,6 +420,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
       return result;
     } catch (err) {
       lastErr = err;
+      if (_isRateLimitError(err)) _markRateLimited(step);
       const label = i === 0 ? 'primary' : 'fallback #' + i;
       console.warn('[providers] ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
     }
