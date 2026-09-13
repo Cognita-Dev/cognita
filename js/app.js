@@ -57,6 +57,14 @@ let _lastReconcileAt = 0;
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...], documentFile?: {...} }
 let conversationMeta = [];
+// Conversation-scoped record of connected-app write actions the user has
+// already approved in THIS conversation (see Bug 4 in the audit doc —
+// "confirmation re-asked despite explicit prior consent"). Sent back to
+// the backend on every /api/chat call for this conversation so it can
+// skip re-prompting for the exact same provider+scope+action; never
+// copied to a different conversation, never sent for a different one.
+// Shape: [{ provider, scope, approvedActionClasses: string[] }]
+let conversationApprovals = [];
 let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
@@ -375,6 +383,7 @@ async function fetchAndMergeConversation(id, serverUpdatedAt) {
     if (id === currentConversationId) {
       conversation = merged.messages || [];
       conversationMeta = merged.meta || [];
+      conversationApprovals = merged.approvals || [];
       if (merged.quality) setQuality(merged.quality);
       renderConversation();
       updateConversationTitle();
@@ -434,6 +443,7 @@ async function reconcileWithB2() {
           currentConversationId = null;
           conversation = [];
           conversationMeta = [];
+          conversationApprovals = [];
           renderConversation();
           updateConversationTitle();
           showToast('This chat was deleted from another device.');
@@ -502,6 +512,7 @@ function persistCurrentConversation() {
     title: deriveTitle(conversation),
     messages: conversation,
     meta: conversationMeta,
+    approvals: conversationApprovals,
     quality: currentQuality,
     updatedAt: Date.now(),
     remoteSyncedAt: existing ? existing.remoteSyncedAt : undefined,
@@ -559,6 +570,7 @@ function loadConversation(id) {
   if (entry.notLoaded) {
     conversation = [];
     conversationMeta = [];
+    conversationApprovals = [];
     renderConversation();
     updateConversationTitle();
     renderSidebarHistory();
@@ -569,6 +581,7 @@ function loadConversation(id) {
 
   conversation = entry.messages;
   conversationMeta = entry.meta || [];
+  conversationApprovals = entry.approvals || [];
   if (entry.quality) setQuality(entry.quality);
   renderConversation();
   updateConversationTitle();
@@ -594,6 +607,7 @@ function deleteConversation(id) {
     currentConversationId = null;
     conversation = [];
     conversationMeta = [];
+    conversationApprovals = [];
     renderConversation();
     updateConversationTitle();
   }
@@ -628,6 +642,7 @@ function wireSidebar() {
     currentConversationId = null;
     conversation = [];
     conversationMeta = [];
+    conversationApprovals = [];
     renderConversation();
     updateConversationTitle();
     renderSidebarHistory();
@@ -1136,6 +1151,7 @@ async function sendMessage(text) {
     const payload = {
       messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
       quality: currentQuality,
+      approvals: conversationApprovals,
     };
     if (outgoingImages.length > 0) payload.images = outgoingImages;
 
@@ -1162,8 +1178,16 @@ async function sendMessage(text) {
       sources: data.sources || null,
       elapsedMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
-      toolExecuted: data.toolExecuted || null,
+      // `steps` is the full recorded action chain for this turn (Bug 2) —
+      // may contain several entries (read → write → verify, etc.), not
+      // just one. Falls back to the legacy single-object `toolExecuted`
+      // field for compatibility with any cached older responses.
+      steps: Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : []),
     };
+    // The backend echoes back the full, updated approvals list — including
+    // anything newly approved this turn — so this conversation never
+    // re-asks for the same write again (Bug 4).
+    if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
     freshAssistantIndex = conversation.length - 1;
     renderConversation();
     refreshUsage();
@@ -1390,22 +1414,34 @@ function renderMessage(msg, index) {
     // result already arrived as the next assistant message in the thread.
   }
 
-  // Action Trace: a one-line, persistent record of a tool action that
-  // actually ran and fed this reply — either a write the user just
-  // confirmed, or a read-only tool the model ran silently (list/get/
-  // search calls never show a confirm card, so without this line they
-  // left zero visible trace that anything happened). Reuses the existing
-  // tool-confirm-card styling rather than introducing a new component.
+  // Action Trace: a persistent, ordered record of every step the agent
+  // loop actually ran to produce this reply (Bug 2's "recorded thought
+  // chain") — e.g. "Looking at README.md" → "Updating README.md" →
+  // "awaiting confirmation" for a write. Read-only steps and
+  // already-approved writes never show a confirm card, so without this
+  // list they'd leave zero visible trace that anything happened. Falls
+  // back to a legacy single-object `toolExecuted` shape for any cached
+  // older responses that predate the multi-step trace.
   let actionTraceHtml = '';
-  if (!isUser && meta.toolExecuted) {
-    const te = meta.toolExecuted;
-    const icon = te.ok ? 'ph-check-circle' : 'ph-warning-circle';
-    const statusClass = te.ok ? 'tool-trace-card--ok' : 'tool-trace-card--error';
-    actionTraceHtml =
-      '<div class="tool-trace-card ' + statusClass + '">' +
-        '<i class="ph ' + icon + '"></i>' +
-        '<span>' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
-      '</div>';
+  if (!isUser) {
+    const stepList = Array.isArray(meta.steps) ? meta.steps
+      : (meta.toolExecuted ? [meta.toolExecuted] : []);
+    // The final step is usually 'awaiting_confirmation', which is already
+    // rendered by the confirm card above — don't show it twice in the trace.
+    const traceSteps = stepList.filter((s) => s && s.type !== 'awaiting_confirmation');
+    if (traceSteps.length > 0) {
+      actionTraceHtml = '<div class="tool-trace-list">' + traceSteps.map((te) => {
+        const ok = te.ok !== false;
+        const icon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
+        const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
+        return (
+          '<div class="tool-trace-card ' + statusClass + '">' +
+            '<i class="ph ' + icon + '"></i>' +
+            '<span>' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
+          '</div>'
+        );
+      }).join('') + '</div>';
+    }
   }
 
   return (
@@ -1493,6 +1529,7 @@ async function resolvePendingToolCall(index, approved) {
         messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
         quality: currentQuality,
         confirmToolCall: { name: ptc.name, args: ptc.args },
+        approvals: conversationApprovals,
       }),
     });
 
@@ -1509,8 +1546,12 @@ async function resolvePendingToolCall(index, approved) {
       thinking: data.thinking || null,
       sources: data.sources || null,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
-      toolExecuted: data.toolExecuted || null,
+      steps: Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : []),
     };
+    // This confirmation may have just been recorded as a standing
+    // approval for this conversation (Bug 4) — pick up the updated list
+    // so the next equivalent write on the same repo/scope isn't re-asked.
+    if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
     freshAssistantIndex = conversation.length - 1;
     renderConversation();
     refreshUsage();
