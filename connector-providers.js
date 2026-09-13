@@ -53,11 +53,24 @@ function _basicAuthHeader(id, secret) {
 // visible change here; requesting broad scopes up front is not
 // reversible for users who already granted them.
 const SCOPES = {
-  github: 'public_repo',
+  github: 'repo', // full read/write on public AND private repos — see hasSufficientScope() below
   google: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events',
   figma: 'file_read',
   canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
 };
+
+// ── Scope sufficiency check ─────────────────────────────────────────
+// Only meaningful for GitHub right now. Tokens issued before the scope
+// changed from 'public_repo' to 'repo' still work but can't see private
+// repos — this lets getValidToken() (connectors.js) detect that and
+// force a reconnect instead of quietly returning an incomplete result.
+// GitHub returns granted scopes as a comma-separated string, e.g.
+// "repo,gist" — split defensively in case of stray spaces.
+export function hasSufficientScope(provider, storedScope) {
+  if (provider !== 'github') return true; // not implemented for the other three yet
+  const granted = (storedScope || '').split(',').map((s) => s.trim());
+  return granted.includes('repo');
+}
 
 // ── 1. Authorize URL (redirect the user here) ──────────────────────
 
@@ -125,7 +138,7 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
       body: JSON.stringify({ client_id: id, client_secret: secret, code, redirect_uri: redirectUri }),
     });
     const data = await _mustJson(res, 'github');
-    if (data.error) throw new Error('github_oauth_error: ' + data.error_description);
+    if (data.error) throw new Error('github_oauth_error:' + data.error + ': ' + data.error_description);
     return {
       accessToken: data.access_token,
       refreshToken: null, // classic GitHub OAuth Apps issue non-expiring tokens
