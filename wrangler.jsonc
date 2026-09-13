@@ -35,6 +35,7 @@
 
   "vars": {
     "FIREBASE_PROJECT_ID": "cognita-b94eb",
-    "APP_ORIGIN": "https://cognitai.vercel.app"
+    "APP_ORIGIN": "https://cognitai.vercel.app",
+    "WORKER_ORIGIN": "https://cognita.cognitai.workers.dev"
   }
 }
