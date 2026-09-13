@@ -308,6 +308,7 @@ export async function handleChatRequest(request, env) {
         name: confirmToolCall.name,
         provider: providerForTool(confirmToolCall.name),
         ok: !execOutcome.error,
+        summary: describeTool(confirmToolCall.name, confirmToolCall.args),
       };
     } else if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
@@ -406,6 +407,7 @@ export async function handleChatRequest(request, env) {
               name: firstCall.name,
               provider: providerForTool(firstCall.name),
               ok: !execOutcome.error,
+              summary: describeTool(firstCall.name, firstCall.args),
             };
           }
         }
