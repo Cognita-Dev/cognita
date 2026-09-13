@@ -52,6 +52,12 @@ import {
   handleAdminRoleRevoke,
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
+import {
+  handleConnectorStart,
+  handleConnectorCallback,
+  handleConnectorStatus,
+  handleConnectorDisconnect,
+} from './connectors-endpoint.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -175,6 +181,32 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
       return handleSubscriptionCancel(request, env);
+    }
+
+    // ── Connectors (GitHub, Google, Slack, Figma, Dropbox, Canva) ─────
+
+    // Must come before the /:provider/start check below, since both
+    // match a "/api/connectors/<segment>" shape.
+    if (request.method === 'GET' && url.pathname === '/api/connectors/status') {
+      return handleConnectorStatus(request, env);
+    }
+
+    if (request.method === 'GET' && /^\/api\/connectors\/[^/]+\/start$/.test(url.pathname)) {
+      const provider = url.pathname.split('/')[3];
+      return handleConnectorStart(request, env, provider);
+    }
+
+    if (request.method === 'POST' && /^\/api\/connectors\/[^/]+\/disconnect$/.test(url.pathname)) {
+      const provider = url.pathname.split('/')[3];
+      return handleConnectorDisconnect(request, env, provider);
+    }
+
+    // Hit directly by the provider's redirect after the user approves
+    // (or denies) access — not an /api/ route, no Authorization header
+    // will ever be present here. See connectors-endpoint.js for why.
+    if (request.method === 'GET' && /^\/auth\/[^/]+\/callback$/.test(url.pathname)) {
+      const provider = url.pathname.split('/')[2];
+      return handleConnectorCallback(request, env, provider);
     }
 
     // ── One-time first-admin bootstrap ────────────────────────────────
