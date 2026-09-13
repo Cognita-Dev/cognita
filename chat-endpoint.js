@@ -285,21 +285,27 @@ export async function handleChatRequest(request, env) {
       }
 
       const execOutcome = await executeConnectorTool(confirmToolCall.name, confirmToolCall.args, identity.uid, env);
-      const syntheticCallId = 'call_confirmed_1';
+      // Fold the tool's result into a plain assistant/user exchange rather
+      // than replaying the OpenAI tool_calls/role:"tool" protocol here.
+      // That protocol is only valid on a request that ALSO declares a
+      // `tools` schema — this follow-up call intentionally declares none
+      // (the user's click already decided the one action to take, so the
+      // model isn't being offered a choice to call anything). Some
+      // providers reject a tool-call-shaped history with no tools present
+      // in the same request (Groq: "Tool choice is none, but model called
+      // a tool"), and content: null on the synthetic assistant message
+      // fails Workers AI's schema outright. Plain string content sidesteps
+      // both, on every provider.
       const followUpMessages = messages.concat([
         {
           role: 'assistant',
-          content: null,
-          tool_calls: [{
-            id: syntheticCallId,
-            type: 'function',
-            function: { name: confirmToolCall.name, arguments: JSON.stringify(confirmToolCall.args) },
-          }],
+          content: 'I ran ' + confirmToolCall.name + ' with the arguments you just confirmed.',
         },
         {
-          role: 'tool',
-          tool_call_id: syntheticCallId,
-          content: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+          role: 'user',
+          content: 'Here is the result of that action:\n\n' +
+            JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
+            '\n\nReply to me naturally based on this result — do not call any more tools.',
         },
       ]);
 
@@ -384,20 +390,19 @@ export async function handleChatRequest(request, env) {
               ' success=' + !execOutcome.error +
               (execOutcome.error ? ' code=' + execOutcome.code : '')
             );
+            // See the matching comment in the confirmToolCall branch above —
+            // same fix, same reason: no tool_calls/role:"tool" replay on a
+            // request that declares no tools, and no content: null.
             const followUpMessages = messages.concat([
               {
                 role: 'assistant',
-                content: result.text || null,
-                tool_calls: [{
-                  id: firstCall.id || 'call_1',
-                  type: 'function',
-                  function: { name: firstCall.name, arguments: JSON.stringify(firstCall.args || {}) },
-                }],
+                content: (result.text && result.text.trim()) ? result.text : ('I looked this up using ' + firstCall.name + '.'),
               },
               {
-                role: 'tool',
-                tool_call_id: firstCall.id || 'call_1',
-                content: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+                role: 'user',
+                content: 'Here is the result of that lookup:\n\n' +
+                  JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
+                  '\n\nReply to me naturally based on this result — do not call any more tools.',
               },
             ]);
 
