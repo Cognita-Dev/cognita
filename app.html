@@ -189,6 +189,10 @@
                       <i class="ph ph-file-doc"></i>
                       <span>Create a document</span>
                     </button>
+                    <button class="attach-menu-item" id="attachConnectorsItem" type="button">
+                      <i class="ph ph-plug"></i>
+                      <span>Connected apps</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -308,6 +312,28 @@
       <button class="modal-submit-btn" id="documentSubmitBtn">        <span class="btn-label">Generate</span>
         <span class="btn-spinner" hidden></span>
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Connected apps modal (connectors: view/connect/disconnect) ── -->
+<div class="modal-overlay" id="connectorsModal" hidden>
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Connected apps</h2>
+      <button class="modal-close-btn" id="connectorsModalClose" aria-label="Close">
+        <i class="ph ph-x"></i>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="connector-list" id="connectorsList">
+        <div class="connector-row skeleton" style="height:56px;"></div>
+        <div class="connector-row skeleton" style="height:56px;"></div>
+        <div class="connector-row skeleton" style="height:56px;"></div>
+      </div>
+      <p class="connectors-modal-footnote">
+        Connect an app to let Cognita use it in chat — for example, listing your GitHub repos or checking your calendar. Cognita only acts when you ask it to, and always asks for confirmation before making any change on your behalf. Manage these anytime from <a href="/account.html">Account Settings</a>.
+      </p>
     </div>
   </div>
 </div>
