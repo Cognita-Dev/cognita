@@ -106,12 +106,10 @@
   const CONNECTOR_META = {
     github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
     google: { label: 'Google', icon: 'ph-google-logo', desc: 'Save to Drive, check your calendar.' },
-    slack: { label: 'Slack', icon: 'ph-slack-logo', desc: 'Post messages to a channel.' },
     figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
-    dropbox: { label: 'Dropbox', icon: 'ph-dropbox-logo', desc: 'Save and read files.' },
     canva: { label: 'Canva', icon: 'ph-image-square', desc: 'Read and create designs.' },
   };
-  const CONNECTOR_ORDER = ['github', 'google', 'slack', 'figma', 'dropbox', 'canva'];
+  const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
 
   function connectionRow(provider, connected) {
     const meta = CONNECTOR_META[provider];
@@ -157,7 +155,9 @@
       connectBtn.disabled = true;
       connectBtn.textContent = 'Connecting…';
       try {
-        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start');
+        // returnTo=account: this page started the flow, so the provider's
+        // callback should send the user back here (see connectors-endpoint.js).
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start?returnTo=account');
         const data = await res.json();
         if (!res.ok || !data.url) throw new Error(data.error || 'Could not start connection.');
         // Full-page navigation, not a popup — the provider's consent
@@ -226,6 +226,32 @@
   })();
 
   loadConnections();
+
+  // ── Recover from a stuck "Connecting…"/"Disconnecting…" button ────
+  // window.location.href above leaves this page's JS state alone right
+  // up until the browser actually navigates away. If that navigation
+  // never completes — the user hits Back before the provider's page
+  // loads, the OS kills the tab, the network drops mid-redirect — and
+  // the browser then restores THIS page from its back/forward cache
+  // (bfcache) instead of re-running the script from scratch, the button
+  // is still sitting there disabled with "Connecting…" and there is no
+  // in-page way to retry short of a hard reload.
+  //
+  // `pageshow` with `event.persisted === true` fires exactly on a
+  // bfcache restore (it does NOT fire on a normal fresh load, so this
+  // never touches an in-flight click that's about to navigate away
+  // normally). Simplest correct fix: just reload the connections list —
+  // it rebuilds every row from scratch via connectionRow(), which never
+  // renders a "Connecting…"/"Disconnecting…" state, only "Connect" or
+  // "Disconnect" based on the real, freshly-fetched status. That
+  // sidesteps needing to track "which specific button was mid-click"
+  // and works the same whether it was a Connect or a Disconnect button,
+  // and however many connector rows are on the page.
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+      loadConnections();
+    }
+  });
 
   const USAGE_ICONS = {
     messages: 'ph-chat-circle',
