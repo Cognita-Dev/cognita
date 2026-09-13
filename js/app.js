@@ -1390,6 +1390,24 @@ function renderMessage(msg, index) {
     // result already arrived as the next assistant message in the thread.
   }
 
+  // Action Trace: a one-line, persistent record of a tool action that
+  // actually ran and fed this reply — either a write the user just
+  // confirmed, or a read-only tool the model ran silently (list/get/
+  // search calls never show a confirm card, so without this line they
+  // left zero visible trace that anything happened). Reuses the existing
+  // tool-confirm-card styling rather than introducing a new component.
+  let actionTraceHtml = '';
+  if (!isUser && meta.toolExecuted) {
+    const te = meta.toolExecuted;
+    const icon = te.ok ? 'ph-check-circle' : 'ph-warning-circle';
+    const statusClass = te.ok ? 'tool-trace-card--ok' : 'tool-trace-card--error';
+    actionTraceHtml =
+      '<div class="tool-trace-card ' + statusClass + '">' +
+        '<i class="ph ' + icon + '"></i>' +
+        '<span>' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
+      '</div>';
+  }
+
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
       '<div class="message-avatar">' + avatarContent + '</div>' +
@@ -1404,6 +1422,7 @@ function renderMessage(msg, index) {
         documentFileHtml +
         sourcesHtml +
         toolConfirmHtml +
+        actionTraceHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
