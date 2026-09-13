@@ -771,6 +771,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .thought-content ul,
 .thought-content ol { margin: var(--space-2) 0; padding-left: 1.2em; }
 
+/* Tool-using turns show only a short heading here instead of raw
+   reasoning (see _thinkingHeadingFromSteps in chat-endpoint.js) — no
+   bullet/paragraph spacing needed for a single line. */
+.thought-content--heading {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
 .message-sources {
   margin-top: var(--space-4);
   padding-top: var(--space-3);
@@ -1323,12 +1331,48 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   font-size: var(--text-xs);
   color: var(--text-3);
 }
-.tool-trace-card i.ph { font-size: var(--text-sm); }
+.tool-trace-card i.ph { font-size: var(--text-sm); flex-shrink: 0; }
 .tool-trace-card--ok i.ph { color: var(--accent, var(--text-2)); }
 .tool-trace-card--error { color: var(--text-2); }
 .tool-trace-card--error i.ph { color: #d0645a; }
 .tool-trace-card--blocked { color: var(--text-2); }
 .tool-trace-card--blocked i.ph { color: #c8952f; }
+.tool-trace-card--done i.ph { color: var(--accent, var(--text-2)); }
+.tool-trace-card--done .tool-trace-card-label { font-weight: 500; color: var(--text-2); }
+
+/* Sequential step reveal (animateToolTrace in js/app.js) — a card in
+   this state is "currently running": spinning icon (.trace-spin, set
+   via JS by swapping the icon's class) and a shimmering label using the
+   same text-gradient technique as .thinking-word above. Both clear the
+   moment the step settles to its real icon. */
+.tool-trace-card--pending i.ph { color: var(--text-4); }
+.tool-trace-card--pending .tool-trace-card-label {
+  background: linear-gradient(
+    90deg,
+    var(--text-4) 0%,
+    var(--text-4) 35%,
+    var(--text-1) 50%,
+    var(--text-4) 65%,
+    var(--text-4) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-word-shimmer 1.4s ease-in-out infinite;
+}
+.trace-spin { animation: trace-spin-rotate 0.85s linear infinite; }
+@keyframes trace-spin-rotate { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-trace-card--pending .tool-trace-card-label {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--text-4);
+    color: var(--text-4);
+  }
+  .trace-spin { animation: none; }
+}
 
 
 /* ── Responsive ── */
