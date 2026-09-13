@@ -3,7 +3,7 @@
 // authorize URL shape, token endpoint, whether it wants JSON or
 // form-encoded, Basic-auth vs body credentials, and whether refresh
 // tokens exist at all. Everything above this file (connectors-endpoint.js)
-// talks to all six providers through the same three functions:
+// talks to all four providers through the same three functions:
 // buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken.
 //
 // Scopes are intentionally hardcoded here, not passed in from the
@@ -14,9 +14,7 @@
 const ENV_VARS = {
   github: { id: 'GITHUB_CLIENT_ID', secret: 'GITHUB_CLIENT_SECRET' },
   google: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
-  slack: { id: 'SLACK_CLIENT_ID', secret: 'SLACK_CLIENT_SECRET' },
   figma: { id: 'FIGMA_CLIENT_ID', secret: 'FIGMA_CLIENT_SECRET' },
-  dropbox: { id: 'DROPBOX_CLIENT_ID', secret: 'DROPBOX_CLIENT_SECRET' },
   canva: { id: 'CANVA_CLIENT_ID', secret: 'CANVA_CLIENT_SECRET' },
 };
 
@@ -31,7 +29,7 @@ function _creds(provider, env) {
 }
 
 function _redirectUri(provider, env) {
-  // All six callbacks live at the same shape on this Worker — see
+  // All four callbacks live at the same shape on this Worker — see
   // worker.js routing. WORKER_ORIGIN must be set to the Worker's own
   // deployed URL (not APP_ORIGIN, which is the frontend).
   const origin = env.WORKER_ORIGIN || 'https://cognita.cognitai.workers.dev';
@@ -57,9 +55,7 @@ function _basicAuthHeader(id, secret) {
 const SCOPES = {
   github: 'public_repo',
   google: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events',
-  slack: 'chat:write,channels:read',
   figma: 'file_read',
-  dropbox: 'files.metadata.read files.content.read files.content.write',
   canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
 };
 
@@ -69,7 +65,7 @@ const SCOPES = {
  * Builds the URL to send the user's browser to, to start the provider's
  * consent screen. `state` is always required (CSRF protection, see
  * connectors.js createOAuthState). `codeChallenge` is only used for
- * Canva; harmless to pass undefined for the other five.
+ * Canva; harmless to pass undefined for the other three.
  */
 export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
   const { id } = _creds(provider, env);
@@ -93,24 +89,9 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
     });
   }
 
-  if (provider === 'slack') {
-    return 'https://slack.com/oauth/v2/authorize?' + _form({
-      client_id: id, redirect_uri: redirectUri, scope, state,
-    });
-  }
-
   if (provider === 'figma') {
     return 'https://www.figma.com/oauth?' + _form({
       client_id: id, redirect_uri: redirectUri, scope, state, response_type: 'code',
-    });
-  }
-
-  if (provider === 'dropbox') {
-    return 'https://www.dropbox.com/oauth2/authorize?' + _form({
-      client_id: id, redirect_uri: redirectUri, response_type: 'code', scope, state,
-      // offline access_type = get a refresh token; Dropbox access tokens
-      // are short-lived (~4h) by default, so this isn't optional.
-      token_access_type: 'offline',
     });
   }
 
@@ -172,27 +153,6 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
     };
   }
 
-  if (provider === 'slack') {
-    const res = await fetch('https://slack.com/api/oauth.v2.access', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: _form({ client_id: id, client_secret: secret, code, redirect_uri: redirectUri }),
-    });
-    const data = await _mustJson(res, 'slack');
-    if (!data.ok) throw new Error('slack_oauth_error: ' + data.error);
-    return {
-      accessToken: data.access_token, // bot token
-      // Slack only issues refresh_token/expires_in if the app has "token
-      // rotation" enabled in its settings (opt-in, off by default). If
-      // it's off, both are simply absent here and the bot token doesn't
-      // expire — that's expected, not a bug.
-      refreshToken: data.refresh_token || null,
-      expiresAt: data.expires_in ? now + data.expires_in * 1000 : null,
-      scope: data.scope || '',
-      providerAccountId: data.team && data.team.id ? data.team.id : null,
-    };
-  }
-
   if (provider === 'figma') {
     const res = await fetch('https://www.figma.com/api/oauth/token?' + _form({
       client_id: id, client_secret: secret, redirect_uri: redirectUri, code, grant_type: 'authorization_code',
@@ -204,24 +164,6 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
       expiresAt: now + (data.expires_in || 3600) * 1000,
       scope: SCOPES.figma,
       providerAccountId: data.user_id || null,
-    };
-  }
-
-  if (provider === 'dropbox') {
-    const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: _form({
-        grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: id, client_secret: secret,
-      }),
-    });
-    const data = await _mustJson(res, 'dropbox');
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || null,
-      expiresAt: now + (data.expires_in || 14400) * 1000,
-      scope: data.scope || '',
-      providerAccountId: data.account_id || null,
     };
   }
 
@@ -283,23 +225,6 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
     };
   }
 
-  if (provider === 'slack') {
-    const res = await fetch('https://slack.com/api/oauth.v2.access', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: _form({ client_id: id, client_secret: secret, grant_type: 'refresh_token', refresh_token: refreshTokenValue }),
-    });
-    const data = await _mustJson(res, 'slack');
-    if (!data.ok) throw new Error('slack_refresh_error: ' + data.error);
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || refreshTokenValue,
-      expiresAt: data.expires_in ? now + data.expires_in * 1000 : null,
-      scope: data.scope || '',
-      providerAccountId: null,
-    };
-  }
-
   if (provider === 'figma') {
     const res = await fetch('https://www.figma.com/api/oauth/refresh?' + _form({
       client_id: id, client_secret: secret, refresh_token: refreshTokenValue,
@@ -310,22 +235,6 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
       refreshToken: refreshTokenValue, // Figma refresh doesn't rotate the refresh token itself
       expiresAt: now + (data.expires_in || 3600) * 1000,
       scope: SCOPES.figma,
-      providerAccountId: null,
-    };
-  }
-
-  if (provider === 'dropbox') {
-    const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: _form({ grant_type: 'refresh_token', refresh_token: refreshTokenValue, client_id: id, client_secret: secret }),
-    });
-    const data = await _mustJson(res, 'dropbox');
-    return {
-      accessToken: data.access_token,
-      refreshToken: refreshTokenValue,
-      expiresAt: now + (data.expires_in || 14400) * 1000,
-      scope: data.scope || '',
       providerAccountId: null,
     };
   }
@@ -368,20 +277,6 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
 export async function revokeToken(provider, env, token) {
   if (provider === 'google') {
     await fetch('https://oauth2.googleapis.com/revoke?' + _form({ token }), { method: 'POST' });
-    return;
-  }
-  if (provider === 'slack') {
-    await fetch('https://slack.com/api/auth.revoke', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token },
-    });
-    return;
-  }
-  if (provider === 'dropbox') {
-    await fetch('https://api.dropboxapi.com/2/auth/token/revoke', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token },
-    });
     return;
   }
   if (provider === 'canva') {
