@@ -6,7 +6,7 @@
 // that can't be undone by hand).
 //
 // Every file in this "*-tools.js" family follows the same shape, on
-// purpose, so connector-tools.js can treat all six identically:
+// purpose, so connector-tools.js can treat all four identically:
 //   - TOOLS: OpenAI-compatible tool schemas (what the model sees)
 //   - REQUIRES_CONFIRMATION: names of tools that write/change something —
 //     the chat loop must get explicit user confirmation before calling
