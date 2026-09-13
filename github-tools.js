@@ -5,21 +5,44 @@
 //
 // Actions exposed:
 //   Read-only (safe to run immediately, no confirmation):
-//     - github_list_repos          — list the user's repos
-//     - github_list_branches       — list branches on a repo
-//     - github_get_file_contents   — read a file's content/sha, or list a directory
+//     Discover : github_list_repos, github_get_repo, github_search_repositories
+//     Read     : github_get_file_contents (also lists directories),
+//                github_search_code, github_list_branches,
+//                github_list_commits, github_get_commit
+//     Issues   : github_list_issues, github_get_issue
+//     PRs      : github_list_pull_requests, github_get_pull_request,
+//                github_get_pull_request_diff
+//     Compare  : github_compare_refs
+//     CI/CD    : github_list_workflows, github_list_workflow_runs,
+//                github_get_workflow_run, github_get_workflow_run_logs
 //   Write (always require explicit user confirmation before execute()
 //   is called; see REQUIRES_CONFIRMATION and the confirmToolCall flow
 //   in chat-endpoint.js):
-//     - github_create_issue            — open an issue
-//     - github_create_branch           — create a new branch from a base ref
-//     - github_create_or_update_file   — commit a single file (create or update)
-//     - github_create_pull_request     — open a pull request
+//     - github_create_issue             — open an issue
+//     - github_update_issue             — edit title/body/state/labels
+//     - github_add_issue_comment        — comment on an issue or PR
+//     - github_create_branch            — create a new branch from a base ref
+//     - github_create_or_update_file    — commit a single file (create or update)
+//     - github_create_or_update_files   — commit multiple files atomically in one commit
+//     - github_create_pull_request      — open a pull request
+//     - github_create_pull_request_review — approve/request changes/comment on a PR
 //
-// None of these can delete or force-push anything, and none rewrite
-// history — every write here is a normal, revertible GitHub operation
-// (new ref, new/updated file via a normal commit, new PR). Widen
-// REQUIRES_CONFIRMATION and this comment together if that changes.
+// Two deliberate deviations from the raw tool wishlist this file was
+// built from:
+//   - No separate github_list_directory tool: github_get_file_contents
+//     already returns a directory listing when `path` is a folder, so a
+//     second tool doing the same underlying GitHub call would just be a
+//     duplicate the model has to choose between.
+//   - github_get_workflow_run_logs returns the signed download URL for
+//     the logs .zip, not inlined log text — the GitHub API only offers
+//     this as a binary archive, and pretending to paste it as text would
+//     either fail or silently truncate. The user/model can follow the URL.
+//
+// None of the writes here can delete or force-push anything, and none
+// rewrite history — every write is a normal, revertible GitHub operation
+// (new ref, new/updated file(s) via a normal commit, new issue/comment/PR,
+// new review). Widen REQUIRES_CONFIRMATION and this comment together if
+// that changes.
 //
 // Every file in this "*-tools.js" family follows the same shape, on
 // purpose, so connector-tools.js can treat all four identically:
@@ -45,6 +68,12 @@ import { getValidToken } from './connectors.js';
 // entire dataset by mistake" before it hits the network.
 const MAX_FILE_CONTENT_CHARS = 300_000;
 
+// Same cap, applied per-file, for the multi-file commit tool — plus a cap
+// on file COUNT, since the multi-file path builds one blob per file before
+// it ever touches the tree/commit endpoints, and an unbounded file list
+// would mean an unbounded number of upstream requests per tool call.
+const MAX_FILES_PER_COMMIT = 20;
+
 export const TOOLS = [
   {
     type: 'function',
@@ -63,16 +92,30 @@ export const TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'github_list_branches',
-      description: 'Lists branches on a repository, including which one is the default branch. Use this before creating a branch or a pull request so you know what base to branch from or target.',
+      name: 'github_get_repo',
+      description: 'Gets details about a single repository: description, default branch, visibility, star/fork counts, primary language, and URLs. Use this to confirm a repo exists and check its default branch before other operations.',
       parameters: {
         type: 'object',
         properties: {
-          owner: { type: 'string', description: "The repo owner's username or org, e.g. 'gbemigaakinde'." },
-          repo: { type: 'string', description: "The repo name, e.g. 'cognita'." },
-          limit: { type: 'integer', description: 'Max branches to return (default 30, max 100).' },
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
         },
         required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_search_repositories',
+      description: "Searches GitHub for repositories by name/description/topic, across all of GitHub (not just the user's own repos). Use this to find a repository when the user doesn't know the exact owner/name.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: "Search query, e.g. 'react state management' or 'user:someone topic:cli'." },
+          limit: { type: 'integer', description: 'Max results to return (default 10, max 30).' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -96,6 +139,104 @@ export const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'github_search_code',
+      description: "Searches source code across GitHub (or scoped to one repo) for a text/regex-free query using GitHub's code search syntax, e.g. 'useEffect repo:owner/repo' or 'TODO extension:js'. Use this to find where something is defined or referenced without downloading whole files.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: "GitHub code search query. Scope to one repo with 'repo:owner/name' inside the query for better results." },
+          limit: { type: 'integer', description: 'Max results to return (default 10, max 30).' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_branches',
+      description: 'Lists branches on a repository, including which one is the default branch. Use this before creating a branch or a pull request so you know what base to branch from or target.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org, e.g. 'gbemigaakinde'." },
+          repo: { type: 'string', description: "The repo name, e.g. 'cognita'." },
+          limit: { type: 'integer', description: 'Max branches to return (default 30, max 100).' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_commits',
+      description: 'Lists recent commits on a branch (or the default branch), with SHA, author, date, and message. Use this to see recent history before comparing refs or looking at a specific commit.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          branch: { type: 'string', description: "Branch, tag, or SHA to list from. Defaults to the repo's default branch." },
+          path: { type: 'string', description: 'Optional: only list commits that touched this file or folder.' },
+          limit: { type: 'integer', description: 'Max commits to return (default 10, max 30).' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_commit',
+      description: 'Gets full detail on a single commit: message, author, parent(s), and the list of files it changed with per-file addition/deletion counts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          sha: { type: 'string', description: 'The commit SHA (full or short).' },
+        },
+        required: ['owner', 'repo', 'sha'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_issues',
+      description: "Lists issues on a repository (open by default). Note: GitHub's API returns pull requests as issues too — this tool filters PRs out, so results are actual issues only. Use github_list_pull_requests for PRs.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          state: { type: 'string', enum: ['open', 'closed', 'all'], description: "Defaults to 'open'." },
+          limit: { type: 'integer', description: 'Max issues to return (default 10, max 30).' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_issue',
+      description: 'Gets full detail on a single issue: title, body, state, labels, assignees, and comment count.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The issue number.' },
+        },
+        required: ['owner', 'repo', 'number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'github_create_issue',
       description: "Opens a new issue on one of the user's GitHub repositories. This creates something visible in their repo, so it always requires the user's explicit confirmation first.",
       parameters: {
@@ -107,6 +248,129 @@ export const TOOLS = [
           body: { type: 'string', description: 'Issue body/description (markdown supported). Optional.' },
         },
         required: ['owner', 'repo', 'title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_update_issue',
+      description: "Edits an existing issue's title, body, state (open/closed), or labels. Only the fields provided are changed. This changes the repo, so it always requires the user's explicit confirmation first.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The issue number to edit.' },
+          title: { type: 'string', description: 'New title. Optional.' },
+          body: { type: 'string', description: 'New body. Optional.' },
+          state: { type: 'string', enum: ['open', 'closed'], description: 'New state. Optional.' },
+          labels: { type: 'array', items: { type: 'string' }, description: 'Full replacement list of labels. Optional.' },
+        },
+        required: ['owner', 'repo', 'number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_add_issue_comment',
+      description: "Adds a comment to an issue or pull request (PRs are numbered the same as issues on GitHub, so this works on both). This posts something visible, so it always requires the user's explicit confirmation first.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The issue or PR number.' },
+          body: { type: 'string', description: 'Comment text (markdown supported).' },
+        },
+        required: ['owner', 'repo', 'number', 'body'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_pull_requests',
+      description: 'Lists pull requests on a repository (open by default).',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          state: { type: 'string', enum: ['open', 'closed', 'all'], description: "Defaults to 'open'." },
+          limit: { type: 'integer', description: 'Max PRs to return (default 10, max 30).' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_pull_request',
+      description: 'Gets full detail on a single pull request: title, body, state, head/base branches, mergeable status, and change stats.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The pull request number.' },
+        },
+        required: ['owner', 'repo', 'number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_pull_request_diff',
+      description: "Gets the unified diff for a pull request — the actual line-by-line code changes. Use this before reviewing a PR or summarizing what it changes. Large diffs are truncated with a note; use github_get_file_contents for the full current state of a specific file if needed.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The pull request number.' },
+        },
+        required: ['owner', 'repo', 'number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_create_pull_request',
+      description: "Opens a pull request from one branch into another on the same repository. This creates something visible in the user's repo, so it always requires the user's explicit confirmation first.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          title: { type: 'string', description: 'Pull request title.' },
+          head: { type: 'string', description: "The branch with the changes, e.g. 'feature/add-write-tools'." },
+          base: { type: 'string', description: "The branch to merge into. Defaults to the repo's default branch if omitted." },
+          body: { type: 'string', description: 'Pull request description (markdown supported). Optional.' },
+        },
+        required: ['owner', 'repo', 'title', 'head'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_create_pull_request_review',
+      description: "Submits a review on a pull request: approve, request changes, or leave a general comment. This posts something visible on the PR, so it always requires the user's explicit confirmation first.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          number: { type: 'integer', description: 'The pull request number.' },
+          event: { type: 'string', enum: ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'], description: 'The review verdict.' },
+          body: { type: 'string', description: 'Review summary text. Required for REQUEST_CHANGES and COMMENT; optional for APPROVE.' },
+        },
+        required: ['owner', 'repo', 'number', 'event'],
       },
     },
   },
@@ -131,7 +395,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'github_create_or_update_file',
-      description: 'Commits a single file to a branch — creates it if it does not exist yet, or updates it (using its current sha automatically) if it does. This changes the repo, so it always requires the user\'s explicit confirmation first. Prefer checking github_get_file_contents first when updating an existing file, so the proposed change is based on its real current content.',
+      description: 'Commits a single file to a branch — creates it if it does not exist yet, or updates it (using its current sha automatically) if it does. This changes the repo, so it always requires the user\'s explicit confirmation first. Prefer checking github_get_file_contents first when updating an existing file, so the proposed change is based on its real current content. For more than one file, prefer github_create_or_update_files so all changes land in a single atomic commit.',
       parameters: {
         type: 'object',
         properties: {
@@ -149,19 +413,111 @@ export const TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'github_create_pull_request',
-      description: "Opens a pull request from one branch into another on the same repository. This creates something visible in the user's repo, so it always requires the user's explicit confirmation first.",
+      name: 'github_create_or_update_files',
+      description: "Commits multiple files to a branch in a single atomic commit (all-or-nothing), using the Git Data API (blob -> tree -> commit -> ref update) rather than one commit per file. Use this whenever a change spans more than one file, so the repo never sits in a half-updated state. This changes the repo, so it always requires the user's explicit confirmation first.",
       parameters: {
         type: 'object',
         properties: {
           owner: { type: 'string', description: "The repo owner's username or org." },
           repo: { type: 'string', description: 'The repo name.' },
-          title: { type: 'string', description: 'Pull request title.' },
-          head: { type: 'string', description: "The branch with the changes, e.g. 'feature/add-write-tools'." },
-          base: { type: 'string', description: "The branch to merge into. Defaults to the repo's default branch if omitted." },
-          body: { type: 'string', description: 'Pull request description (markdown supported). Optional.' },
+          files: {
+            type: 'array',
+            description: 'Files to create/update, all landing in one commit.',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'File path, e.g. src/index.js.' },
+                content: { type: 'string', description: 'Full new content, as plain text (not base64).' },
+              },
+              required: ['path', 'content'],
+            },
+          },
+          message: { type: 'string', description: 'Commit message for the combined commit.' },
+          branch: { type: 'string', description: "Branch to commit to. Defaults to the repo's default branch if omitted." },
         },
-        required: ['owner', 'repo', 'title', 'head'],
+        required: ['owner', 'repo', 'files', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_compare_refs',
+      description: 'Compares two branches/tags/commits and reports how many commits ahead/behind they are, plus the list of changed files between them. Use this before opening a PR to preview what it would contain, or to check if a branch is out of date.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          base: { type: 'string', description: 'The base ref (branch, tag, or SHA).' },
+          head: { type: 'string', description: 'The head ref (branch, tag, or SHA) to compare against base.' },
+        },
+        required: ['owner', 'repo', 'base', 'head'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_workflows',
+      description: 'Lists GitHub Actions workflows configured on a repository (name, state, file path).',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_workflow_runs',
+      description: 'Lists recent runs of GitHub Actions workflows on a repository, optionally filtered to one workflow or branch, with status/conclusion for each.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          workflow_id: { type: 'string', description: 'Optional: workflow file name (e.g. ci.yml) or numeric ID to filter to one workflow.' },
+          branch: { type: 'string', description: 'Optional: only runs triggered on this branch.' },
+          limit: { type: 'integer', description: 'Max runs to return (default 10, max 30).' },
+        },
+        required: ['owner', 'repo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_workflow_run',
+      description: 'Gets detail on a single GitHub Actions workflow run: status, conclusion, triggering event/branch/commit, and timing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          run_id: { type: 'integer', description: 'The workflow run ID (from github_list_workflow_runs).' },
+        },
+        required: ['owner', 'repo', 'run_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_workflow_run_logs',
+      description: "Gets a time-limited signed download URL for a workflow run's full logs archive (a .zip of plain-text log files — GitHub does not offer these as inline text). Share the URL with the user or fetch it separately if the log contents themselves are needed.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: "The repo owner's username or org." },
+          repo: { type: 'string', description: 'The repo name.' },
+          run_id: { type: 'integer', description: 'The workflow run ID.' },
+        },
+        required: ['owner', 'repo', 'run_id'],
       },
     },
   },
@@ -169,20 +525,48 @@ export const TOOLS = [
 
 export const REQUIRES_CONFIRMATION = [
   'github_create_issue',
+  'github_update_issue',
+  'github_add_issue_comment',
   'github_create_branch',
   'github_create_or_update_file',
+  'github_create_or_update_files',
   'github_create_pull_request',
+  'github_create_pull_request_review',
 ];
 
 export function describe(name, args) {
   args = args || {};
   if (name === 'github_list_repos') return 'List your GitHub repositories.';
-  if (name === 'github_list_branches') return 'List branches on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_repo') return 'Get details on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_search_repositories') return 'Search GitHub repositories for "' + (args.query || '') + '".';
   if (name === 'github_get_file_contents') {
     return 'Read "' + (args.path || '?') + '" from ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
   }
+  if (name === 'github_search_code') return 'Search GitHub code for "' + (args.query || '') + '".';
+  if (name === 'github_list_branches') return 'List branches on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_list_commits') return 'List recent commits on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_commit') return 'Get commit ' + (args.sha || '?').slice(0, 12) + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_list_issues') return 'List issues on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_issue') return 'Get issue #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
   if (name === 'github_create_issue') {
     return 'Open a GitHub issue titled "' + (args.title || '') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  }
+  if (name === 'github_update_issue') {
+    return 'Update issue #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  }
+  if (name === 'github_add_issue_comment') {
+    return 'Comment on #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  }
+  if (name === 'github_list_pull_requests') return 'List pull requests on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_pull_request') return 'Get pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_pull_request_diff') return 'Get the diff for pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_create_pull_request') {
+    return 'Open a pull request "' + (args.title || '') + '" from "' + (args.head || '?') + '" into "' +
+      (args.base || 'the default branch') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  }
+  if (name === 'github_create_pull_request_review') {
+    return (args.event === 'APPROVE' ? 'Approve' : args.event === 'REQUEST_CHANGES' ? 'Request changes on' : 'Comment on') +
+      ' pull request #' + (args.number || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
   }
   if (name === 'github_create_branch') {
     return 'Create branch "' + (args.branch || '?') + '" from "' + (args.from || 'the default branch') + '" on ' +
@@ -192,10 +576,18 @@ export function describe(name, args) {
     return 'Commit "' + (args.path || '?') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') +
       ' (branch "' + (args.branch || 'default') + '"): ' + (args.message || 'no commit message given') + '.';
   }
-  if (name === 'github_create_pull_request') {
-    return 'Open a pull request "' + (args.title || '') + '" from "' + (args.head || '?') + '" into "' +
-      (args.base || 'the default branch') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_create_or_update_files') {
+    const n = Array.isArray(args.files) ? args.files.length : 0;
+    return 'Commit ' + n + ' file(s) on ' + (args.owner || '?') + '/' + (args.repo || '?') +
+      ' (branch "' + (args.branch || 'default') + '"): ' + (args.message || 'no commit message given') + '.';
   }
+  if (name === 'github_compare_refs') {
+    return 'Compare "' + (args.base || '?') + '" with "' + (args.head || '?') + '" on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  }
+  if (name === 'github_list_workflows') return 'List workflows on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_list_workflow_runs') return 'List workflow runs on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_workflow_run') return 'Get workflow run ' + (args.run_id || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
+  if (name === 'github_get_workflow_run_logs') return 'Get the logs download link for workflow run ' + (args.run_id || '?') + ' on ' + (args.owner || '?') + '/' + (args.repo || '?') + '.';
   return 'Perform a GitHub action.';
 }
 
@@ -209,14 +601,19 @@ async function _githubFetch(token, path, options = {}, fetchOpts = {}) {
       'User-Agent': 'Cognita-App',
       ...(options.headers || {}),
     },
+    redirect: fetchOpts.manualRedirect ? 'manual' : 'follow',
   });
   if (res.status === 404 && fetchOpts.allow404) return null;
+  if (fetchOpts.manualRedirect && (res.status === 302 || res.status === 301)) {
+    return { redirectUrl: res.headers.get('location') };
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     if (res.status === 401) throw new Error('NEEDS_RECONNECT');
     throw new Error('GitHub API error (' + res.status + '): ' + text.slice(0, 300));
   }
   if (res.status === 204) return null; // no-content responses (rare here, kept for safety)
+  if (fetchOpts.raw) return res.text();
   return res.json();
 }
 
@@ -270,6 +667,64 @@ async function _listRepos(uid, args, env) {
   return { repos: list };
 }
 
+async function _getRepo(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const r = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo, { method: 'GET' });
+  return {
+    name: r.full_name,
+    description: r.description || null,
+    private: !!r.private,
+    defaultBranch: r.default_branch,
+    language: r.language || null,
+    stars: r.stargazers_count,
+    forks: r.forks_count,
+    openIssues: r.open_issues_count,
+    url: r.html_url,
+    updatedAt: r.updated_at,
+  };
+}
+
+async function _searchRepositories(uid, args, env) {
+  _requireArgs(args, ['query']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  const data = await _githubFetch(
+    token,
+    '/search/repositories?q=' + encodeURIComponent(args.query) + '&per_page=' + limit,
+    { method: 'GET' }
+  );
+  return {
+    totalCount: data.total_count,
+    repos: (data.items || []).map((r) => ({
+      name: r.full_name,
+      description: r.description || null,
+      private: !!r.private,
+      stars: r.stargazers_count,
+      url: r.html_url,
+    })),
+  };
+}
+
+async function _searchCode(uid, args, env) {
+  _requireArgs(args, ['query']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  const data = await _githubFetch(
+    token,
+    '/search/code?q=' + encodeURIComponent(args.query) + '&per_page=' + limit,
+    { method: 'GET' }
+  );
+  return {
+    totalCount: data.total_count,
+    results: (data.items || []).map((it) => ({
+      path: it.path,
+      repo: it.repository && it.repository.full_name,
+      url: it.html_url,
+    })),
+  };
+}
+
 async function _listBranches(uid, args, env) {
   _requireArgs(args, ['owner', 'repo']);
   const token = await getValidToken(uid, 'github', env);
@@ -281,6 +736,41 @@ async function _listBranches(uid, args, env) {
   return {
     defaultBranch,
     branches: branches.map((b) => ({ name: b.name, protected: !!b.protected, isDefault: b.name === defaultBranch })),
+  };
+}
+
+async function _listCommits(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  let qs = '?per_page=' + limit;
+  if (args.branch) qs += '&sha=' + encodeURIComponent(args.branch);
+  if (args.path) qs += '&path=' + encodeURIComponent(args.path);
+  const commits = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/commits' + qs, { method: 'GET' });
+  return {
+    commits: commits.map((c) => ({
+      sha: c.sha,
+      message: (c.commit && c.commit.message || '').split('\n')[0],
+      author: c.commit && c.commit.author && c.commit.author.name,
+      date: c.commit && c.commit.author && c.commit.author.date,
+      url: c.html_url,
+    })),
+  };
+}
+
+async function _getCommit(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'sha']);
+  const token = await getValidToken(uid, 'github', env);
+  const c = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/commits/' + encodeURIComponent(args.sha), { method: 'GET' });
+  return {
+    sha: c.sha,
+    message: c.commit && c.commit.message,
+    author: c.commit && c.commit.author && c.commit.author.name,
+    date: c.commit && c.commit.author && c.commit.author.date,
+    parents: (c.parents || []).map((p) => p.sha),
+    stats: c.stats,
+    files: (c.files || []).map((f) => ({ path: f.filename, status: f.status, additions: f.additions, deletions: f.deletions })),
+    url: c.html_url,
   };
 }
 
@@ -299,7 +789,7 @@ async function _getFileContents(uid, args, env) {
   if (data === null) {
     return {
       found: false,
-      note: 'No file or directory exists at "' + cleanPath + '" on the requested ref. If the goal is to create it, use github_create_or_update_file — no existing sha is needed for a new file.',
+      note: 'No file or directory exists at "' + cleanPath + '" on the requested ref. If the goal is to create it, use github_create_or_update_file (or github_create_or_update_files for several) — no existing sha is needed for a new file.',
     };
   }
 
@@ -345,6 +835,48 @@ async function _getFileContents(uid, args, env) {
   };
 }
 
+async function _listIssues(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  const state = args.state || 'open';
+  // Over-fetch a bit before filtering out PRs, since GitHub's /issues
+  // endpoint mixes them in and we want `limit` real issues back, not
+  // `limit` minus however many PRs happened to be in that page.
+  const raw = await _githubFetch(
+    token,
+    '/repos/' + args.owner + '/' + args.repo + '/issues?state=' + encodeURIComponent(state) + '&per_page=' + Math.min(limit * 2, 100),
+    { method: 'GET' }
+  );
+  const issuesOnly = raw.filter((it) => !it.pull_request).slice(0, limit);
+  return {
+    issues: issuesOnly.map((it) => ({
+      number: it.number,
+      title: it.title,
+      state: it.state,
+      labels: (it.labels || []).map((l) => (typeof l === 'string' ? l : l.name)),
+      comments: it.comments,
+      url: it.html_url,
+    })),
+  };
+}
+
+async function _getIssue(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number']);
+  const token = await getValidToken(uid, 'github', env);
+  const it = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/issues/' + args.number, { method: 'GET' });
+  return {
+    number: it.number,
+    title: it.title,
+    body: it.body || '',
+    state: it.state,
+    labels: (it.labels || []).map((l) => (typeof l === 'string' ? l : l.name)),
+    assignees: (it.assignees || []).map((a) => a.login),
+    comments: it.comments,
+    url: it.html_url,
+  };
+}
+
 async function _createIssue(uid, args, env) {
   _requireArgs(args, ['owner', 'repo', 'title']);
   const token = await getValidToken(uid, 'github', env);
@@ -354,6 +886,140 @@ async function _createIssue(uid, args, env) {
     body: JSON.stringify({ title: args.title, body: args.body || '' }),
   });
   return { number: issue.number, url: issue.html_url, title: issue.title };
+}
+
+async function _updateIssue(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number']);
+  const payload = {};
+  if (args.title !== undefined) payload.title = args.title;
+  if (args.body !== undefined) payload.body = args.body;
+  if (args.state !== undefined) payload.state = args.state;
+  if (args.labels !== undefined) payload.labels = args.labels;
+
+  // No-op guard: if the model calls this with only owner/repo/number and
+  // nothing to actually change, don't spend a write call and a GitHub
+  // request round-trip on an edit that changes nothing — tell the model
+  // so it can ask for what it actually wants changed.
+  if (Object.keys(payload).length === 0) {
+    return {
+      updated: false,
+      note: 'No fields to change were provided (title/body/state/labels were all omitted) — nothing was sent to GitHub.',
+    };
+  }
+
+  const token = await getValidToken(uid, 'github', env);
+  const issue = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/issues/' + args.number, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return { updated: true, number: issue.number, url: issue.html_url, state: issue.state };
+}
+
+async function _addIssueComment(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number', 'body']);
+  const token = await getValidToken(uid, 'github', env);
+  const comment = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/issues/' + args.number + '/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: args.body }),
+  });
+  return { url: comment.html_url, number: args.number };
+}
+
+async function _listPullRequests(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  const state = args.state || 'open';
+  const prs = await _githubFetch(
+    token,
+    '/repos/' + args.owner + '/' + args.repo + '/pulls?state=' + encodeURIComponent(state) + '&per_page=' + limit,
+    { method: 'GET' }
+  );
+  return {
+    pullRequests: prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      state: pr.state,
+      head: pr.head && pr.head.ref,
+      base: pr.base && pr.base.ref,
+      draft: !!pr.draft,
+      url: pr.html_url,
+    })),
+  };
+}
+
+async function _getPullRequest(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number']);
+  const token = await getValidToken(uid, 'github', env);
+  const pr = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/pulls/' + args.number, { method: 'GET' });
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: pr.body || '',
+    state: pr.state,
+    draft: !!pr.draft,
+    head: pr.head && pr.head.ref,
+    base: pr.base && pr.base.ref,
+    mergeable: pr.mergeable,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changedFiles: pr.changed_files,
+    url: pr.html_url,
+  };
+}
+
+async function _getPullRequestDiff(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number']);
+  const token = await getValidToken(uid, 'github', env);
+  const diff = await _githubFetch(
+    token,
+    '/repos/' + args.owner + '/' + args.repo + '/pulls/' + args.number,
+    { method: 'GET', headers: { Accept: 'application/vnd.github.v3.diff' } },
+    { raw: true }
+  );
+  const MAX_DIFF_CHARS = 60_000;
+  if (diff.length > MAX_DIFF_CHARS) {
+    return {
+      diff: diff.slice(0, MAX_DIFF_CHARS),
+      truncated: true,
+      note: 'Diff was truncated at ' + MAX_DIFF_CHARS + ' characters for a very large PR. Use github_get_file_contents on specific files for their full current content.',
+    };
+  }
+  return { diff, truncated: false };
+}
+
+async function _createPullRequest(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'title', 'head']);
+  const token = await getValidToken(uid, 'github', env);
+  const base = args.base || await _defaultBranch(token, args.owner, args.repo);
+
+  if (args.head === base) {
+    throw new Error('The head branch ("' + args.head + '") and base branch ("' + base + '") are the same — nothing to compare.');
+  }
+
+  const pr = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/pulls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: args.title, head: args.head, base, body: args.body || '' }),
+  });
+
+  return { number: pr.number, url: pr.html_url, title: pr.title, head: args.head, base };
+}
+
+async function _createPullRequestReview(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'number', 'event']);
+  if ((args.event === 'REQUEST_CHANGES' || args.event === 'COMMENT') && !args.body) {
+    throw new Error('A review body is required for ' + args.event + ' reviews.');
+  }
+  const token = await getValidToken(uid, 'github', env);
+  const review = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/pulls/' + args.number + '/reviews', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: args.event, body: args.body || '' }),
+  });
+  return { id: review.id, state: review.state, url: review.html_url, number: args.number };
 }
 
 async function _createBranch(uid, args, env) {
@@ -433,31 +1099,200 @@ async function _createOrUpdateFile(uid, args, env) {
   };
 }
 
-async function _createPullRequest(uid, args, env) {
-  _requireArgs(args, ['owner', 'repo', 'title', 'head']);
-  const token = await getValidToken(uid, 'github', env);
-  const base = args.base || await _defaultBranch(token, args.owner, args.repo);
-
-  if (args.head === base) {
-    throw new Error('The head branch ("' + args.head + '") and base branch ("' + base + '") are the same — nothing to compare.');
+// Multi-file atomic commit via the Git Data API: one blob per file, one
+// tree built on top of the branch's current tree, one commit pointing at
+// that tree, then the branch ref fast-forwarded to the new commit. If any
+// step fails, the branch ref is never updated, so the repo never ends up
+// half-changed — this is what makes it "atomic" compared to calling
+// github_create_or_update_file once per file.
+async function _createOrUpdateFiles(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'files', 'message']);
+  if (!Array.isArray(args.files) || args.files.length === 0) {
+    throw new Error('"files" must be a non-empty array of { path, content }.');
+  }
+  if (args.files.length > MAX_FILES_PER_COMMIT) {
+    throw new Error('Too many files in one commit (' + args.files.length + ', max ' + MAX_FILES_PER_COMMIT + '). Split into multiple commits.');
+  }
+  for (const f of args.files) {
+    if (!f || typeof f.path !== 'string' || typeof f.content !== 'string') {
+      throw new Error('Each file needs a string "path" and string "content".');
+    }
+    if (f.content.length > MAX_FILE_CONTENT_CHARS) {
+      throw new Error('File "' + f.path + '" is too large (' + f.content.length + ' chars, max ' + MAX_FILE_CONTENT_CHARS + ').');
+    }
   }
 
-  const pr = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/pulls', {
+  const token = await getValidToken(uid, 'github', env);
+  const branch = args.branch || await _defaultBranch(token, args.owner, args.repo);
+  const repoPath = '/repos/' + args.owner + '/' + args.repo;
+
+  const branchRef = await _githubFetch(repoPath === '' ? token : token, repoPath + '/git/ref/heads/' + encodeURIComponent(branch), { method: 'GET' }, { allow404: true });
+  if (!branchRef) {
+    throw new Error('Branch "' + branch + '" was not found on ' + args.owner + '/' + args.repo + '.');
+  }
+  const baseCommitSha = branchRef.object.sha;
+
+  const baseCommit = await _githubFetch(token, repoPath + '/git/commits/' + baseCommitSha, { method: 'GET' });
+  const baseTreeSha = baseCommit.tree.sha;
+
+  // 1. One blob per file.
+  const blobs = [];
+  for (const f of args.files) {
+    const blob = await _githubFetch(token, repoPath + '/git/blobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: _utf8ToBase64(f.content), encoding: 'base64' }),
+    });
+    blobs.push({ path: String(f.path).replace(/^\/+/, ''), mode: '100644', type: 'blob', sha: blob.sha });
+  }
+
+  // 2. One tree, layered on the branch's current tree.
+  const newTree = await _githubFetch(token, repoPath + '/git/trees', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: args.title, head: args.head, base, body: args.body || '' }),
+    body: JSON.stringify({ base_tree: baseTreeSha, tree: blobs }),
   });
 
-  return { number: pr.number, url: pr.html_url, title: pr.title, head: args.head, base };
+  // 3. One commit pointing at that tree.
+  const newCommit = await _githubFetch(token, repoPath + '/git/commits', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: args.message, tree: newTree.sha, parents: [baseCommitSha] }),
+  });
+
+  // 4. Fast-forward the branch ref — only step that actually makes the
+  // commit "land"; nothing above this point is visible on the branch yet.
+  await _githubFetch(token, repoPath + '/git/refs/heads/' + encodeURIComponent(branch), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sha: newCommit.sha }),
+  });
+
+  return {
+    branch,
+    filesCommitted: args.files.map((f) => f.path),
+    commitSha: newCommit.sha,
+    commitUrl: 'https://github.com/' + args.owner + '/' + args.repo + '/commit/' + newCommit.sha,
+  };
+}
+
+async function _compareRefs(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'base', 'head']);
+  const token = await getValidToken(uid, 'github', env);
+  const cmp = await _githubFetch(
+    token,
+    '/repos/' + args.owner + '/' + args.repo + '/compare/' + encodeURIComponent(args.base) + '...' + encodeURIComponent(args.head),
+    { method: 'GET' }
+  );
+  return {
+    status: cmp.status,
+    aheadBy: cmp.ahead_by,
+    behindBy: cmp.behind_by,
+    totalCommits: cmp.total_commits,
+    files: (cmp.files || []).map((f) => ({ path: f.filename, status: f.status, additions: f.additions, deletions: f.deletions })),
+    url: cmp.html_url,
+  };
+}
+
+async function _listWorkflows(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const data = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/actions/workflows', { method: 'GET' });
+  return {
+    workflows: (data.workflows || []).map((w) => ({ id: w.id, name: w.name, path: w.path, state: w.state })),
+  };
+}
+
+async function _listWorkflowRuns(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo']);
+  const token = await getValidToken(uid, 'github', env);
+  const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
+  let base = '/repos/' + args.owner + '/' + args.repo;
+  base += args.workflow_id ? '/actions/workflows/' + encodeURIComponent(args.workflow_id) + '/runs' : '/actions/runs';
+  let qs = '?per_page=' + limit;
+  if (args.branch) qs += '&branch=' + encodeURIComponent(args.branch);
+  const data = await _githubFetch(token, base + qs, { method: 'GET' });
+  return {
+    runs: (data.workflow_runs || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      conclusion: r.conclusion,
+      branch: r.head_branch,
+      event: r.event,
+      createdAt: r.created_at,
+      url: r.html_url,
+    })),
+  };
+}
+
+async function _getWorkflowRun(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'run_id']);
+  const token = await getValidToken(uid, 'github', env);
+  const r = await _githubFetch(token, '/repos/' + args.owner + '/' + args.repo + '/actions/runs/' + args.run_id, { method: 'GET' });
+  return {
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    conclusion: r.conclusion,
+    branch: r.head_branch,
+    commitSha: r.head_sha,
+    event: r.event,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    url: r.html_url,
+  };
+}
+
+async function _getWorkflowRunLogs(uid, args, env) {
+  _requireArgs(args, ['owner', 'repo', 'run_id']);
+  const token = await getValidToken(uid, 'github', env);
+  // GitHub responds to this endpoint with a 302 to a time-limited signed
+  // URL for a .zip of log files — there is no inline-text form of this
+  // API. We capture the redirect target instead of following it, since
+  // following it would download a binary archive server-side for no
+  // reason (the model can't read a zip either).
+  const result = await _githubFetch(
+    token,
+    '/repos/' + args.owner + '/' + args.repo + '/actions/runs/' + args.run_id + '/logs',
+    { method: 'GET' },
+    { manualRedirect: true }
+  );
+  if (!result || !result.redirectUrl) {
+    throw new Error('GitHub did not return a logs download link for this run (it may still be in progress, or too old — logs expire after 90 days).');
+  }
+  return {
+    downloadUrl: result.redirectUrl,
+    note: 'This link is a time-limited signed URL to a .zip archive of the run\'s logs (plain-text files inside). It is not inlined here because it is a binary download, not text.',
+  };
 }
 
 export async function execute(name, args, uid, env) {
   if (name === 'github_list_repos') return _listRepos(uid, args, env);
-  if (name === 'github_list_branches') return _listBranches(uid, args, env);
+  if (name === 'github_get_repo') return _getRepo(uid, args, env);
+  if (name === 'github_search_repositories') return _searchRepositories(uid, args, env);
   if (name === 'github_get_file_contents') return _getFileContents(uid, args, env);
+  if (name === 'github_search_code') return _searchCode(uid, args, env);
+  if (name === 'github_list_branches') return _listBranches(uid, args, env);
+  if (name === 'github_list_commits') return _listCommits(uid, args, env);
+  if (name === 'github_get_commit') return _getCommit(uid, args, env);
+  if (name === 'github_list_issues') return _listIssues(uid, args, env);
+  if (name === 'github_get_issue') return _getIssue(uid, args, env);
   if (name === 'github_create_issue') return _createIssue(uid, args, env);
+  if (name === 'github_update_issue') return _updateIssue(uid, args, env);
+  if (name === 'github_add_issue_comment') return _addIssueComment(uid, args, env);
+  if (name === 'github_list_pull_requests') return _listPullRequests(uid, args, env);
+  if (name === 'github_get_pull_request') return _getPullRequest(uid, args, env);
+  if (name === 'github_get_pull_request_diff') return _getPullRequestDiff(uid, args, env);
+  if (name === 'github_create_pull_request') return _createPullRequest(uid, args, env);
+  if (name === 'github_create_pull_request_review') return _createPullRequestReview(uid, args, env);
   if (name === 'github_create_branch') return _createBranch(uid, args, env);
   if (name === 'github_create_or_update_file') return _createOrUpdateFile(uid, args, env);
-  if (name === 'github_create_pull_request') return _createPullRequest(uid, args, env);
+  if (name === 'github_create_or_update_files') return _createOrUpdateFiles(uid, args, env);
+  if (name === 'github_compare_refs') return _compareRefs(uid, args, env);
+  if (name === 'github_list_workflows') return _listWorkflows(uid, args, env);
+  if (name === 'github_list_workflow_runs') return _listWorkflowRuns(uid, args, env);
+  if (name === 'github_get_workflow_run') return _getWorkflowRun(uid, args, env);
+  if (name === 'github_get_workflow_run_logs') return _getWorkflowRunLogs(uid, args, env);
   throw new Error('Unknown GitHub tool: ' + name);
 }
