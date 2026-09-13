@@ -183,7 +183,7 @@ export default {
       return handleSubscriptionCancel(request, env);
     }
 
-    // ── Connectors (GitHub, Google, Slack, Figma, Dropbox, Canva) ─────
+    // ── Connectors (GitHub, Google, Figma, Canva) ─────
 
     // Must come before the /:provider/start check below, since both
     // match a "/api/connectors/<segment>" shape.
