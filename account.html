@@ -68,6 +68,17 @@
     </div>
   </div>
 
+  <!-- ── Connections ── -->
+  <div class="settings-group-label">Connections</div>
+  <div class="settings-group" id="connectionsGrid">
+    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row skeleton" style="height:52px;"></div>
+  </div>
+  <p class="settings-footnote" id="connectionsFootnote">
+    Connect an account to let Cognita use it in chat — for example, reading a file from Drive or listing your GitHub repos. Cognita only acts when you ask it to, and always asks first before making any change on your behalf.
+  </p>
+
   <!-- ── Sign out ── -->
   <div class="settings-group-label">Session</div>
   <div class="settings-group">
@@ -86,6 +97,135 @@
   if (!user) throw new Error('redirecting');
 
   document.getElementById('detailEmail').textContent = user.email || '—';
+
+  // ── Connections ──────────────────────────────────────────────────
+  // Metadata only lives here for display — the actual scopes, OAuth
+  // URLs, and everything security-relevant are server-side
+  // (connector-providers.js). This is purely "what icon and one-line
+  // description to show," never trusted for anything else.
+  const CONNECTOR_META = {
+    github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
+    google: { label: 'Google', icon: 'ph-google-logo', desc: 'Save to Drive, check your calendar.' },
+    slack: { label: 'Slack', icon: 'ph-slack-logo', desc: 'Post messages to a channel.' },
+    figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
+    dropbox: { label: 'Dropbox', icon: 'ph-dropbox-logo', desc: 'Save and read files.' },
+    canva: { label: 'Canva', icon: 'ph-image-square', desc: 'Read and create designs.' },
+  };
+  const CONNECTOR_ORDER = ['github', 'google', 'slack', 'figma', 'dropbox', 'canva'];
+
+  function connectionRow(provider, connected) {
+    const meta = CONNECTOR_META[provider];
+    return (
+      '<div class="settings-row" data-provider="' + provider + '">' +
+        '<i class="ph ' + meta.icon + '"></i>' +
+        '<div class="settings-row-usage-text">' +
+          '<span class="settings-row-label">' + meta.label + '</span>' +
+          '<span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">' +
+            (connected ? 'Connected' : meta.desc) +
+          '</span>' +
+        '</div>' +
+        (connected
+          ? '<button class="settings-row-cta settings-row--danger connector-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
+          : '<button class="settings-row-cta connector-connect-btn" data-provider="' + provider + '">Connect</button>') +
+      '</div>'
+    );
+  }
+
+  async function loadConnections() {
+    const grid = document.getElementById('connectionsGrid');
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/status');
+      const status = await res.json();
+      if (!res.ok) throw new Error(status.error || 'Failed to load connections.');
+
+      grid.innerHTML = CONNECTOR_ORDER.map((p) => connectionRow(p, !!status[p])).join('');
+    } catch (e) {
+      grid.innerHTML = '<p style="color:var(--text-3); padding: var(--space-4);">Could not load connections.</p>';
+      console.error('[account] ' + e.message);
+    }
+  }
+
+  // Event delegation — rows are re-rendered on every loadConnections()
+  // call, so listeners are attached to the (stable) container instead
+  // of individual buttons that get replaced.
+  document.getElementById('connectionsGrid').addEventListener('click', async (e) => {
+    const connectBtn = e.target.closest('.connector-connect-btn');
+    const disconnectBtn = e.target.closest('.connector-disconnect-btn');
+
+    if (connectBtn) {
+      const provider = connectBtn.dataset.provider;
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Connecting…';
+      try {
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start');
+        const data = await res.json();
+        if (!res.ok || !data.url) throw new Error(data.error || 'Could not start connection.');
+        // Full-page navigation, not a popup — the provider's consent
+        // screen needs the whole viewport on mobile, and popups are
+        // routinely blocked by mobile browsers anyway.
+        window.location.href = data.url;
+      } catch (err) {
+        alert('Could not connect ' + CONNECTOR_META[provider].label + ': ' + err.message);
+        connectBtn.disabled = false;
+        connectBtn.textContent = 'Connect';
+      }
+      return;
+    }
+
+    if (disconnectBtn) {
+      const provider = disconnectBtn.dataset.provider;
+      const confirmed = confirm('Disconnect ' + CONNECTOR_META[provider].label + '? Cognita will no longer be able to use it in chat until you reconnect.');
+      if (!confirmed) return;
+
+      disconnectBtn.disabled = true;
+      disconnectBtn.textContent = 'Disconnecting…';
+      try {
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/disconnect', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not disconnect.');
+        loadConnections();
+      } catch (err) {
+        alert('Could not disconnect ' + CONNECTOR_META[provider].label + ': ' + err.message);
+        disconnectBtn.disabled = false;
+        disconnectBtn.textContent = 'Disconnect';
+      }
+    }
+  });
+
+  // Landed here from a provider's OAuth redirect? Show a one-line result
+  // banner, then strip the query params so a page refresh doesn't
+  // re-show it. This covers all three outcomes connectors-endpoint.js
+  // can redirect back with: connected, denied (user clicked "Cancel" on
+  // the provider's consent screen — not an error), and error (something
+  // actually went wrong server-side).
+  (function showConnectorRedirectBanner() {
+    const params = new URLSearchParams(window.location.search);
+    const provider = params.get('connector');
+    const status = params.get('status');
+    if (!provider || !status) return;
+
+    const label = CONNECTOR_META[provider] ? CONNECTOR_META[provider].label : provider;
+    const messages = {
+      connected: label + ' connected.',
+      denied: label + ' connection was cancelled.',
+      error: 'Something went wrong connecting ' + label + '. Please try again.',
+    };
+    const footnote = document.getElementById('connectionsFootnote');
+    if (footnote && messages[status]) {
+      const banner = document.createElement('p');
+      banner.className = 'settings-footnote';
+      banner.style.color = status === 'error' ? 'var(--danger, #d33)' : 'var(--text-1)';
+      banner.style.fontWeight = '600';
+      banner.textContent = messages[status];
+      footnote.parentNode.insertBefore(banner, footnote);
+    }
+
+    // Clean the URL so refreshing doesn't re-show the banner or re-fire
+    // any logic keyed off these params.
+    window.history.replaceState({}, '', window.location.pathname);
+  })();
+
+  loadConnections();
 
   const USAGE_ICONS = {
     messages: 'ph-chat-circle',
