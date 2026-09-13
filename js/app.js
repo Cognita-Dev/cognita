@@ -1175,6 +1175,7 @@ async function sendMessage(text) {
     conversation.push({ role: 'assistant', content: data.reply });
     conversationMeta[conversation.length - 1] = {
       thinking: data.thinking || null,
+      thinkingHeading: data.thinkingHeading || null,
       sources: data.sources || null,
       elapsedMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
@@ -1234,7 +1235,9 @@ function renderConversation() {
     const messageEls = list.querySelectorAll('.message.is-assistant');
     const targetEl = messageEls[messageEls.length - 1];
     const contentEl = targetEl ? targetEl.querySelector('.message-content') : null;
-    if (contentEl) {
+
+    const startTypewriter = () => {
+      if (!contentEl) return;
       const fullText = conversation[idx].content || '';
       const sources = (conversationMeta[idx] || {}).sources || null;
       typewriterReveal(contentEl, fullText, sources, () => {
@@ -1244,10 +1247,60 @@ function renderConversation() {
         wireCodeCopyButtons(targetEl);
         renderMathInElement(targetEl);
       });
+    };
+
+    // Order on screen is: thought box → step trace → reply text. If this
+    // turn used tools, play the step-reveal animation first and only
+    // start typing the reply once every step has landed on its final
+    // checkmark — see animateToolTrace() below.
+    if (targetEl && targetEl.querySelector('.tool-trace-list[data-animate="true"]')) {
+      animateToolTrace(targetEl, startTypewriter);
+    } else {
+      startTypewriter();
     }
   } else {
     freshAssistantIndex = -1;
   }
+}
+
+/* ── Tool step reveal ─────────────────────────────────────────────
+   Plays back the already-known `steps` array (the backend is not
+   streamed, so every step arrived at once — see chat-endpoint.js) as if
+   each one were completing in real time: cards start hidden, are
+   revealed one at a time with a spinning icon and shimmering label
+   (.tool-trace-card--pending / .trace-spin in css/app.css), then flip to
+   their real checkmark/warning icon before the next card appears. A
+   trailing "Completed" card closes the sequence. Respects
+   prefers-reduced-motion by skipping the per-card delay entirely. */
+function animateToolTrace(messageEl, onDone) {
+  const list = messageEl.querySelector('.tool-trace-list[data-animate="true"]');
+  if (!list) { onDone && onDone(); return; }
+
+  const cards = Array.from(list.children);
+  if (cards.length === 0) { onDone && onDone(); return; }
+
+  const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  let i = 0;
+  function revealNext() {
+    if (i >= cards.length) { onDone && onDone(); return; }
+    const card = cards[i];
+    card.style.display = '';
+    scrollToBottom();
+
+    const settleDelay = reducedMotion ? 0 : (420 + Math.random() * 380);
+    setTimeout(() => {
+      const icon = card.querySelector('i.ph');
+      if (icon) icon.className = 'ph ' + (card.dataset.finalIcon || 'ph-check-circle');
+      card.classList.remove('tool-trace-card--pending');
+      i++;
+      // A brief pause between a card settling and the next one starting
+      // to spin, so the sequence reads as discrete steps rather than one
+      // continuous blur.
+      setTimeout(revealNext, reducedMotion ? 0 : 120);
+    }, settleDelay);
+  }
+  revealNext();
 }
 
 /* ── Typewriter reveal ─────────────────────────────────────────────
@@ -1344,16 +1397,35 @@ function renderMessage(msg, index) {
     attachmentsHtml = imagesHtml + chipsHtml;
   }
 
+  // A turn that used tools (Array of steps is non-empty once you filter
+  // out the pure "awaiting_confirmation" placeholder, which is rendered
+  // separately by the confirm card) never shows the model's raw
+  // reasoning in the thought box — only a short deterministic heading
+  // (see _thinkingHeadingFromSteps in chat-endpoint.js). Raw reasoning
+  // is reserved for plain, tool-free turns.
+  const rawStepList = !isUser && Array.isArray(meta.steps) ? meta.steps : [];
+  const traceSteps = rawStepList.filter((s) => s && s.type !== 'awaiting_confirmation');
+  const hasSteps = traceSteps.length > 0;
+  // This message is the one that JUST arrived (not a history reload) —
+  // only fresh tool-using turns get the animated pending→checkmark
+  // reveal; anything re-rendered later (edits, reloads) shows the
+  // finished state immediately.
+  const isFreshAnimated = !isUser && index === freshAssistantIndex && hasSteps;
+
   let thoughtHtml = '';
-  if (!isUser && meta.thinking) {
+  if (!isUser && (meta.thinking || hasSteps)) {
     const secs = meta.elapsedMs ? (meta.elapsedMs / 1000).toFixed(1) : null;
+    const label = secs ? 'Thought for ' + secs + 's' : 'Thought process';
+    const bodyHtml = hasSteps
+      ? '<div class="thought-content thought-content--heading">' + escapeHtml(meta.thinkingHeading || 'Working on your request') + '</div>'
+      : '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>';
     thoughtHtml =
       '<details class="thought-block">' +
         '<summary>' +
           '<i class="ph ph-caret-right thought-caret"></i>' +
-          '<span>' + (secs ? 'Thought for ' + secs + 's' : 'Thought process') + '</span>' +
+          '<span>' + label + '</span>' +
         '</summary>' +
-        '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>' +
+        bodyHtml +
       '</details>';
   }
 
@@ -1419,29 +1491,45 @@ function renderMessage(msg, index) {
   // chain") — e.g. "Looking at README.md" → "Updating README.md" →
   // "awaiting confirmation" for a write. Read-only steps and
   // already-approved writes never show a confirm card, so without this
-  // list they'd leave zero visible trace that anything happened. Falls
-  // back to a legacy single-object `toolExecuted` shape for any cached
-  // older responses that predate the multi-step trace.
+  // list they'd leave zero visible trace that anything happened.
+  //
+  // Rendered right after the thought box and BEFORE the reply text (see
+  // the returned template below) — never trailing under the answer.
+  // `traceSteps`/`hasSteps`/`isFreshAnimated` come from just above.
+  //
+  // For a freshly-arrived tool-using turn (isFreshAnimated), every card
+  // starts hidden with a spinning "in progress" icon and shimmering
+  // label; animateToolTrace() (called from renderConversation, once this
+  // HTML is in the DOM) reveals them one at a time and swaps each to its
+  // real checkmark/warning icon only once that step's "turn" is done,
+  // finishing with a "Completed" line — see the styles in css/app.css
+  // (.tool-trace-card--pending, .trace-spin) for the visual side.
+  // History reloads / regenerated re-renders show the finished state
+  // immediately, with no animation.
   let actionTraceHtml = '';
-  if (!isUser) {
-    const stepList = Array.isArray(meta.steps) ? meta.steps
-      : (meta.toolExecuted ? [meta.toolExecuted] : []);
-    // The final step is usually 'awaiting_confirmation', which is already
-    // rendered by the confirm card above — don't show it twice in the trace.
-    const traceSteps = stepList.filter((s) => s && s.type !== 'awaiting_confirmation');
-    if (traceSteps.length > 0) {
-      actionTraceHtml = '<div class="tool-trace-list">' + traceSteps.map((te) => {
-        const ok = te.ok !== false;
-        const icon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
-        const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
-        return (
-          '<div class="tool-trace-card ' + statusClass + '">' +
-            '<i class="ph ' + icon + '"></i>' +
-            '<span>' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
-          '</div>'
-        );
-      }).join('') + '</div>';
-    }
+  if (hasSteps) {
+    const cardsHtml = traceSteps.map((te) => {
+      const ok = te.ok !== false;
+      const finalIcon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
+      const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
+      const iconClass = isFreshAnimated ? 'ph-circle-notch trace-spin' : finalIcon;
+      return (
+        '<div class="tool-trace-card ' + statusClass + (isFreshAnimated ? ' tool-trace-card--pending' : '') + '" ' +
+          'data-final-icon="' + finalIcon + '"' + (isFreshAnimated ? ' style="display:none;"' : '') + '>' +
+          '<i class="ph ' + iconClass + '"></i>' +
+          '<span class="tool-trace-card-label">' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
+        '</div>'
+      );
+    }).join('');
+
+    const doneIconClass = isFreshAnimated ? 'ph-circle-notch trace-spin' : 'ph-check-circle';
+    const doneHtml =
+      '<div class="tool-trace-card tool-trace-card--done" data-final-icon="ph-check-circle"' + (isFreshAnimated ? ' style="display:none;"' : '') + '>' +
+        '<i class="ph ' + doneIconClass + '"></i>' +
+        '<span class="tool-trace-card-label">Completed</span>' +
+      '</div>';
+
+    actionTraceHtml = '<div class="tool-trace-list"' + (isFreshAnimated ? ' data-animate="true"' : '') + '>' + cardsHtml + doneHtml + '</div>';
   }
 
   return (
@@ -1449,16 +1537,17 @@ function renderMessage(msg, index) {
       '<div class="message-avatar">' + avatarContent + '</div>' +
       '<div class="message-body">' +
         thoughtHtml +
+        actionTraceHtml +
         attachmentsHtml +
         // The freshly-received reply starts as an empty content div —
         // typewriterReveal (called from renderConversation right after
-        // this HTML is inserted) fills it in. This avoids a flash of the
+        // this HTML is inserted, and after any step-reveal animation
+        // above has finished) fills it in. This avoids a flash of the
         // full text before the typing animation takes over.
         (msg.content ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         documentFileHtml +
         sourcesHtml +
         toolConfirmHtml +
-        actionTraceHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
@@ -1544,6 +1633,7 @@ async function resolvePendingToolCall(index, approved) {
     conversation.push({ role: 'assistant', content: data.reply });
     conversationMeta[conversation.length - 1] = {
       thinking: data.thinking || null,
+      thinkingHeading: data.thinkingHeading || null,
       sources: data.sources || null,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
       steps: Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : []),
