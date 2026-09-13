@@ -238,6 +238,19 @@ export async function handleChatRequest(request, env) {
   const tierConfig = MODEL_TIERS[actualTier];
   const connectorToolsEnabled = !hasImages && !confirmToolCall && planHasConnectorTools(account.planId);
 
+  // Diagnostics for the connector tool-calling pipeline (see project
+  // notes on issue 5c — "connected tools aren't used in chat"). Never
+  // logs tokens, message content, or tool arguments — only enough to
+  // tell, from logs alone, how far a given request got through the
+  // pipeline and why it stopped where it did.
+  console.log(
+    '[chat][tools] uid=' + identity.uid +
+    ' plan=' + account.planId +
+    ' connectorToolsEnabled=' + connectorToolsEnabled +
+    (connectorToolsEnabled ? '' :
+      ' reason=' + (hasImages ? 'has_images' : confirmToolCall ? 'confirm_tool_call' : 'plan_lacks_connectorTools'))
+  );
+
   let result;
   let pendingToolCall = null;
   let toolExecuted = null;
@@ -289,12 +302,18 @@ export async function handleChatRequest(request, env) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
     } else if (connectorToolsEnabled) {
       const tools = await getAvailableTools(identity.uid, env);
+      console.log(
+        '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
+        ' toolCount=' + tools.length +
+        ' tier=' + actualTier + ' provider=' + tierConfig.provider + ' model=' + tierConfig.model
+      );
 
       if (tools.length === 0) {
         // Nothing connected — identical to the pre-tools code path, no
         // overhead for users who haven't set up any connector.
         result = await callWithFallback(tierConfig, messages, env);
       } else {
+        let usedToolsPath = true;
         try {
           result = await callWithTools(tierConfig, messages, tools, env);
         } catch (toolCallErr) {
@@ -303,6 +322,7 @@ export async function handleChatRequest(request, env) {
             // do tool-calling right now — degrade to a normal tool-less
             // reply rather than failing the whole request.
             console.warn('[chat] tools unsupported for this tier, falling back to plain reply:', toolCallErr.message);
+            usedToolsPath = false;
             result = await callWithFallback(tierConfig, messages, env);
           } else {
             throw toolCallErr;
@@ -314,6 +334,11 @@ export async function handleChatRequest(request, env) {
         // MAX_AUTO_TOOL_ROUNDS) — any additional calls in the same
         // response are ignored; the model can request them on a
         // subsequent turn once it sees this result.
+        console.log(
+          '[chat][tools] usedToolsPath=' + usedToolsPath +
+          ' modelReturnedToolCalls=' + !!(result.toolCalls && result.toolCalls.length) +
+          ' requestedTool=' + (firstCall ? firstCall.name : 'none')
+        );
 
         if (firstCall) {
           if (toolRequiresConfirmation(firstCall.name)) {
@@ -328,6 +353,7 @@ export async function handleChatRequest(request, env) {
               provider: providerForTool(firstCall.name),
               summary: describeTool(firstCall.name, firstCall.args),
             };
+            console.log('[chat][tools] executorRan=false (awaiting user confirmation) tool=' + firstCall.name);
           } else {
             // Read-only tool — safe to run immediately without a
             // round-trip confirmation.
@@ -341,6 +367,11 @@ export async function handleChatRequest(request, env) {
             }
 
             const execOutcome = await executeConnectorTool(firstCall.name, firstCall.args, identity.uid, env);
+            console.log(
+              '[chat][tools] executorRan=true tool=' + firstCall.name +
+              ' success=' + !execOutcome.error +
+              (execOutcome.error ? ' code=' + execOutcome.code : '')
+            );
             const followUpMessages = messages.concat([
               {
                 role: 'assistant',
@@ -359,6 +390,7 @@ export async function handleChatRequest(request, env) {
             ]);
 
             result = await callWithFallback(tierConfig, followUpMessages, env);
+            console.log('[chat][tools] finalPassReceivedToolResult=true tool=' + firstCall.name);
             toolExecuted = {
               name: firstCall.name,
               provider: providerForTool(firstCall.name),
