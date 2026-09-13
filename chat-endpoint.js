@@ -62,6 +62,28 @@ const COMPLETION_CLAIM_PATTERNS = [
   /\bthe (?:file|issue|branch|commit|pull request|pr|event|design) (?:is|has been) (?:updated|created|committed|opened|merged|added)\b/i,
 ];
 
+// Bug 1/5 catches a reply that falsely CLAIMS the task is done. This
+// catches the other failure mode we've now actually seen in testing: a
+// reply that never claims anything, isn't a real answer to the user at
+// all, and stops the task silently — either a short mechanical
+// tool-narration line (the kind that used to get fed back as fake
+// assistant speech, see the workingMessages fix above) or a reply that's
+// obviously just describing an in-progress action rather than
+// addressing the user. Deliberately narrow (a handful of verb-first
+// progress-narration openers) so it never flags a genuine short answer
+// like "Yes, I can do that." or "No repositories found.".
+const NARRATION_LEAK_PATTERNS = [
+  /^(Running|Working on|Checking|Looking at|Reading|Fetching|Attempting)\b.{0,120}(to understand|to check|to see|to find out)\b/i,
+  /^Running\s+(Checking|Looking at|Reading|Fetching)\b/i,
+];
+
+function _looksLikeLeakedNarration(text) {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t || t.length > 200) return false; // a real, substantive answer is never this and this short
+  return NARRATION_LEAK_PATTERNS.some((re) => re.test(t));
+}
+
 function _claimsCompletion(text) {
   if (!text) return false;
   return COMPLETION_CLAIM_PATTERNS.some((re) => re.test(text));
@@ -491,10 +513,10 @@ export async function handleChatRequest(request, env) {
               approvals = _mergeApproval(approvals, providerForTool(confirmToolCall.name), scope, confirmToolCall.name);
             }
             workingMessages = workingMessages.concat([
-              { role: 'assistant', content: 'I ran ' + describeTool(confirmToolCall.name, confirmToolCall.args) },
               {
                 role: 'user',
-                content: 'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
+                content: 'Tool call: ' + describeTool(confirmToolCall.name, confirmToolCall.args) + ' (just approved and run by the user)\n' +
+                  'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
                   '\n\nContinue the task if it is not fully finished yet — call another tool if one is needed. ' +
                   'If it is fully finished, say so plainly. Do not ask the user anything you can find out yourself.',
               },
@@ -519,35 +541,47 @@ export async function handleChatRequest(request, env) {
               // natural end. Run the grounding check (Bug 1 / Bug 5)
               // before accepting this as the final answer.
               const claimsCompletion = _claimsCompletion(result.text || '');
+              const leakedNarration = _looksLikeLeakedNarration(result.text || '');
               const somethingExecutedThisTurn = steps.some((s) => s.type === 'executed' && s.ok);
-              if (claimsCompletion && !somethingExecutedThisTurn) {
+              if ((claimsCompletion && !somethingExecutedThisTurn) || leakedNarration) {
                 if (groundingRetries < MAX_GROUNDING_RETRIES) {
-                  console.warn('[chat][grounding] completion claim with no successful tool this turn — retrying. uid=' + identity.uid);
+                  console.warn(
+                    '[chat][grounding] ' + (leakedNarration ? 'leaked tool-narration line' : 'completion claim with no successful tool this turn') +
+                    ' — retrying. uid=' + identity.uid
+                  );
                   groundingRetries++;
                   workingMessages = workingMessages.concat([
                     { role: 'assistant', content: result.text || '' },
                     {
                       role: 'user',
-                      content: 'You have not actually called a tool to do this yet in this conversation. ' +
-                        'If completing this requires an action in a connected app, call the right tool now. ' +
-                        'If you are not sure it has happened, or you have not done it, say so plainly instead ' +
-                        'of stating it is done.',
+                      content: leakedNarration
+                        ? 'That wasn\'t a real reply to the user — it looked like an internal progress note. ' +
+                          'Either call the next tool the task actually needs, or write a plain, complete answer ' +
+                          'addressed to the user about where things stand and what (if anything) you need from them.'
+                        : 'You have not actually called a tool to do this yet in this conversation. ' +
+                          'If completing this requires an action in a connected app, call the right tool now. ' +
+                          'If you are not sure it has happened, or you have not done it, say so plainly instead ' +
+                          'of stating it is done.',
                     },
                   ]);
                   result = null;
                   round++;
                   continue;
                 }
-                // Retried once and it still asserted a false completion —
-                // override its text ourselves rather than let a
-                // fabricated success reach the user. Always logged, per
-                // the audit doc, as the signal for whether this needs a
-                // stronger corrective prompt upstream.
-                console.error('[chat][grounding] forced honest rewrite after repeated false completion claim. uid=' + identity.uid);
+                // Retried once and it's still not giving the user a real
+                // answer — override its text ourselves rather than show
+                // a broken-looking log line or a fabricated success.
+                // Always logged, per the audit doc, as the signal for
+                // whether this needs a stronger corrective prompt
+                // upstream.
+                console.error('[chat][grounding] forced honest rewrite after repeated ' + (leakedNarration ? 'non-answer' : 'false completion claim') + '. uid=' + identity.uid);
                 result = {
-                  text: 'I haven\'t actually completed that yet — I wasn\'t able to confirm the action went through, ' +
-                    'so I don\'t want to tell you it\'s done when it isn\'t. Let me know if you\'d like me to try again, ' +
-                    'or if there\'s more detail I need first.',
+                  text: leakedNarration
+                    ? 'I\'ve looked into this but haven\'t made the actual change yet. Want me to go ahead, ' +
+                      'or is there something specific you\'d like me to check first?'
+                    : 'I haven\'t actually completed that yet — I wasn\'t able to confirm the action went through, ' +
+                      'so I don\'t want to tell you it\'s done when it isn\'t. Let me know if you\'d like me to try again, ' +
+                      'or if there\'s more detail I need first.',
                   reasoning: result.reasoning || null,
                   toolCalls: null,
                 };
@@ -640,18 +674,28 @@ export async function handleChatRequest(request, env) {
               summary: describeTool(call.name, call.args),
             });
 
-            workingMessages = workingMessages.concat([
-              {
-                role: 'assistant',
-                content: (result.text && result.text.trim()) ? result.text : ('Running ' + describeTool(call.name, call.args)),
-              },
-              {
+            // Only ever put words in the assistant's own mouth here if it
+            // ACTUALLY said something alongside the tool call. Previously
+            // this fell back to a robotic 'Running ' + describeTool(...)
+            // line whenever result.text was empty (the normal case for a
+            // pure tool call) — feeding that back turn after turn taught
+            // the model, by imitation, to talk like a system log, and on
+            // a later turn it would echo that same voice back as its
+            // "final answer" with no tool call attached (see the
+            // leaked-narration guard below, which now also catches this).
+            // A tool result is plainly a fact about the world, not
+            // something the assistant said, so it belongs in the 'user'
+            // role either way.
+            const sawAssistantText = !!(result.text && result.text.trim());
+            workingMessages = workingMessages.concat(
+              (sawAssistantText ? [{ role: 'assistant', content: result.text }] : []).concat([{
                 role: 'user',
-                content: 'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
+                content: (sawAssistantText ? '' : 'Tool call: ' + describeTool(call.name, call.args) + '\n') +
+                  'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
                   '\n\nContinue the task if it is not fully finished yet — call another tool if one is needed. ' +
                   'If it is fully finished, say so plainly. Do not ask the user anything you can find out yourself.',
-              },
-            ]);
+              }])
+            );
 
             result = null;
             round++;
