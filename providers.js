@@ -154,6 +154,158 @@ async function _dispatch(providerName, messages, model, env, maxTokens) {
   throw new Error('Unknown provider: ' + providerName);
 }
 
+// ── Tool-calling (connector tools: GitHub/Google/Slack/Figma/Dropbox/Canva) ──
+// Only Groq and OpenRouter speak the OpenAI-compatible `tools` param here.
+// Workers AI is deliberately NOT wired for tools — its binding's tool-call
+// support is inconsistent across models and this app only uses it as an
+// emergency fallback, never as a primary chat provider. If a tier's whole
+// provider chain can't do tools, callWithTools throws 'tools_unsupported'
+// and the caller (chat-endpoint.js) falls back to a plain, tool-less reply
+// rather than failing the request outright.
+
+function _safeParseToolArgs(raw) {
+  if (!raw || typeof raw !== 'string') return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function _extractToolCalls(message) {
+  if (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) return null;
+  return message.tool_calls
+    .filter((tc) => tc && tc.function && tc.function.name)
+    .map((tc) => ({
+      id: tc.id || null,
+      name: tc.function.name,
+      args: _safeParseToolArgs(tc.function.arguments),
+    }));
+}
+
+async function _callGroqWithTools(messages, model, tools, env, maxTokens) {
+  const body = {
+    model,
+    max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
+    temperature: 0.5,
+    messages,
+    tools,
+    tool_choice: 'auto',
+  };
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + env.GROQ_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    // Some Groq models reject an unrecognized/unsupported `tools` param
+    // with a 400 — treat that distinctly so the caller can fall back to a
+    // tool-less call on the same provider instead of a hard failure.
+    if (res.status === 400 && /tool/i.test(text)) {
+      throw new Error('tools_unsupported:groq_' + res.status + ':' + text.slice(0, 200));
+    }
+    throw new Error('groq_' + res.status + ':' + text.slice(0, 200));
+  }
+  const data = await res.json();
+  const message = data.choices?.[0]?.message || {};
+  const toolCalls = _extractToolCalls(message);
+  const text = typeof message.content === 'string' ? message.content : '';
+  if (!toolCalls && !text.trim()) throw new Error('groq_empty');
+  return {
+    text: text.trim(),
+    finishReason: data.choices?.[0]?.finish_reason,
+    reasoning: message.reasoning || message.reasoning_content || null,
+    toolCalls,
+  };
+}
+
+async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens) {
+  const body = {
+    model,
+    max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
+    temperature: 0.5,
+    messages,
+    tools,
+    tool_choice: 'auto',
+  };
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
+      'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
+      'X-Title': 'Cognita',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if (res.status === 400 && /tool/i.test(text)) {
+      throw new Error('tools_unsupported:openrouter_' + res.status + ':' + text.slice(0, 200));
+    }
+    throw new Error('openrouter_' + res.status + ':' + text.slice(0, 200));
+  }
+  const data = await res.json();
+  const message = data.choices?.[0]?.message || {};
+  const toolCalls = _extractToolCalls(message);
+  const text = typeof message.content === 'string' ? message.content : '';
+  if (!toolCalls && !text.trim()) throw new Error('openrouter_empty');
+  return {
+    text: text.trim(),
+    finishReason: data.choices?.[0]?.finish_reason,
+    reasoning: message.reasoning || message.reasoning_content || null,
+    toolCalls,
+  };
+}
+
+async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens) {
+  if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, maxTokens);
+  if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens);
+  // workersai (and anything else) — no tool support. Signal the caller
+  // distinctly so it can retry tool-less rather than treat this as a
+  // generic provider outage.
+  throw new Error('tools_unsupported:' + providerName);
+}
+
+/**
+ * Same shape as callWithFallback, but offers the model a set of callable
+ * tools (OpenAI-compatible `tools` array — see connector-tools.js for how
+ * these are built). Returns { text, finishReason, reasoning, toolCalls }
+ * where toolCalls is either null (model just replied normally) or an
+ * array of { id, name, args } the caller should act on.
+ *
+ * Throws 'tools_unsupported' (as the error message prefix) if neither the
+ * primary nor fallback provider for this tier can do tool-calling at all —
+ * chat-endpoint.js catches this specifically and re-runs the turn through
+ * plain callWithFallback() instead of failing the request.
+ */
+export async function callWithTools(tierConfig, messages, tools, env, options = {}) {
+  const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+
+  try {
+    return await _dispatchWithTools(tierConfig.provider, messages, tierConfig.model, tools, env, maxTokens);
+  } catch (primaryErr) {
+    console.warn('[providers] tool-call primary failed:', primaryErr.message);
+    if (!tierConfig.fallback) throw primaryErr;
+    try {
+      return await _dispatchWithTools(tierConfig.fallback.provider, messages, tierConfig.fallback.model, tools, env, maxTokens);
+    } catch (fallbackErr) {
+      console.error('[providers] tool-call fallback also failed:', fallbackErr.message);
+      // If both legs failed specifically because tools aren't supported,
+      // surface that distinctly; otherwise it's a real outage.
+      if (primaryErr.message.startsWith('tools_unsupported') && fallbackErr.message.startsWith('tools_unsupported')) {
+        throw new Error('tools_unsupported: no provider in this tier supports tool-calling.');
+      }
+      throw new Error('All providers unavailable.');
+    }
+  }
+}
+
 /**
  * Calls the primary provider for a model tier, falling back to the tier's
  * configured fallback provider on failure. Never escalates to a richer
