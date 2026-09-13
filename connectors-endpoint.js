@@ -6,8 +6,10 @@
 import { requireAuth } from './auth-middleware.js';
 import {
   CONNECTOR_PROVIDERS,
+  ALLOWED_RETURN_TARGETS,
   startAuth,
   handleCallback,
+  consumeOAuthState,
   listConnectedProviders,
   disconnectProvider,
 } from './connectors.js';
@@ -22,6 +24,30 @@ function _jsonError(message, status, env) {
 
 function _isKnownProvider(provider) {
   return CONNECTOR_PROVIDERS.includes(provider);
+}
+
+// Maps a resolved returnTo ('account' | 'chat') to the actual page the
+// provider's redirect should land on. Centralized here so every exit
+// path in handleConnectorCallback below sends the user back to where
+// they actually started, instead of always landing on account.html.
+function _redirectBase(appOrigin, returnTo) {
+  return appOrigin + '/' + (returnTo === 'chat' ? 'app.html' : 'account.html');
+}
+
+// Turns a raw error message into a short reason code the frontend can
+// key a friendlier message off of, without the frontend needing to know
+// anything about GitHub/OAuth error strings itself.
+function _classifyFailureReason(message) {
+  const text = String(message || '');
+  // GitHub's token endpoint returns error=bad_verification_code when the
+  // code was already used or the underlying login session (e.g. a
+  // device-verification email code) expired before the exchange
+  // happened — see connector-providers.js exchangeCodeForToken.
+  if (/bad_verification_code/i.test(text)) return 'session_expired';
+  // Our own 10-minute OAuth state KV entry expired — same user-facing
+  // situation (they took too long partway through), different layer.
+  if (/Invalid or expired authorization state/i.test(text)) return 'session_expired';
+  return 'error';
 }
 
 /**
@@ -44,9 +70,12 @@ export async function handleConnectorStart(request, env, provider) {
     return _jsonError('Not authenticated: ' + e.message, 401, env);
   }
 
+  const url = new URL(request.url);
+  const returnTo = url.searchParams.get('returnTo') || 'account';
+
   try {
-    const url = await startAuth(identity.uid, provider, env);
-    return new Response(JSON.stringify({ url }), { status: 200, headers: _corsJsonHeaders(env) });
+    const authUrl = await startAuth(identity.uid, provider, env, returnTo);
+    return new Response(JSON.stringify({ url: authUrl }), { status: 200, headers: _corsJsonHeaders(env) });
   } catch (e) {
     console.error('[connectors] start failed for', provider, ':', e.message);
     return _jsonError('Could not start the connection to ' + provider + '. Please try again.', 500, env);
@@ -61,7 +90,8 @@ export async function handleConnectorStart(request, env, provider) {
  * to a uid via the one-time KV entry created in handleConnectorStart.
  * Ends in a redirect to the frontend either way (success or failure),
  * never a raw JSON response — the user is mid-browser-navigation, not
- * making an API call.
+ * making an API call. Always redirects to whichever page (account.html
+ * or app.html) the flow actually started from — see _redirectBase.
  */
 export async function handleConnectorCallback(request, env, provider) {
   const url = new URL(request.url);
@@ -73,9 +103,20 @@ export async function handleConnectorCallback(request, env, provider) {
 
   // The provider itself can redirect back with an error instead of a
   // code — e.g. the user clicked "Deny" on the consent screen. That's a
-  // normal outcome, not a bug; just send them back without a code param.
+  // normal outcome, not a bug. GitHub still sends `state` on a denial,
+  // so peek at it (read-only intent, but consumeOAuthState is one-time-
+  // use either way) purely to find out which page to send them back to.
   if (providerError) {
-    return Response.redirect(appOrigin + '/account.html?connector=' + provider + '&status=denied', 302);
+    let returnTo = 'account';
+    try {
+      const stateData = await consumeOAuthState(state, env);
+      if (stateData && stateData.provider === provider && ALLOWED_RETURN_TARGETS.includes(stateData.returnTo)) {
+        returnTo = stateData.returnTo;
+      }
+    } catch (e) {
+      // Fall back to account.html — a denial redirect should never itself fail.
+    }
+    return Response.redirect(_redirectBase(appOrigin, returnTo) + '?connector=' + provider + '&status=denied', 302);
   }
 
   if (!_isKnownProvider(provider)) {
@@ -83,11 +124,13 @@ export async function handleConnectorCallback(request, env, provider) {
   }
 
   try {
-    await handleCallback(provider, code, state, env);
-    return Response.redirect(appOrigin + '/account.html?connector=' + provider + '&status=connected', 302);
+    const { returnTo } = await handleCallback(provider, code, state, env);
+    return Response.redirect(_redirectBase(appOrigin, returnTo) + '?connector=' + provider + '&status=connected', 302);
   } catch (e) {
     console.error('[connectors] callback failed for', provider, ':', e.message);
-    return Response.redirect(appOrigin + '/account.html?connector=' + provider + '&status=error', 302);
+    const returnTo = e.returnTo || 'account';
+    const reason = _classifyFailureReason(e.message);
+    return Response.redirect(_redirectBase(appOrigin, returnTo) + '?connector=' + provider + '&status=error&reason=' + reason, 302);
   }
 }
 
