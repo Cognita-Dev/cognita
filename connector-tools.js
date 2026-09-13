@@ -1,5 +1,5 @@
 // connector-tools.js
-// The single seam between chat-endpoint.js and the six *-tools.js
+// The single seam between chat-endpoint.js and the four *-tools.js
 // executor files. Nothing in chat-endpoint.js should ever import
 // github-tools.js/google-tools.js/etc. directly — it only talks to the
 // three functions exported here.
@@ -21,20 +21,19 @@
 import { CONNECTOR_PROVIDERS, listConnectedProviders } from './connectors.js';
 import * as githubTools from './github-tools.js';
 import * as googleTools from './google-tools.js';
-import * as slackTools from './slack-tools.js';
 import * as figmaTools from './figma-tools.js';
-import * as dropboxTools from './dropbox-tools.js';
 import * as canvaTools from './canva-tools.js';
 
 // Keyed by the same provider names as CONNECTOR_PROVIDERS (connectors.js)
 // — kept as one object literal, rather than a naming convention, so a
 // mismatched key fails loudly (undefined) instead of silently.
+// Slack and Dropbox were removed (2026) — slack-tools.js/dropbox-tools.js
+// no longer exist; do not re-add entries here without also restoring
+// those files and their connector-providers.js OAuth config.
 const REGISTRY = {
   github: githubTools,
   google: googleTools,
-  slack: slackTools,
   figma: figmaTools,
-  dropbox: dropboxTools,
   canva: canvaTools,
 };
 
