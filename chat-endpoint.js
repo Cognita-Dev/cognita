@@ -2,9 +2,17 @@
 
 import { requireAuth } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
-import { checkAndIncrement } from './usage.js';
-import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision } from './entitlements.js';
-import { callWithFallback, callVisionModel } from './providers.js';
+import { checkAndIncrement, getUsage } from './usage.js';
+import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools } from './entitlements.js';
+import { callWithFallback, callVisionModel, callWithTools } from './providers.js';
+import { getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool, executeConnectorTool } from './connector-tools.js';
+
+// Cap how many tool calls a model can chain in a single follow-up round
+// after a non-write tool executes. 1 keeps the request bounded and the
+// latency predictable; the model can always ask a follow-up question in
+// its next chat turn if it needs another tool after seeing the first
+// result, rather than this endpoint silently looping.
+const MAX_AUTO_TOOL_ROUNDS = 1;
 
 const MAX_IMAGES_PER_REQUEST = 4;
 const HARD_MAX_IMAGE_BASE64_CHARS = 8_000_000;
@@ -121,6 +129,18 @@ export async function handleChatRequest(request, env) {
     return _jsonError('Missing messages.', 400, env);
   }
 
+  // A confirmToolCall request is the second half of the write-action
+  // confirmation flow (see the tool-calling section below): the frontend
+  // is not sending a new user message, it's telling us "the user approved
+  // the pending action you proposed last turn, go ahead and run it." It
+  // reuses the same /api/chat endpoint and the same message history, so
+  // it does NOT count against the daily message quota — only tool-call
+  // quota, once the action actually executes.
+  const confirmToolCall = (body.confirmToolCall && typeof body.confirmToolCall === 'object' &&
+    typeof body.confirmToolCall.name === 'string')
+    ? { name: body.confirmToolCall.name, args: (body.confirmToolCall.args && typeof body.confirmToolCall.args === 'object') ? body.confirmToolCall.args : {} }
+    : null;
+
   let account;
   try {
     account = await resolveAccount(identity.uid, env);
@@ -131,13 +151,25 @@ export async function handleChatRequest(request, env) {
 
   const plan = getPlan(account.planId);
 
-  const quota = await checkAndIncrement(identity.uid, 'messages', plan.limits.messagesPerDay, env);
-  if (!quota.allowed) {
-    return _jsonError(
-      'You have reached your daily message limit for the ' + plan.name + ' plan (' + quota.limit + ' per day). ' +
-      'It resets at midnight UTC, or you can upgrade for a higher limit.',
-      429, env
-    );
+  if (confirmToolCall && !planHasConnectorTools(account.planId)) {
+    return _jsonError('Connected-app actions are not available on the ' + plan.name + ' plan.', 403, env);
+  }
+
+  let quota;
+  if (confirmToolCall) {
+    // Not a new message — just read today's count for the response's
+    // remainingToday field, don't increment it.
+    const used = await getUsage(identity.uid, 'messages', env);
+    quota = { allowed: true, used, limit: plan.limits.messagesPerDay };
+  } else {
+    quota = await checkAndIncrement(identity.uid, 'messages', plan.limits.messagesPerDay, env);
+    if (!quota.allowed) {
+      return _jsonError(
+        'You have reached your daily message limit for the ' + plan.name + ' plan (' + quota.limit + ' per day). ' +
+        'It resets at midnight UTC, or you can upgrade for a higher limit.',
+        429, env
+      );
+    }
   }
 
   const hasImages = Array.isArray(body.images) && body.images.length > 0;
@@ -203,12 +235,139 @@ export async function handleChatRequest(request, env) {
 
   const messages = [{ role: 'system', content: _systemPrompt(userFirstName) }, ...trimmedHistory];
 
+  const tierConfig = MODEL_TIERS[actualTier];
+  const connectorToolsEnabled = !hasImages && !confirmToolCall && planHasConnectorTools(account.planId);
+
   let result;
+  let pendingToolCall = null;
+  let toolExecuted = null;
+
   try {
-    if (hasImages) {
+    if (confirmToolCall) {
+      // Second half of the confirmation flow: run the action the user
+      // already approved, then ask the model for one final natural-
+      // language reply that incorporates the result. The model itself is
+      // NOT re-asked whether to call the tool — the user's confirmation
+      // click already decided that; re-offering tools here would let the
+      // model second-guess or substitute a different action than the one
+      // that was actually shown to the user.
+      const toolQuota = await checkAndIncrement(identity.uid, 'toolCalls', plan.limits.toolCallsPerDay, env);
+      if (!toolQuota.allowed) {
+        return _jsonError(
+          'You have reached your daily connected-app action limit for the ' + plan.name + ' plan (' +
+          toolQuota.limit + ' per day). It resets at midnight UTC.',
+          429, env
+        );
+      }
+
+      const execOutcome = await executeConnectorTool(confirmToolCall.name, confirmToolCall.args, identity.uid, env);
+      const syntheticCallId = 'call_confirmed_1';
+      const followUpMessages = messages.concat([
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: syntheticCallId,
+            type: 'function',
+            function: { name: confirmToolCall.name, arguments: JSON.stringify(confirmToolCall.args) },
+          }],
+        },
+        {
+          role: 'tool',
+          tool_call_id: syntheticCallId,
+          content: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+        },
+      ]);
+
+      result = await callWithFallback(tierConfig, followUpMessages, env);
+      toolExecuted = {
+        name: confirmToolCall.name,
+        provider: providerForTool(confirmToolCall.name),
+        ok: !execOutcome.error,
+      };
+    } else if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
+    } else if (connectorToolsEnabled) {
+      const tools = await getAvailableTools(identity.uid, env);
+
+      if (tools.length === 0) {
+        // Nothing connected — identical to the pre-tools code path, no
+        // overhead for users who haven't set up any connector.
+        result = await callWithFallback(tierConfig, messages, env);
+      } else {
+        try {
+          result = await callWithTools(tierConfig, messages, tools, env);
+        } catch (toolCallErr) {
+          if (String(toolCallErr.message).startsWith('tools_unsupported')) {
+            // Neither the primary nor fallback provider for this tier can
+            // do tool-calling right now — degrade to a normal tool-less
+            // reply rather than failing the whole request.
+            console.warn('[chat] tools unsupported for this tier, falling back to plain reply:', toolCallErr.message);
+            result = await callWithFallback(tierConfig, messages, env);
+          } else {
+            throw toolCallErr;
+          }
+        }
+
+        const firstCall = result.toolCalls && result.toolCalls.length ? result.toolCalls[0] : null;
+        // Only the first proposed tool call is acted on per turn (see
+        // MAX_AUTO_TOOL_ROUNDS) — any additional calls in the same
+        // response are ignored; the model can request them on a
+        // subsequent turn once it sees this result.
+
+        if (firstCall) {
+          if (toolRequiresConfirmation(firstCall.name)) {
+            // Do NOT execute yet. Hand the proposed action back to the
+            // frontend so it can show a confirmation prompt; execution
+            // only happens if/when the user approves it (confirmToolCall
+            // branch above, in a later request).
+            pendingToolCall = {
+              id: firstCall.id,
+              name: firstCall.name,
+              args: firstCall.args,
+              provider: providerForTool(firstCall.name),
+              summary: describeTool(firstCall.name, firstCall.args),
+            };
+          } else {
+            // Read-only tool — safe to run immediately without a
+            // round-trip confirmation.
+            const toolQuota = await checkAndIncrement(identity.uid, 'toolCalls', plan.limits.toolCallsPerDay, env);
+            if (!toolQuota.allowed) {
+              return _jsonError(
+                'You have reached your daily connected-app action limit for the ' + plan.name + ' plan (' +
+                toolQuota.limit + ' per day). It resets at midnight UTC.',
+                429, env
+              );
+            }
+
+            const execOutcome = await executeConnectorTool(firstCall.name, firstCall.args, identity.uid, env);
+            const followUpMessages = messages.concat([
+              {
+                role: 'assistant',
+                content: result.text || null,
+                tool_calls: [{
+                  id: firstCall.id || 'call_1',
+                  type: 'function',
+                  function: { name: firstCall.name, arguments: JSON.stringify(firstCall.args || {}) },
+                }],
+              },
+              {
+                role: 'tool',
+                tool_call_id: firstCall.id || 'call_1',
+                content: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+              },
+            ]);
+
+            result = await callWithFallback(tierConfig, followUpMessages, env);
+            toolExecuted = {
+              name: firstCall.name,
+              provider: providerForTool(firstCall.name),
+              ok: !execOutcome.error,
+            };
+          }
+        }
+      }
     } else {
-      const tierConfig = MODEL_TIERS[actualTier];
       result = await callWithFallback(tierConfig, messages, env);
     }
   } catch (e) {
@@ -224,10 +383,21 @@ export async function handleChatRequest(request, env) {
     reply = extracted.reply;
   }
 
+  // When a write action is pending confirmation, prefer a clear
+  // yes/no-shaped prompt over whatever (possibly empty, since some models
+  // return no content at all alongside a tool_calls response) text the
+  // model produced, so the frontend always has something sensible to show
+  // above the confirm/cancel buttons.
+  if (pendingToolCall && !reply.trim()) {
+    reply = pendingToolCall.summary + ' Would you like me to go ahead?';
+  }
+
   return new Response(JSON.stringify({
     reply,
     thinking,
     remainingToday: plan.limits.messagesPerDay - quota.used,
+    pendingToolCall,
+    toolExecuted,
   }), {
     status: 200,
     headers: _corsJsonHeaders(env),
