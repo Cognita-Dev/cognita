@@ -2117,7 +2117,10 @@ function insertDocumentIntoConversation(data, topicText, docType, conversationId
 // section. The actual scopes and OAuth handling are entirely
 // server-side; this is purely what icon/description to render.
 const CONNECTOR_META = {
-  github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
+  github: {
+    label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.',
+    hint: 'You need to be signed in to GitHub in this browser to connect it.',
+  },
   google: { label: 'Google', icon: 'ph-google-logo', desc: 'Check your calendar, save to Drive.' },
   figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
   canva: { label: 'Canva', icon: 'ph-image-square', desc: 'List and create designs.' },
@@ -2134,6 +2137,7 @@ function connectorRowHtml(provider, connected) {
         '<span class="connector-row-desc' + (connected ? ' is-connected' : '') + '">' +
           (connected ? 'Connected' : meta.desc) +
         '</span>' +
+        (!connected && meta.hint ? '<span class="connector-row-hint">' + meta.hint + '</span>' : '') +
       '</div>' +
       (connected
         ? '<button class="connector-row-cta is-danger connector-modal-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
@@ -2230,13 +2234,16 @@ function showConnectorRedirectBanner() {
   const params = new URLSearchParams(window.location.search);
   const provider = params.get('connector');
   const status = params.get('status');
+  const reason = params.get('reason');
   if (!provider || !status) return;
 
   const label = CONNECTOR_META[provider] ? CONNECTOR_META[provider].label : provider;
   const messages = {
     connected: label + ' connected.',
     denied: label + ' connection was cancelled.',
-    error: 'Something went wrong connecting ' + label + '. Please try again.',
+    error: reason === 'session_expired'
+      ? 'Your sign-in session with ' + label + ' expired before the connection finished. This happens if ' + label + ' asked for extra verification and it took a while to complete. Try connecting again, and stay in the same tab until it is done.'
+      : 'Something went wrong connecting ' + label + '. Please try again.',
   };
 
   const banner = document.getElementById('connectorsBanner');
