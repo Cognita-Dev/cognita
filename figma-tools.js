@@ -43,9 +43,16 @@ export const TOOLS = [
 export const REQUIRES_CONFIRMATION = [];
 
 export function describe(name, args) {
-  if (name === 'figma_get_file_summary') return 'Read the structure of Figma file ' + (args.fileKey || '?') + '.';
-  if (name === 'figma_list_comments') return 'List comments on Figma file ' + (args.fileKey || '?') + '.';
-  return 'Perform a Figma action.';
+  if (name === 'figma_get_file_summary') return 'Looking at your design file.';
+  if (name === 'figma_list_comments') return 'Checking comments on your design file.';
+  return 'Working in Figma.';
+}
+
+// Read-only connector — REQUIRES_CONFIRMATION is empty, so approvalScope
+// is never consulted, but exported for shape-consistency with the other
+// three *-tools.js files.
+export function approvalScope(_name, _args) {
+  return 'global';
 }
 
 async function _figmaFetch(token, path) {
