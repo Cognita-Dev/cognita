@@ -109,6 +109,7 @@ const THINKING_WORDS = [
   wireAccountMenu();
   wireVisualModal();
   wireDocumentModal();
+  wireConnectorsModal();
   wireSuggestionCards();
   startPlaceholderTypewriter();
 
@@ -778,6 +779,7 @@ function wireAttachMenu() {
   const diagramItem = document.getElementById('attachDiagramItem');
   const illustrationItem = document.getElementById('attachIllustrationItem');
   const documentItem = document.getElementById('attachDocumentItem');
+  const connectorsItem = document.getElementById('attachConnectorsItem');
   const fileInput = document.getElementById('fileInput');
 
   function closeMenu() {
@@ -813,6 +815,11 @@ function wireAttachMenu() {
   documentItem.addEventListener('click', () => {
     closeMenu();
     openDocumentModal();
+  });
+
+  connectorsItem.addEventListener('click', () => {
+    closeMenu();
+    openConnectorsModal();
   });
 }
 
@@ -1153,6 +1160,8 @@ async function sendMessage(text) {
       thinking: data.thinking || null,
       sources: data.sources || null,
       elapsedMs,
+      pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
+      toolExecuted: data.toolExecuted || null,
     };
     freshAssistantIndex = conversation.length - 1;
     renderConversation();
@@ -1356,6 +1365,30 @@ function renderMessage(msg, index) {
       '</button>';
   }
 
+  // A write action (e.g. "open a GitHub issue", "post to Slack") the
+  // model proposed but hasn't run yet — see the confirmToolCall flow in
+  // chat-endpoint.js. Rendered as a small card with Confirm/Cancel;
+  // status flips to 'confirmed'/'cancelled' once acted on so it doesn't
+  // stay clickable (or reappear as actionable) after a re-render.
+  let toolConfirmHtml = '';
+  if (!isUser && meta.pendingToolCall) {
+    const ptc = meta.pendingToolCall;
+    if (ptc.status === 'pending') {
+      toolConfirmHtml =
+        '<div class="tool-confirm-card" data-index="' + index + '">' +
+          '<div class="tool-confirm-card-summary"><i class="ph ph-plug"></i><span>' + escapeHtml(ptc.summary || 'Perform this action?') + '</span></div>' +
+          '<div class="tool-confirm-card-actions">' +
+            '<button class="tool-confirm-btn tool-confirm-btn--confirm" data-tool-action="confirm" data-index="' + index + '">Confirm</button>' +
+            '<button class="tool-confirm-btn tool-confirm-btn--cancel" data-tool-action="cancel" data-index="' + index + '">Cancel</button>' +
+          '</div>' +
+        '</div>';
+    } else if (ptc.status === 'cancelled') {
+      toolConfirmHtml = '<div class="tool-confirm-card-status">Action cancelled.</div>';
+    }
+    // status === 'confirmed': nothing to render here — the executed
+    // result already arrived as the next assistant message in the thread.
+  }
+
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
       '<div class="message-avatar">' + avatarContent + '</div>' +
@@ -1369,6 +1402,7 @@ function renderMessage(msg, index) {
         (msg.content ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         documentFileHtml +
         sourcesHtml +
+        toolConfirmHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
@@ -1402,6 +1436,70 @@ function wireMessageActionButtons() {
       await sendMessage(priorUserMsg.content);
     });
   });
+
+  document.querySelectorAll('[data-tool-action="confirm"]').forEach((btn) => {
+    btn.addEventListener('click', () => resolvePendingToolCall(parseInt(btn.dataset.index, 10), true));
+  });
+  document.querySelectorAll('[data-tool-action="cancel"]').forEach((btn) => {
+    btn.addEventListener('click', () => resolvePendingToolCall(parseInt(btn.dataset.index, 10), false));
+  });
+}
+
+// Runs (or cancels) a write action the model proposed earlier in the
+// conversation — see the tool-confirm card in renderMessage() and the
+// confirmToolCall handling in chat-endpoint.js. Cancelling never calls
+// the backend at all: the user simply declined, nothing to undo.
+async function resolvePendingToolCall(index, approved) {
+  const meta = conversationMeta[index];
+  if (!meta || !meta.pendingToolCall || meta.pendingToolCall.status !== 'pending') return;
+  const ptc = meta.pendingToolCall;
+
+  if (!approved) {
+    meta.pendingToolCall = { ...ptc, status: 'cancelled' };
+    renderConversation();
+    persistCurrentConversation();
+    return;
+  }
+
+  meta.pendingToolCall = { ...ptc, status: 'confirmed' };
+  renderConversation();
+
+  const thinkingId = appendThinkingIndicator();
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+        quality: currentQuality,
+        confirmToolCall: { name: ptc.name, args: ptc.args },
+      }),
+    });
+
+    const data = await res.json();
+    removeThinkingIndicator(thinkingId);
+
+    if (!res.ok) {
+      appendSystemNotice(data.error || 'Could not complete that action.', res.status === 429 ? 'limit' : 'error');
+      return;
+    }
+
+    conversation.push({ role: 'assistant', content: data.reply });
+    conversationMeta[conversation.length - 1] = {
+      thinking: data.thinking || null,
+      sources: data.sources || null,
+      pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
+      toolExecuted: data.toolExecuted || null,
+    };
+    freshAssistantIndex = conversation.length - 1;
+    renderConversation();
+    refreshUsage();
+    persistCurrentConversation();
+  } catch (e) {
+    removeThinkingIndicator(thinkingId);
+    appendSystemNotice('Could not reach Cognita. Please check your connection.', 'error');
+    console.error('[app] tool confirmation request failed:', e.message);
+  }
 }
 
 // Copies what the person actually SEES (rendered bold, lists, tables,
@@ -2008,6 +2106,117 @@ function insertDocumentIntoConversation(data, topicText, docType, conversationId
   }
 
   persistCurrentConversation();
+}
+
+/* ════════════════════════════════════════════════════════
+   CONNECTED APPS MODAL (connectors: view/connect/disconnect)
+════════════════════════════════════════════════════════ */
+
+// Display-only metadata — same list as account.html's Connections
+// section. The actual scopes and OAuth handling are entirely
+// server-side; this is purely what icon/description to render.
+const CONNECTOR_META = {
+  github: { label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.' },
+  google: { label: 'Google', icon: 'ph-google-logo', desc: 'Check your calendar, save to Drive.' },
+  slack: { label: 'Slack', icon: 'ph-slack-logo', desc: 'List channels, post messages.' },
+  figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
+  dropbox: { label: 'Dropbox', icon: 'ph-dropbox-logo', desc: 'List files, save new files.' },
+  canva: { label: 'Canva', icon: 'ph-image-square', desc: 'List and create designs.' },
+};
+const CONNECTOR_ORDER = ['github', 'google', 'slack', 'figma', 'dropbox', 'canva'];
+
+function connectorRowHtml(provider, connected) {
+  const meta = CONNECTOR_META[provider];
+  return (
+    '<div class="connector-row" data-provider="' + provider + '">' +
+      '<i class="ph ' + meta.icon + '"></i>' +
+      '<div class="connector-row-text">' +
+        '<span class="connector-row-name">' + meta.label + '</span>' +
+        '<span class="connector-row-desc' + (connected ? ' is-connected' : '') + '">' +
+          (connected ? 'Connected' : meta.desc) +
+        '</span>' +
+      '</div>' +
+      (connected
+        ? '<button class="connector-row-cta is-danger connector-modal-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
+        : '<button class="connector-row-cta connector-modal-connect-btn" data-provider="' + provider + '">Connect</button>') +
+    '</div>'
+  );
+}
+
+async function loadConnectorsList() {
+  const list = document.getElementById('connectorsList');
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/status');
+    const status = await res.json();
+    if (!res.ok) throw new Error(status.error || 'Failed to load connected apps.');
+
+    list.innerHTML = CONNECTOR_ORDER.map((p) => connectorRowHtml(p, !!status[p])).join('');
+  } catch (e) {
+    list.innerHTML = '<p style="color:var(--text-3); padding: var(--space-3);">Could not load connected apps.</p>';
+    console.error('[app] connectors status failed:', e.message);
+  }
+}
+
+function openConnectorsModal() {
+  const modal = document.getElementById('connectorsModal');
+  modal.hidden = false;
+  loadConnectorsList();
+}
+
+function wireConnectorsModal() {
+  const modal = document.getElementById('connectorsModal');
+  const closeBtn = document.getElementById('connectorsModalClose');
+  const list = document.getElementById('connectorsList');
+
+  closeBtn.addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+
+  // Event delegation — rows are replaced wholesale on every
+  // loadConnectorsList() call, so listeners live on the stable container.
+  list.addEventListener('click', async (e) => {
+    const connectBtn = e.target.closest('.connector-modal-connect-btn');
+    const disconnectBtn = e.target.closest('.connector-modal-disconnect-btn');
+
+    if (connectBtn) {
+      const provider = connectBtn.dataset.provider;
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Connecting…';
+      try {
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/start');
+        const data = await res.json();
+        if (!res.ok || !data.url) throw new Error(data.error || 'Could not start connection.');
+        // Full-page navigation — the provider's consent screen redirects
+        // back to Account Settings when done (not back to this chat), so
+        // leaving mid-conversation is expected; the conversation is saved
+        // and will still be here afterward.
+        window.location.href = data.url;
+      } catch (err) {
+        showToast('Could not connect ' + CONNECTOR_META[provider].label + ': ' + err.message);
+        connectBtn.disabled = false;
+        connectBtn.textContent = 'Connect';
+      }
+      return;
+    }
+
+    if (disconnectBtn) {
+      const provider = disconnectBtn.dataset.provider;
+      const confirmed = confirm('Disconnect ' + CONNECTOR_META[provider].label + '? Cognita will no longer be able to use it in chat until you reconnect.');
+      if (!confirmed) return;
+
+      disconnectBtn.disabled = true;
+      disconnectBtn.textContent = 'Disconnecting…';
+      try {
+        const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/' + provider + '/disconnect', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not disconnect.');
+        loadConnectorsList();
+      } catch (err) {
+        showToast('Could not disconnect ' + CONNECTOR_META[provider].label + ': ' + err.message);
+        disconnectBtn.disabled = false;
+        disconnectBtn.textContent = 'Disconnect';
+      }
+    }
+  });
 }
 
 /* ════════════════════════════════════════════════════════
