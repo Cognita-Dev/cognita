@@ -1,6 +1,6 @@
 // connectors.js
-// Storage layer for third-party connector tokens (GitHub, Google, Slack,
-// Figma, Dropbox, Canva). Two separate stores, deliberately never mixed:
+// Storage layer for third-party connector tokens (GitHub, Google, Figma,
+// Canva). Two separate stores, deliberately never mixed:
 //
 //   - Firestore (`connectors/{uid}/providers/{provider}`) — the actual
 //     access/refresh tokens. Long-lived, per-user, read on demand when a
@@ -25,10 +25,19 @@
 import { fsGet, fsSet, fsDelete } from './firestore-rest.js';
 import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken } from './connector-providers.js';
 
-// The only six providers this app knows about. Kept as a single exported
+// The only four providers this app knows about. Kept as a single exported
 // list so routing, the account-page UI data, and validation all check
 // against the same source of truth instead of re-typing provider names.
-export const CONNECTOR_PROVIDERS = ['github', 'google', 'slack', 'figma', 'dropbox', 'canva'];
+// Slack and Dropbox were removed (2026) — see project notes; do not
+// re-add provider names here without also wiring up connector-providers.js,
+// a *-tools.js executor, and every frontend CONNECTOR_META/CONNECTOR_ORDER.
+export const CONNECTOR_PROVIDERS = ['github', 'google', 'figma', 'canva'];
+
+// Where the OAuth flow should send the user back to after the provider's
+// redirect completes. This is the ONLY set of values `returnTo` may ever
+// take — it is never a client-supplied URL (see startAuth/handleCallback
+// below), specifically to avoid turning this into an open redirect.
+export const ALLOWED_RETURN_TARGETS = ['account', 'chat'];
 
 function _assertKnownProvider(provider) {
   if (!CONNECTOR_PROVIDERS.includes(provider)) {
@@ -85,9 +94,9 @@ export async function deleteConnectorToken(uid, provider, env) {
 }
 
 /**
- * Returns which of the six providers this uid has a token stored for,
- * as { github: true|false, google: true|false, ... }. Reads all six in
- * parallel — six small point-reads is cheap and simple, and avoids
+ * Returns which of the four providers this uid has a token stored for,
+ * as { github: true|false, google: true|false, ... }. Reads all four in
+ * parallel — four small point-reads is cheap and simple, and avoids
  * needing a Firestore subcollection-listing query for a fixed, tiny set
  * of possible providers.
  */
@@ -210,9 +219,17 @@ export async function generateCodeChallenge(codeVerifier) {
 /**
  * Starts a connector's OAuth flow for an already-authenticated uid.
  * Returns the URL to redirect the user's browser to.
+ *
+ * @param {string} returnTo - one of ALLOWED_RETURN_TARGETS, captured at
+ *   the moment the flow starts (e.g. "chat" if the user opened the
+ *   Connected Apps modal from app.html, "account" from account.html) and
+ *   carried inside the signed/validated OAuth state so the callback can
+ *   send them back to where they started. Never a raw URL — see
+ *   handleCallback below for why.
  */
-export async function startAuth(uid, provider, env) {
+export async function startAuth(uid, provider, env, returnTo = 'account') {
   _assertKnownProvider(provider);
+  const safeReturnTo = ALLOWED_RETURN_TARGETS.includes(returnTo) ? returnTo : 'account';
 
   let codeVerifier;
   let codeChallenge;
@@ -221,7 +238,10 @@ export async function startAuth(uid, provider, env) {
     codeChallenge = await generateCodeChallenge(codeVerifier);
   }
 
-  const state = await createOAuthState(uid, provider, env, codeVerifier ? { codeVerifier } : {});
+  const state = await createOAuthState(uid, provider, env, {
+    returnTo: safeReturnTo,
+    ...(codeVerifier ? { codeVerifier } : {}),
+  });
   return buildAuthorizeUrl(provider, env, { state, codeChallenge });
 }
 
@@ -229,11 +249,19 @@ export async function startAuth(uid, provider, env) {
  * Handles a provider's redirect back to /auth/:provider/callback.
  * Validates `state` (rejects missing/expired/mismatched-provider —
  * see consumeOAuthState's one-time-use guarantee), exchanges the code,
- * and persists the resulting token. Returns the uid that was connected,
- * so the route handler knows who to redirect and what to log.
+ * and persists the resulting token. Returns the uid that was connected
+ * and the allowlisted returnTo destination that was captured when the
+ * flow started, so the route handler knows who to redirect, where to
+ * send them, and what to log.
  *
  * Throws on any failure. Callers must not redirect the user to a
  * "connected!" page unless this resolves successfully.
+ *
+ * Diagnostic logging here is deliberately non-secret: uid, provider, and
+ * providerAccountId (where the provider gives us one) only — never the
+ * access/refresh token itself. This is what lets a security review of
+ * "did user A really get bound to user A's own token" happen from logs
+ * alone, without ever having a token pass through log output.
  */
 export async function handleCallback(provider, code, state, env) {
   _assertKnownProvider(provider);
@@ -251,7 +279,14 @@ export async function handleCallback(provider, code, state, env) {
   const tokenData = await exchangeCodeForToken(provider, env, { code, codeVerifier: stateData.codeVerifier });
   await saveConnectorToken(stateData.uid, provider, tokenData, env);
 
-  return stateData.uid;
+  console.log(
+    '[connectors] token stored — provider=' + provider +
+    ' uid=' + stateData.uid +
+    ' providerAccountId=' + (tokenData.providerAccountId || 'n/a')
+  );
+
+  const returnTo = ALLOWED_RETURN_TARGETS.includes(stateData.returnTo) ? stateData.returnTo : 'account';
+  return { uid: stateData.uid, returnTo };
 }
 
 // Refresh a bit before the actual expiry, not exactly at it — avoids a
@@ -282,8 +317,7 @@ export async function getValidToken(uid, provider, env) {
   }
 
   // Expired and no way to refresh (GitHub never expires so never reaches
-  // here; Slack without token rotation also has no refresh token, but
-  // also never sets expiresAt, so it never reaches here either).
+  // here at all).
   if (!record.refreshToken) {
     throw new Error('NEEDS_RECONNECT');
   }
