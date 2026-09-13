@@ -1308,6 +1308,23 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .tool-confirm-btn--cancel:hover:not(:disabled) { background: var(--bg-elevated); }
 .tool-confirm-card-status { font-size: var(--text-xs); color: var(--text-3); font-style: italic; }
 
+/* Action Trace: a one-line record that a tool action ran — either a
+   silently-executed read (list/get/search) or a write the user just
+   confirmed. Deliberately lighter-weight than .tool-confirm-card (no
+   padding/border box) since it's a passive log line, not a prompt. */
+.tool-trace-card {
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.tool-trace-card i.ph { font-size: var(--text-sm); }
+.tool-trace-card--ok i.ph { color: var(--accent, var(--text-2)); }
+.tool-trace-card--error { color: var(--text-2); }
+.tool-trace-card--error i.ph { color: #d0645a; }
+
 
 /* ── Responsive ── */
 @media (max-width: 900px) {
