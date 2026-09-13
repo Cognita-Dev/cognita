@@ -23,7 +23,7 @@
 // provider integrations on top.
 
 import { fsGet, fsSet, fsDelete } from './firestore-rest.js';
-import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken } from './connector-providers.js';
+import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken, hasSufficientScope } from './connector-providers.js';
 
 // The only four providers this app knows about. Kept as a single exported
 // list so routing, the account-page UI data, and validation all check
@@ -265,28 +265,44 @@ export async function startAuth(uid, provider, env, returnTo = 'account') {
  */
 export async function handleCallback(provider, code, state, env) {
   _assertKnownProvider(provider);
-  if (!code) throw new Error('Missing authorization code.');
 
   const stateData = await consumeOAuthState(state, env);
-  if (!stateData) throw new Error('Invalid or expired authorization state — please try connecting again.');
+  if (!stateData) {
+    const e = new Error('Invalid or expired authorization state — please try connecting again.');
+    e.returnTo = 'account'; // no state to read a returnTo from
+    throw e;
+  }
+  const returnTo = ALLOWED_RETURN_TARGETS.includes(stateData.returnTo) ? stateData.returnTo : 'account';
+
   if (stateData.provider !== provider) {
     // Someone hit provider A's callback URL with a state minted for
     // provider B — either a bug in the redirect URI configuration or a
     // deliberate mismatch attempt. Reject outright either way.
-    throw new Error('State/provider mismatch.');
+    const e = new Error('State/provider mismatch.');
+    e.returnTo = returnTo;
+    throw e;
+  }
+  if (!code) {
+    const e = new Error('Missing authorization code.');
+    e.returnTo = returnTo;
+    throw e;
   }
 
-  const tokenData = await exchangeCodeForToken(provider, env, { code, codeVerifier: stateData.codeVerifier });
-  await saveConnectorToken(stateData.uid, provider, tokenData, env);
+  try {
+    const tokenData = await exchangeCodeForToken(provider, env, { code, codeVerifier: stateData.codeVerifier });
+    await saveConnectorToken(stateData.uid, provider, tokenData, env);
 
-  console.log(
-    '[connectors] token stored — provider=' + provider +
-    ' uid=' + stateData.uid +
-    ' providerAccountId=' + (tokenData.providerAccountId || 'n/a')
-  );
+    console.log(
+      '[connectors] token stored — provider=' + provider +
+      ' uid=' + stateData.uid +
+      ' providerAccountId=' + (tokenData.providerAccountId || 'n/a')
+    );
 
-  const returnTo = ALLOWED_RETURN_TARGETS.includes(stateData.returnTo) ? stateData.returnTo : 'account';
-  return { uid: stateData.uid, returnTo };
+    return { uid: stateData.uid, returnTo };
+  } catch (e) {
+    e.returnTo = returnTo; // preserve so the caller can send the user back to where they started, even on failure
+    throw e;
+  }
 }
 
 // Refresh a bit before the actual expiry, not exactly at it — avoids a
@@ -313,6 +329,12 @@ export async function getValidToken(uid, provider, env) {
 
   const isExpired = typeof record.expiresAt === 'number' && Date.now() > record.expiresAt - EXPIRY_SAFETY_MARGIN_MS;
   if (!isExpired) {
+    if (!hasSufficientScope(provider, record.scope)) {
+      // Old connection, old scope (e.g. GitHub's 'public_repo' before it
+      // became 'repo') — treat exactly like an expired/revoked token so
+      // the existing reconnect messaging in connector-tools.js kicks in.
+      throw new Error('NEEDS_RECONNECT');
+    }
     return record.accessToken;
   }
 
