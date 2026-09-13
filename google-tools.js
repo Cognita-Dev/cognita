@@ -49,11 +49,18 @@ export const TOOLS = [
 export const REQUIRES_CONFIRMATION = ['google_create_calendar_event'];
 
 export function describe(name, args) {
-  if (name === 'google_list_calendar_events') return 'Check your upcoming Google Calendar events.';
+  if (name === 'google_list_calendar_events') return 'Checking your upcoming calendar events.';
   if (name === 'google_create_calendar_event') {
-    return 'Create a calendar event "' + (args.summary || '') + '" from ' + (args.startIso || '?') + ' to ' + (args.endIso || '?') + '.';
+    return 'Adding "' + (args.summary || 'an event') + '" to your calendar.';
   }
-  return 'Perform a Google action.';
+  return 'Working in your Google account.';
+}
+
+// Single scope: this connector only ever touches the user's one primary
+// calendar (see the file header — drive.file/calendar.events scopes), so
+// there's no per-object scoping to compute the way GitHub has per-repo.
+export function approvalScope(_name, _args) {
+  return 'primary-calendar';
 }
 
 async function _googleFetch(token, path, options = {}) {
