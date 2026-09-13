@@ -51,9 +51,18 @@ for (const provider of CONNECTOR_PROVIDERS) {
 // name -> provider, built once at module load for O(1) lookup instead of
 // scanning every provider's TOOLS array on every tool call.
 const TOOL_NAME_TO_PROVIDER = {};
+// name -> required argument names, read straight off each tool's own
+// OpenAI-compatible schema (parameters.required) rather than duplicated
+// as a second hand-maintained list — the schema the model is given and
+// the list used to validate its calls must never be able to drift apart.
+const TOOL_NAME_TO_REQUIRED = {};
 for (const provider of CONNECTOR_PROVIDERS) {
   for (const tool of REGISTRY[provider].TOOLS) {
     TOOL_NAME_TO_PROVIDER[tool.function.name] = provider;
+    TOOL_NAME_TO_REQUIRED[tool.function.name] =
+      (tool.function.parameters && Array.isArray(tool.function.parameters.required))
+        ? tool.function.parameters.required
+        : [];
   }
 }
 
@@ -90,6 +99,68 @@ export function describeTool(name, args) {
   const provider = providerForTool(name);
   if (!provider) return 'Perform an action in a connected app.';
   return REGISTRY[provider].describe(name, args || {});
+}
+
+/**
+ * Validates a proposed tool call's arguments against that tool's own
+ * schema (its `required` list) BEFORE the call is ever shown to the user
+ * (describeTool) or executed. This exists so a malformed call — e.g. the
+ * model calling github_get_file_contents with no `path` — never surfaces
+ * as a broken-looking trace/confirm line (previously: `Read "?" from
+ * owner/repo.`). Instead the caller (chat-endpoint.js's agent loop) can
+ * catch this before rendering anything and ask the model to retry with
+ * the missing fields, silently, as part of the same turn.
+ *
+ * Returns { ok: true } or { ok: false, missing: string[] }.
+ */
+export function validateToolArgs(name, args) {
+  const required = TOOL_NAME_TO_REQUIRED[name];
+  if (!required) return { ok: true }; // unrecognized tool — let execute() surface UNKNOWN_TOOL
+  const a = args || {};
+  const missing = required.filter((n) => a[n] === undefined || a[n] === null || a[n] === '');
+  return missing.length > 0 ? { ok: false, missing } : { ok: true };
+}
+
+/**
+ * A stable key identifying "what this write is scoped to" for a given
+ * tool call — e.g. an "owner/repo" string for GitHub tools, so approving
+ * writes to one repo never silently approves writes to a different one.
+ * Providers with no meaningful sub-scope (Google's single primary
+ * calendar, Canva's single account) return a constant scope key. Falls
+ * back to 'unscoped' for a write call missing the args it needs to
+ * compute a real scope (e.g. no owner/repo yet) — 'unscoped' never
+ * matches a real approval record, so it always falls through to asking.
+ */
+export function approvalScopeForTool(name, args) {
+  const provider = providerForTool(name);
+  if (!provider || typeof REGISTRY[provider].approvalScope !== 'function') return 'unscoped';
+  return REGISTRY[provider].approvalScope(name, args || {}) || 'unscoped';
+}
+
+/**
+ * Checks a list of session-scoped (really: conversation-scoped — see
+ * chat-endpoint.js) approval records for one that already covers this
+ * exact tool, on this exact provider+scope. Approval records are supplied
+ * by the client (persisted per-conversation, never shared across
+ * conversations or accounts) in the shape:
+ *   { provider, scope, approvedActionClasses: string[] }
+ * This function is defensive about malformed input since it reads
+ * client-supplied data — anything that doesn't look like a valid record
+ * is simply ignored rather than trusted.
+ */
+export function isToolApproved(approvals, name, args) {
+  if (!Array.isArray(approvals)) return false;
+  const provider = providerForTool(name);
+  if (!provider) return false;
+  const scope = approvalScopeForTool(name, args);
+  if (scope === 'unscoped') return false;
+  return approvals.some((a) =>
+    a && typeof a === 'object' &&
+    a.provider === provider &&
+    a.scope === scope &&
+    Array.isArray(a.approvedActionClasses) &&
+    a.approvedActionClasses.includes(name)
+  );
 }
 
 /**
