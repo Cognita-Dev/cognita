@@ -1,9 +1,11 @@
 // github-tools.js
-// Tool schemas + executors for the GitHub connector, scoped to exactly
-// what the `public_repo` OAuth scope (see connector-providers.js) allows:
-// read the user's repos, and open an issue on one of them. No private-repo
-// access, no destructive actions (no delete/close, no force-push, nothing
-// that can't be undone by hand).
+// Tool schemas + executors for the GitHub connector, scoped to the
+// `repo` OAuth scope (see connector-providers.js): full read/write
+// access to both public and private repositories the user can access.
+// Currently only two actions are exposed: listing repos and opening an
+// issue. No destructive actions (no delete/close, no force-push,
+// nothing that can't be undone by hand) — widen REQUIRES_CONFIRMATION
+// and TOOLS together if that changes.
 //
 // Every file in this "*-tools.js" family follows the same shape, on
 // purpose, so connector-tools.js can treat all four identically:
@@ -27,7 +29,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'github_list_repos',
-      description: "Lists the user's most recently updated GitHub repositories (name, description, visibility, URL). Use this to find a repo before opening an issue on it, or to answer questions about what repos the user has.",
+      description: "Lists the user's most recently updated GitHub repositories (name, description, visibility, URL), including private repositories now that the connection uses the 'repo' scope. Use this to find a repo before opening an issue on it, or to answer questions about what repos the user has.",
       parameters: {
         type: 'object',
         properties: {
@@ -89,13 +91,20 @@ async function _listRepos(uid, args, env) {
   const token = await getValidToken(uid, 'github', env);
   const limit = Math.min(Math.max(parseInt(args.limit, 10) || 10, 1), 30);
   const repos = await _githubFetch(token, '/user/repos?sort=updated&per_page=' + limit, { method: 'GET' });
-  return repos.map((r) => ({
+  const list = repos.map((r) => ({
     name: r.full_name,
     description: r.description || null,
     private: !!r.private,
     url: r.html_url,
     updatedAt: r.updated_at,
   }));
+  if (list.length === 0) {
+    return {
+      repos: [],
+      note: 'GitHub returned zero repositories for this account. This means either the account genuinely has none, or — if the user expects to see repos here — the connection is stale: reconnecting GitHub from Account Settings > Connections will fix it. Tell the user which of these is more likely given the context, and suggest reconnecting if they expected results.',
+    };
+  }
+  return { repos: list };
 }
 
 async function _createIssue(uid, args, env) {
