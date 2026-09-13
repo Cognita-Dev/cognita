@@ -47,11 +47,17 @@ export const TOOLS = [
 export const REQUIRES_CONFIRMATION = ['canva_create_design'];
 
 export function describe(name, args) {
-  if (name === 'canva_list_designs') return 'List your recent Canva designs.';
+  if (name === 'canva_list_designs') return 'Checking your recent designs.';
   if (name === 'canva_create_design') {
-    return 'Create a new Canva design titled "' + (args.title || '') + '"' + (args.designType ? ' (' + args.designType + ')' : '') + '.';
+    return 'Creating a new design titled "' + (args.title || '') + '"' + (args.designType ? ' (' + args.designType + ')' : '') + '.';
   }
-  return 'Perform a Canva action.';
+  return 'Working in your Canva account.';
+}
+
+// Single scope: writes here only ever add a design to the user's one
+// connected Canva account — no sub-scope to isolate approvals to.
+export function approvalScope(_name, _args) {
+  return 'account';
 }
 
 async function _canvaFetch(token, path, options = {}) {
