@@ -1340,11 +1340,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .tool-trace-card--done i.ph { color: var(--accent, var(--text-2)); }
 .tool-trace-card--done .tool-trace-card-label { font-weight: 500; color: var(--text-2); }
 
-/* Sequential step reveal (animateToolTrace in js/app.js) — a card in
-   this state is "currently running": spinning icon (.trace-spin, set
-   via JS by swapping the icon's class) and a shimmering label using the
-   same text-gradient technique as .thinking-word above. Both clear the
-   moment the step settles to its real icon. */
+/* Live step-in-progress state (createLiveTurnIndicator in js/app.js) — a
+   card in this state is a real "the agent is working on the next step
+   right now" placeholder, inserted the instant a `round` SSE event
+   arrives from the backend: spinning icon (.trace-spin) and a
+   shimmering label using the same text-gradient technique as
+   .thinking-word above. It's swapped for the real, settled card the
+   moment the matching `step` event arrives with that step's actual
+   result. */
 .tool-trace-card--pending i.ph { color: var(--text-4); }
 .tool-trace-card--pending .tool-trace-card-label {
   background: linear-gradient(
