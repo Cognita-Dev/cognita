@@ -1,9 +1,13 @@
 // js/resources.js
-// Resources page behavior. Talks to the same Worker as the chat app,
+// Resources view behavior. Talks to the same Worker as the chat app,
 // through window.Auth.authedFetch — never touches AI providers or B2
 // directly.
+//
+// Exports mount(), called once by js/router.js the first time the
+// resources view is opened. Sidebar chrome is owned by js/shell.js.
 
 import { buildExcerpt } from '../excerpt-builder.js';
+import { escapeHtml, showToast, renderAccountInfo } from './shell.js';
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
@@ -203,7 +207,7 @@ let currentAccountPlanId = 'free';
 let currentAccountHasDesignTemplates = false;
 let activeEditorHandle = null;
 
-(async function init() {
+export async function mount() {
   const user = await window.Auth.requireAuthOrRedirect();
   if (!user) return;
 
@@ -213,21 +217,10 @@ let activeEditorHandle = null;
 
   renderResourceTypeGrid();
   wireForm();
-  wireSidebar();
-  wireAccountMenu();
   wireResultPanel();
   wireLibraryPreviewPanel();
   await loadMyResources();
   await loadRecommendedLibrary();
-})();
-
-function renderAccountInfo(user) {
-  const displayName = (user.displayName || '').trim();
-  const label = displayName || user.email || 'Signed in';
-
-  document.getElementById('accountEmail').textContent = label;
-  document.getElementById('accountAvatar').textContent =
-    label.charAt(0).toUpperCase();
 }
 
 async function refreshAccount() {
@@ -297,60 +290,6 @@ async function refreshUsage() {
   } catch (e) {
     console.error('[resources] could not load usage:', e.message);
   }
-}
-
-/* ════════════════════════════════════════════════════════
-   SIDEBAR / ACCOUNT MENU (same behavior as app.js)
-════════════════════════════════════════════════════════ */
-
-function wireSidebar() {
-  const sidebar = document.getElementById('appSidebar');
-  const scrim = document.getElementById('sidebarScrim');
-
-  document
-    .getElementById('sidebarCollapseBtn')
-    .addEventListener('click', () => {
-      sidebar.classList.toggle('is-collapsed');
-    });
-
-  document
-    .getElementById('sidebarCloseBtn')
-    .addEventListener('click', closeMobileSidebar);
-
-  document
-    .getElementById('mobileSidebarBtn')
-    .addEventListener('click', () => {
-      sidebar.classList.add('is-open');
-      scrim.classList.add('is-visible');
-    });
-
-  scrim.addEventListener('click', closeMobileSidebar);
-}
-
-function closeMobileSidebar() {
-  document.getElementById('appSidebar').classList.remove('is-open');
-  document.getElementById('sidebarScrim').classList.remove('is-visible');
-}
-
-function wireAccountMenu() {
-  const btn = document.getElementById('accountBtn');
-  const menu = document.getElementById('accountMenu');
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menu.hidden = !menu.hidden;
-  });
-
-  document.addEventListener('click', () => {
-    menu.hidden = true;
-  });
-
-  document
-    .getElementById('logOutBtn')
-    .addEventListener('click', async () => {
-      await window.Auth.logOut();
-      window.location.href = '/login.html';
-    });
 }
 
 /* ════════════════════════════════════════════════════════
@@ -1381,9 +1320,9 @@ async function downloadResource(resourceId, format, btn) {
 
 /* ════════════════════════════════════════════════════════
    RECOMMENDED / FEATURED (admin-curated library content)
-   Moved here from library.html since this is the page a user
-   sees first. Read-only — no edit/regenerate, unlike a user's
-   own resources above.
+   Shown here since Resources is the view a user sees first.
+   Read-only — no edit/regenerate, unlike a user's own
+   resources above.
 ════════════════════════════════════════════════════════ */
 
 async function loadRecommendedLibrary() {
@@ -1632,33 +1571,4 @@ async function loadMyResources() {
       e.message
     );
   }
-}
-
-/* ════════════════════════════════════════════════════════
-   HELPERS
-════════════════════════════════════════════════════════ */
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function showToast(message) {
-  const existing = document.querySelector('.toast');
-
-  if (existing) {
-    existing.remove();
-  }
-
-  const toast = document.createElement('div');
-
-  toast.className = 'toast';
-  toast.textContent = message;
-
-  document.body.appendChild(toast);
-
-  setTimeout(() => toast.remove(), 3000);
 }
