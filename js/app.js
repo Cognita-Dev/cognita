@@ -1144,35 +1144,42 @@ async function sendMessage(text) {
   renderConversation();
   updateConversationTitle();
 
-  const thinkingId = appendThinkingIndicator();
+  const payload = {
+    messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+    quality: currentQuality,
+    approvals: conversationApprovals,
+  };
+  if (outgoingImages.length > 0) payload.images = outgoingImages;
+
+  await runStreamedTurn(payload);
+  isSending = false;
+}
+
+/* Shared by a fresh message send and a confirmed tool-call resume (see
+ * resolvePendingToolCall) — both are just a POST to /api/chat that comes
+ * back as an SSE stream of `round` / `step` / `error` / `done` events
+ * (see the big comment above the streaming section in chat-endpoint.js).
+ * This drives a single live indicator bubble in real time as each event
+ * arrives, then commits the finished turn into `conversation` /
+ * `conversationMeta` exactly once, on `done`. */
+async function runStreamedTurn(payload) {
+  const live = createLiveTurnIndicator();
   const startedAt = performance.now();
+  let settled = false;
 
-  try {
-    const payload = {
-      messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
-      quality: currentQuality,
-      approvals: conversationApprovals,
-    };
-    if (outgoingImages.length > 0) payload.images = outgoingImages;
+  const finishWithError = (message, status) => {
+    if (settled) return;
+    settled = true;
+    live.remove();
+    appendSystemNotice(message || 'Something went wrong. Please try again.', status === 429 ? 'limit' : 'error');
+  };
 
-    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-    removeThinkingIndicator(thinkingId);
-
-    if (!res.ok) {
-      appendSystemNotice(data.error || 'Something went wrong. Please try again.', res.status === 429 ? 'limit' : 'error');
-      isSending = false;
-      return;
-    }
-
+  const finishWithData = (data) => {
+    if (settled) return;
+    settled = true;
+    live.remove();
     const elapsedMs = performance.now() - startedAt;
-
-    conversation.push({ role: 'assistant', content: data.reply });
+    conversation.push({ role: 'assistant', content: data.reply || '' });
     conversationMeta[conversation.length - 1] = {
       thinking: data.thinking || null,
       thinkingHeading: data.thinkingHeading || null,
@@ -1193,13 +1200,243 @@ async function sendMessage(text) {
     renderConversation();
     refreshUsage();
     persistCurrentConversation();
+  };
+
+  try {
+    await streamChatSSE(WORKER_URL + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, {
+      onRound: () => live.addPendingRow(),
+      onStep: (step) => live.addStep(step),
+      onDone: (data) => finishWithData(data),
+      onError: (data) => finishWithError(data && data.message, data && data.status),
+      onFatal: (message, status) => finishWithError(message, status),
+    });
   } catch (e) {
-    removeThinkingIndicator(thinkingId);
-    appendSystemNotice('Could not reach Cognita. Please check your connection.', 'error');
-    console.error('[app] chat request failed:', e.message);
+    console.error('[app] chat stream failed:', e.message);
+    finishWithError('Could not reach Cognita. Please check your connection.', 0);
+    return;
   }
 
-  isSending = false;
+  // The connection closed without ever sending an `error` or `done`
+  // event — e.g. the Worker crashed mid-stream, or a proxy cut the
+  // connection. Never leave the user staring at a spinner forever, and
+  // never silently pretend the turn succeeded.
+  if (!settled) {
+    finishWithError('Connection to Cognita was interrupted before a response was received.', 0);
+  }
+}
+
+/* ── SSE client ──────────────────────────────────────────────────────
+ * Parses a text/event-stream response from /api/chat by hand (rather
+ * than EventSource, which can't send the Authorization header or a POST
+ * body). Buffers raw bytes across chunk boundaries and splits on the
+ * blank-line event separator per the SSE spec; `: ping` heartbeat
+ * comments (sent periodically by the backend to keep the connection
+ * alive during long tool-call rounds) are recognized and ignored. */
+async function streamChatSSE(url, options, handlers) {
+  let res;
+  try {
+    res = await window.Auth.authedFetch(url, options);
+  } catch (e) {
+    handlers.onFatal && handlers.onFatal('Could not reach Cognita. Please check your connection.', 0);
+    return;
+  }
+
+  if (!res.ok) {
+    // A failure caught before the stream ever opened (auth, quota, plan
+    // checks, request validation) still comes back as a plain JSON error
+    // with a real HTTP status — see the top of handleChatRequest.
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    handlers.onFatal && handlers.onFatal(data.error, res.status);
+    return;
+  }
+
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    // Streaming reads aren't available in this environment. Fall back to
+    // treating the whole response as one JSON payload in case the server
+    // ever answers this way.
+    try {
+      const data = await res.json();
+      handlers.onDone && handlers.onDone(data);
+    } catch (e) {
+      handlers.onFatal && handlers.onFatal('Could not read the response from Cognita.', 500);
+    }
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  const dispatch = (eventName, data) => {
+    if (eventName === 'round') handlers.onRound && handlers.onRound(data);
+    else if (eventName === 'step') handlers.onStep && handlers.onStep(data);
+    else if (eventName === 'error') handlers.onError && handlers.onError(data);
+    else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
+    // Unknown event names are ignored rather than treated as fatal, so a
+    // future server-added event type never breaks older clients.
+  };
+
+  const consumeBuffered = () => {
+    let sepIndex;
+    while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, sepIndex);
+      buffer = buffer.slice(sepIndex + 2);
+      if (!rawEvent || rawEvent.startsWith(':')) continue; // heartbeat/comment-only
+
+      let eventName = 'message';
+      const dataLines = [];
+      for (const line of rawEvent.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+      }
+      const dataStr = dataLines.join('\n');
+      if (!dataStr) continue;
+      let data;
+      try {
+        data = JSON.parse(dataStr);
+      } catch (e) {
+        continue; // malformed frame — skip rather than crash the whole turn
+      }
+      dispatch(eventName, data);
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      consumeBuffered();
+    }
+    // Flush any trailing decoder state and process a final frame that
+    // wasn't terminated by a trailing blank line.
+    buffer += decoder.decode();
+    consumeBuffered();
+  } catch (e) {
+    console.error('[app] SSE read failed:', e.message);
+    handlers.onFatal && handlers.onFatal('Connection to Cognita was interrupted.', 0);
+  }
+}
+
+/* Live, streaming version of appendThinkingIndicator(): starts identical
+ * (rotating word + timer), then morphs in place into a growing action
+ * trace the instant the first `round`/`step` event arrives — each tool
+ * step appears the moment it actually finishes on the backend, never a
+ * client-side replay of an already-known array (see the removed
+ * animateToolTrace()). Text is inserted via textContent throughout, not
+ * innerHTML, since step summaries can contain user- or repo-controlled
+ * strings (file names, issue titles, etc.). */
+function createLiveTurnIndicator() {
+  const list = document.getElementById('messageList');
+  const id = 'live-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+  const el = document.createElement('div');
+  el.className = 'message is-assistant';
+  el.id = id;
+  el.innerHTML =
+    '<div class="message-avatar"><img src="/assets/cognita.png" alt="" style="width:16px;height:16px;"></div>' +
+    '<div class="message-body">' +
+      '<div class="thinking-indicator" data-role="idle-indicator">' +
+        '<span class="thinking-dot"></span>' +
+        '<span class="thinking-word" data-role="word"></span>' +
+        '<span class="thinking-timer" data-role="timer">0.0s</span>' +
+      '</div>' +
+      '<div class="tool-trace-list" data-role="live-trace" style="display:none;"></div>' +
+    '</div>';
+  document.getElementById('emptyState').hidden = true;
+  list.hidden = false;
+  list.appendChild(el);
+  scrollToBottom();
+
+  const wordEl = el.querySelector('[data-role="word"]');
+  const timerEl = el.querySelector('[data-role="timer"]');
+  const traceEl = el.querySelector('[data-role="live-trace"]');
+  const idleEl = el.querySelector('[data-role="idle-indicator"]');
+  if (wordEl) wordEl.textContent = THINKING_WORDS[0];
+
+  const startedAt = performance.now();
+  let wordIdx = 0;
+  const wordInterval = setInterval(() => {
+    wordIdx = (wordIdx + 1) % THINKING_WORDS.length;
+    if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
+  }, 2200);
+  const timerInterval = setInterval(() => {
+    const elapsed = (performance.now() - startedAt) / 1000;
+    if (timerEl) timerEl.textContent = elapsed.toFixed(1) + 's';
+  }, 100);
+  activeThinkingTimers[id] = { wordInterval, timerInterval };
+
+  let pendingRow = null; // the single "working on the next step…" placeholder, if any
+
+  function reveal() {
+    if (idleEl) idleEl.style.display = 'none';
+    if (traceEl) traceEl.style.display = '';
+  }
+
+  function addPendingRow() {
+    reveal();
+    if (!traceEl || pendingRow) return; // only one placeholder at a time
+    const row = document.createElement('div');
+    row.className = 'tool-trace-card tool-trace-card--pending';
+    const icon = document.createElement('i');
+    icon.className = 'ph ph-circle-notch trace-spin';
+    const label = document.createElement('span');
+    label.className = 'tool-trace-card-label';
+    label.textContent = 'Working\u2026';
+    row.appendChild(icon);
+    row.appendChild(label);
+    traceEl.appendChild(row);
+    pendingRow = row;
+    scrollToBottom();
+  }
+
+  function addStep(step) {
+    if (!step) return;
+    reveal();
+    if (!traceEl) return;
+
+    // "awaiting_confirmation" isn't rendered as its own trace row (the
+    // confirm/cancel card that appears once the turn commits already
+    // covers it) — it just closes out any pending placeholder.
+    if (step.type === 'awaiting_confirmation') {
+      if (pendingRow) { pendingRow.remove(); pendingRow = null; }
+      return;
+    }
+
+    const ok = step.ok !== false;
+    const finalIcon = step.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
+    const statusClass = step.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
+
+    const row = pendingRow || document.createElement('div');
+    if (!pendingRow) traceEl.appendChild(row);
+    row.className = 'tool-trace-card ' + statusClass;
+    row.innerHTML = '';
+    const icon = document.createElement('i');
+    icon.className = 'ph ' + finalIcon;
+    const label = document.createElement('span');
+    label.className = 'tool-trace-card-label';
+    label.textContent = step.summary || step.name || 'Action performed.';
+    row.appendChild(icon);
+    row.appendChild(label);
+    pendingRow = null;
+    scrollToBottom();
+  }
+
+  function remove() {
+    const timers = activeThinkingTimers[id];
+    if (timers) {
+      clearInterval(timers.wordInterval);
+      clearInterval(timers.timerInterval);
+      delete activeThinkingTimers[id];
+    }
+    el.remove();
+  }
+
+  return { id, addPendingRow, addStep, remove };
 }
 
 /* ════════════════════════════════════════════════════════
@@ -1249,58 +1486,16 @@ function renderConversation() {
       });
     };
 
-    // Order on screen is: thought box → step trace → reply text. If this
-    // turn used tools, play the step-reveal animation first and only
-    // start typing the reply once every step has landed on its final
-    // checkmark — see animateToolTrace() below.
-    if (targetEl && targetEl.querySelector('.tool-trace-list[data-animate="true"]')) {
-      animateToolTrace(targetEl, startTypewriter);
-    } else {
-      startTypewriter();
-    }
+    // Order on screen is: thought box → step trace → reply text. The
+    // step trace itself was already shown live, step by step, as it
+    // actually happened (see createLiveTurnIndicator/runStreamedTurn) —
+    // this commit render just re-renders it in its final, settled state,
+    // with no replay animation needed. Only the reply text still types
+    // out here.
+    startTypewriter();
   } else {
     freshAssistantIndex = -1;
   }
-}
-
-/* ── Tool step reveal ─────────────────────────────────────────────
-   Plays back the already-known `steps` array (the backend is not
-   streamed, so every step arrived at once — see chat-endpoint.js) as if
-   each one were completing in real time: cards start hidden, are
-   revealed one at a time with a spinning icon and shimmering label
-   (.tool-trace-card--pending / .trace-spin in css/app.css), then flip to
-   their real checkmark/warning icon before the next card appears. A
-   trailing "Completed" card closes the sequence. Respects
-   prefers-reduced-motion by skipping the per-card delay entirely. */
-function animateToolTrace(messageEl, onDone) {
-  const list = messageEl.querySelector('.tool-trace-list[data-animate="true"]');
-  if (!list) { onDone && onDone(); return; }
-
-  const cards = Array.from(list.children);
-  if (cards.length === 0) { onDone && onDone(); return; }
-
-  const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-
-  let i = 0;
-  function revealNext() {
-    if (i >= cards.length) { onDone && onDone(); return; }
-    const card = cards[i];
-    card.style.display = '';
-    scrollToBottom();
-
-    const settleDelay = reducedMotion ? 0 : (420 + Math.random() * 380);
-    setTimeout(() => {
-      const icon = card.querySelector('i.ph');
-      if (icon) icon.className = 'ph ' + (card.dataset.finalIcon || 'ph-check-circle');
-      card.classList.remove('tool-trace-card--pending');
-      i++;
-      // A brief pause between a card settling and the next one starting
-      // to spin, so the sequence reads as discrete steps rather than one
-      // continuous blur.
-      setTimeout(revealNext, reducedMotion ? 0 : 120);
-    }, settleDelay);
-  }
-  revealNext();
 }
 
 /* ── Typewriter reveal ─────────────────────────────────────────────
@@ -1406,11 +1601,6 @@ function renderMessage(msg, index) {
   const rawStepList = !isUser && Array.isArray(meta.steps) ? meta.steps : [];
   const traceSteps = rawStepList.filter((s) => s && s.type !== 'awaiting_confirmation');
   const hasSteps = traceSteps.length > 0;
-  // This message is the one that JUST arrived (not a history reload) —
-  // only fresh tool-using turns get the animated pending→checkmark
-  // reveal; anything re-rendered later (edits, reloads) shows the
-  // finished state immediately.
-  const isFreshAnimated = !isUser && index === freshAssistantIndex && hasSteps;
 
   let thoughtHtml = '';
   if (!isUser && (meta.thinking || hasSteps)) {
@@ -1497,39 +1687,31 @@ function renderMessage(msg, index) {
   // the returned template below) — never trailing under the answer.
   // `traceSteps`/`hasSteps`/`isFreshAnimated` come from just above.
   //
-  // For a freshly-arrived tool-using turn (isFreshAnimated), every card
-  // starts hidden with a spinning "in progress" icon and shimmering
-  // label; animateToolTrace() (called from renderConversation, once this
-  // HTML is in the DOM) reveals them one at a time and swaps each to its
-  // real checkmark/warning icon only once that step's "turn" is done,
-  // finishing with a "Completed" line — see the styles in css/app.css
-  // (.tool-trace-card--pending, .trace-spin) for the visual side.
-  // History reloads / regenerated re-renders show the finished state
-  // immediately, with no animation.
+  // The trace was already revealed live, step by step, as each one
+  // actually completed on the backend (see createLiveTurnIndicator /
+  // runStreamedTurn) — this render just shows its final, settled state.
+  // History reloads and regenerated re-renders land here identically.
   let actionTraceHtml = '';
   if (hasSteps) {
     const cardsHtml = traceSteps.map((te) => {
       const ok = te.ok !== false;
       const finalIcon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
       const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
-      const iconClass = isFreshAnimated ? 'ph-circle-notch trace-spin' : finalIcon;
       return (
-        '<div class="tool-trace-card ' + statusClass + (isFreshAnimated ? ' tool-trace-card--pending' : '') + '" ' +
-          'data-final-icon="' + finalIcon + '"' + (isFreshAnimated ? ' style="display:none;"' : '') + '>' +
-          '<i class="ph ' + iconClass + '"></i>' +
+        '<div class="tool-trace-card ' + statusClass + '">' +
+          '<i class="ph ' + finalIcon + '"></i>' +
           '<span class="tool-trace-card-label">' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
         '</div>'
       );
     }).join('');
 
-    const doneIconClass = isFreshAnimated ? 'ph-circle-notch trace-spin' : 'ph-check-circle';
     const doneHtml =
-      '<div class="tool-trace-card tool-trace-card--done" data-final-icon="ph-check-circle"' + (isFreshAnimated ? ' style="display:none;"' : '') + '>' +
-        '<i class="ph ' + doneIconClass + '"></i>' +
+      '<div class="tool-trace-card tool-trace-card--done">' +
+        '<i class="ph ph-check-circle"></i>' +
         '<span class="tool-trace-card-label">Completed</span>' +
       '</div>';
 
-    actionTraceHtml = '<div class="tool-trace-list"' + (isFreshAnimated ? ' data-animate="true"' : '') + '>' + cardsHtml + doneHtml + '</div>';
+    actionTraceHtml = '<div class="tool-trace-list">' + cardsHtml + doneHtml + '</div>';
   }
 
   return (
@@ -1609,48 +1791,12 @@ async function resolvePendingToolCall(index, approved) {
   meta.pendingToolCall = { ...ptc, status: 'confirmed' };
   renderConversation();
 
-  const thinkingId = appendThinkingIndicator();
-  try {
-    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
-        quality: currentQuality,
-        confirmToolCall: { name: ptc.name, args: ptc.args },
-        approvals: conversationApprovals,
-      }),
-    });
-
-    const data = await res.json();
-    removeThinkingIndicator(thinkingId);
-
-    if (!res.ok) {
-      appendSystemNotice(data.error || 'Could not complete that action.', res.status === 429 ? 'limit' : 'error');
-      return;
-    }
-
-    conversation.push({ role: 'assistant', content: data.reply });
-    conversationMeta[conversation.length - 1] = {
-      thinking: data.thinking || null,
-      thinkingHeading: data.thinkingHeading || null,
-      sources: data.sources || null,
-      pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
-      steps: Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : []),
-    };
-    // This confirmation may have just been recorded as a standing
-    // approval for this conversation (Bug 4) — pick up the updated list
-    // so the next equivalent write on the same repo/scope isn't re-asked.
-    if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
-    freshAssistantIndex = conversation.length - 1;
-    renderConversation();
-    refreshUsage();
-    persistCurrentConversation();
-  } catch (e) {
-    removeThinkingIndicator(thinkingId);
-    appendSystemNotice('Could not reach Cognita. Please check your connection.', 'error');
-    console.error('[app] tool confirmation request failed:', e.message);
-  }
+  await runStreamedTurn({
+    messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+    quality: currentQuality,
+    confirmToolCall: { name: ptc.name, args: ptc.args },
+    approvals: conversationApprovals,
+  });
 }
 
 // Copies what the person actually SEES (rendered bold, lists, tables,
