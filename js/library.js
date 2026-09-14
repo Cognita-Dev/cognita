@@ -1,7 +1,12 @@
 // js/library.js
-// User-facing library page. Talks only to /api/library/* — never touches
+// User-facing library view. Talks only to /api/library/* — never touches
 // /api/admin/* or /api/resources/* — so a normal user's session here has
 // nothing that could accidentally hit an admin-only route.
+//
+// Exports mount(), called once by js/router.js the first time the
+// library view is opened. Sidebar chrome is owned by js/shell.js.
+
+import { escapeHtml, showToast, renderAccountInfo } from './shell.js';
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 
@@ -36,28 +41,19 @@ const FORMAT_LABELS = {
 let allLibraryResources = [];
 let currentTypeFilter = '';
 
-(async function init() {
+export async function mount() {
   const user = await window.Auth.requireAuthOrRedirect();
   if (!user) return;
 
   renderAccountInfo(user);
   await refreshAccount();
 
-  wireSidebar();
-  wireAccountMenu();
   wireResultPanel();
   wireTypeFilter();
   wireCollectionDetailBack();
 
   await loadCollections();
   await loadLibraryResources();
-})();
-
-function renderAccountInfo(user) {
-  const displayName = (user.displayName || '').trim();
-  const label = displayName || user.email || 'Signed in';
-  document.getElementById('accountEmail').textContent = label;
-  document.getElementById('accountAvatar').textContent = label.charAt(0).toUpperCase();
 }
 
 async function refreshAccount() {
@@ -71,50 +67,6 @@ async function refreshAccount() {
   } catch (e) {
     console.error('[library] could not load account:', e.message);
   }
-}
-
-/* ── Sidebar / account menu (same behavior as resources.js) ── */
-
-function wireSidebar() {
-  const sidebar = document.getElementById('appSidebar');
-  const scrim = document.getElementById('sidebarScrim');
-
-  document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
-    sidebar.classList.toggle('is-collapsed');
-  });
-
-  document.getElementById('sidebarCloseBtn').addEventListener('click', closeMobileSidebar);
-
-  document.getElementById('mobileSidebarBtn').addEventListener('click', () => {
-    sidebar.classList.add('is-open');
-    scrim.classList.add('is-visible');
-  });
-
-  scrim.addEventListener('click', closeMobileSidebar);
-}
-
-function closeMobileSidebar() {
-  document.getElementById('appSidebar').classList.remove('is-open');
-  document.getElementById('sidebarScrim').classList.remove('is-visible');
-}
-
-function wireAccountMenu() {
-  const btn = document.getElementById('accountBtn');
-  const menu = document.getElementById('accountMenu');
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menu.hidden = !menu.hidden;
-  });
-
-  document.addEventListener('click', () => {
-    menu.hidden = true;
-  });
-
-  document.getElementById('logOutBtn').addEventListener('click', async () => {
-    await window.Auth.logOut();
-    window.location.href = '/login.html';
-  });
 }
 
 /* ── Type filter ── */
@@ -230,9 +182,9 @@ function renderResourceList() {
     ? allLibraryResources.filter((r) => r.resourceType === currentTypeFilter)
     : allLibraryResources;
 
-  // Recommended/Featured now lives on resources.html (the page a user
-  // sees first) — here it's always one flat browsable list, regardless
-  // of the `recommended` flag the backend still attaches per item.
+  // Recommended/Featured lives on the Resources view instead — here
+  // it's always one flat browsable list, regardless of the
+  // `recommended` flag the backend still attaches per item.
   renderResourceRows(container, filtered);
 }
 
@@ -318,16 +270,16 @@ function renderStructuredPreview(content, resourceType) {
 }
 
 function wireResultPanel() {
-  document.getElementById('resourceResultClose').addEventListener('click', () => {
-    document.getElementById('resourcesResultPanel').hidden = true;
+  document.getElementById('libraryResultClose').addEventListener('click', () => {
+    document.getElementById('libraryResultPanel').hidden = true;
   });
 }
 
 function showResultPanel(resource) {
-  const panel = document.getElementById('resourcesResultPanel');
-  const resultTitle = document.getElementById('resourceResultTitle');
-  const resultBody = document.getElementById('resourceResultBody');
-  const actionsWrap = document.getElementById('resourceResultActions');
+  const panel = document.getElementById('libraryResultPanel');
+  const resultTitle = document.getElementById('libraryResultTitle');
+  const resultBody = document.getElementById('libraryResultBody');
+  const actionsWrap = document.getElementById('libraryResultActions');
 
   panel.hidden = false;
   resultTitle.textContent = resource.structuredContent.title || 'Resource';
@@ -499,26 +451,4 @@ async function downloadResource(resourceId, format, btn) {
   }
 
   if (btn) btn.disabled = false;
-}
-
-/* ── Helpers ── */
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function showToast(message) {
-  const existing = document.querySelector('.toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = message;
-
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
 }
