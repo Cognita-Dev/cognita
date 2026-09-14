@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/resource-renderers.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -52,7 +54,9 @@
 
   <div class="sidebar-scrim" id="sidebarScrim"></div>
 
-  <!-- ── Sidebar ── -->
+  <!-- ── Sidebar — shared by every view; only one of these exists in the
+       merged page, so it never re-renders (and never re-fetches usage
+       or account info) when you switch views ── -->
   <aside class="app-sidebar" id="appSidebar">
     <div class="sidebar-top">
       <a href="/index.html" class="sidebar-logo">
@@ -74,22 +78,40 @@
       <span>New chat</span>
     </button>
 
-    <a href="/resources.html" class="sidebar-history-item" style="margin-bottom: var(--space-3);">
-      <i class="ph ph-graduation-cap" style="margin-right:8px;"></i>
-      <span>Resources</span>
-    </a>
-       
+    <nav class="sidebar-history" aria-label="Navigation">
+      <a href="/app.html?view=chat" class="sidebar-history-item" data-view="chat">
+        <i class="ph ph-chat-circle" style="margin-right:8px;"></i>
+        <span>Chat</span>
+      </a>
+      <a href="/app.html?view=resources" class="sidebar-history-item" data-view="resources">
+        <i class="ph ph-graduation-cap" style="margin-right:8px;"></i>
+        <span>Resources</span>
+      </a>
+      <a href="/app.html?view=library" class="sidebar-history-item" data-view="library">
+        <i class="ph ph-books" style="margin-right:8px;"></i>
+        <span>Library</span>
+      </a>
+    </nav>
+
     <nav class="sidebar-history" id="sidebarHistory" aria-label="Chat history">
-      <!-- Populated by app.js from localStorage -->
+      <!-- Populated by app.js from localStorage, chat view only -->
     </nav>
 
     <div class="sidebar-bottom">
-      <div class="usage-widget" id="usageWidget">
+      <div class="usage-widget" id="usageWidgetChat">
         <div class="usage-row">
           <span class="usage-label">Messages today</span>
           <span class="usage-value skeleton" id="usageMessages">00 / 00</span>
         </div>
         <div class="usage-bar"><div class="usage-bar-fill" id="usageMessagesBar"></div></div>
+      </div>
+
+      <div class="usage-widget" id="usageWidgetResources" hidden>
+        <div class="usage-row">
+          <span class="usage-label">Resources today</span>
+          <span class="usage-value skeleton" id="usageResources">00 / 00</span>
+        </div>
+        <div class="usage-bar"><div class="usage-bar-fill" id="usageResourcesBar"></div></div>
       </div>
 
       <a href="/pricing.html" class="upgrade-link" id="upgradeLink" hidden>
@@ -114,153 +136,433 @@
     </div>
   </aside>
 
-  <!-- ── Main conversation area ── -->
-    <main class="app-main">
+  <!-- ══════════════════════════════════════════════════════
+       CHAT VIEW
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-chat">
 
-      <header class="app-topbar">
-        <button class="mobile-sidebar-btn" id="mobileSidebarBtn" aria-label="Open sidebar">
-          <i class="ph ph-list"></i>
-        </button>
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
 
-        <h1 class="conversation-title" id="conversationTitle">New chat</h1>
+      <h1 class="conversation-title" id="conversationTitle">New chat</h1>
 
-        <div class="topbar-spacer"></div>
-      </header>
+      <div class="topbar-spacer"></div>
+    </header>
 
-      <div class="app-loading-overlay" id="appLoadingOverlay">
-        <div class="skeleton" style="width:55%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
-        <div class="skeleton" style="width:78%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
-        <div class="skeleton" style="width:42%;height:16px;border-radius:6px;margin-bottom:32px;"></div>
-        <div class="skeleton" style="width:90%;max-width:640px;height:52px;border-radius:14px;"></div>
-      </div>
+    <div class="app-loading-overlay" id="appLoadingOverlay">
+      <div class="skeleton" style="width:55%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
+      <div class="skeleton" style="width:78%;height:16px;border-radius:6px;margin-bottom:14px;"></div>
+      <div class="skeleton" style="width:42%;height:16px;border-radius:6px;margin-bottom:32px;"></div>
+      <div class="skeleton" style="width:90%;max-width:640px;height:52px;border-radius:14px;"></div>
+    </div>
 
-      <div class="app-content-wrap" id="appContentWrap" hidden>
+    <div class="app-content-wrap" id="appContentWrap" hidden>
 
-        <div class="conversation" id="conversation">
-          <div class="empty-state" id="emptyState">
-            <img src="/assets/cognita.png" alt="" class="empty-state-mark">
-            <h1 class="empty-state-title">What are you working on?</h1>
-            <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
+      <div class="conversation" id="conversation">
+        <div class="empty-state" id="emptyState">
+          <img src="/assets/cognita.png" alt="" class="empty-state-mark">
+          <h1 class="empty-state-title">What are you working on?</h1>
+          <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
 
-            <div class="suggestion-list">
-              <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
-                <i class="ph ph-envelope-simple"></i>
-                <span>Draft an email</span>
-              </button>
-              <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
-                <i class="ph ph-lightbulb"></i>
-                <span>Explain a concept</span>
-              </button>
-              <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
-                <i class="ph ph-file-text"></i>
-                <span>Outline a document</span>
-              </button>
-              <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
-                <i class="ph ph-chart-line"></i>
-                <span>Think through a decision</span>
-              </button>
-            </div>
+          <div class="suggestion-list">
+            <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
+              <i class="ph ph-envelope-simple"></i>
+              <span>Draft an email</span>
+            </button>
+            <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
+              <i class="ph ph-lightbulb"></i>
+              <span>Explain a concept</span>
+            </button>
+            <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
+              <i class="ph ph-file-text"></i>
+              <span>Outline a document</span>
+            </button>
+            <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
+              <i class="ph ph-chart-line"></i>
+              <span>Think through a decision</span>
+            </button>
           </div>
-
-          <div class="message-list" id="messageList" hidden></div>
         </div>
 
-        <div class="composer-wrap">
+        <div class="message-list" id="messageList" hidden></div>
+      </div>
 
-          <div class="composer" id="composer">
-            <div class="composer-attachments" id="composerAttachments" hidden></div>
+      <div class="composer-wrap">
 
-            <textarea
-              id="composerInput"
-              class="composer-input"
-              placeholder="Message Cognita"
-              rows="1"
-              aria-label="Message Cognita"
-            ></textarea>
+        <div class="composer" id="composer">
+          <div class="composer-attachments" id="composerAttachments" hidden></div>
 
-            <div class="composer-tools-row">
-              <div class="composer-tools-left">
-                <div class="attach-menu" id="attachMenu">
-                  <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual or document">
-                    <i class="ph ph-plus"></i>
-                  </button>
-                  <div class="attach-menu-list" id="attachMenuList" hidden>
-                    <button class="attach-menu-item" id="attachFilesItem" type="button">
-                      <i class="ph ph-paperclip"></i>
-                      <span>Add photos & files</span>
-                    </button>
-                    <button class="attach-menu-item" id="attachDiagramItem" type="button" data-kind="diagram">
-                      <i class="ph ph-flow-arrow"></i>
-                      <span>Create a diagram</span>
-                    </button>
-                    <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
-                      <i class="ph ph-image-square"></i>
-                      <span>Create an illustration</span>
-                    </button>
-                    <button class="attach-menu-item" id="attachDocumentItem" type="button">
-                      <i class="ph ph-file-doc"></i>
-                      <span>Create a document</span>
-                    </button>
-                    <button class="attach-menu-item" id="attachConnectorsItem" type="button">
-                      <i class="ph ph-plug"></i>
-                      <span>Connected apps</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
+          <textarea
+            id="composerInput"
+            class="composer-input"
+            placeholder="Message Cognita"
+            rows="1"
+            aria-label="Message Cognita"
+          ></textarea>
 
-              <div class="composer-tools-right">
-                <div class="quality-picker" id="qualityPicker">
-                  <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
-                    <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
-                    <span id="qualityPickerLabel">Standard</span>
-                    <i class="ph ph-caret-down quality-picker-caret"></i>
-                  </button>
-                  <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
-                    <button class="quality-picker-option is-active" data-quality="standard">
-                      <i class="ph ph-lightning"></i>
-                      <span class="quality-picker-option-text">
-                        <span class="quality-picker-option-name">Standard</span>
-                        <span class="quality-picker-option-desc">Fast, everyday answers</span>
-                      </span>
-                      <i class="ph ph-check quality-picker-check"></i>
-                    </button>
-                    <button class="quality-picker-option" data-quality="advanced">
-                      <i class="ph ph-brain"></i>
-                      <span class="quality-picker-option-text">
-                        <span class="quality-picker-option-name">Advanced</span>
-                        <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
-                      </span>
-                      <i class="ph ph-check quality-picker-check"></i>
-                    </button>
-                    <button class="quality-picker-option" data-quality="thorough">
-                      <i class="ph ph-magnifying-glass"></i>
-                      <span class="quality-picker-option-text">
-                        <span class="quality-picker-option-name">Thorough</span>
-                        <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
-                      </span>
-                      <i class="ph ph-check quality-picker-check"></i>
-                    </button>
-                  </div>
-                </div>
-
-                <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
-                  <i class="ph ph-arrow-up"></i>
+          <div class="composer-tools-row">
+            <div class="composer-tools-left">
+              <div class="attach-menu" id="attachMenu">
+                <button class="composer-tool-btn" id="attachMenuTrigger" aria-haspopup="true" aria-expanded="false" aria-label="Add attachment" title="Add photos, files, or generate a visual or document">
+                  <i class="ph ph-plus"></i>
                 </button>
+                <div class="attach-menu-list" id="attachMenuList" hidden>
+                  <button class="attach-menu-item" id="attachFilesItem" type="button">
+                    <i class="ph ph-paperclip"></i>
+                    <span>Add photos & files</span>
+                  </button>
+                  <button class="attach-menu-item" id="attachDiagramItem" type="button" data-kind="diagram">
+                    <i class="ph ph-flow-arrow"></i>
+                    <span>Create a diagram</span>
+                  </button>
+                  <button class="attach-menu-item" id="attachIllustrationItem" type="button" data-kind="illustration">
+                    <i class="ph ph-image-square"></i>
+                    <span>Create an illustration</span>
+                  </button>
+                  <button class="attach-menu-item" id="attachDocumentItem" type="button">
+                    <i class="ph ph-file-doc"></i>
+                    <span>Create a document</span>
+                  </button>
+                  <button class="attach-menu-item" id="attachConnectorsItem" type="button">
+                    <i class="ph ph-plug"></i>
+                    <span>Connected apps</span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
-          <input type="file" id="fileInput" hidden accept=".txt,.csv,.pdf,.doc,.docx,text/plain,text/csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif">
+            <div class="composer-tools-right">
+              <div class="quality-picker" id="qualityPicker">
+                <button class="quality-picker-trigger" id="qualityPickerTrigger" aria-haspopup="true" aria-expanded="false">
+                  <i class="ph ph-sliders-horizontal" id="qualityPickerIcon"></i>
+                  <span id="qualityPickerLabel">Standard</span>
+                  <i class="ph ph-caret-down quality-picker-caret"></i>
+                </button>
+                <div class="quality-picker-menu" id="qualityPickerMenu" hidden>
+                  <button class="quality-picker-option is-active" data-quality="standard">
+                    <i class="ph ph-lightning"></i>
+                    <span class="quality-picker-option-text">
+                      <span class="quality-picker-option-name">Standard</span>
+                      <span class="quality-picker-option-desc">Fast, everyday answers</span>
+                    </span>
+                    <i class="ph ph-check quality-picker-check"></i>
+                  </button>
+                  <button class="quality-picker-option" data-quality="advanced">
+                    <i class="ph ph-brain"></i>
+                    <span class="quality-picker-option-text">
+                      <span class="quality-picker-option-name">Advanced</span>
+                      <span class="quality-picker-option-desc">Better reasoning on harder tasks</span>
+                    </span>
+                    <i class="ph ph-check quality-picker-check"></i>
+                  </button>
+                  <button class="quality-picker-option" data-quality="thorough">
+                    <i class="ph ph-magnifying-glass"></i>
+                    <span class="quality-picker-option-text">
+                      <span class="quality-picker-option-name">Thorough</span>
+                      <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
+                    </span>
+                    <i class="ph ph-check quality-picker-check"></i>
+                  </button>
+                </div>
+              </div>
+
+              <button class="composer-send-btn" id="sendBtn" aria-label="Send message" disabled>
+                <i class="ph ph-arrow-up"></i>
+              </button>
+            </div>
+          </div>
         </div>
 
+        <p class="composer-hint">Cognita can make mistakes. Check important information.</p>
+        <input type="file" id="fileInput" hidden accept=".txt,.csv,.pdf,.doc,.docx,text/plain,text/csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif">
       </div>
 
-    </main>
+    </div>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       RESOURCES VIEW
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-resources" hidden>
+
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Resources</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+
+    <div class="resources-scroll">
+
+      <!-- ── Recommended/Featured (admin-curated library content) ── -->
+      <section class="resources-generate-panel" id="libraryRecommendedSection" hidden>
+        <h2 class="resources-heading" id="libraryRecommendedHeading">Recommended for you</h2>
+        <p class="resources-subheading">Curated by the Cognita team — tap one to see what's inside.</p>
+        <div class="library-recommended-grid" id="libraryRecommendedGrid"></div>
+      </section>
+
+      <!-- ── Read-only preview of a Recommended/Featured item ── -->
+      <section class="resources-result-panel" id="libraryPreviewPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="libraryPreviewTitle">Resource</h2>
+          <button class="resource-result-close" id="libraryPreviewClose" aria-label="Close preview">
+            <i class="ph ph-x"></i>
+          </button>
+        </div>
+        <div class="resource-result-body" id="libraryPreviewBody"></div>
+        <div class="resource-result-actions" id="libraryPreviewActions"></div>
+      </section>
+
+      <!-- ── Generation panel ── -->
+      <section class="resources-generate-panel" id="resourcesGeneratePanel">
+        <h2 class="resources-heading">What do you need to create?</h2>
+        <p class="resources-subheading">Choose a resource type, fill in a few details, and Cognita builds it.</p>
+
+        <div class="resource-type-grid" id="resourceTypeGrid">
+          <!-- Populated by resources.js -->
+        </div>
+
+        <form class="resource-form" id="resourceForm" hidden>
+          <button type="button" class="resource-form-back" id="resourceFormBack">
+            <i class="ph ph-arrow-left"></i> Choose a different type
+          </button>
+
+          <h3 class="resource-form-title" id="resourceFormTitle">Lesson Plan</h3>
+
+          <label class="resource-field">
+            <span>Subject</span>
+            <input type="text" id="fieldSubject" placeholder="e.g. Biology" required>
+          </label>
+
+          <label class="resource-field">
+            <span>Class</span>
+            <input type="text" id="fieldClassLevel" placeholder="e.g. SS2" required>
+          </label>
+
+          <label class="resource-field" id="topicFieldWrap">
+            <span>Topic</span>
+            <input type="text" id="fieldTopic" placeholder="e.g. Photosynthesis" required>
+          </label>
+
+          <label class="resource-field" id="durationFieldWrap" hidden>
+            <span>Duration</span>
+            <input type="text" id="fieldDuration" placeholder="e.g. 40 minutes">
+          </label>
+
+          <label class="resource-field" id="questionCountFieldWrap" hidden>
+            <span>Number of questions</span>
+            <input type="number" id="fieldQuestionCount" placeholder="10" min="1" max="50">
+          </label>
+
+          <label class="resource-field" id="termFieldWrap" hidden>
+            <span>Term</span>
+            <input type="text" id="fieldTerm" placeholder="e.g. First Term">
+          </label>
+
+          <label class="resource-field" id="weekCountFieldWrap" hidden>
+            <span>Number of weeks</span>
+            <input type="number" id="fieldWeekCount" placeholder="12" min="1" max="20">
+          </label>
+
+          <label class="resource-field" id="difficultyFieldWrap" hidden>
+            <span>Difficulty</span>
+            <select id="fieldDifficulty"></select>
+          </label>
+
+          <label class="resource-field" id="lessonStyleFieldWrap" hidden>
+            <span>Lesson style</span>
+            <select id="fieldLessonStyle"></select>
+          </label>
+
+          <label class="resource-field" id="objectiveFocusFieldWrap" hidden>
+            <span>Objective focus</span>
+            <select id="fieldObjectiveFocus"></select>
+          </label>
+
+          <label class="resource-field" id="questionStyleFieldWrap" hidden>
+            <span>Question style</span>
+            <select id="fieldQuestionStyle"></select>
+          </label>
+
+          <label class="resource-field" id="questionMixFieldWrap" hidden>
+            <span>Question mix</span>
+            <select id="fieldQuestionMix"></select>
+          </label>
+
+          <label class="resource-field" id="cardStyleFieldWrap" hidden>
+            <span>Card style</span>
+            <select id="fieldCardStyle"></select>
+          </label>
+
+          <label class="resource-field" id="totalMarksFieldWrap" hidden>
+            <span>Total marks</span>
+            <input type="number" id="fieldTotalMarks" placeholder="100" min="1" max="500">
+          </label>
+
+          <label class="resource-field" id="sectionCountFieldWrap" hidden>
+            <span>Number of sections</span>
+            <input type="number" id="fieldSectionCount" placeholder="3" min="1" max="10">
+          </label>
+
+          <label class="resource-field" id="lessonsPerWeekFieldWrap" hidden>
+            <span>Lessons per week</span>
+            <input type="number" id="fieldLessonsPerWeek" placeholder="3" min="1" max="10">
+          </label>
+
+          <label class="resource-field">
+            <span>Curriculum (optional)</span>
+            <input type="text" id="fieldCurriculum" placeholder="e.g. Nigerian Curriculum">
+          </label>
+
+          <label class="resource-field">
+            <span>Additional instructions (optional)</span>
+            <textarea id="fieldCustomInstructions" rows="3" placeholder="e.g. Any specific angle, emphasis, or extra requirement for this resource."></textarea>
+          </label>
+
+          <button type="submit" class="resource-generate-btn" id="resourceGenerateBtn">
+            <span class="btn-label">Generate resource</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </form>
+      </section>
+
+      <!-- ── Result preview ── -->
+      <section class="resources-result-panel" id="resourcesResultPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="resourceResultTitle">Your resource</h2>
+          <div class="resource-result-header-actions">
+            <button class="resource-header-btn" id="resourceEditBtn" title="Edit content directly">
+              <i class="ph ph-pencil-simple"></i>
+              <span>Edit</span>
+            </button>
+            <button class="resource-result-close" id="resourceResultClose" aria-label="Close preview">
+              <i class="ph ph-x"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="resource-result-body" id="resourceResultBody"></div>
+
+        <div class="resource-edit-wrap" id="resourceEditWrap" hidden>
+          <p class="resource-edit-hint">
+            Edit the content below, then save your changes.
+          </p>
+          <div id="resourceEditForm"></div>
+          <div class="resource-edit-actions">
+            <button class="resource-download-btn" id="resourceEditSaveBtn" style="margin-bottom:0;" disabled>
+              <span class="btn-label">Save changes</span>
+              <span class="btn-spinner" hidden></span>
+            </button>
+            <button class="resource-form-back" id="resourceEditCancelBtn" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <div class="resource-regenerate-row">
+          <label class="resource-field" style="flex:1;">
+            <span>Refine with a follow-up instruction</span>
+            <input type="text" id="resourceRegeneratePrompt" placeholder="e.g. Add more worked examples on the formula section.">
+          </label>
+          <button class="resource-download-btn" id="resourceRegenerateBtn" style="margin-bottom:0;width:auto;white-space:nowrap;">
+            <span class="btn-label"><i class="ph ph-arrows-clockwise"></i> Regenerate</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </div>
+
+        <div class="resource-result-actions" id="resourceResultActions">
+          <button class="resource-download-btn" id="resourceDownloadBtn">
+            <i class="ph ph-file-arrow-down"></i>
+            <span>Download DOCX</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ── My Resources list ── -->
+      <section class="my-resources-panel">
+        <h2 class="resources-heading">My Resources</h2>
+        <div class="my-resources-list" id="myResourcesList">
+          <div class="my-resources-empty">Your generated resources will appear here.</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       LIBRARY VIEW
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-library" hidden>
+
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Library</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+
+    <div class="resources-scroll">
+
+      <!-- ── Collections row ── -->
+      <section class="resources-generate-panel" id="collectionsSection">
+        <h2 class="resources-heading">Collections</h2>
+        <p class="resources-subheading">Curated sets of ready-made resources, put together by the Cognita team.</p>
+        <div class="resource-type-grid" id="libraryCollectionsGrid">
+          <div class="my-resources-empty">Loading collections...</div>
+        </div>
+      </section>
+
+      <!-- ── Collection detail (shown when a collection is opened) ── -->
+      <section class="resources-generate-panel" id="collectionDetailSection" hidden>
+        <button type="button" class="resource-form-back" id="collectionDetailBack">
+          <i class="ph ph-arrow-left"></i> Back to collections
+        </button>
+        <h2 class="resources-heading" id="collectionDetailTitle">Collection</h2>
+        <p class="resources-subheading" id="collectionDetailDescription"></p>
+        <div class="my-resources-list" id="collectionDetailList"></div>
+      </section>
+
+      <!-- ── Browse all / filter by type ── -->
+      <section class="resources-generate-panel">
+        <h2 class="resources-heading">Browse all resources</h2>
+        <label class="resource-field" style="max-width:280px;">
+          <span>Filter by type</span>
+          <select id="typeFilterSelect">
+            <option value="">All types</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="my-resources-panel">
+        <div class="my-resources-list" id="libraryResourceList">
+          <div class="my-resources-empty">Loading library...</div>
+        </div>
+      </section>
+
+      <!-- ── Result preview (own ids — kept separate from the Resources
+           view's result panel above, since a user can have both a
+           resource preview and a library preview open in the same
+           session now that both views live on one page) ── -->
+      <section class="resources-result-panel" id="libraryResultPanel" hidden>
+        <div class="resource-result-header">
+          <h2 id="libraryResultTitle">Resource</h2>
+          <button class="resource-result-close" id="libraryResultClose" aria-label="Close preview">
+            <i class="ph ph-x"></i>
+          </button>
+        </div>
+        <div class="resource-result-body" id="libraryResultBody"></div>
+        <div class="resource-result-actions" id="libraryResultActions"></div>
+      </section>
+
+    </div>
+  </main>
+
 </div>
 
-<!-- ── Visual generation modal (diagram / illustration) ── -->
+<!-- ── Visual generation modal (diagram / illustration) — chat view ── -->
 <div class="modal-overlay" id="visualModal" hidden>
   <div class="modal-box">
     <div class="modal-header">
@@ -290,7 +592,7 @@
   </div>
 </div>
 
-<!-- ── Document generation modal (letter / report / essay / memo) ── -->
+<!-- ── Document generation modal (letter / report / essay / memo) — chat view ── -->
 <div class="modal-overlay" id="documentModal" hidden>
   <div class="modal-box">
     <div class="modal-header">
@@ -328,7 +630,7 @@
   </div>
 </div>
 
-<!-- ── Connected apps modal (connectors: view/connect/disconnect) ── -->
+<!-- ── Connected apps modal (connectors: view/connect/disconnect) — chat view ── -->
 <div class="modal-overlay" id="connectorsModal" hidden>
   <div class="modal-box">
     <div class="modal-header">
@@ -352,7 +654,9 @@
 </div>
 
 <script type="module" src="/js/auth.js"></script>
-<script type="module" src="/js/app.js"></script>
+<script src="/js/resource-renderers.js"></script>
+<script src="/js/resource-editor.js"></script>
+<script type="module" src="/js/main.js"></script>
 
 </body>
 </html>
