@@ -1,16 +1,34 @@
 // google-tools.js
 // Tool schemas + executors for the Google connector: Calendar, Drive, and
-// Gmail. Scoped to the OAuth scopes granted in connector-providers.js:
+// Gmail. Scoped to the OAuth scopes granted in connector-providers.js —
+// narrowed (2026-09) to only scopes Google does NOT classify as
+// "restricted" (see https://support.google.com/cloud/answer/13464325),
+// so this app never has to go through Google's CASA security assessment:
 //   - calendar.events + calendar.readonly → full read/write on events
 //     across any calendar the user can see, plus listing the calendars
-//     themselves. Does not touch calendar sharing/ACL settings.
-//   - drive               → read/write on any Drive file the user can
-//     access (not just app-created ones), so search/read/update/share
-//     actually work on the user's real Drive, not just Cognita's own
-//     files. Deletes are always a trash (recoverable), never permanent.
-//   - gmail.modify + gmail.send + gmail.labels → read, search, label
-//     (archive/star/mark read), and send/draft mail. No permanent
-//     delete scope is requested, so nothing here can bypass Trash.
+//     themselves. Sensitive scope (needs OAuth verification) but NOT
+//     restricted — no CASA. Unchanged from before.
+//   - drive.file          → read/write ONLY on files this app itself
+//     created (there is no Picker flow here for the user to hand it
+//     pre-existing files). This is a real capability cut from the old
+//     bare 'drive' scope: Cognita can no longer list, search, read, or
+//     write a user's pre-existing Drive files — only ones Cognita made.
+//     Non-sensitive, no verification and no CASA at all.
+//   - gmail.send + gmail.labels → send mail, and manage label
+//     *definitions* (create/list/rename/delete a label itself). This is
+//     a real capability cut: reading mail, searching mail, creating
+//     drafts, applying/removing a label on a message, and trashing a
+//     message all require gmail.modify/gmail.compose/gmail.readonly,
+//     which are restricted scopes — those tools have been removed
+//     entirely (see REMOVED note below). gmail.send is sensitive
+//     (verification only); gmail.labels is non-sensitive (no
+//     verification at all).
+//
+// REMOVED (2026-09, restricted-scope cleanup) — do not re-add without
+// also re-widening the scope list above and accepting the CASA
+// requirement: google_search_gmail_messages, google_get_gmail_message,
+// google_get_gmail_thread, google_create_gmail_draft,
+// google_modify_gmail_message_labels, google_trash_gmail_message.
 //
 // Actions exposed:
 //   Read-only (safe to run immediately, no confirmation):
@@ -18,8 +36,9 @@
 //                google_search_calendar_events, google_get_calendar_event
 //     Drive    : google_list_drive_files, google_search_drive_files,
 //                google_get_drive_file, google_read_drive_file_content
-//     Gmail    : google_list_gmail_labels, google_search_gmail_messages,
-//                google_get_gmail_message, google_get_gmail_thread
+//                (all four now implicitly limited to Cognita-created files
+//                by the drive.file scope itself, not by any code here)
+//     Gmail    : google_list_gmail_labels
 //   Write (always require explicit user confirmation before execute() is
 //   called; see REQUIRES_CONFIRMATION and the confirmToolCall flow in
 //   chat-endpoint.js):
@@ -28,14 +47,11 @@
 //     Drive    : google_create_drive_file, google_create_drive_folder,
 //                google_update_drive_file_content, google_rename_or_move_drive_file,
 //                google_share_drive_file, google_delete_drive_file
-//     Gmail    : google_send_gmail_message, google_create_gmail_draft,
-//                google_modify_gmail_message_labels, google_trash_gmail_message
+//     Gmail    : google_send_gmail_message
 //
 // Deliberate safety choices:
 //   - google_delete_drive_file trashes (recoverable in Drive's Trash for
 //     30 days), it never calls the permanent-delete endpoint.
-//   - google_trash_gmail_message trashes (recoverable for 30 days), there
-//     is no permanent-delete tool for Gmail either.
 //   - Calendar/Gmail writes default to NOT notifying other people
 //     (sendUpdates='none' / no auto-CC) unless the model is explicitly
 //     told to notify — a silent write is safer than an accidental email
@@ -189,7 +205,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'google_list_drive_files',
-      description: "Lists the user's Drive files, most recently modified first. Optionally filter by folder or MIME type. Use google_search_drive_files instead when looking for files by name/content keyword.",
+      description: "Lists Drive files this app has created, most recently modified first (the drive.file scope means pre-existing files the user never created via Cognita are not visible here). Optionally filter by folder or MIME type. Use google_search_drive_files instead when looking for files by name/content keyword.",
       parameters: {
         type: 'object',
         properties: {
@@ -205,7 +221,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'google_search_drive_files',
-      description: "Searches Drive by keyword, matching file name and (for Google Docs/Sheets/Slides and other indexed types) file content. Use this for 'find my file about X' style requests.",
+      description: "Searches this app's own Drive files by keyword, matching file name and (for Google Docs/Sheets/Slides and other indexed types) file content. Only finds files Cognita itself created — the drive.file scope does not allow searching a user's pre-existing Drive files. Use this for 'find the file I made with you about X' style requests.",
       parameters: {
         type: 'object',
         properties: {
@@ -341,47 +357,8 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'google_list_gmail_labels',
-      description: "Lists the user's Gmail labels (system ones like INBOX/UNREAD/STARRED/IMPORTANT/SPAM/TRASH, plus any custom labels), with each label's id. Use this before calling google_modify_gmail_message_labels with a custom label name, to get its exact id.",
+      description: "Lists the user's Gmail labels (system ones like INBOX/UNREAD/STARRED/IMPORTANT/SPAM/TRASH, plus any custom labels), with each label's id and type.",
       parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_search_gmail_messages',
-      description: "Searches Gmail using Gmail's own search syntax (the same syntax as the Gmail search box) and returns matching messages' id, subject, sender, date, snippet, and estimated size in bytes. Examples: \"has:attachment larger:10M\" for large attachments, \"is:unread\" for unread mail, \"from:someone@example.com after:2026/01/01\" for filtered mail. Use this for any 'find my emails about/from/with X' request.",
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: "Gmail search query string, e.g. 'has:attachment larger:10M', 'is:unread from:boss@company.com', 'subject:invoice'." },
-          maxResults: { type: 'integer', description: 'Max messages to return (default 10, max 25).' },
-        },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_get_gmail_message',
-      description: 'Gets one message in full: headers (From/To/Cc/Subject/Date), the plain-text body, and a list of attachments (filename, MIME type, size) without downloading their bytes.',
-      parameters: {
-        type: 'object',
-        properties: { messageId: { type: 'string', description: 'The Gmail message id.' } },
-        required: ['messageId'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_get_gmail_thread',
-      description: 'Gets an entire email thread/conversation: every message in it, each with headers, plain-text body, and attachment list, in chronological order.',
-      parameters: {
-        type: 'object',
-        properties: { threadId: { type: 'string', description: 'The Gmail thread id (from a search result).' } },
-        required: ['threadId'],
-      },
     },
   },
   // ── Gmail: write ──
@@ -389,7 +366,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'google_send_gmail_message',
-      description: "Sends a new email immediately from the user's Gmail account. Always requires the user's explicit confirmation first — show the user the recipient, subject, and body before calling this. To reply within an existing conversation, pass threadId and inReplyToMessageId so it threads correctly instead of starting a new conversation.",
+      description: "Sends a new standalone email immediately from the user's Gmail account. Always requires the user's explicit confirmation first — show the user the recipient, subject, and body before calling this. This always starts a new conversation thread — there is no reply-in-existing-thread option, since that requires reading the original message's headers (a restricted Gmail scope this app does not request).",
       parameters: {
         type: 'object',
         properties: {
@@ -398,64 +375,14 @@ export const TOOLS = [
           bcc: { type: 'array', items: { type: 'string' }, description: 'Bcc address(es). Optional.' },
           subject: { type: 'string', description: 'Email subject.' },
           body: { type: 'string', description: 'Plain-text email body.' },
-          threadId: { type: 'string', description: "Existing Gmail thread id to reply within. Omit to start a new conversation." },
-          inReplyToMessageId: { type: 'string', description: 'The Gmail message id being replied to. Required alongside threadId for correct threading.' },
         },
         required: ['to', 'subject', 'body'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_create_gmail_draft',
-      description: "Creates a draft (does NOT send it) in the user's Gmail account. Use this when the user wants to review/edit before sending, or asks for a draft explicitly. Still requires confirmation since it writes to their account.",
-      parameters: {
-        type: 'object',
-        properties: {
-          to: { type: 'array', items: { type: 'string' }, description: 'Recipient email address(es).' },
-          cc: { type: 'array', items: { type: 'string' }, description: 'Cc address(es). Optional.' },
-          bcc: { type: 'array', items: { type: 'string' }, description: 'Bcc address(es). Optional.' },
-          subject: { type: 'string', description: 'Email subject.' },
-          body: { type: 'string', description: 'Plain-text email body.' },
-          threadId: { type: 'string', description: 'Existing thread id to draft a reply within. Optional.' },
-          inReplyToMessageId: { type: 'string', description: 'Message id being replied to, for correct threading. Optional.' },
-        },
-        required: ['to', 'subject', 'body'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_modify_gmail_message_labels',
-      description: "Adds and/or removes labels on a message — this is how to mark read/unread, archive, star, or apply a custom label. Conventions: mark read = removeLabelIds ['UNREAD']; mark unread = addLabelIds ['UNREAD']; archive = removeLabelIds ['INBOX']; star = addLabelIds ['STARRED']; unstar = removeLabelIds ['STARRED']. Always requires the user's explicit confirmation first.",
-      parameters: {
-        type: 'object',
-        properties: {
-          messageId: { type: 'string', description: 'The Gmail message id.' },
-          addLabelIds: { type: 'array', items: { type: 'string' }, description: 'Label ids to add. Optional.' },
-          removeLabelIds: { type: 'array', items: { type: 'string' }, description: 'Label ids to remove. Optional.' },
-        },
-        required: ['messageId'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'google_trash_gmail_message',
-      description: "Moves a message to Trash (recoverable for 30 days — this never permanently deletes). Always requires the user's explicit confirmation first.",
-      parameters: {
-        type: 'object',
-        properties: { messageId: { type: 'string', description: 'The Gmail message id to trash.' } },
-        required: ['messageId'],
       },
     },
   },
 ];
 
-// Sub-groups the 25 Google tools by domain (calendar/drive/gmail), used
+// Sub-groups the 19 Google tools by domain (calendar/drive/gmail), used
 // only by connector-tools.js's tool router (see ROUTER_THRESHOLD there)
 // to narrow "the user connected Google" down to "the user is asking
 // about their calendar" once the total tool count gets large enough that
@@ -474,9 +401,7 @@ export const TOOL_DOMAINS = {
     'google_delete_drive_file',
   ],
   gmail: [
-    'google_list_gmail_labels', 'google_search_gmail_messages', 'google_get_gmail_message',
-    'google_get_gmail_thread', 'google_send_gmail_message', 'google_create_gmail_draft',
-    'google_modify_gmail_message_labels', 'google_trash_gmail_message',
+    'google_list_gmail_labels', 'google_send_gmail_message',
   ],
 };
 
@@ -484,8 +409,7 @@ export const REQUIRES_CONFIRMATION = [
   'google_create_calendar_event', 'google_update_calendar_event', 'google_delete_calendar_event',
   'google_create_drive_file', 'google_create_drive_folder', 'google_update_drive_file_content',
   'google_rename_or_move_drive_file', 'google_share_drive_file', 'google_delete_drive_file',
-  'google_send_gmail_message', 'google_create_gmail_draft',
-  'google_modify_gmail_message_labels', 'google_trash_gmail_message',
+  'google_send_gmail_message',
 ];
 
 export function describe(name, args) {
@@ -508,13 +432,7 @@ export function describe(name, args) {
     case 'google_share_drive_file': return 'Sharing a Drive file with ' + (args.email || 'someone') + '.';
     case 'google_delete_drive_file': return 'Moving a Drive file to Trash.';
     case 'google_list_gmail_labels': return 'Listing your Gmail labels.';
-    case 'google_search_gmail_messages': return 'Searching your Gmail for "' + (args.query || '') + '".';
-    case 'google_get_gmail_message': return 'Reading a Gmail message.';
-    case 'google_get_gmail_thread': return 'Reading a Gmail conversation.';
     case 'google_send_gmail_message': return 'Sending an email to ' + (Array.isArray(args.to) ? args.to.join(', ') : args.to || 'someone') + '.';
-    case 'google_create_gmail_draft': return 'Creating a draft email to ' + (Array.isArray(args.to) ? args.to.join(', ') : args.to || 'someone') + '.';
-    case 'google_modify_gmail_message_labels': return 'Updating labels on a Gmail message.';
-    case 'google_trash_gmail_message': return 'Moving a Gmail message to Trash.';
     default: return 'Working in your Google account.';
   }
 }
@@ -528,10 +446,8 @@ export function approvalScope(name, args) {
     if (name === 'google_create_drive_file' || name === 'google_create_drive_folder') return 'drive:create';
     return 'drive:' + (args.fileId || 'unscoped');
   }
-  if (name.includes('gmail')) {
-    if (name === 'google_send_gmail_message' || name === 'google_create_gmail_draft') return 'gmail:compose';
-    return 'gmail:' + (args.messageId || 'unscoped');
-  }
+  if (name === 'google_send_gmail_message') return 'gmail:compose';
+  if (name.includes('gmail')) return 'gmail:unscoped';
   return 'google:unscoped';
 }
 
@@ -569,71 +485,11 @@ function _base64UrlEncode(str) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function _base64UrlDecodeToText(data) {
-  if (!data) return '';
-  const b64 = data.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder('utf-8').decode(bytes);
-}
-
-// Recursively walk a Gmail message payload to find the best plain-text
-// body and collect attachment metadata (never their bytes — see file
-// header). Falls back to a tag-stripped version of text/html if no
-// text/plain part exists (some mail clients only send HTML).
-function _extractGmailBody(payload) {
-  let plainText = null;
-  let htmlText = null;
-  const attachments = [];
-
-  function walk(part) {
-    if (!part) return;
-    const mimeType = part.mimeType || '';
-    const filename = part.filename || '';
-    if (filename && part.body && (part.body.attachmentId || part.body.size)) {
-      attachments.push({
-        filename,
-        mimeType,
-        sizeBytes: part.body.size || 0,
-        attachmentId: part.body.attachmentId || null,
-      });
-    } else if (mimeType === 'text/plain' && part.body && part.body.data && plainText === null) {
-      plainText = _base64UrlDecodeToText(part.body.data);
-    } else if (mimeType === 'text/html' && part.body && part.body.data && htmlText === null) {
-      htmlText = _base64UrlDecodeToText(part.body.data);
-    }
-    if (Array.isArray(part.parts)) part.parts.forEach(walk);
-  }
-  walk(payload);
-
-  let body = plainText;
-  if (body === null && htmlText !== null) {
-    body = htmlText.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
-  }
-  return { body: body || '(no readable body)', attachments };
-}
-
-function _gmailHeader(headers, name) {
-  const h = (headers || []).find((x) => x.name && x.name.toLowerCase() === name.toLowerCase());
-  return h ? h.value : null;
-}
-
-function _summarizeGmailMessage(msg) {
-  const headers = msg.payload ? msg.payload.headers : [];
-  return {
-    id: msg.id,
-    threadId: msg.threadId,
-    subject: _gmailHeader(headers, 'Subject') || '(no subject)',
-    from: _gmailHeader(headers, 'From'),
-    to: _gmailHeader(headers, 'To'),
-    date: _gmailHeader(headers, 'Date'),
-    snippet: msg.snippet || '',
-    sizeEstimateBytes: msg.sizeEstimate || 0,
-    labelIds: msg.labelIds || [],
-  };
-}
+// NOTE: _base64UrlDecodeToText, _extractGmailBody, _gmailHeader, and
+// _summarizeGmailMessage were removed 2026-09 along with the Gmail
+// read/draft/label/trash tools that used them (restricted-scope
+// cleanup — see file header). _base64UrlEncode below is still needed
+// for building the outgoing MIME message in _sendGmailMessage.
 
 function _buildMimeMessage({ to, cc, bcc, subject, body, inReplyToRfc822Id }) {
   if (String(body || '').length > MAX_EMAIL_BODY_CHARS) {
@@ -972,97 +828,21 @@ async function _listGmailLabels(uid, args, env) {
   return (data.labels || []).map((l) => ({ id: l.id, name: l.name, type: l.type }));
 }
 
-async function _searchGmailMessages(uid, args, env) {
-  if (!args.query) throw new Error('query is required.');
-  const token = await getValidToken(uid, 'google', env);
-  const maxResults = Math.min(Math.max(parseInt(args.maxResults, 10) || 10, 1), 25);
-  const params = new URLSearchParams({ q: args.query, maxResults: String(maxResults) });
-  const list = await _apiFetch(token, GMAIL_BASE + '/messages?' + params.toString(), { method: 'GET' });
-  const refs = list.messages || [];
-  if (refs.length === 0) return [];
-  // N+1 metadata fetches, bounded by maxResults<=25 — needed because the
-  // list endpoint only returns bare {id, threadId}, no headers/snippet/size.
-  const metaParams = new URLSearchParams({ format: 'metadata' });
-  metaParams.append('metadataHeaders', 'Subject');
-  metaParams.append('metadataHeaders', 'From');
-  metaParams.append('metadataHeaders', 'Date');
-  const messages = await Promise.all(
-    refs.map((r) => _apiFetch(token, GMAIL_BASE + '/messages/' + r.id + '?' + metaParams.toString(), { method: 'GET' }).catch((e) => ({ id: r.id, error: e.message })))
-  );
-  return messages.map((m) => (m.error ? { id: m.id, error: m.error } : _summarizeGmailMessage(m)));
-}
-
-async function _getGmailMessage(uid, args, env) {
-  if (!args.messageId) throw new Error('messageId is required.');
-  const token = await getValidToken(uid, 'google', env);
-  const msg = await _apiFetch(token, GMAIL_BASE + '/messages/' + encodeURIComponent(args.messageId) + '?format=full', { method: 'GET' });
-  const { body, attachments } = _extractGmailBody(msg.payload);
-  const summary = _summarizeGmailMessage(msg);
-  const truncated = body.length > MAX_CONTENT_CHARS;
-  return { ...summary, body: truncated ? body.slice(0, MAX_CONTENT_CHARS) : body, bodyTruncated: truncated, attachments };
-}
-
-async function _getGmailThread(uid, args, env) {
-  if (!args.threadId) throw new Error('threadId is required.');
-  const token = await getValidToken(uid, 'google', env);
-  const thread = await _apiFetch(token, GMAIL_BASE + '/threads/' + encodeURIComponent(args.threadId) + '?format=full', { method: 'GET' });
-  return (thread.messages || []).map((msg) => {
-    const { body, attachments } = _extractGmailBody(msg.payload);
-    const summary = _summarizeGmailMessage(msg);
-    const truncated = body.length > 20_000; // per-message cap in a thread dump, keeps long threads manageable
-    return { ...summary, body: truncated ? body.slice(0, 20_000) : body, bodyTruncated: truncated, attachments };
-  });
-}
-
-async function _resolveReplyHeaders(token, args) {
-  if (!args.inReplyToMessageId) return { inReplyToRfc822Id: null, threadId: args.threadId || undefined };
-  const headerParams = new URLSearchParams({ format: 'metadata' });
-  headerParams.append('metadataHeaders', 'Message-Id');
-  const original = await _apiFetch(token, GMAIL_BASE + '/messages/' + encodeURIComponent(args.inReplyToMessageId) + '?' + headerParams.toString(), { method: 'GET' });
-  const rfc822Id = _gmailHeader(original.payload ? original.payload.headers : [], 'Message-Id');
-  return { inReplyToRfc822Id: rfc822Id, threadId: args.threadId || original.threadId };
-}
+// NOTE: reading/searching mail, drafts, label-on-message modification, and
+// trash all required gmail.readonly/gmail.modify/gmail.compose (restricted
+// scopes → CASA assessment) and were removed 2026-09 along with their
+// executors. _resolveReplyHeaders (in-reply-to header lookup) was only
+// used by the draft/reply path and was removed with it — a plain send
+// (below) never needs to look up an existing message's headers.
 
 async function _sendGmailMessage(uid, args, env) {
   if (!args.to || !args.subject || args.body === undefined) throw new Error('to, subject, and body are all required.');
   const token = await getValidToken(uid, 'google', env);
-  const { inReplyToRfc822Id, threadId } = await _resolveReplyHeaders(token, args);
-  const raw = _base64UrlEncode(_buildMimeMessage({ ...args, inReplyToRfc822Id }));
+  const raw = _base64UrlEncode(_buildMimeMessage({ ...args, inReplyToRfc822Id: null }));
   const sent = await _apiFetch(token, GMAIL_BASE + '/messages/send', {
-    method: 'POST', body: JSON.stringify({ raw, threadId: threadId || undefined }),
+    method: 'POST', body: JSON.stringify({ raw }),
   });
   return { id: sent.id, threadId: sent.threadId, sent: true };
-}
-
-async function _createGmailDraft(uid, args, env) {
-  if (!args.to || !args.subject || args.body === undefined) throw new Error('to, subject, and body are all required.');
-  const token = await getValidToken(uid, 'google', env);
-  const { inReplyToRfc822Id, threadId } = await _resolveReplyHeaders(token, args);
-  const raw = _base64UrlEncode(_buildMimeMessage({ ...args, inReplyToRfc822Id }));
-  const draft = await _apiFetch(token, GMAIL_BASE + '/drafts', {
-    method: 'POST', body: JSON.stringify({ message: { raw, threadId: threadId || undefined } }),
-  });
-  return { id: draft.id, messageId: draft.message?.id, created: true };
-}
-
-async function _modifyGmailMessageLabels(uid, args, env) {
-  if (!args.messageId) throw new Error('messageId is required.');
-  if ((!args.addLabelIds || args.addLabelIds.length === 0) && (!args.removeLabelIds || args.removeLabelIds.length === 0)) {
-    throw new Error('Provide addLabelIds and/or removeLabelIds.');
-  }
-  const token = await getValidToken(uid, 'google', env);
-  const msg = await _apiFetch(token, GMAIL_BASE + '/messages/' + encodeURIComponent(args.messageId) + '/modify', {
-    method: 'POST',
-    body: JSON.stringify({ addLabelIds: args.addLabelIds || [], removeLabelIds: args.removeLabelIds || [] }),
-  });
-  return { id: msg.id, labelIds: msg.labelIds || [] };
-}
-
-async function _trashGmailMessage(uid, args, env) {
-  if (!args.messageId) throw new Error('messageId is required.');
-  const token = await getValidToken(uid, 'google', env);
-  await _apiFetch(token, GMAIL_BASE + '/messages/' + encodeURIComponent(args.messageId) + '/trash', { method: 'POST' });
-  return { trashed: true, messageId: args.messageId };
 }
 
 // ─────────────────────────── DISPATCH ───────────────────────────
@@ -1088,13 +868,7 @@ const _EXECUTORS = {
   google_delete_drive_file: _deleteDriveFile,
 
   google_list_gmail_labels: _listGmailLabels,
-  google_search_gmail_messages: _searchGmailMessages,
-  google_get_gmail_message: _getGmailMessage,
-  google_get_gmail_thread: _getGmailThread,
   google_send_gmail_message: _sendGmailMessage,
-  google_create_gmail_draft: _createGmailDraft,
-  google_modify_gmail_message_labels: _modifyGmailMessageLabels,
-  google_trash_gmail_message: _trashGmailMessage,
 };
 
 export async function execute(name, args, uid, env) {
