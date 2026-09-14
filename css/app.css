@@ -1288,24 +1288,34 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .connectors-modal-footnote { font-size: var(--text-xs); color: var(--text-3); line-height: 1.5; }
 .connectors-modal-footnote a { color: var(--accent); font-weight: 600; }
 
-/* ── In-chat tool confirmation card ── */
-.tool-confirm-card {
-  margin-top: var(--space-3);
+/* ── In-chat tool confirmation (inline trace row) ──
+   A pending write no longer floats in its own separate card below the
+   reply text — it's the trace's own terminal row (see renderMessage in
+   js/app.js), so approving it reads as "the next step in the list",
+   which is what it actually is. Distinct from the plain read-only rows
+   above it: a soft highlighted background, a full-size label (not the
+   muted .tool-trace-card default), and the Confirm/Cancel buttons
+   inline on the same row. */
+.tool-trace-card--confirm {
+  margin-top: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  flex-wrap: wrap;
 }
-.tool-confirm-card-summary { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-1); }
-.tool-confirm-card-summary i.ph { color: var(--text-2); }
-.tool-confirm-card-actions { display: flex; gap: var(--space-2); }
+.tool-trace-card--confirm i.ph-hand-palm { color: #c8952f; }
+.tool-trace-card--confirm .tool-trace-card-label { flex: 1 1 auto; min-width: 160px; }
+.tool-trace-card-actions { display: flex; gap: var(--space-2); margin-left: auto; }
 .tool-confirm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   font-weight: 600;
   transition: opacity var(--duration-fast) var(--ease);
 }
@@ -1314,14 +1324,13 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .tool-confirm-btn--confirm:hover:not(:disabled) { opacity: 0.85; }
 .tool-confirm-btn--cancel { background: transparent; border: 1px solid var(--border); color: var(--text-2); }
 .tool-confirm-btn--cancel:hover:not(:disabled) { background: var(--bg-elevated); }
-.tool-confirm-card-status { font-size: var(--text-xs); color: var(--text-3); font-style: italic; }
 
 /* Action Trace: an ordered record of the steps the agent loop actually
    ran — either silently-executed reads (list/get/search) or writes the
    user already confirmed. Deliberately lighter-weight than
-   .tool-confirm-card (no padding/border box) since it's a passive log,
-   not a prompt. .tool-trace-list stacks multiple steps from one turn
-   with a tighter gap than the default message spacing. */
+   .tool-trace-card--confirm (no padding/border box) since it's a passive
+   log, not a prompt. .tool-trace-list stacks multiple steps from one
+   turn with a tighter gap than the default message spacing. */
 .tool-trace-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .tool-trace-card {
   margin-top: 0;
