@@ -54,7 +54,25 @@ function _basicAuthHeader(id, secret) {
 // reversible for users who already granted them.
 const SCOPES = {
   github: 'repo', // full read/write on public AND private repos — see hasSufficientScope() below
-  google: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events',
+  // Widened (2026) from drive.file/calendar.events-only so google-tools.js
+  // can offer real Calendar/Drive/Gmail coverage instead of a narrow demo:
+  //   - calendar.events + calendar.readonly: full CRUD on events across any
+  //     calendar the user can see, plus listing the calendars themselves.
+  //   - drive: read/write on any Drive file the user can access, not just
+  //     ones the app itself created (drive.file's old limitation).
+  //   - gmail.modify + gmail.send + gmail.labels: search/read/label/archive
+  //     mail and send/draft it. Deliberately NOT the blanket
+  //     'https://mail.google.com/' scope, and no scope that allows
+  //     permanent deletion — see google-tools.js's file header for the
+  //     safety choices this enables (trash-not-delete, etc).
+  google: [
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.labels',
+  ].join(' '),
   figma: 'file_read',
   canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
 };
@@ -67,9 +85,22 @@ const SCOPES = {
 // GitHub returns granted scopes as a comma-separated string, e.g.
 // "repo,gist" — split defensively in case of stray spaces.
 export function hasSufficientScope(provider, storedScope) {
-  if (provider !== 'github') return true; // not implemented for the other three yet
-  const granted = (storedScope || '').split(',').map((s) => s.trim());
-  return granted.includes('repo');
+  if (provider === 'github') {
+    const granted = (storedScope || '').split(',').map((s) => s.trim());
+    return granted.includes('repo');
+  }
+  if (provider === 'google') {
+    // Google returns granted scopes space-separated. Accounts connected
+    // before the 2026 widening only have drive.file + calendar.events —
+    // this catches that so getValidToken() (connectors.js) forces a
+    // reconnect instead of every new Drive/Gmail tool silently 403'ing.
+    const granted = (storedScope || '').split(' ').map((s) => s.trim());
+    return (
+      granted.includes('https://www.googleapis.com/auth/drive') &&
+      granted.includes('https://www.googleapis.com/auth/gmail.modify')
+    );
+  }
+  return true; // not implemented for figma/canva yet
 }
 
 // ── 1. Authorize URL (redirect the user here) ──────────────────────
