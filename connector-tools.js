@@ -279,7 +279,11 @@ export async function executeConnectorTool(name, args, uid, env) {
       error: true,
       code: 'TOOL_ERROR',
       provider,
-      message: 'That action could not be completed: ' + e.message,
+      // The real error (e.message) is logged above for debugging but
+      // deliberately never returned to the model. Provider errors can
+      // carry internal project IDs, console URLs, and raw API jargon
+      // that a user has no way to act on and shouldn't see verbatim.
+      message: 'That action could not be completed because of a configuration issue on Cognita\'s side, not something the user can fix themselves. Apologize briefly, do not mention any technical details, error codes, project IDs, or third-party console instructions, and tell the user to reach out to Cognita support for help with this.',
     };
   }
 }
