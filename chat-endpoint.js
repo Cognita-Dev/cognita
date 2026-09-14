@@ -445,6 +445,35 @@ export async function handleChatRequest(request, env) {
       ' reason=' + (hasImages ? 'has_images' : confirmToolCall ? 'confirm_tool_call' : 'plan_lacks_connectorTools'))
   );
 
+  // ── Real-time streaming (Server-Sent Events) ──
+  // Everything above this point (auth, quota, plan checks, validation)
+  // fails fast with a plain JSON error response, exactly as before — the
+  // request never even opens a stream if it was going to be rejected
+  // outright. From here on, though, the agent loop can take several
+  // seconds and (with connector tools) run several dependent rounds, so
+  // the response switches to text/event-stream: each tool-call step is
+  // pushed to the client the moment it actually resolves, instead of the
+  // client waiting in silence and then getting the whole trace at once
+  // to fake-animate (see js/app.js). Event types on the wire:
+  //   event: round  — the model is starting to think about the next
+  //                    step (data: { round })
+  //   event: step   — one entry of the `steps` trace just completed
+  //                    (data: the step object itself, same shape as
+  //                    before: { type, name, provider, ok, summary })
+  //   event: error  — something failed after the stream opened, so it
+  //                    could not come back as a normal HTTP error status
+  //                    (data: { message, status })
+  //   event: done   — the turn is finished; data is the exact same JSON
+  //                    shape /api/chat used to return in one shot
+  //                    ({ reply, thinking, thinkingHeading, ... })
+  // A `: ping` comment line is sent periodically as a heartbeat so
+  // intermediate proxies/CDNs don't time out an idle-looking connection
+  // during a long model call.
+  function _sseError(message, status) {
+    return Object.assign(new Error(message), { __sseError: true, status });
+  }
+
+  async function _agent(emit) {
   let result;
   let pendingToolCall = null;
   // Full recorded chain for this turn — every tool call that ran (or was
@@ -506,6 +535,7 @@ export async function handleChatRequest(request, env) {
               ok: !execOutcome.error,
               summary: describeTool(confirmToolCall.name, confirmToolCall.args),
             });
+            emit('step', steps[steps.length - 1]);
             // Record the approval: this exact provider+scope+tool is now
             // pre-approved for the rest of this conversation (Bug 4).
             const scope = approvalScopeForTool(confirmToolCall.name, confirmToolCall.args);
@@ -528,6 +558,7 @@ export async function handleChatRequest(request, env) {
         if (!quotaExceededError) {
           while (round < MAX_AGENT_ROUNDS) {
             if (!result) {
+              emit('round', { round });
               result = await _modelTurn(tierConfig, workingMessages, tools, env);
             }
 
@@ -605,6 +636,7 @@ export async function handleChatRequest(request, env) {
                   summary: 'I\'m having trouble figuring out the right details for this — could you confirm ' +
                     validation.missing.join(', ') + '?',
                 });
+                emit('step', steps[steps.length - 1]);
                 result = {
                   text: steps[steps.length - 1].summary,
                   reasoning: result.reasoning || null,
@@ -645,6 +677,7 @@ export async function handleChatRequest(request, env) {
                 summary: describeTool(call.name, call.args),
               };
               steps.push({ type: 'awaiting_confirmation', name: call.name, provider: pendingToolCall.provider, summary: pendingToolCall.summary });
+              emit('step', steps[steps.length - 1]);
               console.log('[chat][tools] executorRan=false (awaiting user confirmation) tool=' + call.name);
               break;
             }
@@ -673,6 +706,7 @@ export async function handleChatRequest(request, env) {
               ok: !execOutcome.error,
               summary: describeTool(call.name, call.args),
             });
+            emit('step', steps[steps.length - 1]);
 
             // Only ever put words in the assistant's own mouth here if it
             // ACTUALLY said something alongside the tool call. Previously
@@ -718,11 +752,11 @@ export async function handleChatRequest(request, env) {
     }
   } catch (e) {
     console.error('[chat] model call failed:', e.message);
-    return _jsonError('Cognita is temporarily unavailable. Please try again shortly.', 503, env);
+    throw _sseError('Cognita is temporarily unavailable. Please try again shortly.', 503);
   }
 
   if (quotaExceededError) {
-    return _jsonError(quotaExceededError, 429, env);
+    throw _sseError(quotaExceededError, 429);
   }
 
   let thinking = result.reasoning || null;
@@ -752,7 +786,7 @@ export async function handleChatRequest(request, env) {
     reply = pendingToolCall.summary + ' Would you like me to go ahead?';
   }
 
-  return new Response(JSON.stringify({
+  return {
     reply,
     thinking,
     thinkingHeading,
@@ -765,9 +799,64 @@ export async function handleChatRequest(request, env) {
     steps,
     toolExecuted: [...steps].reverse().find((s) => s.type === 'executed') || null,
     approvals,
-  }), {
+  };
+  }
+
+  const encoder = new TextEncoder();
+  function _sseFrame(event, data) {
+    return encoder.encode('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+  }
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false;
+      const safeEnqueue = (chunk) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk);
+        } catch (e) {
+          // Client disconnected mid-stream — stop trying to write to it.
+          closed = true;
+        }
+      };
+      const emit = (event, data) => safeEnqueue(_sseFrame(event, data));
+
+      const heartbeat = setInterval(() => {
+        safeEnqueue(encoder.encode(': ping\n\n'));
+      }, 15000);
+
+      try {
+        const payload = await _agent(emit);
+        emit('done', payload);
+      } catch (e) {
+        if (e && e.__sseError) {
+          emit('error', { message: e.message, status: e.status || 500 });
+        } else {
+          console.error('[chat] stream failed:', e && e.message);
+          emit('error', { message: 'Cognita is temporarily unavailable. Please try again shortly.', status: 503 });
+        }
+      } finally {
+        clearInterval(heartbeat);
+        closed = true;
+        try { controller.close(); } catch (_) {}
+      }
+    },
+    cancel() {
+      // Client navigated away / aborted the fetch — nothing further to
+      // clean up here since the heartbeat/controller are scoped inside
+      // start() and torn down in its own finally block.
+    },
+  });
+
+  return new Response(stream, {
     status: 200,
-    headers: _corsJsonHeaders(env),
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*',
+      'X-Accel-Buffering': 'no',
+    },
   });
 }
 
