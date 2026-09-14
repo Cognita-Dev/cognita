@@ -1181,6 +1181,11 @@ async function runStreamedTurn(payload) {
     const elapsedMs = performance.now() - startedAt;
     conversation.push({ role: 'assistant', content: data.reply || '' });
     conversationMeta[conversation.length - 1] = {
+      // `thinking`, when present, is already the sanitized, on-brand
+      // version of the model's real reasoning — see
+      // _cleanReasoningForDisplay in chat-endpoint.js. `thinkingHeading`
+      // is the fallback for turns where nothing safe enough survived
+      // that cleaning, or where tools were used. Never both.
       thinking: data.thinking || null,
       thinkingHeading: data.thinkingHeading || null,
       sources: data.sources || null,
@@ -1602,13 +1607,19 @@ function renderMessage(msg, index) {
   const traceSteps = rawStepList.filter((s) => s && s.type !== 'awaiting_confirmation');
   const hasSteps = traceSteps.length > 0;
 
+  // `meta.thinking` is only ever the sanitized, first-person version of
+  // the model's real reasoning (see _cleanReasoningForDisplay in
+  // chat-endpoint.js) — never raw text, so it's always safe to render
+  // as-is here. `meta.thinkingHeading` is the fallback used whenever
+  // there wasn't a clean, trustworthy version to show (or the turn used
+  // tools) — the two are mutually exclusive, never both set.
   let thoughtHtml = '';
-  if (!isUser && (meta.thinking || hasSteps)) {
+  if (!isUser && (meta.thinking || meta.thinkingHeading || hasSteps)) {
     const secs = meta.elapsedMs ? (meta.elapsedMs / 1000).toFixed(1) : null;
     const label = secs ? 'Thought for ' + secs + 's' : 'Thought process';
-    const bodyHtml = hasSteps
-      ? '<div class="thought-content thought-content--heading">' + escapeHtml(meta.thinkingHeading || 'Working on your request') + '</div>'
-      : '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>';
+    const bodyHtml = meta.thinking
+      ? '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>'
+      : '<div class="thought-content thought-content--heading">' + escapeHtml(meta.thinkingHeading || 'Working on your request') + '</div>';
     thoughtHtml =
       '<details class="thought-block">' +
         '<summary>' +
@@ -1652,47 +1663,42 @@ function renderMessage(msg, index) {
       '</button>';
   }
 
-  // A write action (e.g. "open a GitHub issue", "create a Canva design") the
-  // model proposed but hasn't run yet — see the confirmToolCall flow in
-  // chat-endpoint.js. Rendered as a small card with Confirm/Cancel;
-  // status flips to 'confirmed'/'cancelled' once acted on so it doesn't
-  // stay clickable (or reappear as actionable) after a re-render.
-  let toolConfirmHtml = '';
-  if (!isUser && meta.pendingToolCall) {
-    const ptc = meta.pendingToolCall;
-    if (ptc.status === 'pending') {
-      toolConfirmHtml =
-        '<div class="tool-confirm-card" data-index="' + index + '">' +
-          '<div class="tool-confirm-card-summary"><i class="ph ph-plug"></i><span>' + escapeHtml(ptc.summary || 'Perform this action?') + '</span></div>' +
-          '<div class="tool-confirm-card-actions">' +
-            '<button class="tool-confirm-btn tool-confirm-btn--confirm" data-tool-action="confirm" data-index="' + index + '">Confirm</button>' +
-            '<button class="tool-confirm-btn tool-confirm-btn--cancel" data-tool-action="cancel" data-index="' + index + '">Cancel</button>' +
-          '</div>' +
-        '</div>';
-    } else if (ptc.status === 'cancelled') {
-      toolConfirmHtml = '<div class="tool-confirm-card-status">Action cancelled.</div>';
-    }
-    // status === 'confirmed': nothing to render here — the executed
-    // result already arrived as the next assistant message in the thread.
-  }
-
   // Action Trace: a persistent, ordered record of every step the agent
   // loop actually ran to produce this reply (Bug 2's "recorded thought
   // chain") — e.g. "Looking at README.md" → "Updating README.md" →
-  // "awaiting confirmation" for a write. Read-only steps and
-  // already-approved writes never show a confirm card, so without this
-  // list they'd leave zero visible trace that anything happened.
+  // a terminal row showing how the turn actually ended. Read-only steps
+  // and already-approved writes never show a confirm card, so without
+  // this list they'd leave zero visible trace that anything happened.
+  //
+  // The terminal row used to always say "Completed", even when the turn
+  // had actually just paused for the user's OK on a write, or ended
+  // mid-task — a misleading signal. It now reflects the real end state:
+  //   • no pendingToolCall at all           → "Completed"
+  //   • pendingToolCall, status "pending"   → an inline Confirm/Cancel
+  //                                            row, so approving a write
+  //                                            reads as the natural next
+  //                                            step in the trace itself
+  //                                            rather than a separate
+  //                                            floating card below the
+  //                                            reply text
+  //   • pendingToolCall, status "cancelled" → "Cancelled — no changes
+  //                                            were made"
+  //   • pendingToolCall, status "confirmed" → "Confirmed — continued
+  //                                            below" (the actual run
+  //                                            landed in the next
+  //                                            message once approved)
   //
   // Rendered right after the thought box and BEFORE the reply text (see
   // the returned template below) — never trailing under the answer.
-  // `traceSteps`/`hasSteps`/`isFreshAnimated` come from just above.
+  // `traceSteps`/`hasSteps` come from just above.
   //
   // The trace was already revealed live, step by step, as each one
   // actually completed on the backend (see createLiveTurnIndicator /
   // runStreamedTurn) — this render just shows its final, settled state.
   // History reloads and regenerated re-renders land here identically.
+  const ptc = !isUser ? meta.pendingToolCall : null;
   let actionTraceHtml = '';
-  if (hasSteps) {
+  if (hasSteps || ptc) {
     const cardsHtml = traceSteps.map((te) => {
       const ok = te.ok !== false;
       const finalIcon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
@@ -1705,13 +1711,44 @@ function renderMessage(msg, index) {
       );
     }).join('');
 
-    const doneHtml =
-      '<div class="tool-trace-card tool-trace-card--done">' +
-        '<i class="ph ph-check-circle"></i>' +
-        '<span class="tool-trace-card-label">Completed</span>' +
-      '</div>';
+    let terminalHtml;
+    if (!ptc) {
+      terminalHtml =
+        '<div class="tool-trace-card tool-trace-card--done">' +
+          '<i class="ph ph-check-circle"></i>' +
+          '<span class="tool-trace-card-label">Completed</span>' +
+        '</div>';
+    } else if (ptc.status === 'pending') {
+      terminalHtml =
+        '<div class="tool-trace-card tool-trace-card--confirm" data-index="' + index + '">' +
+          '<i class="ph ph-hand-palm"></i>' +
+          '<span class="tool-trace-card-label">' + escapeHtml(ptc.summary || 'Perform this action?') + '</span>' +
+          '<div class="tool-trace-card-actions">' +
+            '<button class="tool-confirm-btn tool-confirm-btn--confirm" data-tool-action="confirm" data-index="' + index + '">' +
+              '<i class="ph ph-check"></i> Confirm' +
+            '</button>' +
+            '<button class="tool-confirm-btn tool-confirm-btn--cancel" data-tool-action="cancel" data-index="' + index + '">' +
+              '<i class="ph ph-x"></i> Cancel' +
+            '</button>' +
+          '</div>' +
+        '</div>';
+    } else if (ptc.status === 'cancelled') {
+      terminalHtml =
+        '<div class="tool-trace-card tool-trace-card--blocked">' +
+          '<i class="ph ph-x-circle"></i>' +
+          '<span class="tool-trace-card-label">Cancelled — no changes were made.</span>' +
+        '</div>';
+    } else {
+      // status === 'confirmed' — the actual run happened as the next
+      // message once the user approved it.
+      terminalHtml =
+        '<div class="tool-trace-card tool-trace-card--done">' +
+          '<i class="ph ph-check-circle"></i>' +
+          '<span class="tool-trace-card-label">Confirmed — continued below</span>' +
+        '</div>';
+    }
 
-    actionTraceHtml = '<div class="tool-trace-list">' + cardsHtml + doneHtml + '</div>';
+    actionTraceHtml = '<div class="tool-trace-list">' + cardsHtml + terminalHtml + '</div>';
   }
 
   return (
@@ -1729,7 +1766,6 @@ function renderMessage(msg, index) {
         (msg.content ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         documentFileHtml +
         sourcesHtml +
-        toolConfirmHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
