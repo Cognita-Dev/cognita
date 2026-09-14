@@ -592,7 +592,13 @@ export async function handleChatRequest(request, env) {
     if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
     } else if (connectorToolsEnabled) {
-      const tools = await getAvailableTools(identity.uid, env);
+      // Only used by getAvailableTools' router, and only once a user's
+      // connected-tool count actually crosses ROUTER_THRESHOLD — see
+      // connector-tools.js. Below that, this is computed but ignored, so
+      // it's cheap/harmless for the common case of 1-2 connectors.
+      const lastUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
+      const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
+      const tools = await getAvailableTools(identity.uid, env, intentText);
       console.log(
         '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
         ' toolCount=' + tools.length +
