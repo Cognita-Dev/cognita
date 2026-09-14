@@ -239,7 +239,35 @@ function _systemPrompt(userFirstName) {
     'github_create_or_update_file tool" or "I called the GitHub API" or ' +
     '"I\'ll invoke a tool." Never describe your own tool use as a ' +
     'mechanism in your reply to the user — describe the outcome, in ' +
-    'plain language, the way a colleague doing the work themselves would.'
+    'plain language, the way a colleague doing the work themselves would. ' +
+    'On formatting: your own chat replies here are rendered as markdown, so ' +
+    'headings, **bold**, *italics*, bullet or numbered lists, tables, and ' +
+    '```code blocks``` are all fine there when they genuinely make the ' +
+    'answer easier to read — but do not add them reflexively to a short ' +
+    'answer that reads fine as plain sentences. The moment content you ' +
+    'are producing is destined for somewhere else, format for that ' +
+    'destination instead of markdown chat formatting, even though you are ' +
+    'still typing it as plain text right now. Concretely: an email body, a ' +
+    'text/SMS message, a chat message sent through a connector (Slack, ' +
+    'Google Chat, etc.), or any tool argument described as "plain text" ' +
+    'must never contain markdown syntax such as **, ###, bullet dashes, or ' +
+    '[label](url) link syntax — write it exactly as a person would type it ' +
+    'in that medium (a greeting, plain paragraphs or line breaks, a plain ' +
+    'sign-off, the literal URL if a link is needed). When writing or ' +
+    'editing a file through a tool (GitHub, Drive, etc.), format its ' +
+    'contents according to that file\'s own type — markdown syntax only in ' +
+    '.md files, code in the language it is written in with no markdown ' +
+    'fences wrapped around it, plain prose in .txt, and so on — never wrap ' +
+    'a file\'s real contents in the ``` fences you\'d use to show code in ' +
+    'chat. Never surface literal formatting tokens (**, ###, [TEXT], curly ' +
+    'placeholders) in any final output, chat or otherwise, unless the user ' +
+    'explicitly asked to see the raw markdown/template source itself. ' +
+    'When you do want a link to be clickable in your chat reply, write it ' +
+    'as [visible text](https://full-url) rather than pasting a bare URL — ' +
+    'the interface turns that into a real clickable link. Use that same ' +
+    '[text](url) form for any file or document link you share, with the ' +
+    'file or document name (not "click here" or the raw URL) as the ' +
+    'visible text.'
   );
 }
 
@@ -925,8 +953,16 @@ export async function handleChatRequest(request, env) {
   // return no content at all alongside a tool_calls response) text the
   // model produced, so the frontend always has something sensible to show
   // above the confirm/cancel buttons.
+  // NOTE: the frontend's confirmation card (the "awaiting_confirmation"
+  // step) already displays `pendingToolCall.summary` right next to the
+  // Confirm/Cancel buttons — see js/app.js's tool-trace-card--confirm
+  // block. Repeating that same summary text here in `reply` used to make
+  // it print a second time as an ordinary chat message directly below the
+  // card (e.g. "Creating X" shown twice). Keep this fallback short and
+  // free of the summary so it never duplicates what the card already
+  // says.
   if (pendingToolCall && !reply.trim()) {
-    reply = pendingToolCall.summary + ' Would you like me to go ahead?';
+    reply = 'Would you like me to go ahead?';
   }
 
   return {
