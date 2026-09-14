@@ -455,6 +455,31 @@ export const TOOLS = [
   },
 ];
 
+// Sub-groups the 25 Google tools by domain (calendar/drive/gmail), used
+// only by connector-tools.js's tool router (see ROUTER_THRESHOLD there)
+// to narrow "the user connected Google" down to "the user is asking
+// about their calendar" once the total tool count gets large enough that
+// narrowing is worth the risk of narrowing wrong. Not part of the
+// OpenAI-compatible schema — purely internal routing metadata.
+export const TOOL_DOMAINS = {
+  calendar: [
+    'google_list_calendars', 'google_list_calendar_events', 'google_search_calendar_events',
+    'google_get_calendar_event', 'google_create_calendar_event', 'google_update_calendar_event',
+    'google_delete_calendar_event',
+  ],
+  drive: [
+    'google_list_drive_files', 'google_search_drive_files', 'google_get_drive_file',
+    'google_read_drive_file_content', 'google_create_drive_file', 'google_create_drive_folder',
+    'google_update_drive_file_content', 'google_rename_or_move_drive_file', 'google_share_drive_file',
+    'google_delete_drive_file',
+  ],
+  gmail: [
+    'google_list_gmail_labels', 'google_search_gmail_messages', 'google_get_gmail_message',
+    'google_get_gmail_thread', 'google_send_gmail_message', 'google_create_gmail_draft',
+    'google_modify_gmail_message_labels', 'google_trash_gmail_message',
+  ],
+};
+
 export const REQUIRES_CONFIRMATION = [
   'google_create_calendar_event', 'google_update_calendar_event', 'google_delete_calendar_event',
   'google_create_drive_file', 'google_create_drive_folder', 'google_update_drive_file_content',
