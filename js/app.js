@@ -3,6 +3,12 @@
 // window.Auth.authedFetch — never calls Groq/OpenRouter/Paystack/etc
 // directly, and never constructs a request containing a provider or
 // model name. The Worker decides all of that.
+//
+// Exports mount(), called once by js/router.js the first time the chat
+// view is opened. Sidebar chrome (collapse/account menu/sign-out) is
+// owned by js/shell.js, not here.
+
+import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo } from './shell.js';
 
 const WORKER_URL = 'https://cognita.cognitai.workers.dev';
 const HISTORY_KEY = 'cognita:conversations';
@@ -100,7 +106,7 @@ const THINKING_WORDS = [
    INIT
 ════════════════════════════════════════════════════════ */
 
-(async function init() {
+export async function mount() {
   const user = await window.Auth.requireAuthOrRedirect();
   if (!user) return; // already redirected to login
 
@@ -113,14 +119,14 @@ const THINKING_WORDS = [
   wireComposer();
   wireAttachMenu();
   wireQualityPicker();
-  wireSidebar();
-  wireAccountMenu();
   wireVisualModal();
   wireDocumentModal();
   wireConnectorsModal();
   showConnectorRedirectBanner();
   wireSuggestionCards();
   startPlaceholderTypewriter();
+
+  window.addEventListener('cognita:new-chat', startNewConversation);
 
   reconcileIfDue();
   window.addEventListener('focus', reconcileIfDue);
@@ -129,18 +135,11 @@ const THINKING_WORDS = [
   const contentWrap = document.getElementById('appContentWrap');
   if (overlay) overlay.hidden = true;
   if (contentWrap) contentWrap.hidden = false;
-})();
+}
 
 /* ════════════════════════════════════════════════════════
    ACCOUNT / USAGE DISPLAY
 ════════════════════════════════════════════════════════ */
-
-function renderAccountInfo(user) {
-  const displayName = (user.displayName || '').trim();
-  const label = displayName || user.email || 'Signed in';
-  document.getElementById('accountEmail').textContent = label;
-  document.getElementById('accountAvatar').textContent = label.charAt(0).toUpperCase();
-}
 
 async function refreshAccount() {
   try {
@@ -619,57 +618,18 @@ function deleteConversation(id) {
    SIDEBAR
 ════════════════════════════════════════════════════════ */
 
-function wireSidebar() {
-  const sidebar = document.getElementById('appSidebar');
-  const scrim = document.getElementById('sidebarScrim');
-
-  document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
-    sidebar.classList.toggle('is-collapsed');
-  });
-
-  document.getElementById('sidebarCloseBtn').addEventListener('click', () => {
-    closeMobileSidebar();
-  });
-
-  document.getElementById('mobileSidebarBtn').addEventListener('click', () => {
-    sidebar.classList.add('is-open');
-    scrim.classList.add('is-visible');
-  });
-
-  scrim.addEventListener('click', closeMobileSidebar);
-
-  document.getElementById('newChatBtn').addEventListener('click', () => {
-    currentConversationId = null;
-    conversation = [];
-    conversationMeta = [];
-    conversationApprovals = [];
-    renderConversation();
-    updateConversationTitle();
-    renderSidebarHistory();
-    closeMobileSidebar();
-  });
-}
-
-function closeMobileSidebar() {
-  document.getElementById('appSidebar').classList.remove('is-open');
-  document.getElementById('sidebarScrim').classList.remove('is-visible');
-}
-
-function wireAccountMenu() {
-  const btn = document.getElementById('accountBtn');
-  const menu = document.getElementById('accountMenu');
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    menu.hidden = !menu.hidden;
-  });
-
-  document.addEventListener('click', () => { menu.hidden = true; });
-
-  document.getElementById('logOutBtn').addEventListener('click', async () => {
-    await window.Auth.logOut();
-    window.location.href = '/login.html';
-  });
+// Reset-to-a-blank-conversation, triggered either by clicking New Chat
+// while already on the chat view, or via the 'cognita:new-chat' event
+// dispatched by js/router.js when New Chat is clicked from another view.
+function startNewConversation() {
+  currentConversationId = null;
+  conversation = [];
+  conversationMeta = [];
+  conversationApprovals = [];
+  renderConversation();
+  updateConversationTitle();
+  renderSidebarHistory();
+  closeMobileSidebar();
 }
 
 /* ════════════════════════════════════════════════════════
@@ -2217,14 +2177,6 @@ function renderMarkdownLite(text, sources) {
   return raw;
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 /* ════════════════════════════════════════════════════════
    VISUAL GENERATION MODAL (diagram / illustration)
 ════════════════════════════════════════════════════════ */
@@ -2645,18 +2597,3 @@ window.addEventListener('pageshow', (event) => {
     loadConnectorsList();
   }
 });
-
-/* ════════════════════════════════════════════════════════
-   TOAST
-════════════════════════════════════════════════════════ */
-
-function showToast(message) {
-  const existing = document.querySelector('.toast');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
-}
