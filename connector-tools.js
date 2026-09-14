@@ -5,10 +5,15 @@
 // three functions exported here.
 //
 // Responsibilities:
-//   1. getAvailableTools(uid, env) — only offer the model tools for
-//      providers this specific user has actually connected. A user with
-//      no connectors gets an empty array, and chat-endpoint.js skips the
-//      whole tool-calling path in that case.
+//   1. getAvailableTools(uid, env, intentText) — only offer the model
+//      tools for providers this specific user has actually connected. A
+//      user with no connectors gets an empty array, and chat-endpoint.js
+//      skips the whole tool-calling path in that case.
+//      Above ROUTER_THRESHOLD total connected tools, this also narrows
+//      the set by keyword-matching `intentText` (the user's latest
+//      message) against each provider — see "Tool router" below. Below
+//      the threshold, or if intentText is omitted/ambiguous, every
+//      connected tool is returned unchanged, exactly as before.
 //   2. toolRequiresConfirmation(name) / describeTool(name, args) — used by
 //      chat-endpoint.js to implement the write-action confirmation flow
 //      without needing to know which provider a tool belongs to.
@@ -66,20 +71,89 @@ for (const provider of CONNECTOR_PROVIDERS) {
   }
 }
 
+// ── Tool router ──────────────────────────────────────────────────────
+// Below this many total connected tools, every connected tool is always
+// offered — no routing, no risk of hiding the tool the user needed. This
+// only starts mattering for a user with several providers connected at
+// once (e.g. GitHub + Google's 25 + Figma + Canva); a single-connector
+// user never crosses it. Tune by watching [chat][tools] toolCount= in
+// logs; raise it if models keep choosing well past this count, lower it
+// if selection accuracy visibly degrades before hitting it.
+const ROUTER_THRESHOLD = 60;
+
+// Keyword → provider. Deliberately coarse (substrings of the lowercased
+// message) and deliberately over-inclusive within each provider — a
+// false-positive match just means "offer a couple of tools that turn out
+// unused," which is harmless, whereas a false negative hides a tool the
+// user actually needed. Ambiguous/unmatched text always falls back to
+// "offer everything" (see getAvailableTools) rather than guessing.
+const PROVIDER_KEYWORDS = {
+  github: ['github', 'repo', 'repository', 'pull request', ' pr ', 'commit', 'branch', 'issue', 'workflow', ' ci ', 'merge'],
+  google: ['google', 'calendar', 'event', 'meeting', 'schedule', 'appointment', 'drive', 'gmail', 'email', 'mail', 'inbox', 'attachment', 'doc', 'sheet', 'spreadsheet', 'folder'],
+  figma: ['figma', 'frame', 'design file'],
+  canva: ['canva', 'design', 'template', 'poster', 'flyer'],
+};
+
+// Same idea one level down, only for Google (the one provider large
+// enough on its own to be worth sub-routing) — see google-tools.js's
+// TOOL_DOMAINS. If Google is in scope but no domain keyword matches,
+// every Google tool is offered rather than guessing which domain.
+const GOOGLE_DOMAIN_KEYWORDS = {
+  calendar: ['calendar', 'event', 'meeting', 'schedule', 'appointment'],
+  drive: ['drive', 'doc', 'sheet', 'spreadsheet', 'folder', 'file'],
+  gmail: ['gmail', 'email', 'mail', 'inbox', 'attachment', 'send a message', 'reply'],
+};
+
+function _matchedKeys(text, keywordMap) {
+  const lower = ' ' + text.toLowerCase() + ' ';
+  const matched = new Set();
+  for (const [key, keywords] of Object.entries(keywordMap)) {
+    if (keywords.some((kw) => lower.includes(kw))) matched.add(key);
+  }
+  return matched;
+}
+
 /**
  * Returns the OpenAI-compatible tool schemas the model should be offered
  * for this user right now — i.e. only tools belonging to providers they
  * have actually connected. Empty array if they have none connected.
+ *
+ * `intentText` (optional — pass the user's latest message) enables the
+ * router described above. Omit it, or leave the connected tool count at
+ * or below ROUTER_THRESHOLD, and this behaves exactly as it always has:
+ * every connected provider's full tool set, unfiltered.
  */
-export async function getAvailableTools(uid, env) {
+export async function getAvailableTools(uid, env, intentText) {
   const connected = await listConnectedProviders(uid, env);
-  const tools = [];
-  for (const provider of CONNECTOR_PROVIDERS) {
-    if (connected[provider]) {
-      tools.push(...REGISTRY[provider].TOOLS);
+  const connectedProviders = CONNECTOR_PROVIDERS.filter((p) => connected[p]);
+  const allTools = connectedProviders.flatMap((p) => REGISTRY[p].TOOLS);
+
+  if (allTools.length <= ROUTER_THRESHOLD || !intentText || typeof intentText !== 'string') {
+    return allTools;
+  }
+
+  const matchedProviders = [...connectedProviders].filter((p) => _matchedKeys(intentText, PROVIDER_KEYWORDS).has(p));
+  if (matchedProviders.length === 0) {
+    // Nothing recognizable in the message — never guess-narrow from an
+    // ambiguous signal, just fall back to the unrouted behavior.
+    return allTools;
+  }
+
+  const routedTools = [];
+  for (const provider of matchedProviders) {
+    if (provider === 'google' && googleTools.TOOL_DOMAINS) {
+      const matchedDomains = _matchedKeys(intentText, GOOGLE_DOMAIN_KEYWORDS);
+      if (matchedDomains.size === 0) {
+        routedTools.push(...googleTools.TOOLS); // Google in scope, domain unclear — offer all of it
+      } else {
+        const allowedNames = new Set([...matchedDomains].flatMap((d) => googleTools.TOOL_DOMAINS[d]));
+        routedTools.push(...googleTools.TOOLS.filter((t) => allowedNames.has(t.function.name)));
+      }
+    } else {
+      routedTools.push(...REGISTRY[provider].TOOLS);
     }
   }
-  return tools;
+  return routedTools;
 }
 
 /** Which provider owns a given tool name, or null if unrecognized. */
