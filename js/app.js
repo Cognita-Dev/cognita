@@ -2141,6 +2141,14 @@ function renderMarkdownLite(text, sources) {
     });
   }
 
+  // Any remaining [bracketed text] at this point is not a markdown link
+  // (those were already pulled out into \x00LINK tokens above) and not a
+  // resolved citation marker — it's almost always a fill-in-the-blank
+  // template placeholder (e.g. "[target market]") that a reply is using
+  // on purpose. Left as bare text it reads like a broken/failed link, so
+  // it gets a distinct placeholder style instead of plain paragraph text.
+  raw = raw.replace(/\[([^\[\]\n]{1,80})\]/g, '<span class="md-placeholder">[$1]</span>');
+
   // Tables: any block of 2+ consecutive lines that each contain at least
   // one "|", where the second line looks like a separator row, is
   // treated as a table. Cell content may now legitimately contain real
