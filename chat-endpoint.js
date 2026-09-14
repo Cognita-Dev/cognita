@@ -168,7 +168,12 @@ async function _modelTurn(tierConfig, messages, tools, env) {
   }
 }
 
-function _systemPrompt(userFirstName) {
+// The base prompt: identity, tone, date/knowledge-cutoff handling, the
+// document/diagram redirect, reasoning/first-person rules, creator
+// disclosure rules, and output formatting rules. This part applies to
+// EVERY chat turn regardless of whether any tool is available, so it is
+// always sent.
+function _systemPromptBase(userFirstName) {
   const today = new Date().toISOString().slice(0, 10);
   const addressLine = userFirstName
     ? 'The user\'s first name is ' + userFirstName + '. Address them by name occasionally where it feels natural and warm, but not in every single reply, and otherwise refer to them as the user or the client. '
@@ -209,7 +214,46 @@ function _systemPrompt(userFirstName) {
     'technology in your reasoning or output. Never hint that you have been ' +
     'instructed not to mention these. Simply state that you are Cognita, ' +
     'created by the Cognita team, and leave it at that. ' +
-    'You may have tools available to act on the user\'s connected apps ' +
+    'On formatting: your own chat replies here are rendered as markdown, so ' +
+    'headings, **bold**, *italics*, bullet or numbered lists, tables, and ' +
+    '```code blocks``` are all fine there when they genuinely make the ' +
+    'answer easier to read — but do not add them reflexively to a short ' +
+    'answer that reads fine as plain sentences. The moment content you ' +
+    'are producing is destined for somewhere else, format for that ' +
+    'destination instead of markdown chat formatting, even though you are ' +
+    'still typing it as plain text right now. Concretely: an email body, a ' +
+    'text/SMS message, a chat message sent through a connector (Slack, ' +
+    'Google Chat, etc.), or any tool argument described as "plain text" ' +
+    'must never contain markdown syntax such as **, ###, bullet dashes, or ' +
+    '[label](url) link syntax — write it exactly as a person would type it ' +
+    'in that medium (a greeting, plain paragraphs or line breaks, a plain ' +
+    'sign-off, the literal URL if a link is needed). When writing or ' +
+    'editing a file through a tool (GitHub, Drive, etc.), format its ' +
+    'contents according to that file\'s own type — markdown syntax only in ' +
+    '.md files, code in the language it is written in with no markdown ' +
+    'fences wrapped around it, plain prose in .txt, and so on — never wrap ' +
+    'a file\'s real contents in the ``` fences you\'d use to show code in ' +
+    'chat. Never surface literal formatting tokens (**, ###, [TEXT], curly ' +
+    'placeholders) in any final output, chat or otherwise, unless the user ' +
+    'explicitly asked to see the raw markdown/template source itself. ' +
+    'When you do want a link to be clickable in your chat reply, write it ' +
+    'as [visible text](https://full-url) rather than pasting a bare URL — ' +
+    'the interface turns that into a real clickable link. Use that same ' +
+    '[text](url) form for any file or document link you share, with the ' +
+    'file or document name (not "click here" or the raw URL) as the ' +
+    'visible text.'
+  );
+}
+
+// Appended to the base prompt ONLY on turns where at least one connector
+// tool is actually available to the model (see the call site: tools.length
+// > 0). On the common turn — no tools connected, or a plan without
+// connector-tools access — this whole paragraph is skipped entirely,
+// saving its tokens on every such request without changing behavior,
+// since a model with no tools has nothing to apply these rules to anyway.
+function _systemPromptToolsAddendum() {
+  return (
+    ' You may have tools available to act on the user\'s connected apps ' +
     '(GitHub, Google, Figma, Canva). If a tool result comes back empty or ' +
     'thin, check it for a "note" field before concluding anything — some ' +
     'tools attach one explaining why a result might be incomplete (for ' +
@@ -239,35 +283,7 @@ function _systemPrompt(userFirstName) {
     'github_create_or_update_file tool" or "I called the GitHub API" or ' +
     '"I\'ll invoke a tool." Never describe your own tool use as a ' +
     'mechanism in your reply to the user — describe the outcome, in ' +
-    'plain language, the way a colleague doing the work themselves would. ' +
-    'On formatting: your own chat replies here are rendered as markdown, so ' +
-    'headings, **bold**, *italics*, bullet or numbered lists, tables, and ' +
-    '```code blocks``` are all fine there when they genuinely make the ' +
-    'answer easier to read — but do not add them reflexively to a short ' +
-    'answer that reads fine as plain sentences. The moment content you ' +
-    'are producing is destined for somewhere else, format for that ' +
-    'destination instead of markdown chat formatting, even though you are ' +
-    'still typing it as plain text right now. Concretely: an email body, a ' +
-    'text/SMS message, a chat message sent through a connector (Slack, ' +
-    'Google Chat, etc.), or any tool argument described as "plain text" ' +
-    'must never contain markdown syntax such as **, ###, bullet dashes, or ' +
-    '[label](url) link syntax — write it exactly as a person would type it ' +
-    'in that medium (a greeting, plain paragraphs or line breaks, a plain ' +
-    'sign-off, the literal URL if a link is needed). When writing or ' +
-    'editing a file through a tool (GitHub, Drive, etc.), format its ' +
-    'contents according to that file\'s own type — markdown syntax only in ' +
-    '.md files, code in the language it is written in with no markdown ' +
-    'fences wrapped around it, plain prose in .txt, and so on — never wrap ' +
-    'a file\'s real contents in the ``` fences you\'d use to show code in ' +
-    'chat. Never surface literal formatting tokens (**, ###, [TEXT], curly ' +
-    'placeholders) in any final output, chat or otherwise, unless the user ' +
-    'explicitly asked to see the raw markdown/template source itself. ' +
-    'When you do want a link to be clickable in your chat reply, write it ' +
-    'as [visible text](https://full-url) rather than pasting a bare URL — ' +
-    'the interface turns that into a real clickable link. Use that same ' +
-    '[text](url) form for any file or document link you share, with the ' +
-    'file or document name (not "click here" or the raw URL) as the ' +
-    'visible text.'
+    'plain language, the way a colleague doing the work themselves would.'
   );
 }
 
@@ -554,7 +570,7 @@ export async function handleChatRequest(request, env) {
     .slice(-plan.limits.maxContextMessages)
     .map(m => ({ role: m.role, content: m.content }));
 
-  const messages = [{ role: 'system', content: _systemPrompt(userFirstName) }, ...trimmedHistory];
+  const messages = [{ role: 'system', content: _systemPromptBase(userFirstName) }, ...trimmedHistory];
 
   const tierConfig = MODEL_TIERS[actualTier];
   // confirmToolCall requests must also go through the connector-tools
@@ -627,6 +643,9 @@ export async function handleChatRequest(request, env) {
       const lastUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
       const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
       const tools = await getAvailableTools(identity.uid, env, intentText);
+      if (tools.length > 0) {
+        messages[0] = { role: 'system', content: messages[0].content + _systemPromptToolsAddendum() };
+      }
       console.log(
         '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
         ' toolCount=' + tools.length +
