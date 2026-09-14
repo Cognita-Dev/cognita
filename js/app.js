@@ -2076,6 +2076,33 @@ function renderMarkdownLite(text, sources) {
 
   raw = raw.replace(/`([^`\n]+)`/g, '<code>$1</code>');
 
+  // Links: [label](url) markdown syntax becomes a real clickable anchor.
+  // Must run before bold/italic (a label may itself contain other
+  // markdown-looking characters) and before the bare-URL autolink pass
+  // below, so a properly-formed [label](url) is never re-wrapped.
+  // escapeHtml already turned "&" into "&amp;" etc. inside url/label, so
+  // unescape the url portion just enough to produce a valid href while
+  // still escaping it correctly for the attribute.
+  // At this point `raw` is already escapeHtml()'d, so both the label and
+  // the url below are already entity-safe for direct use in an href
+  // attribute (e.g. a literal "&" is already "&amp;") — no further
+  // escaping or unescaping needed.
+  const linkPlaceholders = [];
+  raw = raw.replace(/\[([^\[\]\n]+)\]\((https?:\/\/[^\s()]+)\)/g, (_, label, url) => {
+    const html = '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+    linkPlaceholders.push(html);
+    return '\x00LINK' + (linkPlaceholders.length - 1) + '\x00';
+  });
+
+  // Bare URLs (not already part of a markdown link) become clickable too,
+  // so a model that forgets the [label](url) form still doesn't leave a
+  // dead-looking raw link sitting in the reply.
+  raw = raw.replace(/(^|[\s(])((?:https?:\/\/)[^\s<>()]+[^\s<>()".,!?:;'])/g, (whole, pre, url) => {
+    const html = '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
+    linkPlaceholders.push(html);
+    return pre + '\x00LINK' + (linkPlaceholders.length - 1) + '\x00';
+  });
+
   // Headings — must run before bold/italic so "#" lines aren't eaten.
   raw = raw.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
   raw = raw.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
@@ -2176,6 +2203,8 @@ function renderMarkdownLite(text, sources) {
     return '<' + tag + ' class="katex-target" id="' + id + '" data-display="' + m.display + '">' +
       escapeHtml(m.expr) + '</' + tag + '>';
   });
+
+  raw = raw.replace(/\x00LINK(\d+)\x00/g, (_, i) => linkPlaceholders[parseInt(i, 10)]);
 
   return raw;
 }
