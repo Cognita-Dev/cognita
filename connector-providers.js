@@ -54,22 +54,33 @@ function _basicAuthHeader(id, secret) {
 // reversible for users who already granted them.
 const SCOPES = {
   github: 'repo', // full read/write on public AND private repos — see hasSufficientScope() below
-  // Widened (2026) from drive.file/calendar.events-only so google-tools.js
-  // can offer real Calendar/Drive/Gmail coverage instead of a narrow demo:
-  //   - calendar.events + calendar.readonly: full CRUD on events across any
-  //     calendar the user can see, plus listing the calendars themselves.
-  //   - drive: read/write on any Drive file the user can access, not just
-  //     ones the app itself created (drive.file's old limitation).
-  //   - gmail.modify + gmail.send + gmail.labels: search/read/label/archive
-  //     mail and send/draft it. Deliberately NOT the blanket
-  //     'https://mail.google.com/' scope, and no scope that allows
-  //     permanent deletion — see google-tools.js's file header for the
-  //     safety choices this enables (trash-not-delete, etc).
+  // Narrowed (2026-09) to only scopes Google classifies as "sensitive" or
+  // "non-sensitive" — NOT "restricted". Restricted scopes (drive,
+  // gmail.modify, gmail.readonly, gmail.compose, etc.) force the app
+  // through an annual third-party CASA security assessment before going
+  // to production, on top of normal OAuth verification. See
+  // https://support.google.com/cloud/answer/13464325 for Google's
+  // authoritative restricted-scope list; this project deliberately stays
+  // off of it:
+  //   - calendar.events + calendar.readonly: sensitive, NOT restricted —
+  //     full CRUD on events across any calendar the user can see, plus
+  //     listing the calendars themselves. No CASA required.
+  //   - drive.file: non-sensitive, NOT restricted — read/write only on
+  //     files this app itself created (or that a Picker flow explicitly
+  //     hands it, which this app does not implement). This is narrower
+  //     than the old blanket 'drive' scope: Cognita can no longer browse
+  //     or search a user's pre-existing Drive files, only ones it made.
+  //   - gmail.send: sensitive, NOT restricted — send mail only.
+  //   - gmail.labels: non-sensitive, NOT restricted — create/list/update/
+  //     delete label *definitions* only. It does NOT allow applying or
+  //     removing labels on a message, reading message content, searching
+  //     mail, creating drafts, or trashing mail — all of those require
+  //     gmail.modify/gmail.compose/gmail.readonly, which are restricted.
+  //     Those tools have been removed from google-tools.js accordingly.
   google: [
     'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/calendar.readonly',
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.labels',
   ].join(' '),
@@ -91,13 +102,18 @@ export function hasSufficientScope(provider, storedScope) {
   }
   if (provider === 'google') {
     // Google returns granted scopes space-separated. Accounts connected
-    // before the 2026 widening only have drive.file + calendar.events —
-    // this catches that so getValidToken() (connectors.js) forces a
-    // reconnect instead of every new Drive/Gmail tool silently 403'ing.
+    // before the 2026-09 narrowing may have the old restricted set
+    // (bare 'drive', 'gmail.modify') instead of the current one
+    // ('drive.file', no gmail.modify) — either mismatch means the stored
+    // token doesn't match what google-tools.js now expects, so force a
+    // reconnect instead of letting tools silently 403 or (worse) run
+    // against stale broader access than we mean to use.
     const granted = (storedScope || '').split(' ').map((s) => s.trim());
     return (
-      granted.includes('https://www.googleapis.com/auth/drive') &&
-      granted.includes('https://www.googleapis.com/auth/gmail.modify')
+      granted.includes('https://www.googleapis.com/auth/drive.file') &&
+      !granted.includes('https://www.googleapis.com/auth/gmail.modify') &&
+      granted.includes('https://www.googleapis.com/auth/gmail.send') &&
+      granted.includes('https://www.googleapis.com/auth/gmail.labels')
     );
   }
   return true; // not implemented for figma/canva yet
