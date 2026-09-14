@@ -505,6 +505,30 @@
   overflow-wrap: anywhere;
 }
 
+/* Clickable links inside a reply — the base reset sets `a { color:
+   inherit }` everywhere, which makes a link inside a message look like
+   plain text. This restores a visible, theme-aware link color (accent
+   already flips correctly between light/dark via the root variables). */
+.message-content a:not(.citation-marker) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.message-content a:not(.citation-marker):hover {
+  color: var(--accent-hover);
+  text-decoration-color: currentColor;
+}
+
+/* Fill-in-the-blank template placeholders such as "[target market]" that
+   a reply uses on purpose — styled distinctly so they read as intentional
+   formula slots rather than a broken/failed link. */
+.message-content .md-placeholder {
+  color: var(--text-2);
+  font-style: italic;
+}
+
 .message-content blockquote {
   margin: var(--space-3) 0;
   padding: var(--space-1) 0 var(--space-1) var(--space-3);
