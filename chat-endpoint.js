@@ -89,6 +89,32 @@ function _claimsCompletion(text) {
   return COMPLETION_CLAIM_PATTERNS.some((re) => re.test(text));
 }
 
+// A third failure mode, distinct from both of the above: the model
+// narrates an *intention* to keep investigating ("I'll examine the
+// JavaScript files… let me check a few key files") and then just stops,
+// handing that back as if it were the final answer. It's not a false
+// completion claim (nothing is claimed done) and it's not the short
+// mechanical narration pattern above — it reads like a real sentence,
+// which is exactly why it used to slip through as "Completed" in the UI
+// even though the task plainly wasn't. Bounded separately from the
+// grounding retries below (MAX_STALL_RETRIES) since this isn't a
+// hallucination to correct, it's a legitimate task that just needs the
+// model to actually keep going.
+const MAX_STALL_RETRIES = 2;
+const STALL_PATTERNS = [
+  /^(?:I(?:'ll| will)|Let me|I(?:'m| am) going to|I need to)\s+(?:check|examine|look at|review|investigate|explore|dig into|go through|take a look at|see)\b/i,
+];
+
+function _looksLikeUnfinishedStall(text) {
+  if (!text) return false;
+  const t = text.trim();
+  // A genuine clarifying question to the user ends with "?" — that's the
+  // "genuinely blocked" pause the system prompt explicitly allows, never
+  // a stall to correct.
+  if (!t || t.length > 220 || t.endsWith('?')) return false;
+  return STALL_PATTERNS.some((re) => re.test(t));
+}
+
 // Client-supplied, conversation-scoped record of writes the user has
 // already approved this conversation (Bug 4). Never trusted blindly:
 // re-validated shape on every request, and a record only ever suppresses
@@ -232,6 +258,84 @@ function _extractThinking(text) {
   return { thinking, reply };
 }
 
+// Sentence-level shapes that mark a piece of reasoning as talking ABOUT
+// the interaction (the system prompt, the fact that there's a "user" and
+// an "assistant", what model/provider is involved) rather than actually
+// reasoning through the problem. This is the raw reasoning channel's own
+// habit, not something the visible system prompt asks for — it happens
+// even though that prompt explicitly says to reason in first person and
+// never narrate the task — so it has to be filtered on the way out
+// rather than prevented at the source. Sentences matching any of these
+// are dropped entirely rather than rewritten, since there's no safe
+// first-person paraphrase of "developer instructions say I must not…"
+// that isn't still describing the scaffolding to the user.
+const REASONING_LEAK_SENTENCE_PATTERNS = [
+  /\bthe user\b/i,
+  /\bthe assistant\b/i,
+  /\bdeveloper instructions?\b/i,
+  /\bsystem prompt\b/i,
+  /\b(?:my|the) (?:instructions|guidelines|policy|policies)\b/i,
+  /\baccording to (?:the )?(?:rules|instructions|guidelines|policy)\b/i,
+  /\b(?:openai|anthropic|chatgpt|groq|open ?router|workers ?ai|hugging ?face|llama|mistral|gpt-?\d)\b/i,
+  /\bas an ai\b/i,
+  /\blanguage model\b/i,
+  /\btraining data\b/i,
+  /\bi (?:was|am|'m) (?:trained|instructed|told|programmed) (?:to|not to)\b/i,
+  /\bmy (?:creators|training)\b/i,
+];
+
+// Takes the model's raw hidden-reasoning text and either returns a
+// cleaned, on-brand version safe to show the user, or null if it can't
+// be made safe. Reasoning-tier models keep this channel genuinely
+// separate from their final answer and it does not reliably follow the
+// "speak as Cognita, first person, never we" instructions the way the
+// visible reply does — in testing it has flatly referred to "the user",
+// said "we must not claim we performed actions", and cited "developer
+// instructions" by name. That's real reasoning content underneath, so
+// rather than discard it outright (the previous, blunter fix), this
+// strips the handful of sentence shapes that talk about the interaction
+// itself and normalizes the model's default "we" framing to Cognita's
+// actual first-person voice. If too much of the text turns out to be
+// that kind of scaffolding-talk to make a coherent result, it gives up
+// and returns null so the caller can fall back to a generic heading
+// instead of showing a choppy, gutted paragraph.
+function _cleanReasoningForDisplay(raw) {
+  if (!raw) return null;
+  const flat = raw.replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+
+  // Naive sentence split — this never has to be linguistically perfect,
+  // it just has to reliably isolate the handful of leak-shaped sentences
+  // reasoning models fall into so they can be dropped one at a time
+  // instead of nuking the whole paragraph over one bad line.
+  const sentences = flat.match(/[^.!?]+[.!?]*(?:\s+|$)/g) || [flat];
+  const kept = sentences.filter((s) => !REASONING_LEAK_SENTENCE_PATTERNS.some((re) => re.test(s)));
+
+  // More than a third of the sentences were about the scaffolding rather
+  // than the problem — too saturated to trust the remainder as a
+  // coherent thought.
+  if (kept.length === 0 || kept.length < sentences.length * 0.66) return null;
+
+  let cleaned = kept.join(' ').replace(/\s+/g, ' ').trim();
+  if (cleaned.length < 20) return null;
+
+  // First-person normalization — order matters (contractions and
+  // possessives before the bare pronoun) since each step only touches
+  // whole-word matches.
+  cleaned = cleaned
+    .replace(/\bwe're\b/gi, "I'm")
+    .replace(/\bwe've\b/gi, "I've")
+    .replace(/\bwe'll\b/gi, "I'll")
+    .replace(/\bwe'd\b/gi, "I'd")
+    .replace(/\bourselves\b/gi, 'myself')
+    .replace(/\bours\b/gi, 'mine')
+    .replace(/\bour\b/gi, 'my')
+    .replace(/\bus\b/gi, 'me')
+    .replace(/\bwe\b/gi, 'I');
+
+  return cleaned;
+}
+
 // Human-readable names for the "Looking at your ___" heading below — kept
 // in sync with the provider keys used across connector-tools.js.
 const _PROVIDER_LABELS = {
@@ -241,14 +345,14 @@ const _PROVIDER_LABELS = {
   canva: 'Canva designs',
 };
 
-// A short, one-line heading for the collapsed "Thought for Xs" box on
-// turns where the agent loop actually used tools. Deliberately NOT an
-// extra LLM call (that would add latency and cost to every tool-using
-// turn) — just a cheap, deterministic summary of which provider(s) the
-// recorded `steps` touched. When tools are used, the frontend shows only
-// this heading in the thought box, never the model's raw reasoning (see
-// _extractThinking / result.reasoning) — that raw chain-of-thought is
-// reserved for turns with no tool use at all.
+// A short, one-line heading for the collapsed "Thought for Xs" box.
+// Deliberately NOT an extra LLM call (that would add latency and cost to
+// every turn) — just a cheap, deterministic summary. For tool-using
+// turns it's derived from which provider(s) the recorded `steps`
+// touched; for plain turns the caller falls back to a generic constant
+// heading instead (see the end of _agent in handleChatRequest) — the
+// model's raw reasoning is never shown to the user in either case, see
+// that same comment for why.
 function _thinkingHeadingFromSteps(steps) {
   if (!steps || steps.length === 0) return null;
   const providers = [...new Set(steps.map((s) => s.provider).filter(Boolean))];
@@ -512,6 +616,7 @@ export async function handleChatRequest(request, env) {
         let round = 0;
         let invalidArgAttempts = {}; // tool name -> consecutive invalid-arg count
         let groundingRetries = 0;
+        let stallRetries = 0;
 
         // If this request is the second half of a confirmation
         // (confirmToolCall), the first "round" is running the action the
@@ -616,6 +721,25 @@ export async function handleChatRequest(request, env) {
                   reasoning: result.reasoning || null,
                   toolCalls: null,
                 };
+              } else if (_looksLikeUnfinishedStall(result.text || '') && stallRetries < MAX_STALL_RETRIES) {
+                // The model said it would keep investigating and then
+                // stopped instead of actually doing so — push it to
+                // really take the next step rather than letting that
+                // stand in as the final answer (this is what used to
+                // show a misleading "Completed" trace in the UI).
+                console.warn('[chat][grounding] stalled mid-task without continuing — retrying. uid=' + identity.uid);
+                stallRetries++;
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: result.text || '' },
+                  {
+                    role: 'user',
+                    content: 'Go ahead and actually do that now — call the tool for the step you just described ' +
+                      'instead of telling me you are about to. Keep going until the task is fully answered.',
+                  },
+                ]);
+                result = null;
+                round++;
+                continue;
               }
               break;
             }
@@ -759,22 +883,35 @@ export async function handleChatRequest(request, env) {
     throw _sseError(quotaExceededError, 429);
   }
 
-  let thinking = result.reasoning || null;
+  // Never show the model's raw internal reasoning to the user unfiltered
+  // — see _thinkingHeadingFromSteps above for why tool-using turns
+  // already avoid it, and _cleanReasoningForDisplay for the plain-turn
+  // case. The <think> block (when a model leaks it inline instead of
+  // using a dedicated reasoning field) is always stripped out of the
+  // reply either way — it must never appear in what the user reads as
+  // the answer — but its content only makes it into the thought box if
+  // it survives cleaning.
   let reply = result.text || '';
-  if (!thinking) {
+  let rawReasoning = result.reasoning || null;
+  if (!rawReasoning) {
     const extracted = _extractThinking(reply);
-    thinking = extracted.thinking;
-    reply = extracted.reply;
+    if (extracted.thinking) {
+      rawReasoning = extracted.thinking;
+      reply = extracted.reply;
+    }
   }
 
-  // Turns that used tools get a short deterministic heading instead of the
-  // model's raw reasoning in the thought box — see _thinkingHeadingFromSteps
-  // above for why. `thinking` is intentionally cleared in that case so a
-  // frontend reading this payload naively (or an old cached shape) never
-  // ends up showing both.
-  const thinkingHeading = _thinkingHeadingFromSteps(steps);
-  if (thinkingHeading) {
-    thinking = null;
+  let thinking = null;
+  let thinkingHeading = _thinkingHeadingFromSteps(steps);
+  if (!thinkingHeading && rawReasoning) {
+    thinking = _cleanReasoningForDisplay(rawReasoning);
+    if (!thinking) {
+      // Cleaning gave up (too much of it was scaffolding-talk to trust)
+      // — still true that reasoning happened, just nothing safe enough
+      // to show verbatim, so fall back to the same generic heading
+      // tool-using turns use.
+      thinkingHeading = 'Worked through this before answering';
+    }
   }
 
   // When a write action is pending confirmation, prefer a clear
@@ -788,6 +925,13 @@ export async function handleChatRequest(request, env) {
 
   return {
     reply,
+    // `thinking` is only ever the sanitized, first-person-normalized
+    // version of the model's real reasoning (see
+    // _cleanReasoningForDisplay) — never the raw text. `thinkingHeading`
+    // is used instead whenever there's nothing safe enough to show
+    // verbatim, or when the turn used tools (see
+    // _thinkingHeadingFromSteps). The frontend shows at most one of the
+    // two.
     thinking,
     thinkingHeading,
     remainingToday: plan.limits.messagesPerDay - quota.used,
