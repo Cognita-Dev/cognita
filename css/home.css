@@ -15,10 +15,11 @@ main { overflow-x: hidden; }
 }
 
 .hero-title {
-  font-size: clamp(2.4rem, 5.6vw, 4rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.05;
+  font-family: var(--font-display);
+  font-size: clamp(2.6rem, 6vw, 4.4rem);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.06;
   color: var(--text-1);
   margin-bottom: var(--space-5);
 }
@@ -50,9 +51,11 @@ main { overflow-x: hidden; }
   font-weight: 600;
   font-size: var(--text-base);
   box-shadow: var(--shadow-sm);
-  transition: opacity var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
 }
-.hero-cta-primary:hover { opacity: 0.85; box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.hero-cta-primary:hover { background: var(--accent); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.hero-cta-primary:active { background: var(--accent-hover); transform: translateY(0); box-shadow: var(--shadow-sm); }
+.hero-cta-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .hero-cta-secondary {
   padding: var(--space-3) var(--space-6);
@@ -65,6 +68,8 @@ main { overflow-x: hidden; }
   transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
 .hero-cta-secondary:hover { background: var(--bg-subtle); border-color: var(--text-3); }
+.hero-cta-secondary:active { background: var(--border); }
+.hero-cta-secondary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .hero-note {
   font-size: var(--text-xs);
@@ -624,9 +629,10 @@ main { overflow-x: hidden; }
 }
 
 .section-title {
+  font-family: var(--font-display);
   font-size: var(--text-3xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 500;
+  letter-spacing: -0.015em;
   text-align: center;
   color: var(--text-1);
   margin-bottom: var(--space-3);
@@ -668,9 +674,10 @@ main { overflow-x: hidden; }
 .story-row--reverse > * { direction: ltr; }
 
 .story-copy h2 {
+  font-family: var(--font-display);
   font-size: var(--text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--text-1);
   line-height: 1.25;
   margin: var(--space-2) 0 var(--space-3);
@@ -1208,8 +1215,9 @@ main { overflow-x: hidden; }
 }
 
 .use-case-row h3 {
+  font-family: var(--font-display);
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-1);
   margin-bottom: var(--space-2);
   letter-spacing: -0.01em;
@@ -1307,9 +1315,10 @@ main { overflow-x: hidden; }
 }
 .final-cta h2 {
   position: relative;
+  font-family: var(--font-display);
   font-size: var(--text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 500;
+  letter-spacing: -0.005em;
   color: #f3f3ef;
   margin-bottom: var(--space-2);
 }
@@ -1336,35 +1345,7 @@ main { overflow-x: hidden; }
   .capability-card i { font-size: 1rem; }
 }
 
-/* ── Typography consistency pass — one size/weight/color per role.
-   Primary = bold, --text-1. Cascaded/sub = regular, --text-3, same
-   size as whatever it sits under. No more per-section variation. ── */
-.hero-title {
-  font-size: clamp(1.9rem, 3.6vw, 2.75rem);
-  font-weight: 700;
-  line-height: 1.14;
-  color: var(--text-1);
-}
-.hero-subtitle {
-  font-size: var(--text-base);
-  font-weight: 400;
-  color: var(--text-3);
-}
-.section-title { font-size: var(--text-2xl); font-weight: 700; color: var(--text-1); }
-.section-subtitle { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
-.section-eyebrow { font-weight: 600; color: var(--accent); }
-
-.story-copy h2 { font-size: var(--text-xl); font-weight: 700; color: var(--text-1); }
-.story-copy p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
-
-.capability-card h3 { font-size: var(--text-base); font-weight: 700; color: var(--text-1); }
-.capability-card p { font-size: var(--text-sm); font-weight: 400; color: var(--text-3); }
-
-.use-case-row h3 { font-size: var(--text-lg); font-weight: 700; color: var(--text-1); }
-.use-case-row p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
-.use-case-tag { font-weight: 600; color: var(--accent); }
-
-.trust-item p { font-size: var(--text-sm); font-weight: 400; color: var(--text-3); }
-
-.final-cta h2 { font-size: var(--text-2xl); font-weight: 700; color: var(--text-1); }
-.final-cta p { font-size: var(--text-base); font-weight: 400; color: var(--text-3); }
+/* ── Component type roles are defined once, at their point of use
+   above. (A duplicate override block that fought those definitions —
+   including making final-cta text invisible on its own dark panel —
+   was removed here.) ── */
