@@ -53,6 +53,18 @@
     Helvetica,
     Arial,
     sans-serif;
+  /*
+    Display typeface used for editorial headings on marketing surfaces
+    (hero, section titles). Deliberately a distinct serif so headline
+    type carries the brand's editorial personality — body copy and UI
+    stay on Inter for legibility and neutrality. Loaded only on pages
+    that need it (see marketing.css / home.css).
+  */
+  --font-display:
+    "Fraunces",
+    "Iowan Old Style",
+    "Georgia",
+    serif;
   /* Optional monospace stack for technical content. */
   --font-mono:
     "SFMono-Regular",
@@ -350,6 +362,25 @@ b {
 em,
 i {
   font-style: italic;
+}
+/* ══════════════════════════════════════════════════════════════
+   Skip link — visible on keyboard focus only
+   ══════════════════════════════════════════════════════════════ */
+.skip-link {
+  position: absolute;
+  top: -48px;
+  left: var(--space-4);
+  z-index: 1000;
+  background: var(--text-1);
+  color: var(--bg-base);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: top var(--duration-fast) var(--ease);
+}
+.skip-link:focus {
+  top: var(--space-4);
 }
 /* ══════════════════════════════════════════════════════════════
    Code / Technical Content
