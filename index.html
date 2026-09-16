@@ -202,29 +202,33 @@
     </div>
   </div>
 </article>
-<article class="story-row story-row--reverse" data-story="explore">
+<article class="story-row story-row--wide" data-story="explore">
   <div class="story-copy">
     <span class="section-eyebrow">Explore</span>
     <h2>Follow the idea wherever it goes.</h2>
     <p>Real work rarely stays on one question. You notice something, ask another question, find a connection, then change your mind. Cognita keeps that thread intact as you go.</p>
   </div>
-  <div class="story-visual" data-anim="explore">
-    <div class="ev-ring" aria-hidden="true"></div>
-    <div class="ev-center">Retention risk</div>
-    <div class="ev-orbit-item" style="--offset:0deg; --tumble-dur:34s; --tumble-dir:-1;">
-      <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Support volume</div></div>
-    </div>
-    <div class="ev-orbit-item" style="--offset:120deg; --tumble-dur:41s; --tumble-dir:-1;">
-      <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Pricing shift</div></div>
-    </div>
-    <div class="ev-orbit-item" style="--offset:240deg; --tumble-dur:27s; --tumble-dir:-1;">
-      <div class="ev-orbit-line"></div>
-      <div class="ev-orbit-node"><div class="ev-orbit-node-inner">Onboarding gap</div></div>
-    </div>
+  <div class="story-visual story-visual--network" data-anim="explore">
+    <svg class="nv-lines" viewBox="0 0 640 260" preserveAspectRatio="none" aria-hidden="true">
+      <path class="nv-line" data-from="0" d="M320,130 L150,66" />
+      <path class="nv-line" data-from="1" d="M320,130 L500,54" />
+      <path class="nv-line" data-from="2" d="M320,130 L120,198" />
+      <path class="nv-line" data-from="3" d="M320,130 L470,206" />
+      <path class="nv-line nv-line--dashed" data-from="4" d="M150,66 L120,198" />
+    </svg>
+    <div class="nv-node nv-node--center" style="--nx:320px; --ny:130px;">Retention risk</div>
+    <div class="nv-node" style="--nx:150px; --ny:66px; --drift:9s; --drift-y:-6px;">Support volume ↑</div>
+    <div class="nv-node" style="--nx:500px; --ny:54px; --drift:12s; --drift-y:7px;">Pricing shift</div>
+    <div class="nv-node" style="--nx:120px; --ny:198px; --drift:10.5s; --drift-y:6px;">Onboarding gap</div>
+    <div class="nv-node nv-node--quiet" style="--nx:470px; --ny:206px; --drift:8s; --drift-y:-5px;">3 similar cases last quarter</div>
   </div>
 </article>
+
+<div class="interlude">
+  <p class="interlude-line">You don't need another place to type.</p>
+  <p class="interlude-line interlude-line--accent">You need somewhere to think.</p>
+</div>
+
 <article class="story-row" data-story="think">
   <div class="story-copy">
     <span class="section-eyebrow">Think</span>
@@ -276,38 +280,103 @@
     <span class="section-eyebrow">What you can do</span>
     <h2 class="section-title">More useful than a chat box.</h2>
     <p class="section-subtitle">Cognita is built for the work that usually happens before, between, and after the meetings.</p>
-<div class="capability-grid">
-  <div class="capability-card">
-    <i class="ph ph-file-doc"></i>
-    <h3>Make the document</h3>
-    <p>Need a report, proposal, memo, letter, or brief? Ask for it and get a proper Word document you can open, edit, and send.</p>
-  </div>
-  <div class="capability-card">
-    <i class="ph ph-flow-arrow"></i>
-    <h3>Show, don't just explain</h3>
-    <p>Turn complicated ideas and processes into diagrams and visuals when a picture will make the point faster.</p>
-  </div>
-  <div class="capability-card">
-    <i class="ph ph-magnifying-glass"></i>
-    <h3>Dig into a question</h3>
-    <p>Compare options, examine the details, find the gaps in an argument, and work through a problem before making a call.</p>
-  </div>
-  <div class="capability-card">
-    <i class="ph ph-pencil-simple-line"></i>
-    <h3>Write for the person reading it</h3>
-    <p>A note to your team shouldn't sound like a thesis. A research paper shouldn't sound like an advert. Cognita adjusts to what you're writing and who it's for.</p>
-  </div>
-  <div class="capability-card">
-    <i class="ph ph-brain"></i>
-    <h3>Push back when it matters</h3>
-    <p>You don't need another yes-man. Cognita can question an assumption, flag a weak point, or show you another way of looking at the problem.</p>
-  </div>
-  <div class="capability-card">
-    <i class="ph ph-lock-simple"></i>
-    <h3>Your work stays yours</h3>
-    <p>Your conversations aren't used to train AI models. Requests are authenticated and processed securely on the server.</p>
-  </div>
-</div>
+
+    <div class="cap-console" id="capConsole">
+      <div class="cap-list" role="tablist" aria-label="Capabilities">
+        <button class="cap-item is-active" data-cap="doc" role="tab" aria-selected="true">
+          <i class="ph ph-file-doc"></i>
+          <span>
+            <strong>Make the document</strong>
+            <small>A proper Word file, not just a wall of chat text.</small>
+          </span>
+        </button>
+        <button class="cap-item" data-cap="diagram" role="tab" aria-selected="false">
+          <i class="ph ph-flow-arrow"></i>
+          <span>
+            <strong>Show, don't just explain</strong>
+            <small>Diagrams and visuals when a picture is faster.</small>
+          </span>
+        </button>
+        <button class="cap-item" data-cap="dig" role="tab" aria-selected="false">
+          <i class="ph ph-magnifying-glass"></i>
+          <span>
+            <strong>Dig into a question</strong>
+            <small>Compare options and find the gaps in an argument.</small>
+          </span>
+        </button>
+        <button class="cap-item" data-cap="voice" role="tab" aria-selected="false">
+          <i class="ph ph-pencil-simple-line"></i>
+          <span>
+            <strong>Write for the reader</strong>
+            <small>A team note shouldn't sound like a thesis.</small>
+          </span>
+        </button>
+        <button class="cap-item" data-cap="pushback" role="tab" aria-selected="false">
+          <i class="ph ph-brain"></i>
+          <span>
+            <strong>Push back when it matters</strong>
+            <small>No yes-man. Weak points get flagged, not ignored.</small>
+          </span>
+        </button>
+        <button class="cap-item" data-cap="privacy" role="tab" aria-selected="false">
+          <i class="ph ph-lock-simple"></i>
+          <span>
+            <strong>Your work stays yours</strong>
+            <small>Never used to train models. Authenticated, server-side.</small>
+          </span>
+        </button>
+      </div>
+
+      <div class="cap-preview" id="capPreview" aria-hidden="true">
+        <div class="cap-panel is-active" data-cap="doc">
+          <div class="cap-doc-mock">
+            <i class="ph ph-file-doc"></i>
+            <div class="cap-doc-mock-lines">
+              <span class="cap-doc-mock-title">Q3-retention-brief.docx</span>
+              <span class="cap-doc-mock-bar"></span>
+              <span class="cap-doc-mock-bar" style="width:70%"></span>
+            </div>
+            <span class="cap-doc-mock-status">Ready to download</span>
+          </div>
+        </div>
+        <div class="cap-panel" data-cap="diagram">
+          <div class="cap-diagram-mock">
+            <span class="cap-diagram-node" style="--dx:20%; --dy:30%">Input</span>
+            <span class="cap-diagram-node" style="--dx:52%; --dy:12%">Review</span>
+            <span class="cap-diagram-node" style="--dx:78%; --dy:55%">Output</span>
+            <svg viewBox="0 0 200 100" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M50,40 L100,20" />
+              <path d="M100,20 L150,55" />
+            </svg>
+          </div>
+        </div>
+        <div class="cap-panel" data-cap="dig">
+          <div class="cap-compare-mock">
+            <div class="cap-compare-col"><span>Option A</span><i class="ph ph-minus-circle"></i></div>
+            <div class="cap-compare-col is-strong"><span>Option B</span><i class="ph ph-check-circle"></i></div>
+          </div>
+        </div>
+        <div class="cap-panel" data-cap="voice">
+          <div class="cap-tone-mock">
+            <span class="cap-tone-chip">Team note</span>
+            <span class="cap-tone-chip is-muted">Research paper</span>
+            <span class="cap-tone-chip is-muted">Client email</span>
+          </div>
+        </div>
+        <div class="cap-panel" data-cap="pushback">
+          <div class="cap-flag-mock">
+            <i class="ph ph-warning-circle"></i>
+            <span>This assumes churn is driven by price. Worth checking against support data first.</span>
+          </div>
+        </div>
+        <div class="cap-panel" data-cap="privacy">
+          <div class="cap-lock-mock">
+            <i class="ph ph-lock-simple"></i>
+            <span>Encrypted in transit · never used for training</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
   <!-- ── Use cases ── -->
   <section class="use-cases">
@@ -364,7 +433,7 @@
   <section class="pricing-shell" id="pricing">
     <div class="pricing-intro">
       <span class="section-eyebrow">Pricing</span>
-      <h1>Try it first. Decide later.</h1>
+      <h2>Try it first. Decide later.</h2>
       <p>Start with the free plan. If Cognita becomes part of your routine, upgrade when you need more.</p>
     </div>
     <div class="pricing-grid" id="pricingGrid">
@@ -374,7 +443,7 @@
   </section>
   <!-- ── Final CTA ── -->
   <section class="final-cta">
-    <h2>Bring us something you're working on.</h2>
+    <h2>The thought was the easy part.<br>This is where it becomes something useful.</h2>
     <p>Start free. No setup and no credit card. Give Cognita a real problem and see where it takes you.</p>
     <a href="/signup.html" class="hero-cta-primary">Create your free account</a>
   </section>
@@ -714,9 +783,48 @@
     setTimeout(playOnce, 700);
   })();
 
+  /* ── Capability console: click a row to show its preview; auto-
+     advances on a slow interval until the visitor interacts, then
+     stays on their choice. ── */
+  (function wireCapConsole() {
+    const console_ = document.getElementById('capConsole');
+    if (!console_) return;
+    const items = Array.from(console_.querySelectorAll('.cap-item'));
+    const panels = Array.from(console_.querySelectorAll('.cap-panel'));
+    let auto = null;
+    let idx = 0;
+
+    function show(key) {
+      items.forEach((el) => {
+        const active = el.dataset.cap === key;
+        el.classList.toggle('is-active', active);
+        el.setAttribute('aria-selected', String(active));
+      });
+      panels.forEach((el) => el.classList.toggle('is-active', el.dataset.cap === key));
+    }
+
+    function startAuto() {
+      if (reduceMotion) return;
+      auto = setInterval(() => {
+        idx = (idx + 1) % items.length;
+        show(items[idx].dataset.cap);
+      }, 3600);
+    }
+
+    items.forEach((el, i) => {
+      el.addEventListener('click', () => {
+        idx = i;
+        show(el.dataset.cap);
+        if (auto) { clearInterval(auto); auto = null; }
+      });
+    });
+
+    startAuto();
+  })();
+
   /* ── Scroll-reveal for grid/list sections ── */
   (function wireReveals() {
-    const targets = document.querySelectorAll('.story-row, .capability-card, .use-case-row');
+    const targets = document.querySelectorAll('.story-row, .cap-console, .use-case-row');
     if (reduceMotion || !('IntersectionObserver' in window)) {
       targets.forEach((el) => el.classList.add('is-revealed'));
       return;
