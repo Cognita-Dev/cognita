@@ -53,6 +53,13 @@ import {
   handleAdminRoleLookupEmail,
 } from './admin-roles-endpoint.js';
 import {
+  handleNoteSessionCreate,
+  handleNoteSession,
+  handleNoteSessionSegment,
+  handleNoteStream,
+  noteTakerCors,
+} from './note-taker-endpoint.js';
+import {
   handleConnectorStart,
   handleConnectorCallback,
   handleConnectorStatus,
@@ -75,9 +82,15 @@ export default {
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return _corsPreflight(env);
 
-    const url = new URL(request.url);
+  const url = new URL(request.url);
 
-    if (request.method === 'GET' && url.pathname === '/') {
+  if (url.pathname.startsWith('/api/note-') && request.method === 'OPTIONS') return noteTakerCors(request, env);
+  if (request.method === 'GET' && url.pathname === '/api/note-stream') return handleNoteStream(request, env);
+  if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
+  if (/^\/api\/note-sessions\/[^/]+\/segments$/.test(url.pathname) && request.method === 'POST') return handleNoteSessionSegment(request, env, url.pathname.split('/')[3]);
+  if (/^\/api\/note-sessions\/[^/]+$/.test(url.pathname) && ['GET', 'PATCH'].includes(request.method)) return handleNoteSession(request, env, url.pathname.split('/')[3]);
+
+  if (request.method === 'GET' && url.pathname === '/') {
       return new Response('Cognita Worker is running.', { status: 200 });
     }
 
