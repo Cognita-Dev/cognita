@@ -52,16 +52,18 @@
   <div class="page-top-spacer"></div>
   <!-- ── Hero ── -->
   <section class="hero">
-    <h1 class="hero-title">Start with a <em>thought</em>. Leave with something useful.</h1>
-    <p class="hero-subtitle">
-      Bring Cognita a question, a pile of notes, a document, or a half-formed idea.
-      Work through it together, then turn the result into something you can actually use.
-    </p>
-    <div class="hero-actions">
-      <a href="/signup.html" class="hero-cta-primary">Start for free</a>
-      <a href="#pricing" class="hero-cta-secondary">See pricing</a>
+    <div class="hero-copy">
+      <h1 class="hero-title">Start with a <span class="hero-thought-slot" id="heroThoughtSlot"><span class="hero-thought-word is-current">thought.</span></span><br>Leave with something useful.</h1>
+      <p class="hero-subtitle">
+        Bring Cognita a question, a pile of notes, a document, or a half-formed idea.
+        Work through it together, then turn the result into something you can actually use.
+      </p>
+      <div class="hero-actions">
+        <a href="/signup.html" class="hero-cta-primary">Start for free</a>
+        <a href="#pricing" class="hero-cta-secondary">See pricing</a>
+      </div>
+      <p class="hero-note">No credit card required.</p>
     </div>
-    <p class="hero-note">No credit card required.</p>
 
     <div class="hero-stage" id="heroStage" aria-hidden="true">
       <div class="hero-preview-window" id="heroWindow">
@@ -409,6 +411,57 @@
 <script>
   document.getElementById('year').textContent = new Date().getFullYear();
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── Hero thought cycle: the noun after "Start with a" continuously
+     replaces itself in the same spatial slot — outgoing text lifts,
+     blurs and fades while incoming text rises from below. The slot's
+     width morphs to fit each phrase so nothing reflows abruptly. ── */
+  (function runThoughtCycle() {
+    const slot = document.getElementById('heroThoughtSlot');
+    if (!slot) return;
+    const words = ['thought.', 'research question.', 'half-formed idea.', 'pile of notes.', 'document to understand.', 'difficult decision.'];
+    let index = 0;
+
+    function measure(text) {
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;left:-9999px;font:inherit;';
+      probe.textContent = text;
+      slot.appendChild(probe);
+      const width = probe.getBoundingClientRect().width;
+      probe.remove();
+      return width;
+    }
+
+    slot.style.width = measure(words[0]) + 'px';
+
+    function advance() {
+      index = (index + 1) % words.length;
+      const word = words[index];
+      const current = slot.querySelector('.hero-thought-word.is-current');
+      const incoming = document.createElement('span');
+      incoming.className = 'hero-thought-word is-incoming';
+      incoming.textContent = word;
+      slot.appendChild(incoming);
+      slot.style.width = measure(word) + 'px';
+
+      if (reduceMotion) {
+        if (current) current.remove();
+        incoming.className = 'hero-thought-word is-current';
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (current) current.classList.add('is-outgoing');
+        incoming.classList.add('is-entering');
+      });
+      setTimeout(() => {
+        if (current) current.remove();
+        incoming.className = 'hero-thought-word is-current';
+      }, 520);
+    }
+
+    setInterval(advance, 2400);
+  })();
 
   function wait(ms) { return new Promise((res) => setTimeout(res, ms)); }
 
