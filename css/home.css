@@ -49,26 +49,26 @@ main { overflow-x: hidden; }
   color: var(--accent);
   font-style: normal;
   white-space: nowrap;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
+  transform: translateY(0);
   opacity: 1;
 }
+/* Current word leaving: slides straight up out of the slot and fades
+   as it goes, like the top item of a queue moving off. */
 .hero-thought-word.is-outgoing {
-  transform: translateY(-55%) scale(0.92);
-  filter: blur(6px);
+  transform: translateY(-100%);
   opacity: 0;
-  transition: transform 480ms cubic-bezier(0.16, 1, 0.3, 1), filter 420ms ease, opacity 380ms ease;
+  transition: transform 420ms cubic-bezier(0.65, 0, 0.35, 1), opacity 320ms ease-in;
 }
+/* Next word waiting: parked directly below the slot, ready to rotate up. */
 .hero-thought-word.is-incoming {
-  transform: translateY(55%) scale(0.92);
-  filter: blur(6px);
-  opacity: 0;
-}
-.hero-thought-word.is-entering {
-  transform: translateY(0) scale(1);
-  filter: blur(0);
+  transform: translateY(100%);
   opacity: 1;
-  transition: transform 480ms cubic-bezier(0.16, 1, 0.3, 1) 60ms, filter 420ms ease 60ms, opacity 380ms ease 60ms;
+}
+/* Next word taking the spot: rotates up into the now-empty position. */
+.hero-thought-word.is-entering {
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform 420ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 @media (prefers-reduced-motion: reduce) {
   .hero-thought-slot { transition: none; }
