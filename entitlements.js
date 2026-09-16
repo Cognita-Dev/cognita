@@ -29,6 +29,7 @@ export const PLANS = {
       maxContextMessages: 8,       // how much conversation history is sent
       visionPerDay: 0,             // no image-understanding on Starter
       toolCallsPerDay: 0,          // no connector tool-use on Starter
+      noteTakerSessionsPerDay: 3,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -59,6 +60,7 @@ export const PLANS = {
       maxContextMessages: 24,
       visionPerDay: 15,
       toolCallsPerDay: 30,
+      noteTakerSessionsPerDay: 30,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -89,6 +91,7 @@ export const PLANS = {
       maxContextMessages: 60,
       visionPerDay: 60,
       toolCallsPerDay: 150,
+      noteTakerSessionsPerDay: 150,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
