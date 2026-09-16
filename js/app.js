@@ -632,7 +632,7 @@ function startNewConversation() {
   closeMobileSidebar();
 }
 
-/* ════════════════════════════════════════════════════════
+/* ════════════════════════��═══════════════════════════════
    QUALITY PICKER
 ════════════════════════════════════════════════════════ */
 
@@ -756,6 +756,7 @@ function wireAttachMenu() {
   const illustrationItem = document.getElementById('attachIllustrationItem');
   const documentItem = document.getElementById('attachDocumentItem');
   const connectorsItem = document.getElementById('attachConnectorsItem');
+  const noteTakerItem = document.getElementById('attachNoteTakerItem');
   const fileInput = document.getElementById('fileInput');
 
   function closeMenu() {
@@ -794,10 +795,14 @@ function wireAttachMenu() {
   });
 
   connectorsItem.addEventListener('click', () => {
-    closeMenu();
-    openConnectorsModal();
+  closeMenu();
+  openConnectorsModal();
   });
-}
+  noteTakerItem.addEventListener('click', () => {
+  closeMenu();
+  window.dispatchEvent(new CustomEvent('cognita:open-note-taker'));
+  });
+  }
 
 /* ════════════════════════════════════════════════════════
    COMPOSER + ATTACHMENTS + SENDING MESSAGES
@@ -2286,7 +2291,7 @@ function insertVisualIntoConversation(data, promptText) {
   persistCurrentConversation();
 }
 
-/* ════════════════════════════════════════════════════════
+/* ════════════════════════════════════════���═══════════════
    DOCUMENT GENERATION MODAL (letter / report / essay / memo)
 ════════════════════════════════════════════════════════ */
 
