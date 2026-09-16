@@ -413,13 +413,14 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ── Hero thought cycle: the noun after "Start with a" continuously
-     replaces itself in the same spatial slot — outgoing text lifts,
-     blurs and fades while incoming text rises from below. The slot's
-     width morphs to fit each phrase so nothing reflows abruptly. ── */
+     replaces itself in the same spatial slot, rotating vertically like
+     an odometer — the current word slides up and out while the next
+     word slides up from below into its place. The slot's width morphs
+     to fit each word so nothing reflows abruptly. ── */
   (function runThoughtCycle() {
     const slot = document.getElementById('heroThoughtSlot');
     if (!slot) return;
-    const words = ['thought.', 'research question.', 'half-formed idea.', 'pile of notes.', 'document to understand.', 'difficult decision.'];
+    const words = ['thought.', 'idea.', 'notion.', 'concept.', 'question.', 'hunch.', 'insight.'];
     let index = 0;
 
     function measure(text) {
