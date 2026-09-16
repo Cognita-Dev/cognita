@@ -229,6 +229,10 @@
                     <i class="ph ph-plug"></i>
                     <span>Connected apps</span>
                   </button>
+                  <button class="attach-menu-item" id="attachNoteTakerItem" type="button">
+                    <i class="ph ph-microphone"></i>
+                    <span><strong>Note Taker</strong><small>Capture a live conversation and turn it into notes.</small></span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -653,7 +657,16 @@
   </div>
 </div>
 
-<script type="module" src="/js/auth.js"></script>
+  <section class="note-taker-modal" id="noteTakerModal" hidden aria-labelledby="noteTakerTitle" role="dialog" aria-modal="true">
+    <div class="note-taker-panel">
+      <header class="note-taker-header"><div><p class="eyebrow">Cognita workspace</p><h2 id="noteTakerTitle">Note Taker</h2><p id="noteTakerSubtitle">Turn a live conversation into an editable note.</p></div><button class="note-taker-icon-btn" id="noteTakerClose" aria-label="Close Note Taker"><i class="ph ph-x"></i></button></header>
+      <div class="note-taker-setup" id="noteTakerSetup"><label>Meeting title<input id="noteTakerMeetingTitle" placeholder="e.g. Product review" maxlength="120"></label><label>Language<select id="noteTakerLanguage"><option value="en-NG">Nigerian English</option><option value="en-GB">British English</option><option value="en-US">American English</option><option value="auto">Auto-detect</option><option value="fr-FR">French</option><option value="yo-NG">Yorùbá</option></select></label><p class="note-taker-privacy"><i class="ph ph-shield-check"></i> Audio stays in this session. Cognita uses secure streaming when available and a browser fallback when supported.</p><button class="note-taker-primary" id="noteTakerStart"><i class="ph ph-microphone"></i> Start Note Taking</button></div>
+      <div class="note-taker-live" id="noteTakerLive" hidden><div class="note-taker-status"><span class="note-taker-pulse" id="noteTakerPulse"></span><strong id="noteTakerStatus">Ready</strong><span id="noteTakerTimer">00:00:00</span><span class="note-taker-connection" id="noteTakerConnection">Waiting for microphone</span></div><div class="note-taker-transcript" id="noteTakerTranscript" aria-live="polite"><p class="note-taker-empty">Your transcript will appear here as people speak.</p></div><div class="note-taker-controls"><button id="noteTakerPause" class="note-taker-secondary"><i class="ph ph-pause"></i> Pause</button><button id="noteTakerStop" class="note-taker-stop"><i class="ph ph-stop"></i> Finish note</button></div></div>
+      <div class="note-taker-complete" id="noteTakerComplete" hidden><div class="note-taker-complete-head"><div><p class="eyebrow">Completed note</p><h3 id="noteTakerCompleteTitle">Meeting Notes</h3><p id="noteTakerMeta"></p></div><button class="note-taker-secondary" id="noteTakerEdit"><i class="ph ph-pencil-simple"></i> Edit</button></div><textarea id="noteTakerEditor" class="note-taker-editor" aria-label="Meeting transcript"></textarea><div class="note-taker-actions"><button class="note-taker-secondary" id="noteTakerCopy"><i class="ph ph-copy"></i> Copy</button><button class="note-taker-secondary" id="noteTakerDownload"><i class="ph ph-download-simple"></i> Download</button><button class="note-taker-primary" id="noteTakerAsk"><i class="ph ph-sparkle"></i> Ask Cognita</button></div></div>
+    </div>
+  </section>
+  <script type="module" src="/js/note-taker.js"></script>
+  <script type="module" src="/js/auth.js"></script>
 <script src="/js/resource-renderers.js"></script>
 <script src="/js/resource-editor.js"></script>
 <script type="module" src="/js/main.js"></script>
