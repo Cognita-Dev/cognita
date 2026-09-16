@@ -57,7 +57,6 @@ import {
   handleNoteSession,
   handleNoteSessionSegment,
   handleNoteStream,
-  noteTakerCors,
 } from './note-taker-endpoint.js';
 import {
   handleConnectorStart,
@@ -71,7 +70,7 @@ function _corsPreflight(env) {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400',
     },
@@ -84,7 +83,6 @@ export default {
 
   const url = new URL(request.url);
 
-  if (url.pathname.startsWith('/api/note-') && request.method === 'OPTIONS') return noteTakerCors(request, env);
   if (request.method === 'GET' && url.pathname === '/api/note-stream') return handleNoteStream(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
   if (/^\/api\/note-sessions\/[^/]+\/segments$/.test(url.pathname) && request.method === 'POST') return handleNoteSessionSegment(request, env, url.pathname.split('/')[3]);
