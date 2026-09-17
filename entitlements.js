@@ -224,15 +224,21 @@ export const MODEL_TIERS = {
   },
   // Admin-only. See PLANS.admin — no regular plan's models.chat ever
   // includes 'v0', so this tier is unreachable outside a verified
-  // admins/{uid} role: 'admin' override. Served through Vercel AI
-  // Gateway (the old direct api.v0.dev/v1 endpoint was retired by
-  // Vercel), which requires the gateway-qualified model id below, not
-  // the bare "v0-1.0-md". Falls back into the same Groq chain the
-  // other tiers use, so a v0/Gateway outage still degrades to a
-  // working reply instead of failing the request.
+  // admins/{uid} role: 'admin' override.
+  //
+  // NOTE: this does not actually call a v0 model. The real v0 models
+  // (v0-1.0-md/v0-1.5-md) are excluded from Vercel AI Gateway's free
+  // $5/month tier — they're billed-only, and this project doesn't have
+  // Gateway billing enabled. Until that changes, this tier is routed
+  // to a real, free-tier-eligible Gateway model instead so the "v0
+  // (Admin)" option in the UI still works end-to-end at zero cost. To
+  // switch to the genuine v0 model later: enable AI Gateway billing on
+  // the Vercel team, then change `model` below to 'vercel/v0-1.0-md'
+  // (or 'vercel/v0-1.5-md') — nothing else needs to change, since
+  // provider 'vercel_v0' already points at the Gateway endpoint.
   v0: {
     provider: 'vercel_v0',
-    model: 'vercel/v0-1.0-md',
+    model: 'deepseek/deepseek-v3.2',
     fallback: {
       provider: 'groq',
       model: 'openai/gpt-oss-120b',
