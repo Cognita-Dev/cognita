@@ -91,6 +91,13 @@
         <i class="ph ph-books" style="margin-right:8px;"></i>
         <span>Library</span>
       </a>
+      <!-- Only shown for admins/moderators — app.js unhides this once
+           /api/account reports a role, so regular users never see a
+           dead link to a page the server would 401/403 them from. -->
+      <a href="/admin.html" class="sidebar-history-item" id="adminPanelLink" hidden>
+        <i class="ph ph-shield-star" style="margin-right:8px;"></i>
+        <span>Admin panel</span>
+      </a>
     </nav>
 
     <nav class="sidebar-history" id="sidebarHistory" aria-label="Chat history">
@@ -266,6 +273,18 @@
                     <span class="quality-picker-option-text">
                       <span class="quality-picker-option-name">Thorough</span>
                       <span class="quality-picker-option-desc">Slower, most in-depth answers</span>
+                    </span>
+                    <i class="ph ph-check quality-picker-check"></i>
+                  </button>
+                  <!-- Admin-only. Stays hidden for everyone else; app.js only
+                       reveals this if /api/account reports 'v0' in
+                       models.chat, which the backend only ever does for a
+                       verified admins/{uid} role:'admin' account. -->
+                  <button class="quality-picker-option" data-quality="v0" id="qualityOptionV0" hidden>
+                    <i class="ph ph-triangle"></i>
+                    <span class="quality-picker-option-text">
+                      <span class="quality-picker-option-name">v0 (Admin)</span>
+                      <span class="quality-picker-option-desc">Vercel v0 — admin-only provider</span>
                     </span>
                     <i class="ph ph-check quality-picker-check"></i>
                   </button>
