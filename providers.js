@@ -63,14 +63,17 @@ async function _callOpenRouter(messages, model, env, maxTokens) {
 }
 
 // Vercel v0 — admin-only provider (see entitlements.js MODEL_TIERS.v0 /
-// PLANS.admin). v0's API is OpenAI-compatible, so this mirrors
-// _callGroq/_callOpenRouter exactly; the only differences are the
-// endpoint and the env var holding the key.
+// PLANS.admin). The old direct v0 Model API (api.v0.dev/v1) was retired
+// by Vercel; v0 models are now served through Vercel AI Gateway's
+// OpenAI-compatible endpoint instead, under a gateway-qualified model id
+// ("vercel/v0-1.0-md", set in entitlements.js). env.V0_API_KEY must be
+// an AI Gateway API key (created in the Vercel dashboard's AI Gateway
+// section) — a v0.dev-issued key will not authenticate here.
 async function _callV0(messages, model, env, maxTokens) {
   if (!env.V0_API_KEY) throw new Error('v0_not_configured');
   const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
 
-  const res = await fetch('https://api.v0.dev/v1/chat/completions', {
+  const res = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
     method: 'POST',
     headers: {
       Authorization: 'Bearer ' + env.V0_API_KEY,
@@ -305,7 +308,7 @@ async function _callV0WithTools(messages, model, tools, env, maxTokens) {
     tools,
     tool_choice: 'auto',
   };
-  const res = await fetch('https://api.v0.dev/v1/chat/completions', {
+  const res = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
     method: 'POST',
     headers: {
       Authorization: 'Bearer ' + env.V0_API_KEY,
