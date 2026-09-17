@@ -1,14 +1,18 @@
-import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, openNoteStream } from './note-taker-production.js'
+import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk } from './note-taker-production.js'
 
 const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
 const RECOVERY_KEY = 'cognitaNoteTakerSession'
-const TARGET_SAMPLE_RATE = 16000
-const MAX_WS_RETRIES = 5
+const CHUNK_MS = 8000
+const MAX_CHUNK_FAILURES = 3
 const AUTOSAVE_MS = 20000
+const RETRY_PRIMARY_MS = 30000
+const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 
-let stream, audioCtx, sourceNode, processorNode, recorder, recognition, analyser, raf, timer
-let ws, wsRetries = 0, wsRetryTimer = null, intentionalClose = false
+let stream, analyser, audioCtx, sourceNode, raf, timer
+let chunkRecorder = null, chunkLoopRunning = false, chunkQueue = Promise.resolve()
+let chunkFailures = 0, retryTimer = null
+let recognition
 let autosaveTimer = null
 let startedAt, pausedMs = 0, pauseAt
 let segments = [], interim = ''
@@ -72,44 +76,12 @@ function checkForRecovery() {
   $('noteTakerRecoveryDiscard').onclick = () => { clearRecoveryPointer(); banner.hidden = true }
 }
 
-// ---------- Audio capture + PCM16/16kHz encoding ----------
-function resampleTo16k(float32, inputRate) {
-  if (inputRate === TARGET_SAMPLE_RATE) return float32
-  const ratio = inputRate / TARGET_SAMPLE_RATE
-  const outLength = Math.round(float32.length / ratio)
-  const out = new Float32Array(outLength)
-  for (let i = 0; i < outLength; i++) {
-    const srcIndex = i * ratio
-    const i0 = Math.floor(srcIndex), i1 = Math.min(i0 + 1, float32.length - 1)
-    const frac = srcIndex - i0
-    out[i] = float32[i0] + (float32[i1] - float32[i0]) * frac
-  }
-  return out
-}
-function floatTo16BitPCM(float32) {
-  const out = new Int16Array(float32.length)
-  for (let i = 0; i < float32.length; i++) { const s = Math.max(-1, Math.min(1, float32[i])); out[i] = s < 0 ? s * 0x8000 : s * 0x7fff }
-  return out
-}
-function startAudioGraph() {
+// ---------- Audio level meter (visual only — doesn't touch the chunk pipeline) ----------
+function startLevelMeter() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)()
   sourceNode = audioCtx.createMediaStreamSource(stream)
   analyser = audioCtx.createAnalyser()
   sourceNode.connect(analyser)
-  // ScriptProcessorNode is deprecated but remains the most broadly
-  // compatible way to get raw PCM frames (including on Safari/iOS) without
-  // shipping a separate AudioWorklet module file.
-  processorNode = audioCtx.createScriptProcessor(4096, 1, 1)
-  sourceNode.connect(processorNode)
-  processorNode.connect(audioCtx.createGain()) // keep the graph alive without audible output
-  processorNode.onaudioprocess = (e) => {
-    if (state !== 'recording') return
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    const input = e.inputBuffer.getChannelData(0)
-    const resampled = resampleTo16k(input, audioCtx.sampleRate)
-    const pcm16 = floatTo16BitPCM(resampled)
-    try { ws.send(pcm16.buffer) } catch {}
-  }
   drawLevel()
 }
 function drawLevel() {
@@ -120,58 +92,74 @@ function drawLevel() {
   $('noteTakerPulse').style.setProperty('--level', Math.min(1, level / 32))
   raf = requestAnimationFrame(drawLevel)
 }
-function stopAudioGraph() {
-  try { processorNode && (processorNode.onaudioprocess = null) } catch {}
-  try { processorNode?.disconnect() } catch {}
+function stopLevelMeter() {
   try { sourceNode?.disconnect() } catch {}
   try { audioCtx?.close() } catch {}
   cancelAnimationFrame(raf)
 }
 
-// ---------- Transcript reconciliation ----------
-function handleTranscriptEvent(raw) {
-  let msg
-  try { msg = JSON.parse(raw) } catch { return }
-  const alt = msg.channel?.alternatives?.[0]
-  if (!alt) return
-  const text = (alt.transcript || '').trim()
-  if (msg.is_final) {
-    interim = ''
-    if (text) { const last = segments[segments.length - 1]; if (!last || last.text !== text) segments.push({ id: crypto.randomUUID(), time: elapsed(), text }); persistNoteSegment(sessionId, { segmentId: crypto.randomUUID(), text, startMs: 0, endMs: 0 }).catch(() => {}) }
-  } else {
-    interim = text
-  }
-  render()
+function pickMimeType() {
+  for (const t of MIME_CANDIDATES) { if (window.MediaRecorder?.isTypeSupported?.(t)) return t }
+  return ''
 }
 
-// ---------- Primary provider: Cloudflare AI Gateway / Deepgram Nova-3 ----------
-async function connectPrimary() {
-  setStatus(wsRetries ? 'Reconnecting' : 'Connecting', wsRetries ? `Attempt ${wsRetries} of ${MAX_WS_RETRIES}` : 'Opening secure transcription connection')
-  intentionalClose = false
+// ---------- Primary provider: free-tier Whisper, one short recording at a time ----------
+// Each chunk is its own complete MediaRecorder session (start -> stop), so
+// the resulting Blob is a standalone, independently-decodable audio file —
+// a single long recording sliced with `timeslice` would produce WebM
+// fragments Whisper can't decode on their own.
+function recordOneChunk(ms) {
+  return new Promise((resolve) => {
+    if (!stream || !window.MediaRecorder) return resolve(null)
+    const mimeType = pickMimeType()
+    let rec
+    try { rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) } catch { return resolve(null) }
+    const parts = []
+    rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data) }
+    rec.onstop = () => resolve(parts.length ? new Blob(parts, { type: mimeType || 'audio/webm' }) : null)
+    rec.onerror = () => resolve(null)
+    chunkRecorder = rec
+    rec.start()
+    setTimeout(() => { if (rec.state !== 'inactive') try { rec.stop() } catch {} }, ms)
+  })
+}
+async function transcribeAndAppend(blob) {
+  if (!blob || !sessionId) return
   try {
-    ws = await openNoteStream({ language: $('noteTakerLanguage').value, keywords: [] })
-  } catch (e) { return scheduleReconnectOrFallback() }
-  ws.addEventListener('open', () => { wsRetries = 0; state = 'recording'; setStatus('Recording', 'Live transcription active'); recognition?.stop() })
-  ws.addEventListener('message', (e) => handleTranscriptEvent(e.data))
-  ws.addEventListener('close', () => { if (!intentionalClose && ['recording', 'connecting', 'reconnecting'].includes(state)) scheduleReconnectOrFallback() })
-  ws.addEventListener('error', () => {})
+    const { text } = await transcribeChunk(sessionId, blob, $('noteTakerLanguage').value)
+    chunkFailures = 0
+    if (state === 'degraded') { recognition?.stop(); recognition = null; state = 'recording'; setStatus('Recording', 'Transcribing every few seconds') }
+    if (text) {
+      segments.push({ id: crypto.randomUUID(), time: elapsed(), text })
+      render()
+      persistNoteSegment(sessionId, { segmentId: crypto.randomUUID(), text, startMs: 0, endMs: 0 }).catch(() => {})
+    }
+  } catch (e) {
+    chunkFailures++
+    if (chunkFailures >= MAX_CHUNK_FAILURES && state !== 'degraded' && state !== 'paused') startFallback()
+  }
 }
-function scheduleReconnectOrFallback() {
-  if (state === 'paused' || state === 'stopping' || state === 'completed') return
-  if (wsRetries >= MAX_WS_RETRIES) { startFallback(); return }
-  wsRetries++
-  state = 'reconnecting'
-  setStatus('Reconnecting', `Connection interrupted — retry ${wsRetries} of ${MAX_WS_RETRIES}`)
-  const backoffMs = Math.min(16000, 1000 * 2 ** (wsRetries - 1))
-  clearTimeout(wsRetryTimer)
-  wsRetryTimer = setTimeout(connectPrimary, backoffMs)
+async function runChunkLoop() {
+  if (chunkLoopRunning) return
+  chunkLoopRunning = true
+  while (chunkLoopRunning && state === 'recording') {
+    const blob = await recordOneChunk(CHUNK_MS)
+    if (!chunkLoopRunning || state !== 'recording') break
+    if (blob) chunkQueue = chunkQueue.then(() => transcribeAndAppend(blob)).catch(() => {})
+  }
+  chunkLoopRunning = false
+}
+function stopChunkLoop() {
+  chunkLoopRunning = false
+  try { if (chunkRecorder && chunkRecorder.state !== 'inactive') chunkRecorder.stop() } catch {}
 }
 
-// ---------- Fallback: browser SpeechRecognition, else local-only preservation ----------
+// ---------- Fallback: browser SpeechRecognition (still free, still real-time) ----------
 function startFallback() {
+  stopChunkLoop()
   if (Speech) {
     state = 'degraded'
-    setStatus('Using browser transcription', 'Live transcription switched to your browser')
+    setStatus('Using browser transcription', 'Live transcription switched to your browser while we retry the primary engine')
     recognition = new Speech()
     recognition.continuous = true; recognition.interimResults = true
     recognition.lang = $('noteTakerLanguage').value === 'auto' ? 'en-NG' : $('noteTakerLanguage').value
@@ -191,30 +179,23 @@ function startFallback() {
     state = 'degraded'
     setStatus('Transcription paused — recording preserved', 'Your recording continues; live text is unavailable right now')
   }
-  ensureLocalRecorder()
   retryPrimaryInBackground()
 }
-function ensureLocalRecorder() {
-  if (recorder || !window.MediaRecorder) return
-  try { recorder = new MediaRecorder(stream); recorder.start(4000) } catch {}
-}
 function retryPrimaryInBackground() {
-  clearTimeout(wsRetryTimer)
-  wsRetryTimer = setTimeout(async () => {
+  clearTimeout(retryTimer)
+  retryTimer = setTimeout(async () => {
     if (state !== 'degraded') return
+    const probe = await recordOneChunk(3000)
+    if (!probe) return retryPrimaryInBackground()
     try {
-      const test = await openNoteStream({ language: $('noteTakerLanguage').value, keywords: [] })
-      test.addEventListener('open', () => {
-        recognition?.stop(); recognition = null
-        try { recorder?.stop() } catch {}; recorder = null
-        ws = test; wsRetries = 0; state = 'recording'
-        setStatus('Recording', 'Live transcription active')
-        ws.addEventListener('message', (e) => handleTranscriptEvent(e.data))
-        ws.addEventListener('close', () => { if (!intentionalClose && ['recording', 'connecting', 'reconnecting'].includes(state)) scheduleReconnectOrFallback() })
-      })
-      test.addEventListener('error', () => { try { test.close() } catch {}; retryPrimaryInBackground() })
+      await transcribeChunk(sessionId, probe, $('noteTakerLanguage').value)
+      chunkFailures = 0
+      recognition?.stop(); recognition = null
+      state = 'recording'
+      setStatus('Recording', 'Transcribing every few seconds')
+      runChunkLoop()
     } catch { retryPrimaryInBackground() }
-  }, 30000)
+  }, RETRY_PRIMARY_MS)
 }
 
 // ---------- Session lifecycle ----------
@@ -237,16 +218,17 @@ async function start() {
     return setStatus('Could not start Note Taker', e.message || 'Please try again.')
   }
   sessionId = session.id; sessionVersion = session.version
-  segments = []; interim = ''; pausedMs = 0; startedAt = Date.now()
+  segments = []; interim = ''; pausedMs = 0; startedAt = Date.now(); chunkFailures = 0
   $('noteTakerSetup').hidden = true; $('noteTakerLive').hidden = false
   saveRecoveryPointer()
   timer = setInterval(() => $('noteTakerTimer').textContent = elapsed(), 250)
-  startAudioGraph()
+  startLevelMeter()
   await connectAndRecord()
 }
 async function connectAndRecord() {
-  wsRetries = 0
-  await connectPrimary()
+  state = 'recording'
+  setStatus('Recording', 'Transcribing every few seconds')
+  runChunkLoop()
   autosaveTimer = setInterval(autosave, AUTOSAVE_MS)
 }
 async function autosave() {
@@ -260,28 +242,29 @@ function pause() {
   if (state === 'recording' || state === 'degraded') {
     state = 'paused'; pauseAt = Date.now()
     stream?.getTracks().forEach((t) => t.enabled = false)
+    stopChunkLoop()
     recognition?.stop()
+    clearTimeout(retryTimer)
     $('noteTakerPause').innerHTML = '<i class="ph ph-play"></i> Resume'
     setStatus('Paused', 'Audio capture is paused')
   } else if (state === 'paused') {
     pausedMs += Date.now() - pauseAt; pauseAt = 0
     stream?.getTracks().forEach((t) => t.enabled = true)
-    state = ws && ws.readyState === WebSocket.OPEN ? 'recording' : 'degraded'
-    if (recognition) try { recognition.start() } catch {}
+    state = 'recording'
+    runChunkLoop()
     $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
-    setStatus(state === 'recording' ? 'Recording' : 'Using browser transcription', 'Resumed')
+    setStatus('Recording', 'Resumed')
     drawLevel()
   }
 }
 function finish() { if (!segments.length && !interim) return stopNow(); if (confirm('Finish note? Your live transcript will be finalized.')) stopNow() }
 async function stopNow() {
   state = 'stopping'; setStatus('Finalizing transcript', 'Wrapping up your note')
-  intentionalClose = true
-  clearInterval(timer); clearInterval(autosaveTimer); clearTimeout(wsRetryTimer)
+  clearInterval(timer); clearInterval(autosaveTimer); clearTimeout(retryTimer)
+  stopChunkLoop()
   recognition?.stop(); recognition = null
-  try { recorder?.stop() } catch {}; recorder = null
-  try { ws?.close() } catch {}
-  stopAudioGraph()
+  await chunkQueue.catch(() => {}) // let any in-flight transcription land before finalizing
+  stopLevelMeter()
   stream?.getTracks().forEach((t) => t.stop())
   if (interim) { segments.push({ id: crypto.randomUUID(), time: elapsed(), text: interim.trim() }); interim = '' }
   const text = segments.map((s) => `[${s.time}] ${s.text}`).join('\n\n')
@@ -303,6 +286,6 @@ $('noteTakerDownload').addEventListener('click', () => { const a = document.crea
 $('noteTakerEdit').addEventListener('click', () => $('noteTakerEditor').focus())
 $('noteTakerAsk').addEventListener('click', () => { const input = $('composerInput'); input.value = `Please help me process these meeting notes:\n\n${$('noteTakerEditor').value}`; input.dispatchEvent(new Event('input', { bubbles: true })); close(); input.focus() })
 window.addEventListener('cognita:open-note-taker', open)
-window.addEventListener('online', () => { if (state === 'reconnecting' || state === 'degraded') { wsRetries = 0; connectPrimary() } })
-window.addEventListener('offline', () => { if (['recording', 'reconnecting'].includes(state)) { state = 'reconnecting'; setStatus('Offline', 'Audio is being preserved locally'); ensureLocalRecorder() } })
+window.addEventListener('online', () => { if (state === 'degraded') { clearTimeout(retryTimer); retryTimer = setTimeout(retryPrimaryInBackground, 0) } })
+window.addEventListener('offline', () => { if (state === 'recording') setStatus('Offline', 'Audio is being preserved locally') })
 window.addEventListener('beforeunload', (e) => { if (['recording', 'paused', 'reconnecting', 'degraded'].includes(state)) { e.preventDefault(); e.returnValue = '' } })
