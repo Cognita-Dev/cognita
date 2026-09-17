@@ -30,6 +30,7 @@ export const PLANS = {
       visionPerDay: 0,             // no image-understanding on Starter
       toolCallsPerDay: 0,          // no connector tool-use on Starter
       noteTakerSessionsPerDay: 3,
+      noteTakerChunksPerDay: 200,   // ~8s/chunk -> roughly 27 minutes/day
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -61,6 +62,7 @@ export const PLANS = {
       visionPerDay: 15,
       toolCallsPerDay: 30,
       noteTakerSessionsPerDay: 30,
+      noteTakerChunksPerDay: 2000,  // roughly 4.4 hours/day
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -92,6 +94,7 @@ export const PLANS = {
       visionPerDay: 60,
       toolCallsPerDay: 150,
       noteTakerSessionsPerDay: 150,
+      noteTakerChunksPerDay: 8000,  // roughly 17.8 hours/day
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
