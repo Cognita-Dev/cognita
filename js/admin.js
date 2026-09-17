@@ -110,6 +110,9 @@ let activeDetailEditorHandle = null;
   document.getElementById('accountEmail').textContent = user.email || 'Signed in';
   document.getElementById('accountAvatar').textContent = (user.email || 'A').charAt(0).toUpperCase();
 
+  wireAccountMenu();
+  loadAccountBadge();
+
   populateResourceTypeSelect();
   populateResourceTypeFilter();
   renderStatusTabs();
@@ -126,6 +129,48 @@ let activeDetailEditorHandle = null;
   await tryLoadRolesPanel();
   await loadOverview();
 })();
+
+/* ── Account menu (sign out, settings, back to chat) ── */
+
+function wireAccountMenu() {
+  const btn = document.getElementById('accountBtn');
+  const menu = document.getElementById('accountMenu');
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+
+  document.addEventListener('click', () => { menu.hidden = true; });
+
+  document.getElementById('logOutBtn').addEventListener('click', async () => {
+    await window.Auth.logOut();
+    window.location.href = '/login.html';
+  });
+}
+
+// Reads /api/account purely to show the role/plan badge and the
+// "Unlimited AI access" pill next to the AI Chat nav item — this page's
+// actual access is still gated entirely server-side (requireAdmin on
+// every /api/admin/* call), this is cosmetic only.
+async function loadAccountBadge() {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const roleLabel = data.role === 'admin' ? 'Admin' : (data.role === 'moderator' ? 'Moderator' : 'Signed in');
+    document.getElementById('accountRoleBadge').textContent = roleLabel;
+
+    const isAdmin = data.role === 'admin' || (data.models && Array.isArray(data.models.chat) && data.models.chat.includes('v0'));
+    const pill = document.getElementById('aiChatPill');
+    if (pill) pill.hidden = !isAdmin;
+    const unlimitedBadge = document.getElementById('unlimitedBadge');
+    if (unlimitedBadge) unlimitedBadge.hidden = !isAdmin;
+  } catch (e) {
+    console.error('[admin] Could not load account badge:', e.message);
+  }
+}
 
 /* ── Section navigation ── */
 
