@@ -224,12 +224,15 @@ export const MODEL_TIERS = {
   },
   // Admin-only. See PLANS.admin — no regular plan's models.chat ever
   // includes 'v0', so this tier is unreachable outside a verified
-  // admins/{uid} role: 'admin' override. Falls back into the same
-  // Groq chain the other tiers use, so a v0 outage still degrades to
-  // a working reply instead of failing the request.
+  // admins/{uid} role: 'admin' override. Served through Vercel AI
+  // Gateway (the old direct api.v0.dev/v1 endpoint was retired by
+  // Vercel), which requires the gateway-qualified model id below, not
+  // the bare "v0-1.0-md". Falls back into the same Groq chain the
+  // other tiers use, so a v0/Gateway outage still degrades to a
+  // working reply instead of failing the request.
   v0: {
     provider: 'vercel_v0',
-    model: 'v0-1.0-md',
+    model: 'vercel/v0-1.0-md',
     fallback: {
       provider: 'groq',
       model: 'openai/gpt-oss-120b',
