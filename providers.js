@@ -62,6 +62,37 @@ async function _callOpenRouter(messages, model, env, maxTokens) {
   };
 }
 
+// Vercel v0 — admin-only provider (see entitlements.js MODEL_TIERS.v0 /
+// PLANS.admin). v0's API is OpenAI-compatible, so this mirrors
+// _callGroq/_callOpenRouter exactly; the only differences are the
+// endpoint and the env var holding the key.
+async function _callV0(messages, model, env, maxTokens) {
+  if (!env.V0_API_KEY) throw new Error('v0_not_configured');
+  const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
+
+  const res = await fetch('https://api.v0.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + env.V0_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error('v0_' + res.status + ':' + text.slice(0, 200));
+  }
+  const data = await res.json();
+  const message = data.choices?.[0]?.message || {};
+  const text = message.content;
+  if (!text || !text.trim()) throw new Error('v0_empty');
+  return {
+    text: text.trim(),
+    finishReason: data.choices?.[0]?.finish_reason,
+    reasoning: message.reasoning || message.reasoning_content || null,
+  };
+}
+
 async function _callWorkersAI(messages, model, env) {
   // The messages it receives are always plain role/content pairs (see
   // chat-endpoint.js), so this filter is just a safety net, not load-bearing.
@@ -150,6 +181,7 @@ export async function callVisionModel(model, messages, images, env) {
 async function _dispatch(providerName, messages, model, env, maxTokens) {
   if (providerName === 'groq') return _callGroq(messages, model, env, maxTokens);
   if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens);
+  if (providerName === 'vercel_v0') return _callV0(messages, model, env, maxTokens);
   if (providerName === 'workersai') return _callWorkersAI(messages, model, env);
   throw new Error('Unknown provider: ' + providerName);
 }
@@ -263,9 +295,48 @@ async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens) 
   };
 }
 
+async function _callV0WithTools(messages, model, tools, env, maxTokens) {
+  if (!env.V0_API_KEY) throw new Error('v0_not_configured');
+  const body = {
+    model,
+    max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
+    temperature: 0.5,
+    messages,
+    tools,
+    tool_choice: 'auto',
+  };
+  const res = await fetch('https://api.v0.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + env.V0_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if (res.status === 400 && /tool/i.test(text)) {
+      throw new Error('tools_unsupported:v0_' + res.status + ':' + text.slice(0, 200));
+    }
+    throw new Error('v0_' + res.status + ':' + text.slice(0, 200));
+  }
+  const data = await res.json();
+  const message = data.choices?.[0]?.message || {};
+  const toolCalls = _extractToolCalls(message);
+  const text = typeof message.content === 'string' ? message.content : '';
+  if (!toolCalls && !text.trim()) throw new Error('v0_empty');
+  return {
+    text: text.trim(),
+    finishReason: data.choices?.[0]?.finish_reason,
+    reasoning: message.reasoning || message.reasoning_content || null,
+    toolCalls,
+  };
+}
+
 async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens) {
   if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, maxTokens);
   if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens);
+  if (providerName === 'vercel_v0') return _callV0WithTools(messages, model, tools, env, maxTokens);
   // workersai (and anything else) — no tool support. Signal the caller
   // distinctly so it can retry tool-less rather than treat this as a
   // generic provider outage.
