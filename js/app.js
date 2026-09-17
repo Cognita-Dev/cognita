@@ -17,6 +17,7 @@ const QUALITY_META = {
   standard: { label: 'Standard' },
   advanced: { label: 'Advanced' },
   thorough: { label: 'Thorough' },
+  v0: { label: 'v0 (Admin)' },
 };
 
 // Short phrases only — long sentences don't fit well as a placeholder.
@@ -155,8 +156,14 @@ async function refreshAccount() {
     currentAccountHasDocExport = !!(data.features && data.features.documentExport);
     currentAccountChatTiers = (data.models && Array.isArray(data.models.chat)) ? data.models.chat : ['fast'];
 
+    // Reveal the admin-panel shortcut for curation staff only. Purely
+    // cosmetic — admin.html's own server-side checks (requireAdmin) are
+    // what actually gate access, this just avoids showing a dead link.
+    const adminPanelLink = document.getElementById('adminPanelLink');
+    if (adminPanelLink) adminPanelLink.hidden = !(data.role === 'admin' || data.role === 'moderator');
+
     const upgradeLink = document.getElementById('upgradeLink');
-    if (data.planId !== 'studio') {
+    if (data.planId !== 'studio' && data.planId !== 'admin') {
       upgradeLink.hidden = false;
     }
 
@@ -189,6 +196,7 @@ function updateImageAttachAvailability() {
 function _tierKeyForQuality(quality) {
   if (quality === 'thorough') return 'reasoning';
   if (quality === 'advanced') return 'advanced';
+  if (quality === 'v0') return 'v0';
   return 'fast';
 }
 
@@ -203,6 +211,20 @@ function updateQualityPickerAvailability() {
     opt.classList.toggle('is-locked', !entitled);
     opt.title = entitled ? '' : 'This quality level requires a higher Cognita plan.';
   });
+
+  // v0 isn't just locked for non-admins, it's not a real option for
+  // them at all (see entitlements.js PLANS.admin) — hide it outright
+  // rather than showing a lock icon for something no upgrade can buy.
+  const v0Option = document.getElementById('qualityOptionV0');
+  if (v0Option) {
+    const hasV0 = currentAccountChatTiers.includes('v0');
+    v0Option.hidden = !hasV0;
+    v0Option.title = '';
+    // If the account lost admin status mid-session while v0 was
+    // selected, fall back to standard instead of leaving the picker
+    // showing a quality the account can no longer use.
+    if (!hasV0 && currentQuality === 'v0') setQuality('standard');
+  }
 }
 
 async function refreshUsage() {
@@ -213,10 +235,15 @@ async function refreshUsage() {
 
     const { used, limit } = data.usage.messages;
     const usageEl = document.getElementById('usageMessages');
-    usageEl.textContent = used + ' / ' + limit;
+    // entitlements.js's UNLIMITED sentinel (999999) is a real, comparable
+    // number for the backend's quota math, but showing it raw ("3 / 999999")
+    // would be a confusing display for an admin account — show "Unlimited"
+    // instead once the limit is clearly not a real day-to-day cap.
+    const isUnlimited = limit >= 999999;
+    usageEl.textContent = isUnlimited ? 'Unlimited' : (used + ' / ' + limit);
     usageEl.classList.remove('skeleton');
 
-    const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+    const pct = (!isUnlimited && limit > 0) ? Math.min(100, (used / limit) * 100) : 0;
     const fill = document.getElementById('usageMessagesBar');
     fill.style.width = pct + '%';
     fill.classList.toggle('is-near-limit', pct >= 70 && pct < 100);
