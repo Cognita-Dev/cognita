@@ -46,15 +46,25 @@
       <button class="admin-nav-item" data-section="roles" id="rolesNavItem" hidden>
         <i class="ph ph-users-three"></i><span>People</span>
       </button>
-      <a href="/app.html" class="admin-nav-item admin-nav-item--muted">
-        <i class="ph ph-chat-circle"></i><span>Back to chat</span>
+      <a href="/app.html" class="admin-nav-item admin-nav-item--ai">
+        <i class="ph ph-sparkle"></i><span>AI Chat</span>
+        <span class="admin-nav-pill" id="aiChatPill" hidden>Unlimited</span>
       </a>
     </nav>
 
     <div class="admin-sidebar-bottom">
+      <div class="account-menu" id="accountMenu" hidden>
+        <a href="/account.html"><i class="ph ph-gear"></i> Settings</a>
+        <a href="/app.html"><i class="ph ph-chat-circle"></i> Back to chat</a>
+        <button id="logOutBtn"><i class="ph ph-sign-out"></i> Sign out</button>
+      </div>
       <button class="account-btn" id="accountBtn">
         <span class="account-avatar" id="accountAvatar">C</span>
-        <span class="account-info"><span class="account-name" id="accountEmail">Loading</span></span>
+        <span class="account-info">
+          <span class="account-name" id="accountEmail">Loading</span>
+          <span class="account-plan" id="accountRoleBadge">Loading</span>
+        </span>
+        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
       </button>
     </div>
   </aside>
@@ -67,6 +77,9 @@
         <h1 id="sectionTitle">Overview</h1>
         <p id="sectionSubtitle" class="admin-topbar-subtitle">A quick look at your content pipeline.</p>
       </div>
+      <span class="admin-badge--unlimited" id="unlimitedBadge" hidden>
+        <i class="ph ph-infinity"></i> Unlimited AI access
+      </span>
       <div class="admin-topbar-actions" id="topbarActions">
         <button class="admin-btn admin-btn--primary" id="topbarNewResourceBtn">
           <i class="ph ph-plus"></i><span>New resource</span>
