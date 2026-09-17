@@ -56,7 +56,7 @@ import {
   handleNoteSessionCreate,
   handleNoteSession,
   handleNoteSessionSegment,
-  handleNoteStream,
+  handleNoteChunkTranscribe,
 } from './note-taker-endpoint.js';
 import {
   handleConnectorStart,
@@ -83,9 +83,9 @@ export default {
 
   const url = new URL(request.url);
 
-  if (request.method === 'GET' && url.pathname === '/api/note-stream') return handleNoteStream(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
   if (/^\/api\/note-sessions\/[^/]+\/segments$/.test(url.pathname) && request.method === 'POST') return handleNoteSessionSegment(request, env, url.pathname.split('/')[3]);
+  if (/^\/api\/note-sessions\/[^/]+\/transcribe$/.test(url.pathname) && request.method === 'POST') return handleNoteChunkTranscribe(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/note-sessions\/[^/]+$/.test(url.pathname) && ['GET', 'PATCH'].includes(request.method)) return handleNoteSession(request, env, url.pathname.split('/')[3]);
 
   if (request.method === 'GET' && url.pathname === '/') {
