@@ -11,6 +11,14 @@
 // (limits.visionPerDay) below.
 export const VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 
+// Sentinel used for staff limits that are functionally unlimited. Kept
+// as a real (large) number rather than Infinity so it survives
+// JSON.stringify to the frontend and still compares correctly against
+// usage.js's KV counters. Chosen to be display-friendly: the frontend
+// treats any limit >= this as "Unlimited" rather than printing the raw
+// number (see js/app.js).
+export const UNLIMITED = 999999;
+
 export const PLANS = {
   free: {
     id: 'free',
@@ -108,6 +116,55 @@ export const PLANS = {
       connectorTools: true,
     },
   },
+
+  // ─────────────────────────────────────────────────────────────────
+  // Staff-only pseudo-plan. Never purchasable, never returned by
+  // subscription.js on its own — it is only ever applied as an
+  // override, and only for a Firestore admins/{uid} doc with
+  // role: 'admin' specifically (never 'moderator', never a plain
+  // user). See subscription.js#resolveAccountWithRole, the single
+  // place that decides who gets this. Moderators and regular users
+  // always resolve to one of the plans above, exactly as before.
+  // ─────────────────────────────────────────────────────────────────
+  admin: {
+    id: 'admin',
+    name: 'Cognita Admin',
+    priceNGN: 0,
+    priceUSD: 0,
+    paystackPlanCode: null,
+    limits: {
+      messagesPerDay: UNLIMITED,
+      advancedModelPerDay: UNLIMITED,
+      imageGenPerDay: UNLIMITED,
+      documentGenPerDay: UNLIMITED,
+      resourceGenPerDay: UNLIMITED,
+      fileUploadsPerDay: UNLIMITED,
+      maxFileSizeMB: 50,
+      maxContextMessages: 60,
+      visionPerDay: UNLIMITED,
+      toolCallsPerDay: UNLIMITED,
+      noteTakerSessionsPerDay: UNLIMITED,
+      noteTakerChunksPerDay: UNLIMITED,
+    },
+    models: {
+      // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0
+      // provider — which is exclusive to this plan. Nothing outside
+      // this admin override ever includes 'v0' in its chat tiers, so
+      // moderators/users can never select or be routed to it even if
+      // they tamper with a client-side request (chat-endpoint.js
+      // re-validates the requested tier against the plan resolved
+      // server-side from the verified uid, same as every other tier).
+      chat: ['fast', 'advanced', 'reasoning', 'v0'],
+      vision: true,
+    },
+    features: {
+      documentExport: true,
+      prioritySupport: true,
+      longContext: true,
+      designTemplates: true,
+      connectorTools: true,
+    },
+  },
 };
 
 // Can this plan use connected-app tools (GitHub/Google/Figma/Canva)
@@ -165,9 +222,23 @@ export const MODEL_TIERS = {
       fallback: { provider: 'groq', model: 'openai/gpt-oss-20b' },
     },
   },
+  // Admin-only. See PLANS.admin — no regular plan's models.chat ever
+  // includes 'v0', so this tier is unreachable outside a verified
+  // admins/{uid} role: 'admin' override. Falls back into the same
+  // Groq chain the other tiers use, so a v0 outage still degrades to
+  // a working reply instead of failing the request.
+  v0: {
+    provider: 'vercel_v0',
+    model: 'v0-1.0-md',
+    fallback: {
+      provider: 'groq',
+      model: 'openai/gpt-oss-120b',
+      fallback: { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    },
+  },
 };
 
-export const PLAN_HIERARCHY = ['free', 'plus', 'studio'];
+export const PLAN_HIERARCHY = ['free', 'plus', 'studio', 'admin'];
 
 export function planRank(planId) {
   const i = PLAN_HIERARCHY.indexOf(planId);
