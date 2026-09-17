@@ -1,7 +1,7 @@
 // chat-endpoint.js
 
 import { requireAuth } from './auth-middleware.js';
-import { resolveAccount, assertPlan } from './subscription.js';
+import { resolveAccountWithRole, assertPlan } from './subscription.js';
 import { checkAndIncrement, getUsage } from './usage.js';
 import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools } from './entitlements.js';
 import { callWithFallback, callVisionModel, callWithTools } from './providers.js';
@@ -290,6 +290,11 @@ function _systemPromptToolsAddendum() {
 function _tierForQualityHint(hint) {
   if (hint === 'thorough') return 'reasoning';
   if (hint === 'advanced') return 'advanced';
+  // 'v0' is only ever a real option for the plan resolved server-side
+  // (see PLANS.admin) — a non-admin sending this hint simply fails the
+  // allowedTiers.includes(requestedTier) check right below, same as
+  // any other tier they're not entitled to.
+  if (hint === 'v0') return 'v0';
   return 'fast';
 }
 
@@ -480,7 +485,10 @@ export async function handleChatRequest(request, env) {
 
   let account;
   try {
-    account = await resolveAccount(identity.uid, env);
+    // resolveAccountWithRole applies the unlimited/v0 'admin' plan
+    // override for a verified admins/{uid} role: 'admin' doc; everyone
+    // else resolves to their real plan exactly as before.
+    account = await resolveAccountWithRole(identity.uid, env);
   } catch (e) {
     console.error('[chat] account resolution failed:', e.message);
     return _jsonError('Could not verify your account. Please try again.', 500, env);
@@ -588,6 +596,7 @@ export async function handleChatRequest(request, env) {
   console.log(
     '[chat][tools] uid=' + identity.uid +
     ' plan=' + account.planId +
+    ' role=' + (account.role || 'none') +
     ' connectorToolsEnabled=' + connectorToolsEnabled +
     (connectorToolsEnabled ? '' :
       ' reason=' + (hasImages ? 'has_images' : confirmToolCall ? 'confirm_tool_call' : 'plan_lacks_connectorTools'))
