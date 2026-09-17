@@ -54,17 +54,21 @@ export async function recoverNoteSession(sessionId) {
   return response.json();
 }
 
-// WebSockets can't carry an Authorization header from the browser, so the
-// ID token travels as a query param instead; the Worker accepts either.
-// language/keywords are passed through to Nova-3 (see note-taker-endpoint.js).
-export async function openNoteStream({ language, keywords } = {}) {
-  const token = await auth().getIdToken(false);
-  if (!token) throw new Error('Not signed in.');
-  const params = new URLSearchParams({ token });
-  if (language) params.set('language', language);
-  if (keywords && keywords.length) params.set('keywords', keywords.join(','));
-  const base = WORKER_URL.replace(/^http/, 'ws');
-  return new WebSocket(`${base}/api/note-stream?${params.toString()}`);
+// Sends one recorded audio chunk (a Blob from MediaRecorder) to the Worker,
+// which transcribes it with Whisper on the Workers AI free daily
+// allocation. No token in the URL needed here — this is a normal fetch,
+// so authedFetch's Authorization header works as-is.
+export async function transcribeChunk(sessionId, blob, language) {
+  const response = await auth().authedFetch(`${WORKER_URL}/api/note-sessions/${encodeURIComponent(sessionId)}/transcribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type || 'application/octet-stream', ...(language ? { 'X-Note-Language': language } : {}) },
+    body: blob,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Transcription failed (${response.status})`);
+  }
+  return response.json();
 }
 
-window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, openNoteStream };
+window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk };
