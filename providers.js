@@ -62,13 +62,19 @@ async function _callOpenRouter(messages, model, env, maxTokens) {
   };
 }
 
-// Vercel v0 — admin-only provider (see entitlements.js MODEL_TIERS.v0 /
-// PLANS.admin). The old direct v0 Model API (api.v0.dev/v1) was retired
-// by Vercel; v0 models are now served through Vercel AI Gateway's
-// OpenAI-compatible endpoint instead, under a gateway-qualified model id
-// ("vercel/v0-1.0-md", set in entitlements.js). env.V0_API_KEY must be
-// an AI Gateway API key (created in the Vercel dashboard's AI Gateway
-// section) — a v0.dev-issued key will not authenticate here.
+// "v0 (Admin)" provider — admin-only tier (see entitlements.js
+// MODEL_TIERS.v0 / PLANS.admin). Despite the name, this calls Vercel AI
+// Gateway generically, not the real v0-1.0-md/v0-1.5-md models — those
+// are excluded from Gateway's free $5/month tier and this project
+// doesn't have Gateway billing enabled. The actual model called here is
+// whatever entitlements.js sets as MODEL_TIERS.v0.model (currently a
+// free-tier-eligible model); see the comment there for how to switch
+// this to genuine v0 once billing is turned on. Function/endpoint
+// names kept as "V0" since that's still the tier's public label and
+// this is the only provider that talks to the Gateway.
+// env.V0_API_KEY must be an AI Gateway API key (created in the Vercel
+// dashboard's AI Gateway → API Keys section, prefixed "vck_") — a
+// v0.dev-issued key will not authenticate here.
 async function _callV0(messages, model, env, maxTokens) {
   if (!env.V0_API_KEY) throw new Error('v0_not_configured');
   const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
