@@ -7,6 +7,11 @@
 import { fsGet, fsSet } from './firestore-rest.js';
 import { getPlan, planSatisfies } from './entitlements.js';
 
+// Role lives at admins/{uid} in Firestore — the exact same doc shape
+// admin-auth.js's requireAdmin/requireSuperAdmin read for the curation
+// endpoints. This is the ONLY other place in the codebase that reads
+// it, and it never trusts anything client-sent, only the verified uid.
+
 // Possible subscription.status values:
 //   'active'    — paid plan, in good standing
 //   'none'      — never subscribed (implicitly free)
@@ -97,6 +102,41 @@ export async function resolveAccount(uid, env) {
     await reconcileIfExpired(uid, effective, env);
   }
   return effective;
+}
+
+/**
+ * Same as resolveAccount(), plus the person's curation role (if any) and,
+ * critically, the 'admin' plan override: a Firestore admins/{uid} doc
+ * with role EXACTLY 'admin' (never 'moderator') gets its planId swapped
+ * to the unlimited, v0-enabled 'admin' pseudo-plan from entitlements.js,
+ * regardless of whatever they're actually subscribed to. Moderators and
+ * plain users always fall through to their real, unmodified plan.
+ *
+ * This is the single choke point that decides who gets unlimited/v0
+ * access — every endpoint that should honor it (chat, account, usage)
+ * calls this instead of resolveAccount() directly.
+ *
+ * @returns {Promise<object>} the account doc, plus { role: 'admin'|'moderator'|null }
+ */
+export async function resolveAccountWithRole(uid, env) {
+  const account = await resolveAccount(uid, env);
+
+  let roleDoc = null;
+  try {
+    roleDoc = await fsGet('admins/' + uid, env);
+  } catch (e) {
+    // Role lookup failing (e.g. Firestore hiccup) should never break
+    // ordinary chat/account access — just treat as "no elevated role"
+    // for this request rather than failing it outright.
+    console.error('[subscription] role lookup failed for', uid, ':', e.message);
+  }
+
+  const role = (roleDoc && (roleDoc.role === 'admin' || roleDoc.role === 'moderator')) ? roleDoc.role : null;
+
+  if (role === 'admin') {
+    return { ...account, planId: 'admin', status: 'active', role };
+  }
+  return { ...account, role };
 }
 
 /**
