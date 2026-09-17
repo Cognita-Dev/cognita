@@ -4,21 +4,20 @@ const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
 const RECOVERY_KEY = 'cognitaNoteTakerSession'
 const CHUNK_MS = 8000
-const MAX_CHUNK_FAILURES = 3
+const MAX_SPEECH_FAILURES = 3
 const AUTOSAVE_MS = 20000
 const RETRY_PRIMARY_MS = 30000
 const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+const Speech = window.SpeechRecognition || window.webkitSpeechRecognition
 
 let stream, analyser, audioCtx, sourceNode, raf, timer
 let chunkRecorder = null, chunkLoopRunning = false, chunkQueue = Promise.resolve()
-let chunkFailures = 0, retryTimer = null
-let recognition
+let recognition, speechFailures = 0, retryTimer = null, intentionalRecognitionStop = false
 let autosaveTimer = null
 let startedAt, pausedMs = 0, pauseAt
 let segments = [], interim = ''
-let state = 'idle' // idle | requesting-permission | connecting | recording | paused | reconnecting | degraded | stopping | completed | error
+let state = 'idle' // idle | requesting-permission | connecting | recording | paused | degraded | stopping | completed | error
 let sessionId = null, sessionVersion = 1
-const Speech = window.SpeechRecognition || window.webkitSpeechRecognition
 
 function formatTime(ms) { const s = Math.floor(ms / 1000); return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((n) => String(n).padStart(2, '0')).join(':') }
 function elapsed() { return startedAt ? formatTime(Date.now() - startedAt - pausedMs - (pauseAt ? Date.now() - pauseAt : 0)) : '00:00:00' }
@@ -33,6 +32,7 @@ function render() {
 }
 function saveRecoveryPointer() { if (sessionId) localStorage.setItem(RECOVERY_KEY, JSON.stringify({ sessionId, version: sessionVersion, title: $('noteTakerMeetingTitle').value.trim(), language: $('noteTakerLanguage').value, startedAt })) }
 function clearRecoveryPointer() { localStorage.removeItem(RECOVERY_KEY) }
+function appendFinal(text) { if (!text) return; const last = segments[segments.length - 1]; if (!last || last.text !== text) segments.push({ id: crypto.randomUUID(), time: elapsed(), text }) }
 
 function open() {
   modal.hidden = false
@@ -44,7 +44,7 @@ function open() {
   checkForRecovery()
 }
 function close() {
-  if (['recording', 'paused', 'reconnecting', 'degraded', 'connecting'].includes(state)) {
+  if (['recording', 'paused', 'degraded', 'connecting'].includes(state)) {
     if (!confirm("You're still recording. Close anyway? Your note stays open in the background — nothing is lost.")) return
   }
   modal.hidden = true
@@ -76,7 +76,7 @@ function checkForRecovery() {
   $('noteTakerRecoveryDiscard').onclick = () => { clearRecoveryPointer(); banner.hidden = true }
 }
 
-// ---------- Audio level meter (visual only — doesn't touch the chunk pipeline) ----------
+// ---------- Audio level meter (visual only) ----------
 function startLevelMeter() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)()
   sourceNode = audioCtx.createMediaStreamSource(stream)
@@ -85,7 +85,7 @@ function startLevelMeter() {
   drawLevel()
 }
 function drawLevel() {
-  if (!analyser || !['recording', 'reconnecting', 'degraded'].includes(state)) { $('noteTakerPulse')?.style.setProperty('--level', 0); return }
+  if (!analyser || !['recording', 'degraded'].includes(state)) { $('noteTakerPulse')?.style.setProperty('--level', 0); return }
   const data = new Uint8Array(analyser.frequencyBinCount)
   analyser.getByteTimeDomainData(data)
   const level = data.reduce((sum, n) => sum + Math.abs(n - 128), 0) / data.length
@@ -98,12 +98,70 @@ function stopLevelMeter() {
   cancelAnimationFrame(raf)
 }
 
+// ---------- Primary provider: the browser's own SpeechRecognition ----------
+// Runs entirely on-device/in-browser with no server round trip, so it's
+// free and effectively unlimited for us — but it does not exist at all on
+// iOS (Safari, Chrome, or any other browser there, since Apple requires all
+// iOS browsers to use WebKit, which never implemented this API). See
+// startWhisperFallback() below for what covers that gap.
+function startPrimarySpeech() {
+  speechFailures = 0
+  intentionalRecognitionStop = false
+  recognition = new Speech()
+  recognition.continuous = true
+  recognition.interimResults = true
+  // 'auto' has no true equivalent here (unlike a server model, the browser
+  // can't detect-then-switch mid-stream) — leaving lang unset lets the
+  // browser use its own default rather than silently mislabeling the
+  // session as one specific language.
+  const lang = $('noteTakerLanguage').value
+  if (lang && lang !== 'auto') recognition.lang = lang
+  recognition.onresult = (e) => {
+    interim = ''
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const text = e.results[i][0].transcript.trim()
+      if (e.results[i].isFinal) appendFinal(text)
+      else interim += text + ' '
+    }
+    render()
+  }
+  recognition.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return // benign — onend below restarts it
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      state = 'error'; setStatus('Microphone access is required', 'Enable microphone permission in your browser, then try again.')
+      return
+    }
+    speechFailures++
+    if (speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback()
+  }
+  recognition.onend = () => {
+    if (intentionalRecognitionStop || state !== 'recording') return
+    // Chrome/Edge stop the recognizer on their own periodically even with
+    // continuous:true (silence, backgrounding, internal timeouts) — this is
+    // expected and the standard fix is simply to restart it.
+    try { recognition.start() } catch { speechFailures++; if (speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback() }
+  }
+  try {
+    recognition.start()
+    state = 'recording'
+    setStatus('Recording', 'Live transcription active')
+  } catch (e) {
+    startWhisperFallback()
+  }
+}
+function stopPrimarySpeech() {
+  intentionalRecognitionStop = true
+  try { recognition?.stop() } catch {}
+  recognition = null
+  clearTimeout(retryTimer)
+}
+
+// ---------- Fallback: free-tier Whisper, used only when the browser has no
+// SpeechRecognition at all (chiefly iOS) or the primary keeps erroring ----------
 function pickMimeType() {
   for (const t of MIME_CANDIDATES) { if (window.MediaRecorder?.isTypeSupported?.(t)) return t }
   return ''
 }
-
-// ---------- Primary provider: free-tier Whisper, one short recording at a time ----------
 // Each chunk is its own complete MediaRecorder session (start -> stop), so
 // the resulting Blob is a standalone, independently-decodable audio file —
 // a single long recording sliced with `timeslice` would produce WebM
@@ -127,24 +185,15 @@ async function transcribeAndAppend(blob) {
   if (!blob || !sessionId) return
   try {
     const { text } = await transcribeChunk(sessionId, blob, $('noteTakerLanguage').value)
-    chunkFailures = 0
-    if (state === 'degraded') { recognition?.stop(); recognition = null; state = 'recording'; setStatus('Recording', 'Transcribing every few seconds') }
-    if (text) {
-      segments.push({ id: crypto.randomUUID(), time: elapsed(), text })
-      render()
-      persistNoteSegment(sessionId, { segmentId: crypto.randomUUID(), text, startMs: 0, endMs: 0 }).catch(() => {})
-    }
-  } catch (e) {
-    chunkFailures++
-    if (chunkFailures >= MAX_CHUNK_FAILURES && state !== 'degraded' && state !== 'paused') startFallback()
-  }
+    if (text) { appendFinal(text); render(); persistNoteSegment(sessionId, { segmentId: crypto.randomUUID(), text, startMs: 0, endMs: 0 }).catch(() => {}) }
+  } catch (e) { /* one missed chunk isn't fatal for the batch fallback; audio for it is simply gone */ }
 }
 async function runChunkLoop() {
   if (chunkLoopRunning) return
   chunkLoopRunning = true
-  while (chunkLoopRunning && state === 'recording') {
+  while (chunkLoopRunning && state === 'degraded') {
     const blob = await recordOneChunk(CHUNK_MS)
-    if (!chunkLoopRunning || state !== 'recording') break
+    if (!chunkLoopRunning || state !== 'degraded') break
     if (blob) chunkQueue = chunkQueue.then(() => transcribeAndAppend(blob)).catch(() => {})
   }
   chunkLoopRunning = false
@@ -153,48 +202,22 @@ function stopChunkLoop() {
   chunkLoopRunning = false
   try { if (chunkRecorder && chunkRecorder.state !== 'inactive') chunkRecorder.stop() } catch {}
 }
-
-// ---------- Fallback: browser SpeechRecognition (still free, still real-time) ----------
-function startFallback() {
-  stopChunkLoop()
-  if (Speech) {
-    state = 'degraded'
-    setStatus('Using browser transcription', 'Live transcription switched to your browser while we retry the primary engine')
-    recognition = new Speech()
-    recognition.continuous = true; recognition.interimResults = true
-    recognition.lang = $('noteTakerLanguage').value === 'auto' ? 'en-NG' : $('noteTakerLanguage').value
-    recognition.onresult = (e) => {
-      interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const text = e.results[i][0].transcript.trim()
-        if (e.results[i].isFinal && text) { const last = segments[segments.length - 1]; if (!last || last.text !== text) segments.push({ id: crypto.randomUUID(), time: elapsed(), text }) }
-        else interim += text + ' '
-      }
-      render()
-    }
-    recognition.onerror = () => {}
-    recognition.onend = () => { if (state === 'degraded') try { recognition.start() } catch {} }
-    recognition.start()
-  } else {
-    state = 'degraded'
-    setStatus('Transcription paused — recording preserved', 'Your recording continues; live text is unavailable right now')
-  }
-  retryPrimaryInBackground()
+function startWhisperFallback() {
+  stopPrimarySpeech()
+  state = 'degraded'
+  setStatus(
+    Speech ? 'Using backup transcription' : 'Recording',
+    Speech ? "Live transcription hit a snag — we're retrying it in the background" : "Your browser doesn't support live speech recognition, so transcripts arrive every few seconds instead"
+  )
+  runChunkLoop()
+  if (Speech) retryPrimaryInBackground() // only worth retrying if the browser *can* run it
 }
 function retryPrimaryInBackground() {
   clearTimeout(retryTimer)
-  retryTimer = setTimeout(async () => {
+  retryTimer = setTimeout(() => {
     if (state !== 'degraded') return
-    const probe = await recordOneChunk(3000)
-    if (!probe) return retryPrimaryInBackground()
-    try {
-      await transcribeChunk(sessionId, probe, $('noteTakerLanguage').value)
-      chunkFailures = 0
-      recognition?.stop(); recognition = null
-      state = 'recording'
-      setStatus('Recording', 'Transcribing every few seconds')
-      runChunkLoop()
-    } catch { retryPrimaryInBackground() }
+    stopChunkLoop()
+    startPrimarySpeech()
   }, RETRY_PRIMARY_MS)
 }
 
@@ -218,7 +241,7 @@ async function start() {
     return setStatus('Could not start Note Taker', e.message || 'Please try again.')
   }
   sessionId = session.id; sessionVersion = session.version
-  segments = []; interim = ''; pausedMs = 0; startedAt = Date.now(); chunkFailures = 0
+  segments = []; interim = ''; pausedMs = 0; startedAt = Date.now()
   $('noteTakerSetup').hidden = true; $('noteTakerLive').hidden = false
   saveRecoveryPointer()
   timer = setInterval(() => $('noteTakerTimer').textContent = elapsed(), 250)
@@ -226,13 +249,12 @@ async function start() {
   await connectAndRecord()
 }
 async function connectAndRecord() {
-  state = 'recording'
-  setStatus('Recording', 'Transcribing every few seconds')
-  runChunkLoop()
+  if (Speech) startPrimarySpeech()
+  else { state = 'degraded'; setStatus('Recording', "Your browser doesn't support live speech recognition, so transcripts arrive every few seconds instead"); runChunkLoop() }
   autosaveTimer = setInterval(autosave, AUTOSAVE_MS)
 }
 async function autosave() {
-  if (!sessionId || !['recording', 'paused', 'reconnecting', 'degraded'].includes(state)) return
+  if (!sessionId || !['recording', 'paused', 'degraded'].includes(state)) return
   try {
     const res = await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: state === 'paused' ? 'paused' : 'recording', updatedAt: new Date().toISOString() })
     sessionVersion = res.version
@@ -240,20 +262,18 @@ async function autosave() {
 }
 function pause() {
   if (state === 'recording' || state === 'degraded') {
+    const wasDegraded = state === 'degraded'
     state = 'paused'; pauseAt = Date.now()
     stream?.getTracks().forEach((t) => t.enabled = false)
-    stopChunkLoop()
-    recognition?.stop()
+    if (wasDegraded) stopChunkLoop(); else stopPrimarySpeech()
     clearTimeout(retryTimer)
     $('noteTakerPause').innerHTML = '<i class="ph ph-play"></i> Resume'
     setStatus('Paused', 'Audio capture is paused')
   } else if (state === 'paused') {
     pausedMs += Date.now() - pauseAt; pauseAt = 0
     stream?.getTracks().forEach((t) => t.enabled = true)
-    state = 'recording'
-    runChunkLoop()
     $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
-    setStatus('Recording', 'Resumed')
+    if (Speech) startPrimarySpeech(); else { state = 'degraded'; setStatus('Recording', 'Resumed'); runChunkLoop() }
     drawLevel()
   }
 }
@@ -261,12 +281,12 @@ function finish() { if (!segments.length && !interim) return stopNow(); if (conf
 async function stopNow() {
   state = 'stopping'; setStatus('Finalizing transcript', 'Wrapping up your note')
   clearInterval(timer); clearInterval(autosaveTimer); clearTimeout(retryTimer)
+  stopPrimarySpeech()
   stopChunkLoop()
-  recognition?.stop(); recognition = null
-  await chunkQueue.catch(() => {}) // let any in-flight transcription land before finalizing
+  await chunkQueue.catch(() => {}) // let any in-flight fallback transcription land before finalizing
   stopLevelMeter()
   stream?.getTracks().forEach((t) => t.stop())
-  if (interim) { segments.push({ id: crypto.randomUUID(), time: elapsed(), text: interim.trim() }); interim = '' }
+  if (interim) { appendFinal(interim.trim()); interim = '' }
   const text = segments.map((s) => `[${s.time}] ${s.text}`).join('\n\n')
   if (sessionId) { try { await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: 'completed', updatedAt: new Date().toISOString() }) } catch {} }
   clearRecoveryPointer()
@@ -286,6 +306,6 @@ $('noteTakerDownload').addEventListener('click', () => { const a = document.crea
 $('noteTakerEdit').addEventListener('click', () => $('noteTakerEditor').focus())
 $('noteTakerAsk').addEventListener('click', () => { const input = $('composerInput'); input.value = `Please help me process these meeting notes:\n\n${$('noteTakerEditor').value}`; input.dispatchEvent(new Event('input', { bubbles: true })); close(); input.focus() })
 window.addEventListener('cognita:open-note-taker', open)
-window.addEventListener('online', () => { if (state === 'degraded') { clearTimeout(retryTimer); retryTimer = setTimeout(retryPrimaryInBackground, 0) } })
-window.addEventListener('offline', () => { if (state === 'recording') setStatus('Offline', 'Audio is being preserved locally') })
-window.addEventListener('beforeunload', (e) => { if (['recording', 'paused', 'reconnecting', 'degraded'].includes(state)) { e.preventDefault(); e.returnValue = '' } })
+window.addEventListener('online', () => { if (state === 'degraded' && Speech) { clearTimeout(retryTimer); retryTimer = setTimeout(retryPrimaryInBackground, 0) } })
+window.addEventListener('offline', () => { if (state === 'recording' || state === 'degraded') setStatus('Offline', 'Audio is being preserved locally') })
+window.addEventListener('beforeunload', (e) => { if (['recording', 'paused', 'degraded'].includes(state)) { e.preventDefault(); e.returnValue = '' } })
