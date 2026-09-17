@@ -71,7 +71,7 @@ function _corsPreflight(env) {
     headers: {
       'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language',
       'Access-Control-Max-Age': '86400',
     },
   });
