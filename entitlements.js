@@ -23,6 +23,7 @@ export const PLANS = {
   free: {
     id: 'free',
     name: 'Cognita Starter',
+    public: true, // shown on the marketing pricing page / returned by /api/plans
     priceNGN: 0,
     priceUSD: 0,
     paystackPlanCode: null, // no recurring charge for free tier
@@ -55,6 +56,7 @@ export const PLANS = {
   plus: {
     id: 'plus',
     name: 'Cognita Plus',
+    public: true, // shown on the marketing pricing page / returned by /api/plans
     priceNGN: 4500,
     priceUSD: 6,
     paystackPlanCode: 'PLN_yoh2zim6qlr20c0',
@@ -87,6 +89,7 @@ export const PLANS = {
   studio: {
     id: 'studio',
     name: 'Cognita Studio',
+    public: true, // shown on the marketing pricing page / returned by /api/plans
     priceNGN: 12000,
     priceUSD: 16,
     paystackPlanCode: 'PLN_23azph4eskh5wwj',
@@ -129,6 +132,7 @@ export const PLANS = {
   admin: {
     id: 'admin',
     name: 'Cognita Admin',
+    public: false, // staff-only override — must NEVER be returned by /api/plans
     priceNGN: 0,
     priceUSD: 0,
     paystackPlanCode: null,
