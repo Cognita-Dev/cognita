@@ -15,7 +15,7 @@
 // the user meant to click / where to send them next — the Worker never
 // trusts it as a source of truth for price or entitlement.
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 const CACHE_KEY = 'cognita:plans-cache:v1';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches the endpoint's own Cache-Control
 
