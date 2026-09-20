@@ -11,7 +11,7 @@
 // so the nav item + section are hidden for them rather than
 // shown-then-erroring.
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 const RESOURCE_TYPES = [
   'lesson_plan', 'lesson_note', 'worksheet', 'exam', 'scheme_of_work', 'quiz', 'study_guide',
