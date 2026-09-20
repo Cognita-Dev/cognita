@@ -245,7 +245,29 @@ export async function requireAuth(request, env) {
     throw new Error('Server misconfiguration: FIREBASE_PROJECT_ID not set.');
   }
 
-  return verifyFirebaseIdToken(match[1], env.FIREBASE_PROJECT_ID);
+  const identity = await verifyFirebaseIdToken(match[1], env.FIREBASE_PROJECT_ID);
+
+  // Backend-side enforcement of "verified email required to use the app".
+  // This is the check that actually matters — the frontend redirecting an
+  // unverified person to /verify-email.html is just courtesy UX. A request
+  // sent straight at this API (curl, devtools, a modified client) with a
+  // valid-but-unverified token must still be rejected here.
+  //
+  // Scoped to the 'password' sign-in provider only: Google verifies the
+  // address as a condition of its own OAuth flow, so a Google-signed-in
+  // person's token is never unverified in a way this needs to catch, and
+  // gating on it too would wrongly block a legitimate Google account if
+  // Google ever omitted the claim.
+  const signInProvider = identity.claims && identity.claims.firebase
+    ? identity.claims.firebase.sign_in_provider
+    : null;
+  if (signInProvider === 'password' && !identity.emailVerified) {
+    const e = new Error('Please verify your email address before continuing.');
+    e.isEmailUnverified = true;
+    throw e;
+  }
+
+  return identity;
 }
 
 /**
@@ -256,6 +278,10 @@ export async function requireAuth(request, env) {
  *   token at all. The person may well be validly signed in — we just don't
  *   know yet — so this is a 503, not a 401, and it must never be treated
  *   as "log this person out" on the client.
+ * - isEmailUnverified (set above, in requireAuth): the token is valid and
+ *   belongs to a real, signed-in person — they just haven't confirmed
+ *   their email/password account yet. 403, with a distinct `code` so a
+ *   caller could special-case it if it ever needs to.
  * - isForbidden (set by admin-auth.js): the person is who they say they
  *   are, they're just not allowed to do this. 403.
  * - anything else: the token itself was missing, expired, or invalid. 401.
@@ -268,6 +294,13 @@ export function describeAuthError(e) {
     return {
       status: 503,
       message: 'We could not check your sign-in status because of a temporary problem on our end. Please try again in a moment.',
+    };
+  }
+  if (e && e.isEmailUnverified) {
+    return {
+      status: 403,
+      code: 'email_not_verified',
+      message: e.message || 'Please verify your email address before continuing.',
     };
   }
   if (e && e.isForbidden) {
