@@ -144,8 +144,6 @@ export default {
     }
 
     // GET /api/files/:conversationId/:fileId?filename=... -> fetch one file's content.
-    // Must come after the single-segment check above, since both match a
-    // "/api/files/<segment>..." shape.
     if (request.method === 'GET' && /^\/api\/files\/[^/]+\/[^/]+$/.test(url.pathname)) {
       const parts = url.pathname.split('/');
       const conversationId = parts[3];
