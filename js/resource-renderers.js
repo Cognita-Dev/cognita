@@ -62,19 +62,31 @@ const ResourceRenderers = (() => {
     return `
       <div class="resource-specialized resource-flashcards" data-renderer="flashcards">
 
-        <div class="resource-artifact-header">
-          <div>
+        <div class="resource-artifact-header flashcard-header">
+          <div class="flashcard-header-text">
             <span class="resource-artifact-kicker">Study deck</span>
             <h3 class="resource-artifact-title">${safeTitle}</h3>
             <p class="resource-artifact-description">
-              Tap the card to reveal the answer. Use the controls below to move through the deck.
+              Tap the card to reveal the answer. Tap <strong>Present</strong> to show a card full screen to a class.
             </p>
           </div>
 
-          <div class="resource-flashcard-progress" aria-live="polite">
-            <span data-flashcard-current>1</span>
-            <span class="resource-progress-divider">/</span>
-            <span>${cards.length}</span>
+          <div class="flashcard-header-actions">
+            <div class="resource-flashcard-progress" aria-live="polite">
+              <span data-flashcard-current>1</span>
+              <span class="resource-progress-divider">/</span>
+              <span>${cards.length}</span>
+            </div>
+
+            <button
+              type="button"
+              class="flashcard-exit-present"
+              data-flashcard-exit
+              aria-label="Exit full screen"
+            >
+              <i class="ph ph-x"></i>
+              <span>Exit</span>
+            </button>
           </div>
         </div>
 
@@ -87,29 +99,34 @@ const ResourceRenderers = (() => {
             aria-label="Previous flashcard"
           >
             <i class="ph ph-caret-left"></i>
+            <span class="flashcard-nav-text">Previous</span>
           </button>
 
           <button
             type="button"
             class="flashcard"
             data-flashcard
-            aria-label="Flashcard. Click to reveal the answer."
+            aria-label="Flashcard. Press to reveal the answer."
           >
             <span class="flashcard-inner">
 
-              <span class="flashcard-face flashcard-front">
+              <span class="flashcard-face flashcard-front" data-flashcard-front-face>
                 <span class="flashcard-face-label">QUESTION</span>
-                <span class="flashcard-face-image" data-flashcard-image hidden></span>
-                <span class="flashcard-face-content" data-flashcard-front></span>
+                <span class="flashcard-face-body">
+                  <span class="flashcard-face-image" data-flashcard-image hidden></span>
+                  <span class="flashcard-face-content" data-flashcard-front></span>
+                </span>
                 <span class="flashcard-hint">
                   <i class="ph ph-hand-tap"></i>
                   Tap to reveal
                 </span>
               </span>
 
-              <span class="flashcard-face flashcard-back">
+              <span class="flashcard-face flashcard-back" data-flashcard-back-face aria-hidden="true">
                 <span class="flashcard-face-label">ANSWER</span>
-                <span class="flashcard-face-content" data-flashcard-back></span>
+                <span class="flashcard-face-body">
+                  <span class="flashcard-face-content" data-flashcard-back></span>
+                </span>
                 <span class="flashcard-hint">
                   <i class="ph ph-arrow-counter-clockwise"></i>
                   Tap to flip back
@@ -125,6 +142,7 @@ const ResourceRenderers = (() => {
             data-flashcard-next
             aria-label="Next flashcard"
           >
+            <span class="flashcard-nav-text">Next</span>
             <i class="ph ph-caret-right"></i>
           </button>
 
@@ -135,6 +153,15 @@ const ResourceRenderers = (() => {
         </div>
 
         <div class="flashcard-study-controls">
+
+          <button
+            type="button"
+            class="flashcard-control flashcard-control-present"
+            data-flashcard-present
+          >
+            <i class="ph ph-corners-out"></i>
+            Present
+          </button>
 
           <button
             type="button"
@@ -180,43 +207,124 @@ const ResourceRenderers = (() => {
           <span><kbd>Space</kbd> Flip</span>
           <span><kbd>←</kbd> Previous</span>
           <span><kbd>→</kbd> Next</span>
+          <span><kbd>Esc</kbd> Exit full screen</span>
         </div>
 
       </div>
     `;
   }
 
+  // Only one deck can be shown full screen at a time. If the deck is redrawn
+  // while presenting (e.g. new pictures arrived), the old full-screen copy
+  // is cleaned up first so nothing is left stuck on top of the page.
+  let activePresenter = null;
+
   function mountFlashcards(root, content) {
+    if (activePresenter) activePresenter.exit();
+
     const sourceCards = getCards(content);
 
     if (!sourceCards.length) return;
 
+    const deck = root.querySelector('.resource-flashcards');
+    if (!deck) return;
+
     let cards = sourceCards.map((card, index) => ({
       id: index,
-      front: normalizeText(card.front),
-      back: normalizeText(card.back),
+      front: normalizeText(card && card.front),
+      back: normalizeText(card && card.back),
+      imagePrompt: normalizeText(card && card.imagePrompt),
       image: card && card.image && (card.image.url || card.image.data) ? card.image : null,
       state: 'new',
     }));
 
     const originalCards = cards.map((card) => ({ ...card }));
 
+    // When the deck is redrawn (for example after pictures finish arriving)
+    // put the person back on the card they were looking at.
+    const signature = originalCards.map((c) => c.front).join('\u0001');
+    const saved = root.__flashcardState;
     let currentIndex = 0;
+    if (saved && saved.signature === signature) {
+      currentIndex = Math.min(Math.max(saved.cardId || 0, 0), cards.length - 1);
+      cards.forEach((c) => { if (saved.states && saved.states[c.id]) c.state = saved.states[c.id]; });
+    }
     let flipped = false;
 
-    const cardElement = root.querySelector('[data-flashcard]');
-    const frontElement = root.querySelector('[data-flashcard-front]');
-    const backElement = root.querySelector('[data-flashcard-back]');
-    const imageElement = root.querySelector('[data-flashcard-image]');
-    const currentElement = root.querySelector('[data-flashcard-current]');
-    const progressElement = root.querySelector('[data-flashcard-progress]');
-    const statusElement = root.querySelector('[data-flashcard-status]');
-    const prevButton = root.querySelector('[data-flashcard-prev]');
-    const nextButton = root.querySelector('[data-flashcard-next]');
-    const knownButton = root.querySelector('[data-flashcard-known]');
-    const reviewButton = root.querySelector('[data-flashcard-review]');
-    const shuffleButton = root.querySelector('[data-flashcard-shuffle]');
-    const resetButton = root.querySelector('[data-flashcard-reset]');
+    const cardElement = deck.querySelector('[data-flashcard]');
+    const frontFace = deck.querySelector('[data-flashcard-front-face]');
+    const backFace = deck.querySelector('[data-flashcard-back-face]');
+    const frontElement = deck.querySelector('[data-flashcard-front]');
+    const backElement = deck.querySelector('[data-flashcard-back]');
+    const imageElement = deck.querySelector('[data-flashcard-image]');
+    const currentElement = deck.querySelector('[data-flashcard-current]');
+    const progressElement = deck.querySelector('[data-flashcard-progress]');
+    const statusElement = deck.querySelector('[data-flashcard-status]');
+    const prevButton = deck.querySelector('[data-flashcard-prev]');
+    const nextButton = deck.querySelector('[data-flashcard-next]');
+    const knownButton = deck.querySelector('[data-flashcard-known]');
+    const reviewButton = deck.querySelector('[data-flashcard-review]');
+    const shuffleButton = deck.querySelector('[data-flashcard-shuffle]');
+    const resetButton = deck.querySelector('[data-flashcard-reset]');
+    const presentButton = deck.querySelector('[data-flashcard-present]');
+    const exitButton = deck.querySelector('[data-flashcard-exit]');
+
+    function saveState() {
+      const states = {};
+      cards.forEach((c) => { if (c.state !== 'new') states[c.id] = c.state; });
+      root.__flashcardState = {
+        signature,
+        cardId: cards[currentIndex] ? cards[currentIndex].id : 0,
+        states,
+      };
+    }
+
+    function renderImage(current) {
+      imageElement.innerHTML = '';
+      imageElement.classList.remove('is-loaded');
+
+      const src = current.image
+        ? (current.image.url ||
+            (current.image.data
+              ? 'data:' + (current.image.type || 'image/jpeg') + ';base64,' + current.image.data
+              : ''))
+        : '';
+
+      if (!src) {
+        imageElement.hidden = true;
+        return;
+      }
+
+      imageElement.hidden = false;
+
+      const img = document.createElement('img');
+      img.alt = current.imagePrompt || 'Picture for this flashcard';
+      img.decoding = 'async';
+      img.draggable = false;
+      img.addEventListener('load', () => imageElement.classList.add('is-loaded'));
+      // If a picture can't be loaded (for example its link expired), hide
+      // the empty frame instead of showing a broken-image icon. The
+      // question and answer still work.
+      img.addEventListener('error', () => {
+        if (imageElement.contains(img)) {
+          imageElement.innerHTML = '';
+          imageElement.hidden = true;
+        }
+      });
+      img.src = src;
+      imageElement.appendChild(img);
+    }
+
+    // Quietly download the neighbouring pictures so flipping through the
+    // deck is instant, even on a slow connection.
+    function preloadNeighbours() {
+      [cards[currentIndex + 1], cards[currentIndex - 1]].forEach((c) => {
+        if (c && c.image && c.image.url) {
+          const pre = new Image();
+          pre.src = c.image.url;
+        }
+      });
+    }
 
     function update() {
       const current = cards[currentIndex];
@@ -227,25 +335,24 @@ const ResourceRenderers = (() => {
       backElement.textContent = current.back;
       currentElement.textContent = String(currentIndex + 1);
 
-      if (imageElement) {
-        if (current.image) {
-          imageElement.hidden = false;
-          // Newer decks load from a signed link; older decks may still
-          // carry the picture inline as base64.
-          imageElement.innerHTML = current.image.url
-            ? '<img src="' + escapeHtml(current.image.url) + '" alt="" loading="lazy">'
-            : '<img src="data:' + escapeHtml(current.image.type || 'image/jpeg') +
-              ';base64,' + current.image.data + '" alt="" loading="lazy">';
-        } else {
-          imageElement.hidden = true;
-          imageElement.innerHTML = '';
-        }
-      }
+      renderImage(current);
+      preloadNeighbours();
 
       const progress = ((currentIndex + 1) / cards.length) * 100;
       progressElement.style.width = `${progress}%`;
 
       cardElement.classList.toggle('is-flipped', flipped);
+      cardElement.setAttribute(
+        'aria-label',
+        'Flashcard ' + (currentIndex + 1) + ' of ' + cards.length + '. ' +
+          (flipped
+            ? 'Answer: ' + current.back + '. Press to show the question.'
+            : 'Question: ' + current.front + '. Press to reveal the answer.')
+      );
+
+      // Only the visible side should be read out by screen readers.
+      frontFace.setAttribute('aria-hidden', flipped ? 'true' : 'false');
+      backFace.setAttribute('aria-hidden', flipped ? 'false' : 'true');
 
       prevButton.disabled = currentIndex === 0;
       nextButton.disabled = currentIndex === cards.length - 1;
@@ -260,6 +367,8 @@ const ResourceRenderers = (() => {
       } else {
         statusElement.textContent = '';
       }
+
+      saveState();
     }
 
     function flip() {
@@ -303,8 +412,8 @@ const ResourceRenderers = (() => {
 
       currentIndex = 0;
       flipped = false;
-      statusElement.textContent = 'Deck shuffled.';
       update();
+      statusElement.textContent = 'Deck shuffled.';
     }
 
     function reset() {
@@ -315,32 +424,181 @@ const ResourceRenderers = (() => {
 
       currentIndex = 0;
       flipped = false;
+      update();
       statusElement.textContent = 'Deck restarted.';
+    }
+
+    /* ── Full-screen "Present" mode ──
+       Lets a teacher hold up a phone/tablet or project the screen so the
+       whole class can see the picture. Uses the browser's real full screen
+       when it exists (desktop, Android, iPad) and a full-window overlay
+       everywhere else (iPhone Safari has no element full screen). */
+    let presenting = false;
+    let placeholder = null;
+    let usedFullscreen = false;
+    let savedOverflow = null;
+
+    function isFullscreenActive() {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    function onFullscreenChange() {
+      // The person left real full screen (e.g. pressed Esc): leave the
+      // overlay too.
+      if (presenting && usedFullscreen && !isFullscreenActive()) exitPresent();
+    }
+
+    function enterPresent() {
+      if (presenting) return;
+      presenting = true;
+
+      // Move the deck to <body> so no parent container can clip it or
+      // limit its size.
+      placeholder = document.createComment('flashcards-present');
+      deck.parentNode.insertBefore(placeholder, deck);
+      document.body.appendChild(deck);
+      deck.classList.add('is-presenting');
+
+      savedOverflow = {
+        html: document.documentElement.style.overflow,
+        body: document.body.style.overflow,
+      };
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('fullscreenchange', onFullscreenChange);
+      document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+      try {
+        const request = deck.requestFullscreen || deck.webkitRequestFullscreen;
+        if (request) {
+          usedFullscreen = true;
+          const result = request.call(deck);
+          if (result && typeof result.catch === 'function') {
+            result.catch(() => { usedFullscreen = false; });
+          }
+        }
+      } catch (e) {
+        usedFullscreen = false;
+      }
+
+      activePresenter = { exit: exitPresent };
+      deck.focus({ preventScroll: true });
       update();
     }
 
-    cardElement.addEventListener('click', flip);
-    prevButton.addEventListener('click', previous);
-    nextButton.addEventListener('click', next);
-    knownButton.addEventListener('click', markKnown);
-    reviewButton.addEventListener('click', markReview);
-    shuffleButton.addEventListener('click', shuffle);
-    resetButton.addEventListener('click', reset);
+    function exitPresent() {
+      if (!presenting) return;
+      presenting = false;
 
-    root.addEventListener('keydown', (event) => {
-      if (event.key === 'ArrowRight') {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
+
+      if (usedFullscreen && isFullscreenActive()) {
+        try {
+          const leave = document.exitFullscreen || document.webkitExitFullscreen;
+          const result = leave && leave.call(document);
+          if (result && typeof result.catch === 'function') result.catch(() => {});
+        } catch (e) {}
+      }
+      usedFullscreen = false;
+
+      deck.classList.remove('is-presenting');
+
+      if (savedOverflow) {
+        document.documentElement.style.overflow = savedOverflow.html;
+        document.body.style.overflow = savedOverflow.body;
+        savedOverflow = null;
+      }
+
+      // Put the deck back where it came from. If the page was redrawn in
+      // the meantime its old spot no longer exists, so just remove it.
+      if (placeholder && placeholder.parentNode) {
+        placeholder.parentNode.replaceChild(deck, placeholder);
+      } else {
+        deck.remove();
+      }
+      placeholder = null;
+
+      if (activePresenter && activePresenter.exit === exitPresent) activePresenter = null;
+
+      document.dispatchEvent(new CustomEvent('flashcards:present-exit'));
+    }
+
+    function onKey(event) {
+      const target = event.target;
+
+      // Never steal keys from text boxes (e.g. the follow-up instruction).
+      if (target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')) {
+        return;
+      }
+
+      if (event.key === 'Escape' && presenting) {
+        event.preventDefault();
+        exitPresent();
+      } else if (event.key === 'ArrowRight') {
         event.preventDefault();
         next();
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault();
         previous();
       } else if (event.key === ' ' || event.code === 'Space') {
+        // A focused button already flips/clicks itself on Space; handling
+        // it here as well would flip twice.
+        if (target && target.closest && target.closest('button')) return;
         event.preventDefault();
         flip();
       }
-    });
+    }
 
-    root.setAttribute('tabindex', '0');
+    /* ── Touch: swipe left/right to move through the deck ── */
+    let touchStart = null;
+    let ignoreClickUntil = 0;
+
+    cardElement.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 1) {
+        touchStart = null;
+        return;
+      }
+      touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }, { passive: true });
+
+    cardElement.addEventListener('touchend', (event) => {
+      if (!touchStart) return;
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - touchStart.x;
+      const dy = touch.clientY - touchStart.y;
+      touchStart = null;
+
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        ignoreClickUntil = Date.now() + 400; // a swipe is not a tap
+        if (dx < 0) next();
+        else previous();
+      }
+    }, { passive: true });
+
+    cardElement.addEventListener('click', () => {
+      if (Date.now() < ignoreClickUntil) return;
+      flip();
+    });
+    prevButton.addEventListener('click', previous);
+    nextButton.addEventListener('click', next);
+    knownButton.addEventListener('click', markKnown);
+    reviewButton.addEventListener('click', markReview);
+    shuffleButton.addEventListener('click', shuffle);
+    resetButton.addEventListener('click', reset);
+    presentButton.addEventListener('click', enterPresent);
+    exitButton.addEventListener('click', exitPresent);
+
+    // Attached to the deck itself (which is rebuilt on every draw), not to
+    // the long-lived container — otherwise every redraw would add another
+    // listener and one key press would move several cards.
+    deck.addEventListener('keydown', (event) => {
+      if (!presenting) onKey(event);
+    });
+    deck.setAttribute('tabindex', '0');
 
     update();
   }
@@ -943,6 +1201,10 @@ const ResourceRenderers = (() => {
 
   function mount(resourceType, root, content) {
     if (!root) return;
+
+    // Flashcards manage their own size (the page, not a small scrolling
+    // box, does the scrolling), so the container drops its height cap.
+    root.classList.toggle('is-flashcard-view', resourceType === 'flashcards');
 
     switch (resourceType) {
       case 'flashcards':
