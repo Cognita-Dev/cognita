@@ -387,6 +387,12 @@ export async function handleResourceGenerate(request, env) {
     return _jsonError('Unknown resource type: ' + body.resourceType, 400, env);
   }
   const fields = body.fields || {};
+  // The form's "number of questions" box is sent as `questionCount`, but the
+  // flashcards recipe reads `cardCount`. Without this bridge the requested
+  // number was ignored and the default (15) was used instead.
+  if (recipe.resourceType === 'flashcards' && !fields.cardCount && fields.questionCount) {
+    fields.cardCount = fields.questionCount;
+  }
   for (const required of recipe.requiredFields) {
     if (!fields[required] || !String(fields[required]).trim()) {
       return _jsonError('Missing required field: ' + required, 400, env);
