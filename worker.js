@@ -10,6 +10,7 @@ import {
   handleResourceDownload,
   handleResourceFileProxy,
   handleResourceImageProxy,
+  handleResourceCardImage,
   handleResourceList,
   handleResourceEdit,
   handleResourceRegenerate,
@@ -171,6 +172,12 @@ export default {
     if (request.method === 'GET' && /^\/api\/resources\/[^/]+\/file$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[3];
       return handleResourceFileProxy(request, env, resourceId);
+    }
+
+    // Makes the picture for one flashcard (one small request per card).
+    if (request.method === 'POST' && /^\/api\/resources\/[^/]+\/cards\/\d+\/image$/.test(url.pathname)) {
+      const parts = url.pathname.split('/');
+      return handleResourceCardImage(request, env, parts[3], parts[5]);
     }
 
     // Flashcard pictures (stored in B2, served through a signed link so a
