@@ -10,7 +10,7 @@
 
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo } from './shell.js';
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 const HISTORY_KEY = 'cognita:conversations';
 
 const QUALITY_META = {
