@@ -723,6 +723,11 @@ function wireForm() {
 
         if (n) {
           fields.questionCount = n;
+
+          // The flashcards recipe reads this as `cardCount`.
+          if (selectedType === 'flashcards') {
+            fields.cardCount = n;
+          }
         }
       }
 
