@@ -52,6 +52,7 @@ function buildFeatureList(plan) {
   if (plan.hasVision) items.push('Image understanding (' + plan.limits.visionPerDay + '/day)');
   items.push(plan.limits.documentGenPerDay + ' document exports / day');
   items.push(plan.limits.imageGenPerDay + ' image generations / day');
+  if (plan.hasFlashcardImages) items.push('Illustrated flashcards (' + plan.limits.flashcardImagePerDay + ' images/day)');
   items.push('Up to ' + plan.limits.maxFileSizeMB + 'MB per file upload');
   if (plan.features.longContext) items.push('Extended conversation memory');
   if (plan.features.prioritySupport) items.push('Priority support');
