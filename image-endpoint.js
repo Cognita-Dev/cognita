@@ -117,15 +117,31 @@ async function _generateIllustration(prompt, env) {
 // on failure — callers decide how to handle a failed single image (e.g.
 // resources-endpoint.js just skips that one card rather than failing the
 // whole deck).
-export async function generateIllustrationBase64(prompt, env) {
+export async function generateIllustrationBase64(prompt, env, opts = {}) {
   if (!env.AI) throw new Error('Workers AI is not bound.');
 
+  // `classroomSafe` is used for flashcard images. Cloudflare's image model
+  // runs an automatic safety filter that sometimes blocks harmless school
+  // topics (anatomy, biology, history...). Framing the request as a plain
+  // textbook illustration greatly reduces those false alarms.
+  const finalPrompt = opts.classroomSafe
+    ? 'A clean, simple, family-friendly educational textbook illustration suitable for a school classroom: ' +
+      prompt + '. Fully clothed people only if any, no nudity, no violence. No text overlays.'
+    : 'A clean, professional, realistic illustration: ' + prompt + '. No text overlays. No cartoon style.';
+
   const response = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-    prompt: 'A clean, professional, realistic illustration: ' + prompt + '. No text overlays. No cartoon style.',
+    prompt: finalPrompt,
     steps: 4,
   });
 
   return _extractImageBase64(response);
+}
+
+// True when the error came from Workers AI's content-safety filter
+// (error code 8007, "Input prompt contains NSFW content").
+export function isImageSafetyError(e) {
+  const msg = e && e.message ? String(e.message) : '';
+  return /\b8007\b|NSFW/i.test(msg);
 }
 
 function _extractSvg(text) {
