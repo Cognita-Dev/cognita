@@ -90,14 +90,14 @@
 
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
-  const nextPath = params.get('next');
-  // "next" (e.g. from bootstrap.html sending someone here to sign in)
-  // takes priority over everything else, since it's an explicit "come
-  // back to this exact page" instruction. Only accept a same-site
-  // relative path (starts with a single "/") — never redirect to an
-  // absolute or protocol-relative URL from a query param, since that
-  // would let a crafted link send a signed-in session somewhere else.
-  const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
+  // "next" is an explicit "come back to this exact page" instruction
+  // (set by protected pages when they send someone here, and by
+  // bootstrap.html). Auth.getSafeNextPath only accepts a same-site path —
+  // never an absolute URL, "//host", or "/\\host" trick — so a crafted link
+  // can't send a signed-in person to another site.
+  const nextPath = Auth.getSafeNextPath(params.get('next'));
+  const isSafeNextPath = !!nextPath;
+  const sessionEnded = params.get('reason') === 'signed_out';
 
   // Only auto-route to the admin dashboard when there's no explicit
   // destination already requested (next or plan) — those instructions
@@ -173,74 +173,97 @@
     passwordToggle.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
   });
 
-  try {
-    await Auth.ready();
-    if (Auth.getCurrentUser()) {
-      window.location.href = await resolvePostAuthDestination();
+  if (sessionEnded) {
+    errorEls.general.style.color = 'var(--accent)';
+    errorEls.general.textContent = 'You were signed out. Please sign in again to continue.';
+  }
+
+  // ── Handlers are registered IMMEDIATELY, before we wait for anything ──
+  // If the form were wired only after auth finished starting up, a fast
+  // tap on "Sign in" would fall through to the browser's native form
+  // submit, which reloads the page and puts the email AND password in the
+  // address bar / history.
+  let signingIn = false;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (signingIn) return;
+    clearErrors();
+
+    const email = emailInput.value.trim();
+    if (!Auth.isValidEmail(email)) {
+      emailInput.classList.add('is-invalid');
+      errorEls.email.textContent = 'Enter a valid email address.';
+      return;
     }
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      clearErrors();
+    if (!passwordInput.value) {
+      errorEls.password.textContent = 'Enter your password.';
+      return;
+    }
 
-      const email = emailInput.value.trim();
-      if (!Auth.isValidEmail(email)) {
-        emailInput.classList.add('is-invalid');
-        errorEls.email.textContent = 'Enter a valid email address.';
-        return;
-      }
-      if (!passwordInput.value) {
-        errorEls.password.textContent = 'Enter your password.';
-        return;
-      }
+    signingIn = true;
+    setLoading(true);
+    try {
+      await Auth.signInWithEmail(email, passwordInput.value);
+      window.location.replace(await resolvePostAuthDestination());
+    } catch (err) {
+      showError(err);
+      setLoading(false);
+      signingIn = false;
+    }
+  });
 
-      setLoading(true);
-      try {
-        await Auth.signInWithEmail(email, passwordInput.value);
-        window.location.href = await resolvePostAuthDestination();
-      } catch (err) {
-        showError(err);
-        setLoading(false);
-      }
-    });
-    googleBtn.addEventListener('click', async () => {
-      clearErrors();
-      setGoogleLoading(true);
-      try {
-        await Auth.signInWithGoogle();
-        // The redirect below is what actually leaves this page — until
-        // then (Firebase credential exchange, then the staff/whoami
-        // check inside resolvePostAuthDestination) keep the loader
-        // running so the button doesn't look stalled or clickable again.
-        window.location.href = await resolvePostAuthDestination();
-      } catch (err) {
-        setGoogleLoading(false);
-        showError(err);
-      }
-    });
-    forgotBtn.addEventListener('click', async () => {
-      clearErrors();
-      const email = emailInput.value.trim();
-      if (!email) {
-        errorEls.email.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
-        return;
-      }
-      if (!Auth.isValidEmail(email)) {
-        emailInput.classList.add('is-invalid');
-        errorEls.email.textContent = 'Enter a valid email address.';
-        return;
-      }
-      try {
-        await Auth.resetPassword(email);
-        errorEls.general.style.color = 'var(--accent)';
-        errorEls.general.textContent = 'Password reset email sent to ' + email + '.';
-      } catch (err) {
-        showError(err);
-      }
-    });
-  } catch (initErr) {
+  googleBtn.addEventListener('click', async () => {
+    if (signingIn) return;
+    clearErrors();
+    signingIn = true;
+    setGoogleLoading(true);
+    try {
+      await Auth.signInWithGoogle();
+      // The redirect below is what actually leaves this page — until
+      // then keep the loader running so the button doesn't look stalled
+      // or clickable again.
+      window.location.replace(await resolvePostAuthDestination());
+    } catch (err) {
+      setGoogleLoading(false);
+      showError(err);
+      signingIn = false;
+    }
+  });
+
+  forgotBtn.addEventListener('click', async () => {
+    clearErrors();
+    const email = emailInput.value.trim();
+    if (!email) {
+      errorEls.email.textContent = 'Enter your email above first, then tap "Forgot password?" again.';
+      return;
+    }
+    if (!Auth.isValidEmail(email)) {
+      emailInput.classList.add('is-invalid');
+      errorEls.email.textContent = 'Enter a valid email address.';
+      return;
+    }
+    try {
+      await Auth.resetPassword(email);
+      errorEls.general.style.color = 'var(--accent)';
+      errorEls.general.textContent = 'Password reset email sent to ' + email + '.';
+    } catch (err) {
+      showError(err);
+    }
+  });
+
+  // If this browser already has a valid saved login, skip the form.
+  // Waits for Firebase to actually answer (no guessing on slow networks).
+  // Not awaited at top level, so the form above works the whole time.
+  Auth.ready().then(async (user) => {
+    if (user && !signingIn) {
+      signingIn = true;
+      window.location.replace(await resolvePostAuthDestination());
+    }
+  }).catch((initErr) => {
     console.error('Auth initialization failed:', initErr);
     errorEls.general.textContent = 'Unable to load authentication. Please refresh the page.';
-  }
+  });
 </script>
 </body>
 </html>
