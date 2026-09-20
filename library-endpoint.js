@@ -1,6 +1,6 @@
 // library-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { fsGet, fsQuery } from './firestore-rest.js';
 import { b2DownloadFileBytes } from './b2-client.js';
 import { signDownloadToken, verifyDownloadToken } from './download-proxy.js';
@@ -33,7 +33,8 @@ export async function handleLibraryList(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -128,7 +129,8 @@ export async function handleLibraryGet(request, env, resourceId, ctx) {
   try {
     await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   // A published resource's content is identical for every user, so a
@@ -174,7 +176,8 @@ export async function handleLibraryDownload(request, env, resourceId) {
   try {
     await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let doc;
@@ -291,7 +294,8 @@ export async function handleLibraryCollectionGet(request, env, collectionId) {
   try {
     await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let collectionDoc;
