@@ -565,3 +565,115 @@ samp {
     font-size: 2rem;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   FAQ Accordion
+   Shared by the homepage and pricing page. Height is animated
+   with the CSS grid 0fr → 1fr technique: no JS scrollHeight
+   measurement, no layout thrash, and it keeps working correctly
+   even if an answer's content changes length. Fully keyboard-
+   operable (real <button>, ARIA state) and disabled under
+   prefers-reduced-motion.
+   ══════════════════════════════════════════════════════════════ */
+.faq-list {
+  max-width: 680px;
+  margin: 0 auto;
+}
+.faq-item {
+  border-bottom: 1px solid var(--border);
+}
+.faq-item:first-child {
+  border-top: 1px solid var(--border);
+}
+.faq-question-heading {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.faq-question {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-1);
+  background: none;
+  border: none;
+  margin: 0;
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: color var(--duration-base) var(--ease);
+}
+.faq-question:hover {
+  color: var(--accent);
+}
+.faq-question:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+.faq-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  color: var(--text-3);
+  transition: transform var(--duration-slow) var(--ease), color var(--duration-base) var(--ease);
+}
+.faq-item.is-open .faq-question {
+  color: var(--text-1);
+}
+.faq-item.is-open .faq-icon {
+  transform: rotate(45deg);
+  color: var(--accent);
+}
+.faq-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  transition: grid-template-rows var(--duration-slow) var(--ease);
+}
+.faq-item.is-open .faq-panel {
+  grid-template-rows: 1fr;
+}
+.faq-panel-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.faq-panel-inner p {
+  margin: 0;
+  padding: 0 var(--space-1) var(--space-5);
+  max-width: 560px;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.65;
+}
+@media (prefers-reduced-motion: reduce) {
+  .faq-panel {
+    transition: none;
+  }
+  .faq-icon {
+    transition: none;
+  }
+}
+.faq-contact {
+  margin-top: var(--space-6);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.faq-contact a {
+  color: var(--text-1);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+  transition: color var(--duration-base) var(--ease), text-decoration-color var(--duration-base) var(--ease);
+}
+.faq-contact a:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
