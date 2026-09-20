@@ -128,6 +128,20 @@
   // while already signed in under a staff account (Auth.getCurrentUser()
   // check below) with no explicit next/plan.
   async function resolvePostAuthDestination() {
+    const fallback = isSafeNextPath
+      ? nextPath
+      : (planId ? '/payment.html?plan=' + encodeURIComponent(planId) : '/app.html');
+
+    // A brand-new email/password account is never verified yet — send it
+    // to verify-email.html first, carrying along wherever it was actually
+    // headed so that page can forward it on once confirmed. Checked
+    // before the admin/whoami lookup below: that call now gets rejected
+    // for an unverified account anyway, so there's no point making it.
+    const user = Auth.getCurrentUser();
+    if (user && Auth.needsEmailVerification(user)) {
+      return '/verify-email.html?next=' + encodeURIComponent(fallback);
+    }
+
     if (isSafeNextPath) return nextPath;
     if (planId) return '/payment.html?plan=' + encodeURIComponent(planId);
 
