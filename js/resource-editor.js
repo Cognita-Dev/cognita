@@ -499,7 +499,13 @@ window.ResourceEditor = (function () {
     const list = el('div', 'redit-sections');
     const cards = [];
 
-    const keys = items && items.length ? Object.keys(items[0]) : ['text'];
+    // Image data (the picture itself and its status note) is managed by the
+    // server and can't be edited as text, so it is never shown in the form.
+    // The server keeps each card's existing picture when the deck is saved.
+    const HIDDEN_KEYS = ['image', 'imageUnavailableReason'];
+    const keys = items && items.length
+      ? Object.keys(items[0]).filter((k) => !HIDDEN_KEYS.includes(k))
+      : ['text'];
     const hasNumberField = keys.includes('number');
 
     function addCard(item) {
