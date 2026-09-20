@@ -119,8 +119,9 @@
 
   const params = new URLSearchParams(window.location.search);
   const planId = params.get('plan');
-  const nextPath = params.get('next');
-  const isSafeNextPath = nextPath && nextPath.startsWith('/') && !nextPath.startsWith('//');
+  // Same-site paths only (see Auth.getSafeNextPath in js/auth.js).
+  const nextPath = Auth.getSafeNextPath(params.get('next'));
+  const isSafeNextPath = !!nextPath;
 
   // A brand-new signup will essentially never be staff, but this stays
   // consistent with login.html's logic in case someone reaches signup
@@ -237,53 +238,65 @@
     });
   });
 
-  try {
-    await Auth.ready();
-    if (Auth.getCurrentUser()) {
-      window.location.href = await resolvePostAuthDestination();
+  // ── Handlers are registered IMMEDIATELY (see the note in login.html) ──
+  let submitting = false;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+    clearErrors();
+
+    const name = nameInput.value.trim();
+    if (!nameValid) {
+      errorEls.name.textContent = 'Tell us what to call you.';
+      return;
     }
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      clearErrors();
+    if (!emailValid) {
+      errorEls.email.textContent = 'Enter a valid email address.';
+      return;
+    }
+    if (!passwordValid) {
+      errorEls.password.textContent = 'Password does not meet the requirements above.';
+      return;
+    }
 
-      const name = nameInput.value.trim();
-      if (!nameValid) {
-        errorEls.name.textContent = 'Tell us what to call you.';
-        return;
-      }
-      if (!emailValid) {
-        errorEls.email.textContent = 'Enter a valid email address.';
-        return;
-      }
-      if (!passwordValid) {
-        errorEls.password.textContent = 'Password does not meet the requirements above.';
-        return;
-      }
+    submitting = true;
+    setLoading(true);
+    try {
+      await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value, name);
+      window.location.replace(await resolvePostAuthDestination());
+    } catch (err) {
+      showError(err);
+      setLoading(false);
+      submitting = false;
+    }
+  });
 
-      setLoading(true);
-      try {
-        await Auth.signUpWithEmail(emailInput.value.trim(), passwordInput.value, name);
-        window.location.href = await resolvePostAuthDestination();
-      } catch (err) {
-        showError(err);
-        setLoading(false);
-      }
-    });
-    googleBtn.addEventListener('click', async () => {
-      clearErrors();
-      setGoogleLoading(true);
-      try {
-        await Auth.signInWithGoogle();
-        window.location.href = await resolvePostAuthDestination();
-      } catch (err) {
-        setGoogleLoading(false);
-        showError(err);
-      }
-    });
-  } catch (initErr) {
+  googleBtn.addEventListener('click', async () => {
+    if (submitting) return;
+    clearErrors();
+    submitting = true;
+    setGoogleLoading(true);
+    try {
+      await Auth.signInWithGoogle();
+      window.location.replace(await resolvePostAuthDestination());
+    } catch (err) {
+      setGoogleLoading(false);
+      showError(err);
+      submitting = false;
+    }
+  });
+
+  // Already signed in on this browser? Skip the form.
+  Auth.ready().then(async (user) => {
+    if (user && !submitting) {
+      submitting = true;
+      window.location.replace(await resolvePostAuthDestination());
+    }
+  }).catch((initErr) => {
     console.error('Auth initialization failed:', initErr);
     errorEls.general.textContent = 'Unable to load authentication. Please refresh the page.';
-  }
+  });
 </script>
 </body>
 </html>
