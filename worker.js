@@ -122,8 +122,6 @@ export default {
       return handleChatList(request, env);
     }
 
-    // Must come after the /api/chat/list check above, since both match
-    // the same "/api/chat/<segment>" shape.
     if (request.method === 'GET' && /^\/api\/chat\/[^/]+$/.test(url.pathname)) {
       const conversationId = url.pathname.split('/')[3];
       return handleChatGet(request, env, conversationId);
