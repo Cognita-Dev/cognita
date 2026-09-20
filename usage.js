@@ -60,3 +60,20 @@ export async function checkAndIncrement(uid, resource, limit, env) {
 
   return { allowed: true, used: used + 1, limit };
 }
+
+/**
+ * Gives back one unit of today's usage for a resource. Used when we
+ * charged the user for something (e.g. one flashcard image) but then the
+ * work failed on our side, so a failure never costs them their quota.
+ * Never goes below zero.
+ */
+export async function refundUsage(uid, resource, env) {
+  if (!env.COGNITA_USAGE) return;
+  const key = _kvKey(uid, resource);
+  const current = await env.COGNITA_USAGE.get(key);
+  const used = current ? parseInt(current, 10) : 0;
+  if (used <= 0) return;
+  await env.COGNITA_USAGE.put(key, String(used - 1), {
+    expirationTtl: _secondsUntilMidnightUTC() + 60,
+  });
+}
