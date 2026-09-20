@@ -3,7 +3,7 @@
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
-import { getPlan, planSatisfies, MODEL_TIERS } from './entitlements.js';
+import { getPlan, planSatisfies, planHasFlashcardImages, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
@@ -13,6 +13,15 @@ import { b2UploadFile, b2DownloadFileBytes } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
 import { resolveEntitledTemplate } from './design-templates.js';
 import { signDownloadToken, verifyDownloadToken } from './download-proxy.js';
+import { generateIllustrationBase64 } from './image-endpoint.js';
+
+// Hard ceiling on how many real images one generation call will ever
+// produce, independent of plan quota or requested card count. This is a
+// safety/latency bound (each image is a separate Workers AI round trip
+// inside one HTTP request) — the per-day plan quota in entitlements.js
+// is the actual entitlement limit, this just stops one deck from ever
+// trying to render an unreasonable number of images synchronously.
+const MAX_CARD_IMAGES_PER_GENERATION = 20;
 
 const PPTX_TYPES = new Set(['presentation']);
 const RESOURCE_MAX_TOKENS = 6000;
@@ -174,6 +183,64 @@ function _buildGenerateMessages(recipe, fields) {
   ];
 }
 
+// Turns each card's `imagePrompt` (written by the AI when the user asked
+// for images — see recipes/flashcards.js) into a real generated image via
+// Cloudflare Workers AI, mutating structuredContent.cards in place.
+//
+// Entitlement is enforced HERE, server-side, from the resolved plan —
+// never from anything the client sends:
+//   - Free plan: `plan.models.flashcardImages` is false, so this is a
+//     no-op regardless of what the request asked for. Free users always
+//     get plain text-only flashcards.
+//   - Paid plans: each individual image is metered against
+//     `flashcardImagePerDay` (a KV counter, see usage.js) — the SAME
+//     mechanism the standalone /api/image endpoint uses for
+//     illustrations, just a separate counter/limit so a big illustrated
+//     deck doesn't silently exhaust a user's unrelated image-gen quota.
+//     As soon as the quota runs out mid-deck, remaining cards are simply
+//     left without an image rather than failing the whole generation —
+//     partial illustration is far better than losing the deck.
+async function _attachCardImages(structuredContent, uid, plan, env) {
+  if (!planHasFlashcardImages(plan.id)) return;
+  if (!Array.isArray(structuredContent.cards)) return;
+
+  const limit = plan.limits.flashcardImagePerDay;
+  let budgetExhausted = false;
+
+  for (let i = 0; i < structuredContent.cards.length && i < MAX_CARD_IMAGES_PER_GENERATION; i++) {
+    if (budgetExhausted) break;
+
+    const card = structuredContent.cards[i];
+    const imagePrompt = card && typeof card.imagePrompt === 'string' ? card.imagePrompt.trim() : '';
+    if (!imagePrompt) continue;
+
+    let quota;
+    try {
+      quota = await checkAndIncrement(uid, 'flashcardImage', limit, env);
+    } catch (e) {
+      console.error('[resources] flashcard image quota check failed:', e.message);
+      break;
+    }
+
+    if (!quota.allowed) {
+      budgetExhausted = true;
+      card.imageUnavailableReason = 'Daily image limit reached for the ' + plan.name + ' plan.';
+      continue;
+    }
+
+    try {
+      const base64 = await generateIllustrationBase64(imagePrompt, env);
+      if (base64) {
+        card.image = { type: 'image/jpeg', data: base64 };
+      }
+    } catch (e) {
+      console.error('[resources] card image generation failed:', e.message);
+      // Leave this one card without an image; the rest of the deck
+      // still proceeds normally.
+    }
+  }
+}
+
 export async function handleResourceGenerate(request, env) {
   let identity;
   try {
@@ -279,6 +346,10 @@ export async function handleResourceGenerate(request, env) {
     await _markFailed(resourceId, baseDoc, env);
     return _jsonError('The generated resource did not meet quality checks. Please try again.', 503, env);
   }
+  if (recipe.supportsCardImages && fields.includeImages) {
+    await _attachCardImages(structuredContent, identity.uid, plan, env);
+  }
+
   const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, resolvedTemplate.id, env);
   const finalDoc = {
     ...baseDoc,
