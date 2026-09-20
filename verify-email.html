@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Verify your email — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+<div class="auth-shell">
+  <a href="/index.html" class="auth-logo">
+    <img src="/assets/cognita.png" alt="Cognita">
+  </a>
+  <div class="auth-header">
+    <h1 class="auth-title">One more step<br>before you're in.</h1>
+    <p class="auth-subtitle">Confirm it's really you.</p>
+  </div>
+  <div class="auth-card">
+    <div class="verify-icon-wrap">
+      <div id="verifyIcon" class="verify-icon" data-state="pending">
+        <svg class="verify-icon-pending" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M3 6.5C3 5.67157 3.67157 5 4.5 5H19.5C20.3284 5 21 5.67157 21 6.5V17.5C21 18.3284 20.3284 19 19.5 19H4.5C3.67157 19 3 18.3284 3 17.5V6.5Z" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M3.5 6L12 13L20.5 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg class="verify-icon-success" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M5 12.5L10 17.5L19 7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="verify-card-body">
+      We sent a verification link to<br>
+      <span id="verifyEmailValue" class="verify-email-value">your email</span>.
+      Open it on this device or any other to activate your account —
+      this page will pick it up automatically.
+    </div>
+
+    <div id="verifyStatus" class="verify-status" data-state="pending" role="status" aria-live="polite">
+      <span class="verify-status-dot" aria-hidden="true"></span>
+      <span id="verifyStatusText">Waiting for verification&hellip;</span>
+    </div>
+
+    <div id="verifyActions" class="verify-actions">
+      <button id="resendBtn" type="button" class="auth-btn auth-btn--primary verify-resend-btn">
+        <span class="btn-label">Resend verification email</span>
+      </button>
+      <p id="resendStatus" class="verify-resend-status" aria-live="polite"></p>
+    </div>
+
+    <div id="verifySecondary" class="verify-secondary-actions">
+      <button id="switchAccountBtn" type="button">Wrong email? Sign out</button>
+    </div>
+  </div>
+  <p class="verify-hint">
+    Not seeing it? Check your spam or promotions folder — it's sent from a
+    no-reply Firebase address. Verification links can expire; if yours
+    stops working, just request a new one above.
+  </p>
+</div>
+
+<script type="module">
+  import { Auth } from '/js/auth.js';
+
+  const iconEl = document.getElementById('verifyIcon');
+  const emailValueEl = document.getElementById('verifyEmailValue');
+  const statusRowEl = document.getElementById('verifyStatus');
+  const statusTextEl = document.getElementById('verifyStatusText');
+  const actionsEl = document.getElementById('verifyActions');
+  const secondaryEl = document.getElementById('verifySecondary');
+  const resendBtn = document.getElementById('resendBtn');
+  const resendLabelEl = resendBtn.querySelector('.btn-label');
+  const resendStatusEl = document.getElementById('resendStatus');
+  const switchAccountBtn = document.getElementById('switchAccountBtn');
+
+  const params = new URLSearchParams(window.location.search);
+  // Where to send the person once they're verified. Falls back to the
+  // app itself — never trust an unsafe/off-site value (see
+  // Auth.getSafeNextPath).
+  const nextPath = Auth.getSafeNextPath(params.get('next')) || '/app.html';
+
+  const RESEND_COOLDOWN_MS = 60000;
+  const cooldownKey = (uid) => 'cognita:verifyResendUntil:' + uid;
+
+  let countdownTimer = null;
+  let pollTimer = null;
+  let settled = false; // true once we've routed away from this page
+
+  function startCountdown(untilTs) {
+    if (countdownTimer) clearInterval(countdownTimer);
+    function tick() {
+      const remaining = Math.max(0, Math.ceil((untilTs - Date.now()) / 1000));
+      if (remaining <= 0) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        resendBtn.disabled = false;
+        resendLabelEl.textContent = 'Resend verification email';
+        return;
+      }
+      resendBtn.disabled = true;
+      const m = Math.floor(remaining / 60);
+      const s = String(remaining % 60).padStart(2, '0');
+      resendLabelEl.textContent = 'Resend available in ' + m + ':' + s;
+    }
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  // Resumes an in-flight cooldown across a page refresh (so reloading the
+  // tab can't be used to dodge the rate limit), but never invents one —
+  // if nothing is stored, the button is simply ready to use right away.
+  function restoreCooldownIfAny(uid) {
+    let storedUntil = null;
+    try {
+      const raw = sessionStorage.getItem(cooldownKey(uid));
+      if (raw) storedUntil = parseInt(raw, 10);
+    } catch (_) { /* storage unavailable */ }
+    if (storedUntil && storedUntil > Date.now()) startCountdown(storedUntil);
+  }
+
+  function onVerified() {
+    if (settled) return;
+    settled = true;
+    if (countdownTimer) clearInterval(countdownTimer);
+    if (pollTimer) clearInterval(pollTimer);
+
+    iconEl.dataset.state = 'success';
+    statusRowEl.dataset.state = 'success';
+    statusTextEl.textContent = 'Verified — redirecting you now\u2026';
+    actionsEl.hidden = true;
+    secondaryEl.hidden = true;
+
+    setTimeout(() => window.location.replace(nextPath), 900);
+  }
+
+  // Firebase never pushes "this person clicked the link" to an already-
+  // open tab — we have to ask. Returns true if verification was detected
+  // and handled.
+  async function pollOnce() {
+    if (settled) return true;
+    try {
+      const user = await Auth.reloadCurrentUser();
+      if (user && !Auth.needsEmailVerification(user)) {
+        onVerified();
+        return true;
+      }
+    } catch (_) { /* offline / transient — try again on the next tick */ }
+    return false;
+  }
+
+  function startPolling() {
+    pollTimer = setInterval(pollOnce, 4000);
+  }
+
+  // Catches the common case fastest: person switches back to this tab
+  // right after clicking the link in their mail app.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pollOnce();
+  });
+  window.addEventListener('focus', () => pollOnce());
+
+  resendBtn.addEventListener('click', async () => {
+    if (resendBtn.disabled) return;
+    resendBtn.disabled = true;
+    resendStatusEl.dataset.tone = '';
+    resendStatusEl.textContent = '';
+    try {
+      await Auth.resendVerificationEmail();
+      resendStatusEl.dataset.tone = 'success';
+      resendStatusEl.textContent = 'Sent — check your inbox.';
+      const until = Date.now() + RESEND_COOLDOWN_MS;
+      const uid = Auth.getCurrentUser() && Auth.getCurrentUser().uid;
+      if (uid) {
+        try { sessionStorage.setItem(cooldownKey(uid), String(until)); } catch (_) {}
+      }
+      startCountdown(until);
+    } catch (err) {
+      resendBtn.disabled = false;
+      resendStatusEl.dataset.tone = 'error';
+      resendStatusEl.textContent = Auth.classifyAuthError(err).message;
+    }
+  });
+
+  switchAccountBtn.addEventListener('click', async () => {
+    switchAccountBtn.disabled = true;
+    try { await Auth.logOut(); } catch (_) { /* best-effort */ }
+    const back = nextPath && nextPath !== '/app.html' ? '?next=' + encodeURIComponent(nextPath) : '';
+    window.location.replace('/login.html' + back);
+  });
+
+  async function init(user) {
+    emailValueEl.textContent = user.email || 'your email address';
+
+    // The person may already have verified (another tab, another device,
+    // or simply revisited this page) before we even finished loading —
+    // check once, immediately, before settling into "waiting" mode.
+    const alreadyVerified = await pollOnce();
+    if (alreadyVerified) return;
+
+    restoreCooldownIfAny(user.uid);
+    startPolling();
+  }
+
+  Auth.ready().then((user) => {
+    if (!user) {
+      const back = Auth.getSafeNextPath(window.location.pathname + window.location.search);
+      window.location.replace('/login.html' + (back ? '?next=' + encodeURIComponent(back) : ''));
+      return;
+    }
+    if (!Auth.needsEmailVerification(user)) {
+      // Nothing to verify (already verified, or a Google account that
+      // ended up here somehow) — don't make the person look at this page.
+      window.location.replace(nextPath);
+      return;
+    }
+    init(user);
+  }).catch((initErr) => {
+    console.error('Auth initialization failed:', initErr);
+    statusRowEl.dataset.state = 'error';
+    statusTextEl.textContent = 'Unable to load authentication. Please refresh the page.';
+  });
+</script>
+</body>
+</html>
