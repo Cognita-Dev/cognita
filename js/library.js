@@ -8,7 +8,7 @@
 
 import { escapeHtml, showToast, renderAccountInfo } from './shell.js';
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 // Same labels as resources.js, kept as its own copy so this page has no
 // dependency on that file loading first.
