@@ -276,6 +276,24 @@ function needsEmailVerification(user) {
   return (user.providerData || []).some((p) => p.providerId === 'password');
 }
 
+/**
+ * Re-fetches the signed-in person's own profile from Firebase (does
+ * nothing if nobody is signed in) and returns the refreshed user. This is
+ * what makes `user.emailVerified` flip to true in THIS tab after the
+ * person clicks the verification link somewhere else — Firebase never
+ * pushes that change to us on its own, we have to ask. Used by the
+ * verify-email page's polling and by requireAuthOrRedirect(). Also forces
+ * a fresh ID token so the very next authedFetch() call carries the
+ * up-to-date email_verified claim rather than a stale, cached one.
+ */
+async function reloadCurrentUser() {
+  const user = auth.currentUser;
+  if (!user) return null;
+  await user.reload();
+  try { await user.getIdToken(true); } catch (_) { /* non-fatal */ }
+  return auth.currentUser;
+}
+
 async function logOut() {
   _intentionalSignOut = true;
   try {
@@ -392,45 +410,6 @@ function _hideBanner(id) {
   if (el) el.remove();
 }
 
-const VERIFY_DISMISS_KEY = 'cognita:verifyBannerDismissedUid';
-
-// Dismissible-per-session nudge for anyone signed in on an unverified
-// email/password account. Deliberately not a hard block: every account
-// that existed before this check was added has an unverified email, so
-// locking the app until verification would shut everyone out at once.
-function _showVerifyEmailBanner(user) {
-  try {
-    if (sessionStorage.getItem(VERIFY_DISMISS_KEY) === user.uid) return;
-  } catch (_) { /* storage unavailable — just show the banner */ }
-
-  const el = _showBanner(
-    'authVerifyNotice',
-    'Please verify your email address to help keep your account secure.<br>' +
-    '<button id="verifyResendBtn" style="margin-top:10px;margin-right:8px;padding:8px 14px;border:0;' +
-    'border-radius:8px;background:#1a1a1a;color:#fff;cursor:pointer;">Resend verification email</button>' +
-    '<button id="verifyDismissBtn" style="margin-top:10px;padding:8px 14px;border:1px solid #ccc;' +
-    'border-radius:8px;background:#fff;color:#1a1a1a;cursor:pointer;">Dismiss</button>' +
-    '<div id="verifyStatusMsg" style="margin-top:8px;font-size:13px;"></div>'
-  );
-
-  const statusEl = el.querySelector('#verifyStatusMsg');
-  el.querySelector('#verifyResendBtn').addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    try {
-      await resendVerificationEmail();
-      statusEl.textContent = 'Verification email sent — check your inbox.';
-    } catch (err) {
-      statusEl.textContent = classifyAuthError(err).message;
-    } finally {
-      e.target.disabled = false;
-    }
-  });
-  el.querySelector('#verifyDismissBtn').addEventListener('click', () => {
-    try { sessionStorage.setItem(VERIFY_DISMISS_KEY, user.uid); } catch (_) {}
-    _hideBanner('authVerifyNotice');
-  });
-}
-
 function _showLoopError() {
   const el = _showBanner(
     'authLoopNotice',
@@ -469,6 +448,28 @@ function _redirectToLogin(reason) {
   window.location.replace('/login.html' + (qs ? '?' + qs : ''));
 }
 
+// Sends an unverified email/password account to the dedicated
+// verify-email page instead of the page it originally asked for. Shares
+// the same bounce-loop guard as _redirectToLogin — if something keeps
+// bouncing the person back here (e.g. a token that can never resolve to
+// verified) we stop and explain rather than looping forever.
+function _redirectToVerifyEmail() {
+  if (_redirecting) return;
+  _redirecting = true;
+
+  if (_recordBounce() >= BOUNCE_LIMIT) {
+    _showLoopError();
+    return;
+  }
+
+  const params = new URLSearchParams();
+  const next = getSafeNextPath(window.location.pathname + window.location.search);
+  if (next) params.set('next', next);
+  const qs = params.toString();
+
+  window.location.replace('/verify-email.html' + (qs ? '?' + qs : ''));
+}
+
 /**
  * Call at the start of any page that needs a signed-in person. Waits for
  * the saved login to be restored (however long that takes), and only
@@ -503,7 +504,24 @@ async function requireAuthOrRedirect() {
     return null;
   }
   _knownUid = user.uid;
-  if (needsEmailVerification(user)) _showVerifyEmailBanner(user);
+
+  if (needsEmailVerification(user)) {
+    // The signed-in snapshot Firebase restored from local storage can be
+    // stale — the person may already have clicked the verification link
+    // on another tab or device since this browser last talked to
+    // Firebase. Reload from the server once before deciding to bounce
+    // them, so a person who's actually verified is never sent back to
+    // the verify-email page.
+    try {
+      await user.reload();
+    } catch (_) { /* offline / transient — fall through with what we have */ }
+
+    if (needsEmailVerification(auth.currentUser || user)) {
+      _redirectToVerifyEmail();
+      return null;
+    }
+  }
+
   return user;
 }
 
@@ -586,6 +604,7 @@ const Auth = {
   resetPassword,
   resendVerificationEmail,
   needsEmailVerification,
+  reloadCurrentUser,
   logOut,
   authedFetch,
   requireAuthOrRedirect,
