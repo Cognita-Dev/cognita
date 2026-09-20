@@ -1,6 +1,6 @@
 // cancel-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { fsGet, fsUpdate } from './firestore-rest.js';
 
 export async function handleSubscriptionCancel(request, env) {
@@ -8,7 +8,8 @@ export async function handleSubscriptionCancel(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   if (!env.PAYSTACK_SECRET_KEY) {
