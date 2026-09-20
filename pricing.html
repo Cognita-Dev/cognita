@@ -188,13 +188,15 @@
   function wireCheckoutButtons() {
     document.querySelectorAll('[data-plan-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
+        const planId = btn.dataset.planId;
         const user = window.Auth.getCurrentUser();
         if (!user) {
-          window.location.href = '/signup.html?next=pricing';
+          window.location.href = planId === 'free'
+            ? '/signup.html'
+            : '/signup.html?plan=' + encodeURIComponent(planId);
           return;
         }
 
-        const planId = btn.dataset.planId;
         const originalText = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Redirecting…';
