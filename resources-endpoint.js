@@ -7,7 +7,7 @@ import { getPlan, planSatisfies, planHasFlashcardImages, MODEL_TIERS } from './e
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
-import { buildStructuredPdf, buildSimplePdf } from './pdf-builder.js';
+import { buildStructuredPdf, buildSimplePdf, buildFlashcardsPdf } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2DownloadFileBytes } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
@@ -634,6 +634,42 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
     }
     return fileReferences;
   }
+  // Flashcards get their own PDF layout (one block per card, with a real
+  // illustration when the card has one — see resources-endpoint.js's
+  // _attachCardImages) instead of falling through to the generic
+  // plain-text export below, which would flatten each card to a single
+  // line and drop any image entirely. docx export still uses the plain
+  // text formatter for now — the .docx builder here doesn't support
+  // embedded images yet — so a card's illustration only appears in the
+  // PDF, not the Word export.
+  if (recipe.resourceType === 'flashcards' && Array.isArray(structuredContent.cards)) {
+    try {
+      const pdfBase64 = await buildFlashcardsPdf(structuredContent, title, templateId);
+      const pdfBytes = _base64ToBytes(pdfBase64);
+      const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
+      const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
+      fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
+    } catch (e) {
+      console.error('[resources] flashcards pdf export/upload failed:', e.message);
+    }
+    if (typeof recipe.toPlainTextParagraphs === 'function') {
+      try {
+        const plainText = recipe.toPlainTextParagraphs(structuredContent);
+        const docxBase64 = await buildSimpleDocx(plainText, title, templateId);
+        const docxBytes = _base64ToBytes(docxBase64);
+        const docxKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.docx';
+        const docxUpload = await b2UploadFile(
+          env, docxKey, docxBytes,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        );
+        fileReferences.docx = { key: docxKey, fileId: docxUpload.fileId };
+      } catch (e) {
+        console.error('[resources] flashcards docx export/upload failed:', e.message);
+      }
+    }
+    return fileReferences;
+  }
+
   if (typeof recipe.toPlainTextParagraphs === 'function') {
     const plainText = recipe.toPlainTextParagraphs(structuredContent);
     try {
