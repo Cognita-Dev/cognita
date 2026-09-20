@@ -98,12 +98,7 @@ async function _generateIllustration(prompt, env) {
   if (!env.AI) return _jsonError('Image generation is temporarily unavailable.', 503, env);
 
   try {
-    const response = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-      prompt: 'A clean, professional, realistic illustration: ' + prompt + '. No text overlays. No cartoon style.',
-      steps: 4,
-    });
-
-    const base64 = await _extractImageBase64(response);
+    const base64 = await generateIllustrationBase64(prompt, env);
     if (!base64) throw new Error('Could not extract image from provider response.');
 
     return new Response(JSON.stringify({ type: 'image', content: base64 }), {
@@ -114,6 +109,23 @@ async function _generateIllustration(prompt, env) {
     console.error('[image] illustration generation failed:', e.message);
     return _jsonError('Could not generate the image. Please try again.', 503, env);
   }
+}
+
+// Shared Workers AI illustration call, exported so other endpoints (e.g.
+// resources-endpoint.js, for image flashcards) can reuse the exact same
+// model/prompt-wrapping/decoding logic instead of duplicating it. Throws
+// on failure — callers decide how to handle a failed single image (e.g.
+// resources-endpoint.js just skips that one card rather than failing the
+// whole deck).
+export async function generateIllustrationBase64(prompt, env) {
+  if (!env.AI) throw new Error('Workers AI is not bound.');
+
+  const response = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+    prompt: 'A clean, professional, realistic illustration: ' + prompt + '. No text overlays. No cartoon style.',
+    steps: 4,
+  });
+
+  return _extractImageBase64(response);
 }
 
 function _extractSvg(text) {
