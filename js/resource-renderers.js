@@ -195,7 +195,7 @@ const ResourceRenderers = (() => {
       id: index,
       front: normalizeText(card.front),
       back: normalizeText(card.back),
-      image: card && card.image && card.image.data ? card.image : null,
+      image: card && card.image && (card.image.url || card.image.data) ? card.image : null,
       state: 'new',
     }));
 
@@ -230,9 +230,12 @@ const ResourceRenderers = (() => {
       if (imageElement) {
         if (current.image) {
           imageElement.hidden = false;
-          imageElement.innerHTML =
-            '<img src="data:' + escapeHtml(current.image.type || 'image/jpeg') +
-            ';base64,' + current.image.data + '" alt="" loading="lazy">';
+          // Newer decks load from a signed link; older decks may still
+          // carry the picture inline as base64.
+          imageElement.innerHTML = current.image.url
+            ? '<img src="' + escapeHtml(current.image.url) + '" alt="" loading="lazy">'
+            : '<img src="data:' + escapeHtml(current.image.type || 'image/jpeg') +
+              ';base64,' + current.image.data + '" alt="" loading="lazy">';
         } else {
           imageElement.hidden = true;
           imageElement.innerHTML = '';
