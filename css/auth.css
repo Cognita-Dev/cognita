@@ -569,3 +569,28 @@
   color: var(--text-4);
   line-height: 1.6;
 }
+
+/* Shown while we're still deciding whether this person even needs the
+   verify-email page (checking auth state, reloading their profile to
+   rule out a stale "unverified" snapshot). Nothing about the card
+   underneath — including its "Waiting for verification" copy — paints
+   until that decision is made, so someone who turns out not to need
+   this page (a Google account, an already-verified account) never sees
+   it flash before being sent onward. */
+.auth-checking-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+}
+.auth-checking-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--text-2);
+  animation: spin 700ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-checking-spinner { animation-duration: 1400ms; }
+}
