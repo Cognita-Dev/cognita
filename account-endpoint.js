@@ -8,7 +8,7 @@
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole } from './subscription.js';
 import { getUsageBatch } from './usage.js';
-import { getPlan } from './entitlements.js';
+import { getPlan, planHasFlashcardImages } from './entitlements.js';
 
 export async function handleAccountRequest(request, env) {
   let identity;
@@ -49,6 +49,9 @@ export async function handleAccountRequest(request, env) {
     models: {
       vision: plan.models.vision,
       chat: plan.models.chat,
+      // Lets the frontend show/hide the "Include real images" flashcard
+      // control (and its upgrade prompt) without a separate round trip.
+      flashcardImages: planHasFlashcardImages(account.planId),
     },
     features: {
       documentExport: plan.features.documentExport,
@@ -82,6 +85,7 @@ export async function handleUsageRequest(request, env) {
     'imageGen',
     'documentGen',
     'resourceGen',
+    'flashcardImage',
   ], env);
   return new Response(JSON.stringify({
     planName: plan.name,
@@ -92,6 +96,7 @@ export async function handleUsageRequest(request, env) {
       imageGen: { used: used.imageGen, limit: plan.limits.imageGenPerDay },
       documentGen: { used: used.documentGen, limit: plan.limits.documentGenPerDay },
       resourceGen: { used: used.resourceGen, limit: plan.limits.resourceGenPerDay },
+      flashcardImage: { used: used.flashcardImage, limit: plan.limits.flashcardImagePerDay },
     },
   }), {
     status: 200,
