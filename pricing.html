@@ -56,25 +56,93 @@
   <section class="pricing-faq">
     <h2>Frequently asked questions</h2>
 
-    <div class="faq-item">
-      <h3>Can I change plans later?</h3>
-      <p>Yes. You can upgrade at any time, and cancel a paid plan from your account page — you'll keep access until the end of your current billing period.</p>
+    <div class="faq-list">
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-1" id="pricing-faq-btn-1">
+            <span>Can I change plans later?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-1" role="region" aria-labelledby="pricing-faq-btn-1">
+          <div class="faq-panel-inner">
+            <p>Yes. You can upgrade at any time, and cancel a paid plan from your account page — you'll keep access until the end of your current billing period.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-2" id="pricing-faq-btn-2">
+            <span>What happens if I hit my daily limit?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-2" role="region" aria-labelledby="pricing-faq-btn-2">
+          <div class="faq-panel-inner">
+            <p>You'll see a clear notice when a limit is reached, and it resets automatically at midnight UTC. Upgrading raises your limits immediately.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-3" id="pricing-faq-btn-3">
+            <span>What payment methods are supported?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-3" role="region" aria-labelledby="pricing-faq-btn-3">
+          <div class="faq-panel-inner">
+            <p>Payments are processed securely through Paystack, supporting cards, bank transfers, and other methods available in your region.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-4" id="pricing-faq-btn-4">
+            <span>Can I pay if I'm not in Nigeria?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-4" role="region" aria-labelledby="pricing-faq-btn-4">
+          <div class="faq-panel-inner">
+            <p>Yes. Charges are processed in Naira (₦) through Paystack, which accepts both local and international cards. If your card was issued outside Nigeria, your bank will convert the charge at its own exchange rate.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-5" id="pricing-faq-btn-5">
+            <span>Is there a limit on file size or type I can upload?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-5" role="region" aria-labelledby="pricing-faq-btn-5">
+          <div class="faq-panel-inner">
+            <p>Each plan has its own maximum file size per upload, shown on the plan cards above — higher plans allow larger files and more uploads per day.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <h3 class="faq-question-heading">
+          <button type="button" class="faq-question" aria-expanded="false" aria-controls="pricing-faq-panel-6" id="pricing-faq-btn-6">
+            <span>Is my data used to train models?</span>
+            <i class="ph ph-plus faq-icon" aria-hidden="true"></i>
+          </button>
+        </h3>
+        <div class="faq-panel" id="pricing-faq-panel-6" role="region" aria-labelledby="pricing-faq-btn-6">
+          <div class="faq-panel-inner">
+            <p>No. Your conversations are used only to generate your responses and are not used for model training.</p>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="faq-item">
-      <h3>What happens if I hit my daily limit?</h3>
-      <p>You'll see a clear notice when a limit is reached, and it resets automatically at midnight UTC. Upgrading raises your limits immediately.</p>
-    </div>
-
-    <div class="faq-item">
-      <h3>What payment methods are supported?</h3>
-      <p>Payments are processed securely through Paystack, supporting cards, bank transfers, and other methods available in your region.</p>
-    </div>
-
-    <div class="faq-item">
-      <h3>Is my data used to train models?</h3>
-      <p>No. Your conversations are used only to generate your responses and are not used for model training.</p>
-    </div>
+    <p class="faq-contact">Have a question not covered here? <a href="mailto:hellogbemiga@gmail.com">Ask us directly</a>.</p>
   </section>
 </main>
 
@@ -90,6 +158,7 @@
 </footer>
 
 <script type="module" src="/js/auth.js"></script>
+<script src="/js/faq.js" defer></script>
 <script>
   const navMenuBtn = document.getElementById('navMenuBtn');
   const navOverlay = document.getElementById('navOverlay');
