@@ -8,23 +8,46 @@ const FIREBASE_ISSUER_PREFIX = 'https://securetoken.google.com/';
 
 let _certCache = null;
 let _certCacheExpiry = 0;
+let _lastForcedRefresh = 0;
 
-async function _getGoogleCerts() {
+// Imported CryptoKeys, keyed by certificate text. Importing a key is
+// comparatively slow; the same few keys verify every request.
+const _keyCache = new Map();
+
+async function _getGoogleCerts(forceRefresh = false) {
   const now = Date.now();
-  if (_certCache && now < _certCacheExpiry) return _certCache;
+  if (!forceRefresh && _certCache && now < _certCacheExpiry) return _certCache;
 
-  const res = await fetch(GOOGLE_JWKS_URL);
-  if (!res.ok) throw new Error('Could not fetch Google public certs.');
-  const certs = await res.json();
+  try {
+    const res = await fetch(GOOGLE_JWKS_URL);
+    if (!res.ok) throw new Error('Could not fetch Google public certs.');
+    const certs = await res.json();
 
-  // Cache-Control header tells us how long these certs are valid for.
-  const cacheControl = res.headers.get('cache-control') || '';
-  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/);
-  const maxAgeMs = maxAgeMatch ? parseInt(maxAgeMatch[1], 10) * 1000 : 3600000;
+    // How long these certs stay valid = max-age MINUS how long Google's
+    // cache has already held them (the Age header). Ignoring Age made us
+    // keep certs past their real expiry, so after Google rotated its
+    // signing keys, tokens signed with a new key were rejected as
+    // "unknown signing key" until our cache finally expired.
+    const cacheControl = res.headers.get('cache-control') || '';
+    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/);
+    const ageSeconds = parseInt(res.headers.get('age') || '0', 10) || 0;
+    const maxAgeMs = maxAgeMatch
+      ? Math.max(60, parseInt(maxAgeMatch[1], 10) - ageSeconds) * 1000
+      : 3600000;
 
-  _certCache = certs;
-  _certCacheExpiry = now + maxAgeMs;
-  return certs;
+    _certCache = certs;
+    _certCacheExpiry = now + maxAgeMs;
+    return certs;
+  } catch (e) {
+    // A brief network blip reaching Google must not lock every signed-in
+    // person out. Keep using the last good certs (they are still valid
+    // for verifying signatures) and try again in a minute.
+    if (_certCache) {
+      _certCacheExpiry = now + 60000;
+      return _certCache;
+    }
+    throw e;
+  }
 }
 
 function _b64urlToUint8Array(str) {
@@ -46,6 +69,15 @@ function _decodeJwtParts(idToken) {
 
 // Parses a PEM X.509 certificate into a CryptoKey for RS256 verification.
 async function _importCertAsPublicKey(pem) {
+  const cached = _keyCache.get(pem);
+  if (cached) return cached;
+  const key = await _importCertAsPublicKeyUncached(pem);
+  if (_keyCache.size > 8) _keyCache.clear();
+  _keyCache.set(pem, key);
+  return key;
+}
+
+async function _importCertAsPublicKeyUncached(pem) {
   const b64 = pem
     .replace('-----BEGIN CERTIFICATE-----', '')
     .replace('-----END CERTIFICATE-----', '')
@@ -160,8 +192,15 @@ export async function verifyFirebaseIdToken(idToken, projectId) {
   if (!payload.sub) throw new Error('Token missing subject.');
   if (payload.auth_time && payload.auth_time > now + 300) throw new Error('Invalid auth_time.');
 
-  const certs = await _getGoogleCerts();
-  const certPem = certs[header.kid];
+  let certs = await _getGoogleCerts();
+  let certPem = certs[header.kid];
+  if (!certPem && Date.now() - _lastForcedRefresh > 60000) {
+    // Unknown key ID: Google may just have rotated its keys. Re-fetch once
+    // (at most once a minute, so a forged kid can't make us hammer Google).
+    _lastForcedRefresh = Date.now();
+    certs = await _getGoogleCerts(true);
+    certPem = certs[header.kid];
+  }
   if (!certPem) throw new Error('Unknown signing key — token may be forged or certs rotated.');
 
   const publicKey = await _importCertAsPublicKey(certPem);
