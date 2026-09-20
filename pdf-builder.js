@@ -408,7 +408,7 @@ function _buildContentStream(ops, pageIndex, pageCount, theme) {
   return stream;
 }
 
-function _assemblePdf(pages, theme, images) {
+function _assemblePdf(pages, theme, images, asBytes) {
   images = images || [];
   const pageCount = pages.length;
   // Object numbering: 1 = Catalog, 2 = Pages, 3 = Font regular, 4 = Font
@@ -502,8 +502,19 @@ function _assemblePdf(pages, theme, images) {
   let offset = 0;
   for (const c of chunks) { total.set(c, offset); offset += c.length; }
 
+  if (asBytes) return total;
+  return _bytesToBase64Fast(total);
+}
+
+// Converts bytes to base64 in big chunks. The old one-character-at-a-time
+// loop was extremely slow for PDFs that contain pictures (a single
+// picture cost ~45 ms of CPU; this costs ~7 ms).
+function _bytesToBase64Fast(bytes) {
   let binary = '';
-  for (let i = 0; i < total.length; i++) binary += String.fromCharCode(total[i]);
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
   return btoa(binary);
 }
 
@@ -565,4 +576,13 @@ export async function buildFlashcardsPdf(structuredContent, title, templateId) {
   const theme = _resolveTheme(templateId);
   const state = _layoutFlashcards(structuredContent, title, theme);
   return _assemblePdf(state.pages, theme, state.images);
+}
+
+// Same as buildFlashcardsPdf, but returns the raw PDF bytes instead of a
+// base64 string. Lets the caller upload straight to storage without the
+// costly encode-then-decode round trip.
+export async function buildFlashcardsPdfBytes(structuredContent, title, templateId) {
+  const theme = _resolveTheme(templateId);
+  const state = _layoutFlashcards(structuredContent, title, theme);
+  return _assemblePdf(state.pages, theme, state.images, true);
 }
