@@ -116,6 +116,44 @@ function _latin1Bytes(str) {
   return bytes;
 }
 
+function _base64ToBytesLocal(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Minimal baseline-JPEG dimension reader — walks marker segments looking
+// for a Start Of Frame (SOFn) segment, which always carries the pixel
+// height/width regardless of which SOF variant it is. A PDF Image XObject
+// MUST declare /Width and /Height explicitly, and Workers AI only hands
+// back raw JPEG bytes (no metadata sidecar), so this is the only way to
+// get real dimensions without pulling in an image-parsing library (which
+// Workers can't load anyway).
+function _jpegDimensions(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null; // not a JPEG (missing SOI)
+  let i = 2;
+  while (i + 4 <= bytes.length) {
+    if (bytes[i] !== 0xff) { i++; continue; }
+    const marker = bytes[i + 1];
+    // Markers with no payload length to skip.
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += 2;
+      continue;
+    }
+    if (marker === 0xd9) break; // EOI
+    const segmentLength = (bytes[i + 2] << 8) | bytes[i + 3];
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      const height = (bytes[i + 5] << 8) | bytes[i + 6];
+      const width = (bytes[i + 7] << 8) | bytes[i + 8];
+      return { width, height };
+    }
+    i += 2 + segmentLength;
+  }
+  return null;
+}
+
 /* ── Text measurement (approximate — no real font metrics without
    embedding a font, but close enough that lines don't visibly overflow
    the margin in practice). Width factor comes from the resolved template
@@ -151,7 +189,7 @@ function _wrapToWidth(text, widthPts, size, bold, family) {
    font family) so every block is drawn in the chosen template. ── */
 
 function _newLayoutState() {
-  return { pages: [[]], cursorY: CONTENT_TOP, page: 0 };
+  return { pages: [[]], cursorY: CONTENT_TOP, page: 0, images: [] };
 }
 
 function _ensureSpace(state, height) {
@@ -172,6 +210,50 @@ function _drawTextLine(state, text, { x, size, bold, color }) {
 
 function _drawRect(state, { x, y, w, h, color }) {
   _pushOp(state, { cmd: 'rect', x, y, w, h, color });
+}
+
+// Registers an image (raw JPEG bytes) with the layout state's shared
+// image list (deduped by the base64 source so the same illustration used
+// twice, however unlikely, is only embedded once) and returns its PDF
+// XObject resource name. Draws it as a positioned block at the current
+// cursor, top-anchored like every other block in this layout engine.
+function _layoutImage(state, imageBase64, theme, maxWidth, maxHeight) {
+  if (!imageBase64) return;
+
+  let bytes, dims;
+  try {
+    bytes = _base64ToBytesLocal(imageBase64);
+    dims = _jpegDimensions(bytes);
+  } catch (e) {
+    return; // corrupt/undecodable image data — skip it, don't fail the export
+  }
+  if (!dims || !dims.width || !dims.height) return;
+
+  let existingIndex = state.images.findIndex((img) => img.base64 === imageBase64);
+  if (existingIndex === -1) {
+    existingIndex = state.images.length;
+    state.images.push({ base64: imageBase64, bytes, width: dims.width, height: dims.height });
+  }
+
+  const aspect = dims.width / dims.height;
+  let drawW = maxWidth;
+  let drawH = drawW / aspect;
+  if (drawH > maxHeight) {
+    drawH = maxHeight;
+    drawW = drawH * aspect;
+  }
+
+  _ensureSpace(state, drawH + 10);
+  state.cursorY -= drawH;
+  _pushOp(state, {
+    cmd: 'image',
+    x: MARGIN_X,
+    y: state.cursorY,
+    w: drawW,
+    h: drawH,
+    name: 'Im' + existingIndex,
+  });
+  state.cursorY -= 10;
 }
 
 function _layoutTitle(state, title, theme) {
@@ -244,7 +326,48 @@ function _layoutStructured(structured, title, theme) {
     }
   });
 
-  return state.pages;
+  return state;
+}
+
+const CARD_IMAGE_MAX_WIDTH = 220;
+const CARD_IMAGE_MAX_HEIGHT = 165;
+const CARD_RULE_GAP = 16;
+
+// Dedicated flashcards layout — unlike the generic {title, sections}
+// path, each card is a self-contained block: an optional illustration
+// (see resources-endpoint.js#_attachCardImages, which attaches a real
+// Workers-AI-generated image per card when the user asked for images and
+// their plan allows it), the question, and the answer, with a light rule
+// separating cards. Falls back gracefully to a text-only card when a
+// card has no `image` field, so decks generated before this feature (or
+// on the free plan) still export identically to before.
+function _layoutFlashcards(structured, title, theme) {
+  const state = _newLayoutState();
+  _layoutTitle(state, title || structured.title || 'Flashcards', theme);
+
+  const cards = Array.isArray(structured.cards) ? structured.cards : [];
+  cards.forEach((card, index) => {
+    const label = 'Card ' + (card.number || index + 1) +
+      (card.difficulty ? '  \u2014  ' + String(card.difficulty).toUpperCase() : '');
+    _layoutHeading(state, label, theme);
+
+    if (card.image && card.image.data) {
+      _layoutImage(state, card.image.data, theme, CARD_IMAGE_MAX_WIDTH, CARD_IMAGE_MAX_HEIGHT);
+    }
+
+    if (card.front) _layoutParagraph(state, 'Q: ' + card.front, theme);
+    if (card.back) _layoutParagraph(state, 'A: ' + card.back, theme);
+
+    // Separator rule between cards (skip after the last one).
+    if (index < cards.length - 1) {
+      _ensureSpace(state, CARD_RULE_GAP);
+      state.cursorY -= 4;
+      _drawRect(state, { x: MARGIN_X, y: state.cursorY, w: CONTENT_WIDTH, h: 0.75, color: theme.colors.rule });
+      state.cursorY -= (CARD_RULE_GAP - 4);
+    }
+  });
+
+  return state;
 }
 
 /* ── Page content stream + PDF object assembly ── */
@@ -259,6 +382,11 @@ function _buildContentStream(ops, pageIndex, pageCount, theme) {
     if (op.cmd === 'rect') {
       stream += _colorOp(op.color) + '\n';
       stream += op.x.toFixed(2) + ' ' + op.y.toFixed(2) + ' ' + op.w.toFixed(2) + ' ' + op.h.toFixed(2) + ' re\nf\n';
+    } else if (op.cmd === 'image') {
+      // Place the image XObject: scale the unit square to (w, h) and
+      // translate to (x, y), same convention PDF uses for every image.
+      stream += 'q\n' + op.w.toFixed(2) + ' 0 0 ' + op.h.toFixed(2) + ' ' + op.x.toFixed(2) + ' ' + op.y.toFixed(2) + ' cm\n' +
+        '/' + op.name + ' Do\nQ\n';
     } else {
       const font = op.bold ? '/F2' : '/F1';
       stream += 'BT\n' + _colorOp(op.color) + '\n' + font + ' ' + op.size + ' Tf\n' +
@@ -280,13 +408,17 @@ function _buildContentStream(ops, pageIndex, pageCount, theme) {
   return stream;
 }
 
-function _assemblePdf(pages, theme) {
+function _assemblePdf(pages, theme, images) {
+  images = images || [];
   const pageCount = pages.length;
-  // Object numbering: 1 = Catalog, 2 = Pages, 3 = Font regular, 4 = Font bold.
-  // Page i (0-indexed): content stream = 5 + 2*i, page object = 6 + 2*i.
-  const pageObjectIds = pages.map((_, i) => 6 + 2 * i);
-  const contentObjectIds = pages.map((_, i) => 5 + 2 * i);
-  const maxId = 6 + 2 * (pageCount - 1);
+  // Object numbering: 1 = Catalog, 2 = Pages, 3 = Font regular, 4 = Font
+  // bold, 5..(4+imageCount) = one Image XObject per embedded image, then
+  // content stream / page object pairs for each page.
+  const imageObjectIds = images.map((_, i) => 5 + i);
+  const pageStart = 5 + images.length;
+  const pageObjectIds = pages.map((_, i) => pageStart + 1 + 2 * i);
+  const contentObjectIds = pages.map((_, i) => pageStart + 2 * i);
+  const maxId = pageStart + 2 * (pageCount - 1) + 1;
 
   const objects = new Map();
   objects.set(1, { body: '<< /Type /Catalog /Pages 2 0 R >>' });
@@ -295,11 +427,28 @@ function _assemblePdf(pages, theme) {
   objects.set(3, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /' + theme.family.regular + ' /Encoding /WinAnsiEncoding >>' });
   objects.set(4, { body: '<< /Type /Font /Subtype /Type1 /BaseFont /' + theme.family.bold + ' /Encoding /WinAnsiEncoding >>' });
 
+  images.forEach((img, i) => {
+    objects.set(imageObjectIds[i], {
+      raw: true,
+      bytes: img.bytes,
+      dict: '<< /Type /XObject /Subtype /Image /Width ' + img.width + ' /Height ' + img.height +
+        ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + img.bytes.length + ' >>',
+    });
+  });
+
+  // Every page's Resources dict lists every embedded image (by its
+  // fixed /ImN name — see _layoutImage), whether or not that particular
+  // page uses it. An unused /XObject entry is legal PDF and far simpler
+  // than tracking per-page usage; viewers don't care.
+  const xObjectDict = images.length
+    ? ' /XObject << ' + images.map((_, i) => '/Im' + i + ' ' + imageObjectIds[i] + ' 0 R').join(' ') + ' >>'
+    : '';
+
   pages.forEach((ops, i) => {
     const stream = _buildContentStream(ops, i, pageCount, theme);
     objects.set(contentObjectIds[i], { raw: true, bytes: _latin1Bytes(stream) });
     objects.set(pageObjectIds[i], {
-      body: '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> ' +
+      body: '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xObjectDict + ' >> ' +
         '/MediaBox [0 0 ' + PAGE_WIDTH + ' ' + PAGE_HEIGHT + '] /Contents ' + contentObjectIds[i] + ' 0 R >>',
     });
   });
@@ -325,7 +474,8 @@ function _assemblePdf(pages, theme) {
     const obj = objects.get(id);
     push(id + ' 0 obj\n');
     if (obj.raw) {
-      push('<< /Length ' + obj.bytes.length + ' >>\nstream\n');
+      const dict = obj.dict || ('<< /Length ' + obj.bytes.length + ' >>');
+      push(dict + '\nstream\n');
       push(obj.bytes);
       push('\nendstream\nendobj\n');
     } else {
@@ -371,8 +521,8 @@ function _assemblePdf(pages, theme) {
  */
 export async function buildStructuredPdf(structured, title, templateId) {
   const theme = _resolveTheme(templateId);
-  const pages = _layoutStructured(structured, title, theme);
-  return _assemblePdf(pages, theme);
+  const state = _layoutStructured(structured, title, theme);
+  return _assemblePdf(state.pages, theme, state.images);
 }
 
 /**
@@ -393,6 +543,26 @@ export async function buildSimplePdf(content, title, templateId) {
     sections: paragraphs.map((p) => ({ heading: '', type: 'paragraph', content: p })),
   };
   const theme = _resolveTheme(templateId);
-  const pages = _layoutStructured(structured, title, theme);
-  return _assemblePdf(pages, theme);
+  const state = _layoutStructured(structured, title, theme);
+  return _assemblePdf(state.pages, theme, state.images);
+}
+
+/**
+ * Builds a designed .pdf specifically for a flashcards deck: one block
+ * per card (heading, optional real illustration, question, answer),
+ * instead of flattening cards into generic paragraphs. Images come from
+ * `card.image.data` (base64 JPEG) — see resources-endpoint.js's
+ * `_attachCardImages`, which only ever populates that field for
+ * entitled, quota-checked plans. Cards without an image (free plan, or
+ * `includeImages` wasn't requested) render as plain text blocks exactly
+ * like before this feature existed.
+ *
+ * @param {{title: string, cards: Array<{number:number, front:string, back:string, difficulty:string, image?: {type:string, data:string}}>}} structuredContent
+ * @param {string} title
+ * @param {string} [templateId]
+ */
+export async function buildFlashcardsPdf(structuredContent, title, templateId) {
+  const theme = _resolveTheme(templateId);
+  const state = _layoutFlashcards(structuredContent, title, theme);
+  return _assemblePdf(state.pages, theme, state.images);
 }
