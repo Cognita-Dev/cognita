@@ -1366,6 +1366,22 @@ main { overflow-x: hidden; }
 }
 .pricing-teaser-cta:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
 
+/* ═══════════════════════════════════════════════
+   FAQ
+   The accordion behavior itself (.faq-list / .faq-item / .faq-question /
+   .faq-panel / .faq-contact) lives in shared.css since pricing.html
+   reuses the exact same component — this just sets this section's own
+   width and spacing on the homepage.
+═══════════════════════════════════════════════ */
+.faq {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5);
+}
+.faq .faq-list {
+  margin-top: var(--space-6);
+}
+
 .final-cta {
   position: relative;
   background: #171717;
