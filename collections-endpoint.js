@@ -1,6 +1,6 @@
 // collections-endpoint.js
 
-import { requireAdmin } from './admin-auth.js';
+import { requireAdmin, describeAuthError } from './admin-auth.js';
 import { requireAuth } from './auth-middleware.js';
 import { fsSet, fsGet, fsQuery, fsDelete } from './firestore-rest.js';
 
@@ -27,7 +27,8 @@ export async function handleCollectionCreate(request, env) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -67,7 +68,8 @@ export async function handleCollectionEdit(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -110,7 +112,8 @@ export async function handleCollectionResourceEdit(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -174,7 +177,8 @@ export async function handleAdminCollectionList(request, env) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -196,7 +200,8 @@ export async function handleCollectionDelete(request, env, collectionId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -213,7 +218,8 @@ export async function handlePublicCollectionList(request, env) {
   try {
     await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
