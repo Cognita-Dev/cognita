@@ -155,21 +155,6 @@
   margin-bottom: var(--space-5);
   text-align: center;
 }
-.faq-item {
-  padding: var(--space-5) 0;
-  border-bottom: 1px solid var(--border);
-}
-.faq-item h3 {
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--text-1);
-  margin-bottom: var(--space-2);
-}
-.faq-item p {
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  line-height: 1.6;
-}
 @media (max-width: 860px) {
   .pricing-grid { grid-template-columns: 1fr; max-width: 380px; margin: 0 auto; }
 }
