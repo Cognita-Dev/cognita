@@ -421,6 +421,17 @@
             <select id="fieldCardStyle"></select>
           </label>
 
+          <label class="resource-field resource-field-checkbox" id="includeImagesFieldWrap" hidden>
+            <span class="resource-checkbox-row">
+              <input type="checkbox" id="fieldIncludeImages">
+              <span>Include real images on each card</span>
+              <span class="resource-field-badge" id="includeImagesBadge" hidden>Plus</span>
+            </span>
+            <span class="resource-field-hint" id="includeImagesHint">
+              Cognita generates a real illustration for each card using AI, alongside the question and answer — great for visual learners and picture-based vocabulary decks.
+            </span>
+          </label>
+
           <label class="resource-field" id="totalMarksFieldWrap" hidden>
             <span>Total marks</span>
             <input type="number" id="fieldTotalMarks" placeholder="100" min="1" max="500">
