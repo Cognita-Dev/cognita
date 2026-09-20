@@ -1,6 +1,6 @@
 // document-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccount, assertPlan } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
 import { getPlan, MODEL_TIERS } from './entitlements.js';
@@ -32,7 +32,8 @@ export async function handleDocumentRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
