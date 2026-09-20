@@ -102,7 +102,7 @@
   // Only auto-route to the admin dashboard when there's no explicit
   // destination already requested (next or plan) — those instructions
   // win regardless of whether the signed-in account happens to be staff.
-  async function resolvePostAuthDestination() {
+  async function resolvePostAuthDestination(user) {
     const fallback = isSafeNextPath
       ? nextPath
       : (planId ? '/payment.html?plan=' + encodeURIComponent(planId) : '/app.html');
@@ -111,8 +111,13 @@
     // there first, no matter what it was originally headed for — carrying
     // that destination along so verify-email.html can forward it on once
     // confirmed. Checked before the admin/whoami lookup below since that
-    // call is now rejected for an unverified account anyway.
-    const user = Auth.getCurrentUser();
+    // call is now rejected for an unverified account anyway. Takes the
+    // just-resolved `user` directly rather than Auth.getCurrentUser() —
+    // right after signInWithEmail()/signInWithGoogle() resolve, the
+    // module's cached "current user" can still be a beat behind (it
+    // updates via Firebase's own onAuthStateChanged callback, which isn't
+    // guaranteed to have run yet), and reading it here could momentarily
+    // treat an already-verified Google account as unverified.
     if (user && Auth.needsEmailVerification(user)) {
       return '/verify-email.html?next=' + encodeURIComponent(fallback);
     }
@@ -218,8 +223,8 @@
     signingIn = true;
     setLoading(true);
     try {
-      await Auth.signInWithEmail(email, passwordInput.value);
-      window.location.replace(await resolvePostAuthDestination());
+      const signedInUser = await Auth.signInWithEmail(email, passwordInput.value);
+      window.location.replace(await resolvePostAuthDestination(signedInUser));
     } catch (err) {
       showError(err);
       setLoading(false);
@@ -233,11 +238,11 @@
     signingIn = true;
     setGoogleLoading(true);
     try {
-      await Auth.signInWithGoogle();
+      const googleUser = await Auth.signInWithGoogle();
       // The redirect below is what actually leaves this page — until
       // then keep the loader running so the button doesn't look stalled
       // or clickable again.
-      window.location.replace(await resolvePostAuthDestination());
+      window.location.replace(await resolvePostAuthDestination(googleUser));
     } catch (err) {
       setGoogleLoading(false);
       showError(err);
@@ -272,7 +277,7 @@
   Auth.ready().then(async (user) => {
     if (user && !signingIn) {
       signingIn = true;
-      window.location.replace(await resolvePostAuthDestination());
+      window.location.replace(await resolvePostAuthDestination(user));
     }
   }).catch((initErr) => {
     console.error('Auth initialization failed:', initErr);
