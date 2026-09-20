@@ -1,6 +1,6 @@
 // payment-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { getPlan, PLAN_HIERARCHY } from './entitlements.js';
 import { fsSet } from './firestore-rest.js';
 
@@ -9,7 +9,8 @@ export async function handlePaymentInitialize(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
