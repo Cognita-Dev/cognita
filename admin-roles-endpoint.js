@@ -15,7 +15,7 @@
 // which require an existing 'admin' (requireSuperAdmin) — moderators
 // cannot use these endpoints.
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { requireAdmin, requireSuperAdmin } from './admin-auth.js';
 import { fsGet, fsSet, fsQuery, fsDelete, getGoogleAccessToken } from './firestore-rest.js';
 
@@ -51,7 +51,8 @@ export async function handleAdminBootstrap(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   const email = (identity.email || '').trim().toLowerCase();
@@ -111,7 +112,8 @@ export async function handleAdminWhoAmI(request, env) {
     const identity = await requireAdmin(request, env);
     return _jsonOk({ role: identity.role }, 200, env);
   } catch (e) {
-    return _jsonError('Not staff: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 }
 
@@ -121,7 +123,8 @@ export async function handleAdminRoleList(request, env) {
   try {
     await requireSuperAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -147,7 +150,8 @@ export async function handleAdminRoleGrant(request, env) {
   try {
     identity = await requireSuperAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -200,7 +204,8 @@ export async function handleAdminRoleRevoke(request, env) {
   try {
     await requireSuperAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -258,7 +263,8 @@ export async function handleAdminRoleLookupEmail(request, env) {
   try {
     await requireSuperAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
