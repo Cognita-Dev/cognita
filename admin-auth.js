@@ -8,13 +8,16 @@
 // 'moderator' — full curation access (create/edit/publish resources and
 //               collections), but cannot touch anyone's role.
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { fsGet } from './firestore-rest.js';
+
+export { describeAuthError };
 
 /**
  * Verifies the request is from a signed-in user who holds ANY curation
  * role (admin or moderator). Use this for resource/collection curation
- * endpoints. Throws on failure — caller must catch and respond 401/403.
+ * endpoints. Throws on failure — caller must catch and pass the error to
+ * describeAuthError() to get the right status (401/403/503).
  *
  * @returns {Promise<{uid, email, emailVerified, claims, role}>}
  */
