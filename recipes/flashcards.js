@@ -84,7 +84,12 @@ export const FLASHCARDS_RECIPE = {
         'concrete, visualizable description of a real-world object, scene, ' +
         'diagram subject, or process related to the card — something a text-to-image ' +
         'model could draw. Avoid describing text, labels, or the answer itself; ' +
-        'describe what should be SEEN, not what should be READ.\\n';
+        'describe what should be SEEN, not what should be READ. ' +
+        'Every imagePrompt must be safe for a school classroom: describe objects, ' +
+        'plants, animals, places, maps, apparatus, symbols or diagrams. Never describe ' +
+        'nude or partially clothed bodies, body parts, injuries, blood, weapons, or ' +
+        'violence — for human-body or health topics, describe a simple labelled-style ' +
+        'diagram of an organ or a neutral everyday scene instead.\\n';
     }
 
     return prompt;
