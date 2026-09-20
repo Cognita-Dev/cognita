@@ -5,7 +5,7 @@
 // never sends or receives a raw planId string it could tamper with in a
 // way that matters — these are read-only, informational responses used
 // purely to render UI (e.g. "12 messages left today").
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole } from './subscription.js';
 import { getUsageBatch } from './usage.js';
 import { getPlan } from './entitlements.js';
@@ -15,7 +15,8 @@ export async function handleAccountRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
   let account;
   try {
@@ -64,7 +65,8 @@ export async function handleUsageRequest(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
   let account;
   try {
