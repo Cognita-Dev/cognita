@@ -1,6 +1,6 @@
 // admin-resources-endpoint.js
 
-import { requireAdmin } from './admin-auth.js';
+import { requireAdmin, describeAuthError } from './admin-auth.js';
 import { fsSet, fsGet, fsQuery, fsDelete } from './firestore-rest.js';
 import { getRecipe } from './recipes/index.js';
 import { callWithFallback } from './providers.js';
@@ -234,7 +234,8 @@ export async function handleAdminResourceCreate(request, env) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -412,7 +413,8 @@ export async function handleAdminResourceBatchCreate(request, env) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -476,7 +478,8 @@ export async function handleAdminResourceEdit(request, env, resourceId) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -547,7 +550,8 @@ export async function handleAdminResourceTransition(request, env, resourceId) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -639,7 +643,8 @@ export async function handleAdminResourceList(request, env) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   const url = new URL(request.url);
@@ -669,7 +674,8 @@ export async function handleAdminResourceGet(request, env, resourceId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -685,7 +691,8 @@ export async function handleAdminResourceVersions(request, env, resourceId) {
   try {
     await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -702,7 +709,8 @@ export async function handleAdminResourceDelete(request, env, resourceId) {
   try {
     identity = await requireAdmin(request, env);
   } catch (e) {
-    return _jsonError('Not authorized: ' + e.message, e.isForbidden ? 403 : 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let doc;
