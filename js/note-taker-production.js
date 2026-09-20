@@ -2,7 +2,7 @@
 // the Cognita Worker. Reuses the existing Firebase-backed auth (window.Auth,
 // from auth.js) and the same Worker origin every other feature uses, rather
 // than inventing a second auth/config convention.
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 function auth() {
   if (!window.Auth) throw new Error('Auth is not ready yet.');
