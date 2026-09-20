@@ -7,7 +7,7 @@ import { getPlan, planSatisfies, planHasFlashcardImages, MODEL_TIERS } from './e
 import { callWithFallback } from './providers.js';
 import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
 import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
-import { buildStructuredPdf, buildSimplePdf, buildFlashcardsPdf } from './pdf-builder.js';
+import { buildStructuredPdf, buildSimplePdf, buildFlashcardsPdf, buildFlashcardsPdfBytes } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
 import { b2UploadFile, b2DownloadFileBytes } from './b2-client.js';
 import { getRecipe } from './recipes/index.js';
@@ -26,6 +26,12 @@ const MAX_CARD_IMAGES_PER_GENERATION = 20;
 // How many card images are generated + uploaded at the same time. Running
 // a few in parallel keeps a 15-20 card deck from taking a minute or more.
 const CARD_IMAGE_CONCURRENCY = 4;
+
+// Total time (from the start of the request) after which we stop starting
+// new pictures, and a rough guess of how long one batch of pictures takes.
+// Keeps a big deck from running so long that the connection drops.
+const CARD_IMAGE_DEADLINE_MS = 80 * 1000;
+const CARD_IMAGE_BATCH_ESTIMATE_MS = 15 * 1000;
 
 // How long the signed image links we hand the browser stay valid.
 const CARD_IMAGE_URL_TTL_SECONDS = 6 * 60 * 60;
@@ -267,41 +273,53 @@ async function _generateOneCardImage(card, index, deckTitle, resourceId, env) {
 //
 // Returns a Map of cardIndex -> base64 so the PDF export can embed the
 // pictures without downloading them from B2 again.
-async function _attachCardImages(structuredContent, uid, plan, resourceId, env) {
+async function _attachCardImages(structuredContent, uid, plan, resourceId, env, startedAt) {
   const imageData = new Map();
   if (!planHasFlashcardImages(plan.id)) return imageData;
   if (!Array.isArray(structuredContent.cards)) return imageData;
 
   const limit = plan.limits.flashcardImagePerDay;
   const deckTitle = String(structuredContent.title || '').trim();
-  const toRender = [];
+  const deadline = (startedAt || Date.now()) + CARD_IMAGE_DEADLINE_MS;
 
-  // 1) Charge quota one image at a time (sequential, so we stop exactly
-  //    at the daily limit).
+  const candidates = [];
   for (let i = 0; i < structuredContent.cards.length && i < MAX_CARD_IMAGES_PER_GENERATION; i++) {
     const card = structuredContent.cards[i];
-    const imagePrompt = card && typeof card.imagePrompt === 'string' ? card.imagePrompt.trim() : '';
-    if (!imagePrompt) continue;
-
-    let quota;
-    try {
-      quota = await checkAndIncrement(uid, 'flashcardImage', limit, env);
-    } catch (e) {
-      console.error('[resources] flashcard image quota check failed:', e.message);
-      break;
-    }
-
-    if (!quota.allowed) {
-      card.imageUnavailableReason = 'Daily image limit reached for the ' + plan.name + ' plan.';
-      break;
-    }
-    toRender.push(i);
+    if (card && typeof card.imagePrompt === 'string' && card.imagePrompt.trim()) candidates.push(i);
   }
 
-  // 2) Generate + upload in small parallel batches.
-  for (let start = 0; start < toRender.length; start += CARD_IMAGE_CONCURRENCY) {
-    const batch = toRender.slice(start, start + CARD_IMAGE_CONCURRENCY);
-    await Promise.all(batch.map(async (index) => {
+  let quotaExhausted = false;
+
+  for (let start = 0; start < candidates.length; start += CARD_IMAGE_CONCURRENCY) {
+    // Stop starting new pictures if we are running out of time — the deck
+    // is saved with whatever pictures are done rather than timing out and
+    // losing everything.
+    if (Date.now() + CARD_IMAGE_BATCH_ESTIMATE_MS > deadline) {
+      console.error('[resources] image time budget reached; remaining cards left without pictures');
+      break;
+    }
+
+    // Charge quota per picture, one at a time, right before rendering it.
+    const runnable = [];
+    for (const index of candidates.slice(start, start + CARD_IMAGE_CONCURRENCY)) {
+      let quota;
+      try {
+        quota = await checkAndIncrement(uid, 'flashcardImage', limit, env);
+      } catch (e) {
+        console.error('[resources] flashcard image quota check failed:', e.message);
+        quotaExhausted = true;
+        break;
+      }
+      if (!quota.allowed) {
+        structuredContent.cards[index].imageUnavailableReason =
+          'Daily image limit reached for the ' + plan.name + ' plan.';
+        quotaExhausted = true;
+        break;
+      }
+      runnable.push(index);
+    }
+
+    await Promise.all(runnable.map(async (index) => {
       const card = structuredContent.cards[index];
       const base64 = await _generateOneCardImage(card, index, deckTitle, resourceId, env);
       if (base64) {
@@ -311,6 +329,8 @@ async function _attachCardImages(structuredContent, uid, plan, resourceId, env) 
         try { await refundUsage(uid, 'flashcardImage', env); } catch (e) {}
       }
     }));
+
+    if (quotaExhausted) break;
   }
 
   return imageData;
@@ -439,6 +459,7 @@ async function _signedResourceResponse(resource, request, env) {
 }
 
 export async function handleResourceGenerate(request, env) {
+  const requestStartedAt = Date.now();
   let identity;
   try {
     identity = await requireAuth(request, env);
@@ -546,7 +567,7 @@ export async function handleResourceGenerate(request, env) {
   let imageData;
   if (recipe.supportsCardImages && fields.includeImages) {
     try {
-      imageData = await _attachCardImages(structuredContent, identity.uid, plan, resourceId, env);
+      imageData = await _attachCardImages(structuredContent, identity.uid, plan, resourceId, env, requestStartedAt);
     } catch (e) {
       // Pictures are a bonus — never lose the whole deck over them.
       console.error('[resources] attaching card images failed:', e.message);
@@ -849,8 +870,7 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
       // The PDF needs the actual picture bytes; the saved deck only holds
       // B2 references, so pull them in for this one build.
       const pdfContent = await _hydrateCardImages(structuredContent, env, knownImages);
-      const pdfBase64 = await buildFlashcardsPdf(pdfContent, title, templateId);
-      const pdfBytes = _base64ToBytes(pdfBase64);
+      const pdfBytes = await buildFlashcardsPdfBytes(pdfContent, title, templateId);
       const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
       const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
       fileReferences.pdf = { key: pdfKey, fileId: pdfUpload.fileId };
