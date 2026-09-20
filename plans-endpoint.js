@@ -20,9 +20,11 @@ export function handlePlansRequest(env) {
       documentGenPerDay: p.limits.documentGenPerDay,
       fileUploadsPerDay: p.limits.fileUploadsPerDay,
       maxFileSizeMB: p.limits.maxFileSizeMB,
+      flashcardImagePerDay: p.limits.flashcardImagePerDay,
     },
     features: p.features,
     hasVision: p.models.vision,
+    hasFlashcardImages: !!p.models.flashcardImages,
   }));
 
   return new Response(JSON.stringify({ plans: publicPlans }), {
