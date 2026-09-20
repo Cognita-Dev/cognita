@@ -4,7 +4,7 @@
 // (admin-roles-endpoint.js) — this page just needs to be signed in and
 // tap the button, nothing else to type.
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 (async function init() {
   const statusLine = document.getElementById('statusLine');
