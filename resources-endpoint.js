@@ -5,7 +5,7 @@ import { resolveAccount } from './subscription.js';
 import { checkAndIncrement, refundUsage } from './usage.js';
 import { getPlan, planSatisfies, planHasFlashcardImages, MODEL_TIERS } from './entitlements.js';
 import { callWithFallback } from './providers.js';
-import { fsSet, fsGet, fsQuery } from './firestore-rest.js';
+import { fsSet, fsGet, fsQuery, fsUpdate } from './firestore-rest.js';
 import { buildStructuredDocx, buildSimpleDocx } from './docx-builder.js';
 import { buildStructuredPdf, buildSimplePdf, buildFlashcardsPdf, buildFlashcardsPdfBytes } from './pdf-builder.js';
 import { buildSimplePptx } from './pptx-builder.js';
@@ -15,23 +15,10 @@ import { resolveEntitledTemplate } from './design-templates.js';
 import { signDownloadToken, verifyDownloadToken } from './download-proxy.js';
 import { generateIllustrationBase64, isImageSafetyError } from './image-endpoint.js';
 
-// Hard ceiling on how many real images one generation call will ever
-// produce, independent of plan quota or requested card count. This is a
-// safety/latency bound (each image is a separate Workers AI round trip
-// inside one HTTP request) — the per-day plan quota in entitlements.js
-// is the actual entitlement limit, this just stops one deck from ever
-// trying to render an unreasonable number of images synchronously.
+// Highest card position that can get a picture. Pictures are made one per
+// request (see handleResourceCardImage), so this is only a sanity bound —
+// the per-day plan quota in entitlements.js is the real limit.
 const MAX_CARD_IMAGES_PER_GENERATION = 20;
-
-// How many card images are generated + uploaded at the same time. Running
-// a few in parallel keeps a 15-20 card deck from taking a minute or more.
-const CARD_IMAGE_CONCURRENCY = 4;
-
-// Total time (from the start of the request) after which we stop starting
-// new pictures, and a rough guess of how long one batch of pictures takes.
-// Keeps a big deck from running so long that the connection drops.
-const CARD_IMAGE_DEADLINE_MS = 80 * 1000;
-const CARD_IMAGE_BATCH_ESTIMATE_MS = 15 * 1000;
 
 // How long the signed image links we hand the browser stay valid.
 const CARD_IMAGE_URL_TTL_SECONDS = 6 * 60 * 60;
@@ -258,84 +245,6 @@ async function _generateOneCardImage(card, index, deckTitle, resourceId, env) {
   return null;
 }
 
-// Turns each card's `imagePrompt` (written by the AI when the user asked
-// for images — see recipes/flashcards.js) into a real generated image via
-// Cloudflare Workers AI, stores it in B2, and records a small reference on
-// the card (mutating structuredContent.cards in place).
-//
-// Entitlement is enforced HERE, server-side, from the resolved plan —
-// never from anything the client sends:
-//   - Free plan: `plan.models.flashcardImages` is false, so this is a
-//     no-op regardless of what the request asked for.
-//   - Paid plans: each image is metered against `flashcardImagePerDay`.
-//     If a card's image can't be produced, that unit is refunded, and the
-//     card is simply left without a picture — the deck is never lost.
-//
-// Returns a Map of cardIndex -> base64 so the PDF export can embed the
-// pictures without downloading them from B2 again.
-async function _attachCardImages(structuredContent, uid, plan, resourceId, env, startedAt) {
-  const imageData = new Map();
-  if (!planHasFlashcardImages(plan.id)) return imageData;
-  if (!Array.isArray(structuredContent.cards)) return imageData;
-
-  const limit = plan.limits.flashcardImagePerDay;
-  const deckTitle = String(structuredContent.title || '').trim();
-  const deadline = (startedAt || Date.now()) + CARD_IMAGE_DEADLINE_MS;
-
-  const candidates = [];
-  for (let i = 0; i < structuredContent.cards.length && i < MAX_CARD_IMAGES_PER_GENERATION; i++) {
-    const card = structuredContent.cards[i];
-    if (card && typeof card.imagePrompt === 'string' && card.imagePrompt.trim()) candidates.push(i);
-  }
-
-  let quotaExhausted = false;
-
-  for (let start = 0; start < candidates.length; start += CARD_IMAGE_CONCURRENCY) {
-    // Stop starting new pictures if we are running out of time — the deck
-    // is saved with whatever pictures are done rather than timing out and
-    // losing everything.
-    if (Date.now() + CARD_IMAGE_BATCH_ESTIMATE_MS > deadline) {
-      console.error('[resources] image time budget reached; remaining cards left without pictures');
-      break;
-    }
-
-    // Charge quota per picture, one at a time, right before rendering it.
-    const runnable = [];
-    for (const index of candidates.slice(start, start + CARD_IMAGE_CONCURRENCY)) {
-      let quota;
-      try {
-        quota = await checkAndIncrement(uid, 'flashcardImage', limit, env);
-      } catch (e) {
-        console.error('[resources] flashcard image quota check failed:', e.message);
-        quotaExhausted = true;
-        break;
-      }
-      if (!quota.allowed) {
-        structuredContent.cards[index].imageUnavailableReason =
-          'Daily image limit reached for the ' + plan.name + ' plan.';
-        quotaExhausted = true;
-        break;
-      }
-      runnable.push(index);
-    }
-
-    await Promise.all(runnable.map(async (index) => {
-      const card = structuredContent.cards[index];
-      const base64 = await _generateOneCardImage(card, index, deckTitle, resourceId, env);
-      if (base64) {
-        imageData.set(index, base64);
-      } else {
-        // Nothing was delivered for this card — give the quota unit back.
-        try { await refundUsage(uid, 'flashcardImage', env); } catch (e) {}
-      }
-    }));
-
-    if (quotaExhausted) break;
-  }
-
-  return imageData;
-}
-
 // Removes every `image` field from a copy of the content (used before
 // sending the deck to the AI for a revision, so we don't waste tokens on
 // image references it can't use).
@@ -421,6 +330,18 @@ async function _hydrateCardImages(content, env, known) {
 // Returns a copy of the resource where each card image also has a
 // short-lived signed `url` the browser can put straight into an <img>.
 // The URL is created fresh on every response and is never saved.
+async function _signedCardImage(image, resourceId, origin, env) {
+  const token = await signDownloadToken(
+    env,
+    { scope: 'card-image', resourceId, key: image.key },
+    CARD_IMAGE_URL_TTL_SECONDS
+  );
+  return {
+    ...image,
+    url: origin + '/api/resources/' + resourceId + '/image?token=' + encodeURIComponent(token),
+  };
+}
+
 async function _withSignedImageUrls(doc, request, env) {
   const sc = doc && doc.structuredContent;
   if (!sc || !Array.isArray(sc.cards)) return doc;
@@ -429,18 +350,7 @@ async function _withSignedImageUrls(doc, request, env) {
   const origin = new URL(request.url).origin;
   const cards = await Promise.all(sc.cards.map(async (card) => {
     if (!card || !card.image || !card.image.key) return card;
-    const token = await signDownloadToken(
-      env,
-      { scope: 'card-image', resourceId: doc.id, key: card.image.key },
-      CARD_IMAGE_URL_TTL_SECONDS
-    );
-    return {
-      ...card,
-      image: {
-        ...card.image,
-        url: origin + '/api/resources/' + doc.id + '/image?token=' + encodeURIComponent(token),
-      },
-    };
+    return { ...card, image: await _signedCardImage(card.image, doc.id, origin, env) };
   }));
   return { ...doc, structuredContent: { ...sc, cards } };
 }
@@ -459,7 +369,6 @@ async function _signedResourceResponse(resource, request, env) {
 }
 
 export async function handleResourceGenerate(request, env) {
-  const requestStartedAt = Date.now();
   let identity;
   try {
     identity = await requireAuth(request, env);
@@ -564,17 +473,13 @@ export async function handleResourceGenerate(request, env) {
     await _markFailed(resourceId, baseDoc, env);
     return _jsonError('The generated resource did not meet quality checks. Please try again.', 503, env);
   }
-  let imageData;
-  if (recipe.supportsCardImages && fields.includeImages) {
-    try {
-      imageData = await _attachCardImages(structuredContent, identity.uid, plan, resourceId, env, requestStartedAt);
-    } catch (e) {
-      // Pictures are a bonus — never lose the whole deck over them.
-      console.error('[resources] attaching card images failed:', e.message);
-    }
-  }
+  // Pictures are NOT made here. Making them inside this request would use
+  // far more processing time and outgoing calls than a Cloudflare free-plan
+  // Worker is allowed. Instead the deck is saved right away (text only) and
+  // the app then asks for one picture per card, one small request at a time
+  // (see handleResourceCardImage).
 
-  const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, resolvedTemplate.id, env, imageData);
+  const fileReferences = await _buildAndUploadExports(recipe, structuredContent, baseDoc, resourceId, resolvedTemplate.id, env);
   const finalDoc = {
     ...baseDoc,
     status: 'ready',
@@ -869,7 +774,13 @@ async function _buildAndUploadExports(recipe, structuredContent, baseDoc, resour
     try {
       // The PDF needs the actual picture bytes; the saved deck only holds
       // B2 references, so pull them in for this one build.
-      const pdfContent = await _hydrateCardImages(structuredContent, env, knownImages);
+      // Putting pictures into the PDF is expensive (lots of processing), so
+      // it is off by default to stay inside the Workers free plan. Set the
+      // variable PDF_INCLUDE_CARD_IMAGES to "true" on a paid plan to turn
+      // it back on.
+      const pdfContent = env.PDF_INCLUDE_CARD_IMAGES === 'true'
+        ? await _hydrateCardImages(structuredContent, env, knownImages)
+        : _stripCardImages(structuredContent);
       const pdfBytes = await buildFlashcardsPdfBytes(pdfContent, title, templateId);
       const pdfKey = 'generated/' + resourceId + '/exports/' + recipe.resourceType + '.pdf';
       const pdfUpload = await b2UploadFile(env, pdfKey, pdfBytes, 'application/pdf');
@@ -1079,6 +990,115 @@ export async function handleResourceFileProxy(request, env, resourceId) {
     console.error('[resources] file proxy fetch failed:', e.message);
     return _jsonError('Could not prepare the download. Please try again.', 503, env);
   }
+}
+
+// POST /api/resources/:id/cards/:index/image
+// Makes the picture for ONE flashcard. The app calls this once per card,
+// one after another, right after a deck is generated. Keeping each request
+// small (one picture) is what lets image decks work on the Cloudflare free
+// plan: each request stays well inside its processing-time and
+// outgoing-call limits, no matter how many cards the deck has.
+//
+// Everything is decided here on the server: ownership, the plan's image
+// entitlement and the daily quota. The browser only says "card number N".
+export async function handleResourceCardImage(request, env, resourceId, indexText) {
+  let identity;
+  try {
+    identity = await requireAuth(request, env);
+  } catch (e) {
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
+  }
+
+  const index = Number(indexText);
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_CARD_IMAGES_PER_GENERATION) {
+    return _jsonError('Invalid card number.', 400, env);
+  }
+
+  let doc;
+  try {
+    doc = await fsGet('resources/' + resourceId, env);
+  } catch (e) {
+    console.error('[resources] card image lookup failed:', e.message);
+    return _jsonError('Could not load that resource.', 500, env);
+  }
+  if (!doc) return _jsonError('Resource not found.', 404, env);
+  if (doc.ownerId !== identity.uid) {
+    return _jsonError('Not authorized to modify this resource.', 403, env);
+  }
+
+  const recipe = getRecipe(doc.resourceType);
+  if (!recipe || !recipe.supportsCardImages) {
+    return _jsonError('This resource type does not support card images.', 400, env);
+  }
+
+  const cards = doc.structuredContent && doc.structuredContent.cards;
+  const card = Array.isArray(cards) ? cards[index] : null;
+  if (!card) return _jsonError('Card not found.', 404, env);
+
+  const origin = new URL(request.url).origin;
+
+  // Already has a picture — just hand back a fresh link (safe to retry).
+  if (card.image && card.image.key) {
+    const image = await _signedCardImage(card.image, resourceId, origin, env);
+    return new Response(JSON.stringify({ index, image }), { status: 200, headers: _corsJsonHeaders(env) });
+  }
+
+  const imagePrompt = typeof card.imagePrompt === 'string' ? card.imagePrompt.trim() : '';
+  if (!imagePrompt) return _jsonError('This card has no image description.', 400, env);
+
+  let account;
+  try {
+    account = await resolveAccount(identity.uid, env);
+  } catch (e) {
+    console.error('[resources] account resolution failed:', e.message);
+    return _jsonError('Could not verify your account. Please try again.', 500, env);
+  }
+  const plan = getPlan(account.planId);
+  if (!planHasFlashcardImages(plan.id)) {
+    return _jsonError('Flashcard images are available on paid plans.', 403, env);
+  }
+
+  const quota = await checkAndIncrement(identity.uid, 'flashcardImage', plan.limits.flashcardImagePerDay, env);
+  if (!quota.allowed) {
+    return _jsonError('Daily image limit reached for the ' + plan.name + ' plan.', 429, env);
+  }
+
+  const scratch = { imagePrompt };
+  const deckTitle = String((doc.structuredContent && doc.structuredContent.title) || '').trim();
+  await _generateOneCardImage(scratch, index, deckTitle, resourceId, env);
+
+  if (!scratch.image) {
+    try { await refundUsage(identity.uid, 'flashcardImage', env); } catch (e) {}
+    return new Response(JSON.stringify({ index, image: null, failed: true }), {
+      status: 200,
+      headers: _corsJsonHeaders(env),
+    });
+  }
+
+  // Re-read right before saving, so an edit made while the picture was
+  // being drawn is not overwritten with an older copy of the deck.
+  try {
+    const fresh = await fsGet('resources/' + resourceId, env);
+    const freshCards = fresh && fresh.structuredContent && fresh.structuredContent.cards;
+    if (!Array.isArray(freshCards) || !freshCards[index] || freshCards[index].front !== card.front) {
+      return new Response(JSON.stringify({ index, image: null, failed: true }), {
+        status: 200,
+        headers: _corsJsonHeaders(env),
+      });
+    }
+    freshCards[index].image = scratch.image;
+    await fsUpdate('resources/' + resourceId, {
+      structuredContent: fresh.structuredContent,
+      updatedAt: new Date().toISOString(),
+    }, env);
+  } catch (e) {
+    console.error('[resources] card image save failed:', e.message);
+    return _jsonError('The picture was made but could not be saved. Please try again.', 500, env);
+  }
+
+  const image = await _signedCardImage(scratch.image, resourceId, origin, env);
+  return new Response(JSON.stringify({ index, image }), { status: 200, headers: _corsJsonHeaders(env) });
 }
 
 // GET /api/resources/:id/image?token=...
