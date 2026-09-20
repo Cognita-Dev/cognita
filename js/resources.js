@@ -9,7 +9,7 @@
 import { buildExcerpt } from '../excerpt-builder.js';
 import { escapeHtml, showToast, renderAccountInfo } from './shell.js';
 
-const WORKER_URL = 'https://cognita.cognitai.workers.dev';
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 // Kept in sync with recipes/index.js's RECIPE_LABELS on the backend.
 // If a new recipe is added server-side, add its label + icon here too.
