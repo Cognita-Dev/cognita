@@ -32,7 +32,7 @@ function _redirectUri(provider, env) {
   // All four callbacks live at the same shape on this Worker — see
   // worker.js routing. WORKER_ORIGIN must be set to the Worker's own
   // deployed URL (not APP_ORIGIN, which is the frontend).
-  const origin = env.WORKER_ORIGIN || 'https://cognita.cognitai.workers.dev';
+  const origin = env.WORKER_ORIGIN || 'https://api.cognita.com.ng';
   return origin + '/auth/' + provider + '/callback';
 }
 
