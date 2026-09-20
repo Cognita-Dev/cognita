@@ -1,6 +1,6 @@
 // files-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { listGeneratedFiles, getGeneratedFileFromB2 } from './chat-storage.js';
 
 export async function handleFilesList(request, env, conversationId) {
@@ -8,7 +8,8 @@ export async function handleFilesList(request, env, conversationId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   if (!conversationId) return _jsonError('Missing conversation id.', 400, env);
@@ -30,7 +31,8 @@ export async function handleFileGet(request, env, conversationId, fileId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   if (!conversationId || !fileId) {
