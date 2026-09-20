@@ -109,6 +109,7 @@ const TYPE_FIELD_CONFIG = {
     questionCount: true,
     difficulty: true,
     cardStyle: true,
+    includeImages: true,
   },
 
   student_handout: {
@@ -205,6 +206,7 @@ let currentResource = null;
 let selectedDesignTemplateId = 'classic';
 let currentAccountPlanId = 'free';
 let currentAccountHasDesignTemplates = false;
+let currentAccountHasFlashcardImages = false;
 let activeEditorHandle = null;
 
 export async function mount() {
@@ -239,6 +241,13 @@ async function refreshAccount() {
     currentAccountHasDesignTemplates = !!(
       data.features && data.features.designTemplates
     );
+    // Whether this account's plan is entitled to real AI-generated
+    // flashcard images (see entitlements.js models.flashcardImages,
+    // surfaced here by account-endpoint.js). Drives whether the
+    // "Include real images" checkbox is usable or shown as locked.
+    currentAccountHasFlashcardImages = !!(
+      data.models && data.models.flashcardImages
+    );
 
     // If the previously selected template is no longer entitled
     // (e.g. the account downgraded), fall back to the default rather
@@ -254,6 +263,7 @@ async function refreshAccount() {
     }
 
     renderDesignTemplatePicker();
+    syncIncludeImagesFieldLock();
   } catch (e) {
     console.error('[resources] could not load account:', e.message);
   }
@@ -344,6 +354,37 @@ function _populateSelect(id, options, defaultValue) {
 
   if (defaultValue) {
     select.value = defaultValue;
+  }
+}
+
+// Locks/unlocks the "Include real images" flashcard checkbox based on the
+// resolved account plan. Free users see it disabled with a "Plus" badge
+// and an upgrade-flavored hint instead of a working control — the server
+// enforces this too (see resources-endpoint.js#_attachCardImages), this
+// is purely so a free user isn't left checking a box that silently does
+// nothing.
+function syncIncludeImagesFieldLock() {
+  const checkbox = document.getElementById('fieldIncludeImages');
+  const badge = document.getElementById('includeImagesBadge');
+  const hint = document.getElementById('includeImagesHint');
+
+  if (!checkbox) return;
+
+  if (currentAccountHasFlashcardImages) {
+    checkbox.disabled = false;
+    if (badge) badge.hidden = true;
+    if (hint) {
+      hint.textContent =
+        'Cognita generates a real illustration for each card using AI, alongside the question and answer — great for visual learners and picture-based vocabulary decks.';
+    }
+  } else {
+    checkbox.disabled = true;
+    checkbox.checked = false;
+    if (badge) badge.hidden = false;
+    if (hint) {
+      hint.textContent =
+        'Available on Cognita Plus and above. Upgrade to add real AI-generated illustrations to each flashcard.';
+    }
   }
 }
 
@@ -459,6 +500,13 @@ function openForm(type) {
     'lessonsPerWeekFieldWrap',
     !!config.lessonsPerWeek
   );
+
+  _setFieldVisibility('includeImagesFieldWrap', !!config.includeImages);
+  if (config.includeImages) {
+    const includeImagesInput = document.getElementById('fieldIncludeImages');
+    if (includeImagesInput) includeImagesInput.checked = false;
+    syncIncludeImagesFieldLock();
+  }
 
   // Update the existing count label when this form is used for
   // presentations. This avoids requiring an HTML change in Batch 1.
@@ -738,6 +786,18 @@ function wireForm() {
       if (config.cardStyle) {
         fields.cardStyle =
           document.getElementById('fieldCardStyle').value;
+      }
+
+      if (config.includeImages) {
+        const includeImagesInput = document.getElementById('fieldIncludeImages');
+        // Only ever sent as true when the checkbox is both checked AND
+        // not disabled (locked) — belt-and-braces alongside the
+        // server-side plan check in resources-endpoint.js.
+        fields.includeImages = !!(
+          includeImagesInput &&
+          includeImagesInput.checked &&
+          !includeImagesInput.disabled
+        );
       }
 
       if (config.totalMarks) {
