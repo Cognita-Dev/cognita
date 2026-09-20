@@ -46,7 +46,14 @@ async function _getGoogleCerts(forceRefresh = false) {
       _certCacheExpiry = now + 60000;
       return _certCache;
     }
-    throw e;
+    // No cached certs to fall back on: we genuinely cannot verify anyone
+    // right now. This is not the same failure as a bad or missing token —
+    // it's Google being unreachable — so callers must be able to tell the
+    // two apart and answer 503 (temporary) instead of 401 (rejected).
+    const unavailable = new Error('Could not reach Google to verify sign-in credentials.');
+    unavailable.isAuthUnavailable = true;
+    unavailable.cause = e;
+    throw unavailable;
   }
 }
 
@@ -168,7 +175,8 @@ function _extractSpkiFromCert(der) {
 
 /**
  * Verifies a Firebase ID token and returns the decoded, verified payload.
- * Throws on any failure — caller must catch and respond 401.
+ * Throws on any failure — see describeAuthError() below for how callers
+ * should turn that failure into an HTTP response.
  *
  * @param {string} idToken - raw Firebase ID token from Authorization header
  * @param {string} projectId - your Firebase project ID (for aud/iss checks)
@@ -238,4 +246,32 @@ export async function requireAuth(request, env) {
   }
 
   return verifyFirebaseIdToken(match[1], env.FIREBASE_PROJECT_ID);
+}
+
+/**
+ * Turns an error thrown by requireAuth() / requireAdmin() / requireSuperAdmin()
+ * into the HTTP status and message an endpoint should send back.
+ *
+ * - isAuthUnavailable (set above): we could not reach Google to check the
+ *   token at all. The person may well be validly signed in — we just don't
+ *   know yet — so this is a 503, not a 401, and it must never be treated
+ *   as "log this person out" on the client.
+ * - isForbidden (set by admin-auth.js): the person is who they say they
+ *   are, they're just not allowed to do this. 403.
+ * - anything else: the token itself was missing, expired, or invalid. 401.
+ *
+ * Every endpoint that calls requireAuth/requireAdmin/requireSuperAdmin
+ * should route its catch block through this instead of hardcoding a status.
+ */
+export function describeAuthError(e) {
+  if (e && e.isAuthUnavailable) {
+    return {
+      status: 503,
+      message: 'We could not check your sign-in status because of a temporary problem on our end. Please try again in a moment.',
+    };
+  }
+  if (e && e.isForbidden) {
+    return { status: 403, message: (e.message || 'You do not have permission to do this.') };
+  }
+  return { status: 401, message: 'Not authenticated: ' + (e && e.message ? e.message : 'please sign in again.') };
 }
