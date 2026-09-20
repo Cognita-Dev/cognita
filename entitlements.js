@@ -40,10 +40,19 @@ export const PLANS = {
       toolCallsPerDay: 0,          // no connector tool-use on Starter
       noteTakerSessionsPerDay: 3,
       noteTakerChunksPerDay: 200,   // ~8s/chunk -> roughly 27 minutes/day
+      // Real, AI-generated illustrations rendered onto flashcard faces
+      // (Cloudflare Workers AI, same model as illustration image gen).
+      // Free users never get these — text-only flashcards only.
+      flashcardImagePerDay: 0,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
       vision: false,
+      // Can this plan attach real generated images to flashcards at all?
+      // Kept distinct from `vision` (image *understanding*) even though
+      // Starter happens to be false for both right now, because these are
+      // conceptually different capabilities that could diverge later.
+      flashcardImages: false,
     },
     features: {
       documentExport: true,        // docx/pdf export, basic
@@ -73,10 +82,15 @@ export const PLANS = {
       toolCallsPerDay: 30,
       noteTakerSessionsPerDay: 30,
       noteTakerChunksPerDay: 2000,  // roughly 4.4 hours/day
+      // One deck's worth of illustrated cards per day, roughly — kept
+      // well below imageGenPerDay since a single flashcard deck can
+      // burn through many images in one generation call.
+      flashcardImagePerDay: 20,
     },
     models: {
       chat: ['fast', 'advanced'],
       vision: true,
+      flashcardImages: true,
     },
     features: {
       documentExport: true,
@@ -106,10 +120,12 @@ export const PLANS = {
       toolCallsPerDay: 150,
       noteTakerSessionsPerDay: 150,
       noteTakerChunksPerDay: 8000,  // roughly 17.8 hours/day
+      flashcardImagePerDay: 80,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
       vision: true,
+      flashcardImages: true,
     },
     features: {
       documentExport: true,
@@ -149,6 +165,7 @@ export const PLANS = {
       toolCallsPerDay: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerChunksPerDay: UNLIMITED,
+      flashcardImagePerDay: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0
@@ -160,6 +177,7 @@ export const PLANS = {
       // server-side from the verified uid, same as every other tier).
       chat: ['fast', 'advanced', 'reasoning', 'v0'],
       vision: true,
+      flashcardImages: true,
     },
     features: {
       documentExport: true,
@@ -284,4 +302,9 @@ export function resolveChatTier(planId, requestedTier) {
 // Can this plan attach images to a chat message?
 export function planHasVision(planId) {
   return !!getPlan(planId).models.vision;
+}
+
+// Can this plan generate real illustrated images on flashcards?
+export function planHasFlashcardImages(planId) {
+  return !!getPlan(planId).models.flashcardImages;
 }
