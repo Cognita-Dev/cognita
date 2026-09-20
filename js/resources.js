@@ -876,6 +876,12 @@ async function generateResource(resourceType, fields) {
 
     await refreshUsage();
     await loadMyResources();
+
+    // Flashcard pictures are made afterwards, one card at a time, so the
+    // deck itself appears straight away.
+    if (resourceType === 'flashcards' && fields.includeImages) {
+      runCardImageJobs(currentResource);
+    }
   } catch (e) {
     setBtnLoading(btn, false);
 
@@ -888,6 +894,122 @@ async function generateResource(resourceType, fields) {
       e.message
     );
   }
+}
+
+/* ── Flashcard pictures (made one card at a time) ── */
+
+let cardImageJobId = 0;
+
+function getImageStatusEl() {
+  let el = document.getElementById('resourceImageStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'resourceImageStatus';
+    el.style.cssText = 'font-size:0.85rem;opacity:0.75;padding:6px 0;';
+    const body = document.getElementById('resourceResultBody');
+    body.parentNode.insertBefore(el, body);
+  }
+  return el;
+}
+
+function hideImageStatus() {
+  const el = document.getElementById('resourceImageStatus');
+  if (el) el.remove();
+}
+
+// Redraws just the preview (without jumping the page) so freshly added
+// pictures show up. Skipped while the user is editing, so nothing they
+// are typing gets wiped.
+function refreshResultBody(resource) {
+  if (activeEditorHandle) return;
+  const resultBody = document.getElementById('resourceResultBody');
+  resultBody.innerHTML = renderStructuredPreview(
+    resource.structuredContent,
+    resource.resourceType
+  );
+  if (window.ResourceRenderers && typeof window.ResourceRenderers.mount === 'function') {
+    window.ResourceRenderers.mount(resource.resourceType, resultBody, resource.structuredContent);
+  }
+}
+
+async function runCardImageJobs(resource) {
+  const cards = resource && resource.structuredContent && resource.structuredContent.cards;
+  if (!Array.isArray(cards)) return;
+
+  const pending = [];
+  cards.forEach((card, index) => {
+    if (card && card.imagePrompt && !card.image) pending.push(index);
+  });
+  if (!pending.length) return;
+
+  const jobId = ++cardImageJobId;
+  const resourceId = resource.id;
+  let added = 0;
+  let stopMessage = '';
+  let consecutiveFailures = 0;
+
+  for (let n = 0; n < pending.length; n++) {
+    // Stop quietly if the person started something else or opened a
+    // different resource.
+    if (jobId !== cardImageJobId || !currentResource || currentResource.id !== resourceId) {
+      hideImageStatus();
+      return;
+    }
+
+    getImageStatusEl().textContent =
+      'Adding pictures to your cards… ' + (n + 1) + ' of ' + pending.length;
+
+    const index = pending[n];
+
+    try {
+      const res = await window.Auth.authedFetch(
+        WORKER_URL + '/api/resources/' + resourceId + '/cards/' + index + '/image',
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 403 || res.status === 429) {
+        stopMessage = data.error || '';
+        break;
+      }
+
+      if (res.ok && data.image) {
+        const target = currentResource.structuredContent.cards[index];
+        if (target) {
+          target.image = data.image;
+          added++;
+        }
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+      }
+    } catch (e) {
+      console.error('[resources] card image request failed:', e.message);
+      consecutiveFailures++;
+    }
+
+    if (consecutiveFailures >= 3) {
+      stopMessage = 'Some pictures could not be added. Please try again later.';
+      break;
+    }
+  }
+
+  if (jobId !== cardImageJobId) return;
+
+  hideImageStatus();
+
+  if (currentResource && currentResource.id === resourceId && added) {
+    refreshResultBody(currentResource);
+  }
+
+  if (stopMessage) {
+    showToast(stopMessage);
+  } else if (added) {
+    showToast('Pictures added.');
+  }
+
+  await refreshUsage();
+  await loadMyResources();
 }
 
 function setBtnLoading(btn, isLoading) {
