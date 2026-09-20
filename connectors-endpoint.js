@@ -100,7 +100,7 @@ export async function handleConnectorCallback(request, env, provider) {
   const state = url.searchParams.get('state');
   const providerError = url.searchParams.get('error');
 
-  const appOrigin = env.APP_ORIGIN || 'https://cognitai.vercel.app';
+  const appOrigin = env.APP_ORIGIN || 'https://app.cognita.com.ng';
 
   // The provider itself can redirect back with an error instead of a
   // code — e.g. the user clicked "Deny" on the consent screen. That's a
