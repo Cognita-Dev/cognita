@@ -11,10 +11,6 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  setPersistence,
-  browserLocalPersistence,
-  browserSessionPersistence,
-  inMemoryPersistence,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 // Firebase web config is NOT a secret — it's meant to be public and is
@@ -40,69 +36,88 @@ const GOOGLE_WEB_CLIENT_ID =
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
+// ── Session state ──────────────────────────────────────────────────────
+//
+// We deliberately use Firebase's DEFAULT persistence chain here (IndexedDB
+// → localStorage → sessionStorage → in-memory). It already probes each
+// storage type and falls back safely. The old code re-implemented that with
+// hard 1.5s timeouts around setPersistence(); on a slow phone or network
+// those timeouts fired even though nothing was wrong, which silently moved
+// the login from long-lived storage into per-tab storage — the login then
+// disappeared when the tab closed or opened in a second tab.
 let _currentUser = null;
-let _readyResolvers = [];
 let _isReady = false;
+let _readyResolvers = [];
 
-// ── Persistence, with a fallback chain for private/incognito browsing ──
-function _withTimeout(promise, ms) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out')), ms);
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); }
-    );
-  });
+let _protectedPage = false;      // set once a page calls requireAuthOrRedirect()
+let _knownUid = null;            // uid this page has been running as
+let _intentionalSignOut = false; // true once WE called signOut()
+let _redirecting = false;
+
+const LAST_UID_KEY = 'cognita:lastUid';
+// Browser-side copies of one person's data. Must never be shown to (or
+// synced into the account of) a different person on the same browser.
+const USER_SCOPED_LOCAL_KEYS = ['cognita:conversations', 'cognita:pendingDeletes'];
+
+function _clearUserScopedLocalData() {
+  try {
+    USER_SCOPED_LOCAL_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch (_) { /* storage unavailable — nothing to clear */ }
 }
 
-async function _initPersistence() {
-  const attempts = [
-    { mode: browserLocalPersistence, timeoutMs: 1500 },
-    { mode: browserSessionPersistence, timeoutMs: 1500 },
-    { mode: inMemoryPersistence, timeoutMs: 1500 },
-  ];
-  for (const { mode, timeoutMs } of attempts) {
-    try {
-      await _withTimeout(setPersistence(auth, mode), timeoutMs);
-      return;
-    } catch (e) {
-      console.warn('[Auth] Persistence mode failed or timed out, trying next:', e.message);
-    }
-  }
-  console.error('[Auth] All persistence modes failed or timed out — continuing without persistence.');
+// If a different account signs in on this browser, wipe the previous
+// person's locally cached chats first. Without this, chat history was
+// stored under one shared key: person B would see person A's chats, and
+// the app's background sync would upload them into B's cloud account.
+function _guardAgainstAccountSwitch(uid) {
+  try {
+    const last = localStorage.getItem(LAST_UID_KEY);
+    if (last && last !== uid) _clearUserScopedLocalData();
+    if (last !== uid) localStorage.setItem(LAST_UID_KEY, uid);
+  } catch (_) { /* storage unavailable — non-fatal */ }
 }
 
-const _authReadyPromise = _initPersistence().finally(() => {
-  onAuthStateChanged(
-    auth,
-    (user) => {
-      _currentUser = user;
-      _isReady = true;
-      _readyResolvers.forEach((resolve) => resolve(user));
-      _readyResolvers = [];
-    },
-    (error) => {
-      console.error('[Auth] onAuthStateChanged error:', error.message);
-      _currentUser = null;
-      _isReady = true;
-      _readyResolvers.forEach((resolve) => resolve(null));
-      _readyResolvers = [];
+function _settleReady(user) {
+  if (_isReady) return;
+  _isReady = true;
+  _readyResolvers.forEach((resolve) => resolve(user));
+  _readyResolvers = [];
+}
+
+onAuthStateChanged(
+  auth,
+  (user) => {
+    const previousUid = _knownUid;
+    _currentUser = user;
+
+    if (user) _guardAgainstAccountSwitch(user.uid);
+    _settleReady(user);
+
+    if (user) {
+      _knownUid = user.uid;
+      // Another tab signed into a DIFFERENT account. Reload so this tab
+      // starts cleanly as that account instead of mixing the two.
+      if (_protectedPage && previousUid && previousUid !== user.uid) {
+        window.location.reload();
+      }
+    } else if (previousUid && _protectedPage && !_intentionalSignOut) {
+      // We WERE signed in on this page and now aren't — signed out in
+      // another tab, or the account was disabled / password changed.
+      _knownUid = null;
+      _redirectToLogin('signed_out');
     }
-  );
-});
-
-const _READY_TIMEOUT_MS = 5000;
-let _timeoutFired = false;
-setTimeout(() => {
-  if (!_isReady) {
-    _timeoutFired = true;
-    _isReady = true;
-    console.error('[Auth] Auth state did not settle within timeout — treating as signed out.');
-    _readyResolvers.forEach((resolve) => resolve(null));
-    _readyResolvers = [];
+  },
+  (error) => {
+    console.error('[Auth] onAuthStateChanged error:', error.message);
+    _settleReady(auth.currentUser || null);
   }
-}, _READY_TIMEOUT_MS);
+);
 
+// NOTE: there is intentionally NO "give up after N seconds and treat the
+// person as signed out" timer any more. On a slow connection Firebase
+// needs a moment to restore the saved login (it may contact Google to
+// refresh it). Treating "not answered yet" as "signed out" is what bounced
+// people to the login page while they were logged in.
 function ready() {
   if (_isReady) return Promise.resolve(_currentUser);
   return new Promise((resolve) => _readyResolvers.push(resolve));
@@ -209,8 +224,16 @@ async function signUpWithEmail(email, password, name) {
   const result = await createUserWithEmailAndPassword(auth, email, password);
   const trimmedName = String(name || '').trim();
   if (trimmedName) {
-    await updateProfile(result.user, { displayName: trimmedName });
-    try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
+    // The account already exists and the person is already signed in at
+    // this point. If saving the display name hiccups (flaky network) we
+    // must NOT surface that as "sign-up failed" — retrying would only say
+    // "email already in use". Carry on; the name can be set later.
+    try {
+      await updateProfile(result.user, { displayName: trimmedName });
+      await result.user.getIdToken(true);
+    } catch (e) {
+      console.warn('[Auth] Could not save display name (non-fatal):', e.message);
+    }
   }
   return result.user;
 }
@@ -220,12 +243,25 @@ async function resetPassword(email) {
 }
 
 async function logOut() {
-  await signOut(auth);
+  _intentionalSignOut = true;
+  try {
+    await signOut(auth);
+  } catch (e) {
+    _intentionalSignOut = false;
+    throw e;
+  }
+  _knownUid = null;
+  // Shared-computer privacy: don't leave this person's chats behind.
+  // (They're mirrored to the cloud and come back on next sign-in.)
+  _clearUserScopedLocalData();
 }
 
 async function authedFetch(url, options = {}) {
-  let token = await getIdToken(false);
-  if (!token) throw new Error('Not signed in.');
+  // Never run before the saved login has been restored.
+  await ready();
+
+  const user = auth.currentUser || _currentUser;
+  if (!user) throw new Error('Not signed in.');
 
   const doFetch = (t) =>
     fetch(url, {
@@ -236,22 +272,174 @@ async function authedFetch(url, options = {}) {
       },
     });
 
+  // If the token can't be fetched (e.g. offline) this throws Firebase's
+  // real error (auth/network-request-failed) instead of pretending the
+  // person is signed out. The session itself is untouched.
+  const token = await user.getIdToken(false);
   let res = await doFetch(token);
+
   if (res.status === 401) {
-    token = await getIdToken(true);
-    if (token) res = await doFetch(token);
+    // Token may have expired or been rejected — get a brand-new one and
+    // try exactly once more. We do NOT sign the person out on a repeated
+    // 401: Firebase itself ends the session when it is genuinely invalid
+    // (disabled account, password changed), which the auth-state listener
+    // above handles. A 401 from our own server should never log anyone out.
+    try {
+      const fresh = await user.getIdToken(true);
+      res = await doFetch(fresh);
+    } catch (e) {
+      console.warn('[Auth] Token refresh after 401 failed:', e.message);
+    }
   }
   return res;
 }
 
-async function requireAuthOrRedirect() {
-  const user = await ready();
-  if (!user) {
-    window.location.href = '/login.html';
+// ── Safe "where to go next" handling ──────────────────────────────────
+// Accepts only a same-site path. Rejects absolute URLs, protocol-relative
+// URLs ("//evil.com"), backslash tricks ("/\evil.com"), and never sends
+// the person back to the login/signup page itself.
+function getSafeNextPath(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith('/')) return null;
+  if (raw.startsWith('//') || raw.includes('\\')) return null;
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    if (/^\/(login|signup)(\.html)?\/?$/.test(url.pathname)) return null;
+    return url.pathname + url.search + url.hash;
+  } catch (_) {
     return null;
   }
+}
+
+// ── Redirect-loop guard ───────────────────────────────────────────────
+// If something is badly wrong (e.g. the browser blocks all site storage)
+// the app and login page could send the person back and forth forever.
+// After 4 bounces in 30 seconds we stop and explain instead.
+const BOUNCE_KEY = 'cognita:authBounces';
+const BOUNCE_WINDOW_MS = 30000;
+const BOUNCE_LIMIT = 4;
+
+function _recordBounce() {
+  try {
+    const now = Date.now();
+    const recent = JSON.parse(sessionStorage.getItem(BOUNCE_KEY) || '[]')
+      .filter((t) => now - t < BOUNCE_WINDOW_MS);
+    recent.push(now);
+    sessionStorage.setItem(BOUNCE_KEY, JSON.stringify(recent));
+    return recent.length;
+  } catch (_) {
+    return 1;
+  }
+}
+
+function _clearBounces() {
+  try { sessionStorage.removeItem(BOUNCE_KEY); } catch (_) {}
+}
+
+function _showBanner(id, html) {
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    el.setAttribute('role', 'status');
+    el.style.cssText =
+      'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:99999;' +
+      'max-width:min(92vw,440px);padding:14px 16px;border-radius:12px;' +
+      'background:#fff;color:#1a1a1a;box-shadow:0 8px 30px rgba(0,0,0,.18);' +
+      'font:14px/1.45 Inter,system-ui,sans-serif;text-align:center;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = html;
+  return el;
+}
+
+function _hideBanner(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+function _showLoopError() {
+  const el = _showBanner(
+    'authLoopNotice',
+    '<strong>We can\u2019t keep you signed in on this browser.</strong><br>' +
+    'Make sure cookies / site data aren\u2019t blocked and you\u2019re not in a ' +
+    'private window, then try again.<br>' +
+    '<button id="authLoopBtn" style="margin-top:10px;padding:8px 14px;border:0;' +
+    'border-radius:8px;background:#1a1a1a;color:#fff;cursor:pointer;">Go to sign in</button>'
+  );
+  el.querySelector('#authLoopBtn').addEventListener('click', () => {
+    _clearBounces();
+    window.location.replace('/login.html');
+  });
+}
+
+function _redirectToLogin(reason) {
+  if (_redirecting) return;
+  _redirecting = true;
+
+  if (_recordBounce() >= BOUNCE_LIMIT) {
+    _showLoopError();
+    return;
+  }
+
+  // Remember where the person was headed (page + query, e.g.
+  // /payment.html?plan=plus or /app.html?view=library) so that signing in
+  // brings them straight back instead of dropping them on the default page.
+  const params = new URLSearchParams();
+  const next = getSafeNextPath(window.location.pathname + window.location.search);
+  if (next) params.set('next', next);
+  if (reason) params.set('reason', reason);
+  const qs = params.toString();
+
+  // replace(), not href = : keeps the protected page out of the Back-button
+  // history so Back doesn't bounce the person straight into another redirect.
+  window.location.replace('/login.html' + (qs ? '?' + qs : ''));
+}
+
+/**
+ * Call at the start of any page that needs a signed-in person. Waits for
+ * the saved login to be restored (however long that takes), and only
+ * redirects to the login page when Firebase has DEFINITELY said "nobody is
+ * signed in". Also keeps watching for the rest of the page's life so that
+ * signing out in another tab, or an account being disabled, sends this tab
+ * to login cleanly instead of leaving it half-broken.
+ */
+async function requireAuthOrRedirect() {
+  _protectedPage = true;
+
+  // If restoring the login is slow, say so rather than guess.
+  const slowTimer = setTimeout(() => {
+    _showBanner(
+      'authSlowNotice',
+      'Still connecting\u2026 this is taking longer than usual.<br>' +
+      '<button id="authSlowBtn" style="margin-top:8px;padding:6px 12px;border:0;' +
+      'border-radius:8px;background:#1a1a1a;color:#fff;cursor:pointer;">Reload</button>'
+    ).querySelector('#authSlowBtn').addEventListener('click', () => window.location.reload());
+  }, 8000);
+
+  let user;
+  try {
+    user = await ready();
+  } finally {
+    clearTimeout(slowTimer);
+    _hideBanner('authSlowNotice');
+  }
+
+  if (!user) {
+    _redirectToLogin();
+    return null;
+  }
+  _knownUid = user.uid;
   return user;
 }
+
+// Back/forward cache: after signing out, pressing Back can restore the
+// old signed-in page from memory without running any code. Re-check.
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  _redirecting = false;
+  if (_protectedPage && !auth.currentUser) _redirectToLogin('signed_out');
+});
 
 function classifyAuthError(error) {
   const code = error?.code || '';
@@ -325,6 +513,7 @@ const Auth = {
   logOut,
   authedFetch,
   requireAuthOrRedirect,
+  getSafeNextPath,
   classifyAuthError,
   isValidEmail,
   evaluatePasswordStrength,
