@@ -3,7 +3,7 @@
 // connectors.js (storage/orchestration) and connector-providers.js
 // (per-provider protocol). This file only translates Requests/Responses.
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import {
   CONNECTOR_PROVIDERS,
   ALLOWED_RETURN_TARGETS,
@@ -67,7 +67,8 @@ export async function handleConnectorStart(request, env, provider) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   const url = new URL(request.url);
@@ -145,7 +146,8 @@ export async function handleConnectorStatus(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
@@ -169,7 +171,8 @@ export async function handleConnectorDisconnect(request, env, provider) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   try {
