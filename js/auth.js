@@ -11,6 +11,7 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  sendEmailVerification,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 // Firebase web config is NOT a secret — it's meant to be public and is
@@ -235,11 +236,44 @@ async function signUpWithEmail(email, password, name) {
       console.warn('[Auth] Could not save display name (non-fatal):', e.message);
     }
   }
+  // Anyone could type in someone else's email address at sign-up; sending
+  // a verification link is what actually confirms they own it. Non-fatal:
+  // a flaky network here must not turn into "sign-up failed" either. The
+  // person still gets reminded on their next visit — see the "unverified
+  // email" banner wired up in requireAuthOrRedirect() below.
+  try {
+    await sendEmailVerification(result.user);
+  } catch (e) {
+    console.warn('[Auth] Could not send verification email (non-fatal):', e.message);
+  }
   return result.user;
 }
 
 async function resetPassword(email) {
   await sendPasswordResetEmail(auth, email);
+}
+
+/**
+ * Re-sends the verification link to the signed-in person's own email.
+ * Used by the "unverified email" banner. Firebase itself rate-limits
+ * this, so a rapid double-click just surfaces auth/too-many-requests
+ * rather than spamming the inbox.
+ */
+async function resendVerificationEmail() {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in.');
+  await sendEmailVerification(user);
+}
+
+/**
+ * True only for accounts that could plausibly be sitting on an
+ * unverified, possibly-not-owned email address: email/password sign-ups
+ * that haven't clicked the link yet. Google sign-in already verifies the
+ * address as a condition of the OAuth flow, so those are left alone.
+ */
+function needsEmailVerification(user) {
+  if (!user || user.emailVerified) return false;
+  return (user.providerData || []).some((p) => p.providerId === 'password');
 }
 
 async function logOut() {
@@ -358,6 +392,45 @@ function _hideBanner(id) {
   if (el) el.remove();
 }
 
+const VERIFY_DISMISS_KEY = 'cognita:verifyBannerDismissedUid';
+
+// Dismissible-per-session nudge for anyone signed in on an unverified
+// email/password account. Deliberately not a hard block: every account
+// that existed before this check was added has an unverified email, so
+// locking the app until verification would shut everyone out at once.
+function _showVerifyEmailBanner(user) {
+  try {
+    if (sessionStorage.getItem(VERIFY_DISMISS_KEY) === user.uid) return;
+  } catch (_) { /* storage unavailable — just show the banner */ }
+
+  const el = _showBanner(
+    'authVerifyNotice',
+    'Please verify your email address to help keep your account secure.<br>' +
+    '<button id="verifyResendBtn" style="margin-top:10px;margin-right:8px;padding:8px 14px;border:0;' +
+    'border-radius:8px;background:#1a1a1a;color:#fff;cursor:pointer;">Resend verification email</button>' +
+    '<button id="verifyDismissBtn" style="margin-top:10px;padding:8px 14px;border:1px solid #ccc;' +
+    'border-radius:8px;background:#fff;color:#1a1a1a;cursor:pointer;">Dismiss</button>' +
+    '<div id="verifyStatusMsg" style="margin-top:8px;font-size:13px;"></div>'
+  );
+
+  const statusEl = el.querySelector('#verifyStatusMsg');
+  el.querySelector('#verifyResendBtn').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      await resendVerificationEmail();
+      statusEl.textContent = 'Verification email sent — check your inbox.';
+    } catch (err) {
+      statusEl.textContent = classifyAuthError(err).message;
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+  el.querySelector('#verifyDismissBtn').addEventListener('click', () => {
+    try { sessionStorage.setItem(VERIFY_DISMISS_KEY, user.uid); } catch (_) {}
+    _hideBanner('authVerifyNotice');
+  });
+}
+
 function _showLoopError() {
   const el = _showBanner(
     'authLoopNotice',
@@ -430,6 +503,7 @@ async function requireAuthOrRedirect() {
     return null;
   }
   _knownUid = user.uid;
+  if (needsEmailVerification(user)) _showVerifyEmailBanner(user);
   return user;
 }
 
@@ -484,7 +558,7 @@ function isValidEmail(email) {
 function evaluatePasswordStrength(password) {
   const pwd = String(password || '');
   const checks = {
-    length: pwd.length >= 6,
+    length: pwd.length >= 8,
     lower: /[a-z]/.test(pwd),
     upper: /[A-Z]/.test(pwd),
     number: /[0-9]/.test(pwd),
@@ -510,6 +584,8 @@ const Auth = {
   signInWithEmail,
   signUpWithEmail,
   resetPassword,
+  resendVerificationEmail,
+  needsEmailVerification,
   logOut,
   authedFetch,
   requireAuthOrRedirect,
