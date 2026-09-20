@@ -1,6 +1,6 @@
 // resources-endpoint.js
 
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccount } from './subscription.js';
 import { checkAndIncrement } from './usage.js';
 import { getPlan, planSatisfies, MODEL_TIERS } from './entitlements.js';
@@ -179,7 +179,8 @@ export async function handleResourceGenerate(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
   let body;
   try {
@@ -320,7 +321,8 @@ export async function handleResourceEdit(request, env, resourceId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -405,7 +407,8 @@ export async function handleResourceRegenerate(request, env, resourceId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
 
   let body;
@@ -641,7 +644,8 @@ export async function handleResourceDownload(request, env, resourceId) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
   const url = new URL(request.url);
   const requestedFormat = url.searchParams.get('format');
@@ -762,7 +766,8 @@ export async function handleResourceList(request, env) {
   try {
     identity = await requireAuth(request, env);
   } catch (e) {
-    return _jsonError('Not authenticated: ' + e.message, 401, env);
+    const _authErr = describeAuthError(e);
+    return _jsonError(_authErr.message, _authErr.status, env);
   }
   try {
     const resources = await fsQuery('resources', 'ownerId', identity.uid, 'createdAt', 50, env);
