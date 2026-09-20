@@ -12,7 +12,12 @@
 <link rel="stylesheet" href="/css/auth.css">
 </head>
 <body class="auth-page">
-<div class="auth-shell">
+<div id="verifyChecking" class="auth-checking-screen" role="status" aria-live="polite">
+  <div class="auth-checking-spinner" aria-hidden="true"></div>
+  <span class="visually-hidden">Checking your account&hellip;</span>
+</div>
+<div class="auth-shell" id="verifyShell" hidden></div>
+<template id="verifyShellTemplate">
   <a href="/index.html" class="auth-logo">
     <img src="/assets/cognita.png" alt="Cognita">
   </a>
@@ -61,21 +66,41 @@
     no-reply Firebase address. Verification links can expire; if yours
     stops working, just request a new one above.
   </p>
-</div>
+</template>
 
 <script type="module">
   import { Auth } from '/js/auth.js';
 
-  const iconEl = document.getElementById('verifyIcon');
-  const emailValueEl = document.getElementById('verifyEmailValue');
-  const statusRowEl = document.getElementById('verifyStatus');
-  const statusTextEl = document.getElementById('verifyStatusText');
-  const actionsEl = document.getElementById('verifyActions');
-  const secondaryEl = document.getElementById('verifySecondary');
-  const resendBtn = document.getElementById('resendBtn');
-  const resendLabelEl = resendBtn.querySelector('.btn-label');
-  const resendStatusEl = document.getElementById('resendStatus');
-  const switchAccountBtn = document.getElementById('switchAccountBtn');
+  const checkingEl = document.getElementById('verifyChecking');
+  const shellEl = document.getElementById('verifyShell');
+
+  // Nothing below is queried until reveal() actually clones the template
+  // in, which only happens once we've confirmed this person genuinely
+  // needs this page. Declared here so the rest of the module can refer
+  // to them; they stay null (and unused) for anyone who gets redirected
+  // straight through.
+  let iconEl, emailValueEl, statusRowEl, statusTextEl, actionsEl,
+      secondaryEl, resendBtn, resendLabelEl, resendStatusEl, switchAccountBtn;
+
+  function reveal() {
+    shellEl.appendChild(document.getElementById('verifyShellTemplate').content.cloneNode(true));
+    shellEl.hidden = false;
+    checkingEl.hidden = true;
+
+    iconEl = document.getElementById('verifyIcon');
+    emailValueEl = document.getElementById('verifyEmailValue');
+    statusRowEl = document.getElementById('verifyStatus');
+    statusTextEl = document.getElementById('verifyStatusText');
+    actionsEl = document.getElementById('verifyActions');
+    secondaryEl = document.getElementById('verifySecondary');
+    resendBtn = document.getElementById('resendBtn');
+    resendLabelEl = resendBtn.querySelector('.btn-label');
+    resendStatusEl = document.getElementById('resendStatus');
+    switchAccountBtn = document.getElementById('switchAccountBtn');
+
+    resendBtn.addEventListener('click', onResendClick);
+    switchAccountBtn.addEventListener('click', onSwitchAccountClick);
+  }
 
   const params = new URLSearchParams(window.location.search);
   // Where to send the person once they're verified. Falls back to the
@@ -163,7 +188,7 @@
   });
   window.addEventListener('focus', () => pollOnce());
 
-  resendBtn.addEventListener('click', async () => {
+  async function onResendClick() {
     if (resendBtn.disabled) return;
     resendBtn.disabled = true;
     resendStatusEl.dataset.tone = '';
@@ -183,14 +208,14 @@
       resendStatusEl.dataset.tone = 'error';
       resendStatusEl.textContent = Auth.classifyAuthError(err).message;
     }
-  });
+  }
 
-  switchAccountBtn.addEventListener('click', async () => {
+  async function onSwitchAccountClick() {
     switchAccountBtn.disabled = true;
     try { await Auth.logOut(); } catch (_) { /* best-effort */ }
     const back = nextPath && nextPath !== '/app.html' ? '?next=' + encodeURIComponent(nextPath) : '';
     window.location.replace('/login.html' + back);
-  });
+  }
 
   async function init(user) {
     emailValueEl.textContent = user.email || 'your email address';
@@ -205,24 +230,47 @@
     startPolling();
   }
 
-  Auth.ready().then((user) => {
+  // Decides whether this person needs to be here at all, and shows
+  // NOTHING — not even a flash of this page's markup — until that's
+  // settled. A Google account (never unverified) or an email/password
+  // account that's already confirmed goes straight on to its real
+  // destination without this page ever becoming visible.
+  async function decideAndProceed() {
+    let user;
+    try {
+      user = await Auth.ready();
+    } catch (initErr) {
+      console.error('Auth initialization failed:', initErr);
+      checkingEl.innerHTML =
+        '<p style="max-width:280px;text-align:center;font-size:13px;color:var(--text-3)">' +
+        'Unable to load authentication. Please refresh the page.</p>';
+      return;
+    }
+
     if (!user) {
       const back = Auth.getSafeNextPath(window.location.pathname + window.location.search);
       window.location.replace('/login.html' + (back ? '?next=' + encodeURIComponent(back) : ''));
       return;
     }
+
+    // The restored/just-returned user snapshot can be a beat behind the
+    // server — reload once before deciding. This is what actually
+    // prevents the flash: a Google sign-in (never unverified) or an
+    // already-verified email/password account resolves here and leaves
+    // via replace() below without reveal() ever having run.
+    try { await user.reload(); } catch (_) { /* offline — proceed with what we have */ }
+    user = Auth.getCurrentUser() || user;
+
     if (!Auth.needsEmailVerification(user)) {
-      // Nothing to verify (already verified, or a Google account that
-      // ended up here somehow) — don't make the person look at this page.
       window.location.replace(nextPath);
       return;
     }
+
+    reveal();
     init(user);
-  }).catch((initErr) => {
-    console.error('Auth initialization failed:', initErr);
-    statusRowEl.dataset.state = 'error';
-    statusTextEl.textContent = 'Unable to load authentication. Please refresh the page.';
-  });
+  }
+
+  decideAndProceed();
 </script>
 </body>
 </html>
