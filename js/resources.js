@@ -925,8 +925,17 @@ function hideImageStatus() {
 // Redraws just the preview (without jumping the page) so freshly added
 // pictures show up. Skipped while the user is editing, so nothing they
 // are typing gets wiped.
+let resultRefreshDeferred = false;
+
 function refreshResultBody(resource) {
   if (activeEditorHandle) return;
+
+  // Don't yank the deck away (or reset it) while a teacher is showing a
+  // card full screen — redraw as soon as they leave full screen instead.
+  if (document.querySelector('.resource-flashcards.is-presenting')) {
+    resultRefreshDeferred = true;
+    return;
+  }
   const resultBody = document.getElementById('resourceResultBody');
   resultBody.innerHTML = renderStructuredPreview(
     resource.structuredContent,
@@ -936,6 +945,13 @@ function refreshResultBody(resource) {
     window.ResourceRenderers.mount(resource.resourceType, resultBody, resource.structuredContent);
   }
 }
+
+document.addEventListener('flashcards:present-exit', () => {
+  if (resultRefreshDeferred && currentResource) {
+    resultRefreshDeferred = false;
+    refreshResultBody(currentResource);
+  }
+});
 
 async function runCardImageJobs(resource) {
   const cards = resource && resource.structuredContent && resource.structuredContent.cards;
