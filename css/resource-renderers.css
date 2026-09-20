@@ -75,9 +75,13 @@
 .flashcard-study-area {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-areas: "prev card next";
   align-items: center;
   gap: var(--space-3);
 }
+
+.flashcard-nav-prev { grid-area: prev; }
+.flashcard-nav-next { grid-area: next; }
 
 .flashcard-nav {
   width: 44px;
@@ -85,16 +89,26 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--bg-elevated);
   color: var(--text-2);
   font-size: 1.15rem;
+  -webkit-tap-highlight-color: transparent;
   transition:
     background var(--duration-fast) var(--ease),
     border-color var(--duration-fast) var(--ease),
     color var(--duration-fast) var(--ease),
     opacity var(--duration-fast) var(--ease);
+}
+
+/* The "Previous" / "Next" words only appear where the buttons become
+   wide (phones) — on desktop they stay compact round arrows. */
+.flashcard-nav-text {
+  display: none;
+  font-size: var(--text-sm);
+  font-weight: 650;
 }
 
 .flashcard-nav:hover:not(:disabled) {
@@ -108,22 +122,40 @@
   cursor: not-allowed;
 }
 
+.flashcard-nav:focus-visible,
+.flashcard:focus-visible .flashcard-face,
+.flashcard-control:focus-visible,
+.flashcard-exit-present:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .flashcard {
+  --flashcard-image-max: min(56vh, 520px);
+  grid-area: card;
+  display: block;
   width: 100%;
-  min-height: 340px;
+  min-height: 0;
   padding: 0;
   border: 0;
   background: transparent;
   perspective: 1400px;
   cursor: pointer;
   text-align: left;
+  font: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
+/* Both faces sit in the SAME grid cell, so the card is always exactly as
+   tall as its tallest side — nothing is ever cut off or overlapped, however
+   long the question or big the picture. */
 .flashcard-inner {
   position: relative;
-  display: block;
+  display: grid;
   width: 100%;
-  min-height: 340px;
+  min-height: clamp(320px, 46vh, 560px);
   transform-style: preserve-3d;
   transition: transform 480ms cubic-bezier(0.2, 0.75, 0.25, 1);
 }
@@ -133,13 +165,13 @@
 }
 
 .flashcard-face {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  grid-area: 1 / 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: clamp(32px, 7vw, 64px);
+  min-width: 0;
+  padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 44px) clamp(16px, 2.5vw, 24px);
   border: 1px solid var(--border);
   border-radius: 24px;
   background: var(--bg-elevated);
@@ -171,29 +203,62 @@
 }
 
 .flashcard-face-label {
-  margin-bottom: var(--space-4);
+  flex: 0 0 auto;
+  margin-bottom: var(--space-3);
   color: var(--text-4);
   font-size: var(--text-xs);
   font-weight: 800;
   letter-spacing: 0.1em;
 }
 
-.flashcard-face-image {
-  display: block;
+/* Picture + text share one centred area that takes all the room between
+   the label and the hint. */
+.flashcard-face-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
   width: 100%;
-  max-width: 320px;
-  margin-bottom: var(--space-4);
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  min-width: 0;
 }
 
+.flashcard-face-image {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  border-radius: 16px;
+}
+
+.flashcard-face-image[hidden] { display: none; }
+
+/* While a picture is still loading, hold its place with a soft block so
+   the card doesn't jump when it appears. */
+.flashcard-face-image:not(.is-loaded) {
+  min-height: 200px;
+  background: var(--bg-subtle);
+  animation: flashcard-image-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes flashcard-image-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* The whole picture is always shown (never cropped): it grows to fill the
+   card's width, and only stops when it reaches the height limit. */
 .flashcard-face-image img {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
-  max-height: 200px;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: var(--flashcard-image-max);
+  object-fit: contain;
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .flashcard-face-content {
@@ -201,15 +266,18 @@
   color: var(--text-1);
   font-size: clamp(1.15rem, 2.5vw, 1.75rem);
   font-weight: 650;
-  line-height: 1.45;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
+/* In normal flow (not floating) so it can never sit on top of the text. */
 .flashcard-hint {
-  position: absolute;
-  bottom: 24px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: var(--space-4);
   color: var(--text-4);
   font-size: var(--text-xs);
   font-weight: 500;
@@ -806,33 +874,58 @@
     gap: 12px;
   }
 
+  .resource-result-body.is-flashcard-view {
+    padding: 12px;
+  }
+
+  .resource-flashcards .resource-artifact-description {
+    display: none;
+  }
+
+  .resource-flashcards .flashcard-header {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+
+  /* Phones: the card gets the FULL width (so pictures are as big as
+     possible) and Previous / Next become big, easy thumb targets under it. */
   .flashcard-study-area {
-    grid-template-columns: 34px minmax(0, 1fr) 34px;
-    gap: 7px;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "card card"
+      "prev next";
+    gap: 12px;
+  }
+
+  .flashcard {
+    --flashcard-image-max: min(52vh, 440px);
   }
 
   .flashcard-nav {
-    width: 34px;
-    height: 34px;
-    font-size: 0.95rem;
+    width: 100%;
+    height: 48px;
+    border-radius: var(--radius-full);
+    font-size: 1.05rem;
   }
 
-  .flashcard,
+  .flashcard-nav-text { display: inline; }
+
   .flashcard-inner {
     min-height: 300px;
   }
 
   .flashcard-face {
-    padding: 26px 20px;
+    padding: 18px 14px 14px;
+    border-radius: 20px;
   }
 
   .flashcard-face-content {
-    font-size: 1.05rem;
+    font-size: 1.2rem;
   }
 
   .flashcard-progress-track {
-    margin-left: 40px;
-    margin-right: 40px;
+    margin-left: 0;
+    margin-right: 0;
   }
 
   .flashcard-study-controls {
@@ -842,6 +935,11 @@
 
   .flashcard-control {
     width: 100%;
+    min-height: 44px;
+  }
+
+  .flashcard-control-present {
+    grid-column: 1 / -1;
   }
 
   .quiz-controls {
@@ -987,4 +1085,194 @@
   margin: 0;
   color: var(--text-1);
   line-height: var(--leading-relaxed);
+}
+
+
+/* ================================================================
+   FLASHCARDS — extras: present mode, header, touch, motion
+   ================================================================ */
+
+/* The flashcard view lets the page scroll instead of trapping the deck in
+   a small scrolling box (the generic result body caps its height). */
+.resource-result-body.is-flashcard-view {
+  max-height: none;
+  overflow: visible;
+}
+
+.flashcard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.flashcard-exit-present {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.flashcard-control-present {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.flashcard-control-present:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Present mode: the card fills the whole screen ── */
+.resource-flashcards.is-presenting {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-base);
+  outline: none;
+}
+
+.is-presenting .flashcard-header {
+  margin-bottom: var(--space-3);
+  align-items: center;
+}
+
+.is-presenting .flashcard-header-text,
+.is-presenting .flashcard-study-controls,
+.is-presenting .flashcard-status,
+.is-presenting .flashcard-keyboard-hint,
+.is-presenting .flashcard-hint {
+  display: none;
+}
+
+.is-presenting .flashcard-header-actions {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.is-presenting .flashcard-exit-present {
+  display: inline-flex;
+}
+
+.is-presenting .flashcard-study-area {
+  flex: 1 0 auto;
+}
+
+.is-presenting .flashcard {
+  --flashcard-image-max: min(64vh, 1000px);
+  --flashcard-image-max: min(64dvh, 1000px);
+}
+
+.is-presenting .flashcard-inner {
+  min-height: max(300px, calc(100vh - 210px));
+  min-height: max(300px, calc(100dvh - 210px));
+}
+
+.is-presenting .flashcard-face {
+  padding: clamp(16px, 3vw, 36px);
+}
+
+.is-presenting .flashcard-face-content {
+  max-width: 1100px;
+  font-size: clamp(1.6rem, 4.2vw, 3.4rem);
+  line-height: 1.3;
+}
+
+.is-presenting .flashcard-face-label {
+  font-size: var(--text-sm);
+}
+
+.is-presenting .flashcard-progress-track {
+  margin-top: var(--space-3);
+}
+
+/* Phone held sideways: there is very little height, so put the picture
+   and the question next to each other instead of stacking them. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .is-presenting .flashcard {
+    --flashcard-image-max: 62vh;
+    --flashcard-image-max: 62dvh;
+  }
+
+  .is-presenting .flashcard-face-body {
+    flex-direction: row;
+    gap: var(--space-5);
+  }
+
+  .is-presenting .flashcard-face-image {
+    flex: 1 1 55%;
+    width: auto;
+  }
+
+  .is-presenting .flashcard-face-content {
+    flex: 1 1 45%;
+    font-size: clamp(1.2rem, 3.4vw, 2rem);
+  }
+
+  /* Counter and Exit float over the corners so the card can use the
+     full height of the screen. */
+  .is-presenting .flashcard-header {
+    position: absolute;
+    top: max(8px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    z-index: 2;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  .is-presenting .flashcard-header-actions > * {
+    pointer-events: auto;
+  }
+
+  .is-presenting .flashcard-inner {
+    min-height: max(200px, calc(100vh - 56px));
+    min-height: max(200px, calc(100dvh - 56px));
+  }
+
+  .is-presenting .flashcard-face {
+    padding: 14px 20px;
+  }
+
+  .is-presenting .flashcard {
+    --flashcard-image-max: calc(100vh - 110px);
+    --flashcard-image-max: calc(100dvh - 110px);
+  }
+}
+
+/* Keyboard hints make no sense on a touch screen. */
+@media (hover: none) {
+  .flashcard-keyboard-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flashcard-inner { transition: none; }
+  .flashcard-face-image:not(.is-loaded) { animation: none; }
+}
+
+@media (max-width: 640px) {
+  .is-presenting .flashcard-face {
+    padding: 14px 10px;
+  }
 }
