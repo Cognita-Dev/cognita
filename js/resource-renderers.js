@@ -99,6 +99,7 @@ const ResourceRenderers = (() => {
 
               <span class="flashcard-face flashcard-front">
                 <span class="flashcard-face-label">QUESTION</span>
+                <span class="flashcard-face-image" data-flashcard-image hidden></span>
                 <span class="flashcard-face-content" data-flashcard-front></span>
                 <span class="flashcard-hint">
                   <i class="ph ph-hand-tap"></i>
@@ -194,6 +195,7 @@ const ResourceRenderers = (() => {
       id: index,
       front: normalizeText(card.front),
       back: normalizeText(card.back),
+      image: card && card.image && card.image.data ? card.image : null,
       state: 'new',
     }));
 
@@ -205,6 +207,7 @@ const ResourceRenderers = (() => {
     const cardElement = root.querySelector('[data-flashcard]');
     const frontElement = root.querySelector('[data-flashcard-front]');
     const backElement = root.querySelector('[data-flashcard-back]');
+    const imageElement = root.querySelector('[data-flashcard-image]');
     const currentElement = root.querySelector('[data-flashcard-current]');
     const progressElement = root.querySelector('[data-flashcard-progress]');
     const statusElement = root.querySelector('[data-flashcard-status]');
@@ -223,6 +226,18 @@ const ResourceRenderers = (() => {
       frontElement.textContent = current.front;
       backElement.textContent = current.back;
       currentElement.textContent = String(currentIndex + 1);
+
+      if (imageElement) {
+        if (current.image) {
+          imageElement.hidden = false;
+          imageElement.innerHTML =
+            '<img src="data:' + escapeHtml(current.image.type || 'image/jpeg') +
+            ';base64,' + current.image.data + '" alt="" loading="lazy">';
+        } else {
+          imageElement.hidden = true;
+          imageElement.innerHTML = '';
+        }
+      }
 
       const progress = ((currentIndex + 1) / cards.length) * 100;
       progressElement.style.width = `${progress}%`;
