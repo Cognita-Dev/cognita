@@ -267,3 +267,25 @@ export async function fsQuery(collectionId, fieldName, value, orderByField, limi
     .filter((r) => r.document)
     .map((r) => _fsDecodeFields(r.document.fields || {}));
 }
+
+/**
+ * Creates a document ONLY if it does not exist yet (atomic, server-side
+ * precondition). Returns true if this call created it, false if it was
+ * already there. Used for claims/locks and lazy-initialising records
+ * where a plain fsSet would race and overwrite someone else's write.
+ */
+export async function fsCreate(path, data, env) {
+  const token = await _getAccessToken(env);
+  const res = await fetch(_baseUrl(env) + path + '?currentDocument.exists=false', {
+    method: 'PATCH',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields: _fsEncodeFields(data) }),
+  });
+  if (res.ok) return true;
+  const text = await res.text().catch(() => '');
+  if (res.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(text)) return false;
+  throw new Error('Firestore CREATE ' + path + ' failed (' + res.status + '): ' + text.slice(0, 200));
+}
