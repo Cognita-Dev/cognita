@@ -4,6 +4,8 @@
 // one real file (not a fake path) so refresh, back/forward and shared
 // links all keep working with no server rewrite rules needed.
 
+import { closeMobileSidebar } from './shell.js';
+
 const VIEWS = {
   chat: {
     containerId: 'view-chat',
@@ -101,6 +103,13 @@ export function initRouter() {
       const view = el.getAttribute('data-view');
       if (!VIEWS[view]) return;
       e.preventDefault();
+      // On mobile the sidebar is a temporary overlay — picking a
+      // destination should tuck it away so the view underneath is
+      // visible, the same way choosing a past chat already does.
+      // This only touches the route links themselves, so it never
+      // interferes with the account menu / Settings, which lives
+      // outside the nav and isn't wired here.
+      closeMobileSidebar();
       navigate(view);
     });
   });
@@ -111,6 +120,7 @@ export function initRouter() {
   const newChatBtn = document.getElementById('newChatBtn');
   if (newChatBtn) {
     newChatBtn.addEventListener('click', async () => {
+      closeMobileSidebar();
       await navigate('chat');
       window.dispatchEvent(new CustomEvent('cognita:new-chat'));
     });
