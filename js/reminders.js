@@ -10,7 +10,7 @@ const WORKER_URL = 'https://api.cognita.com.ng';
 // Paste the public key shown by pwa/vapid-keygen.html here after you
 // generate your VAPID key pair (step 4 of the upload order). This is the
 // PUBLIC half only — never put the private key in a frontend file.
-const VAPID_PUBLIC_KEY = 'REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY';
+const VAPID_PUBLIC_KEY = 'BCa9kBjMGBoIfYt_YOsxarPBJHhVp_SvY_T5jYXAPdHaHbRqsaWZNzjT3qyBGDBs5T1zwGtEXGmXVC369-HfN4k';
 
 const OFFSET_LABELS = {
   '1_week': '1 week before',
