@@ -318,7 +318,7 @@
       const actionBtn = document.getElementById('planActionBtn');
       const cancelBtn = document.getElementById('cancelPlanBtn');
 
-      if (data.planId !== 'free' && data.status === 'active') {
+      if (data.planId !== 'free' && (data.status === 'active' || data.status === 'past_due')) {
         actionBtn.innerHTML = 'Change plan <i class="ph ph-caret-right"></i>';
         cancelBtn.hidden = false;
       } else if (data.status === 'cancelled') {
