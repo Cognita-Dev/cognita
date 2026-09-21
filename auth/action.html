@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Account action | Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+<div class="auth-shell">
+  <a href="/index.html" class="auth-logo">
+    <img src="/assets/cognita.png" alt="Cognita">
+  </a>
+
+  <!-- Loading -->
+  <div id="stateLoading" class="auth-header">
+    <p class="auth-subtitle">One moment&hellip;</p>
+  </div>
+
+  <!-- Result message (verified, password changed, expired link, etc.) -->
+  <div id="stateMessage" hidden>
+    <div class="verify-icon-wrap">
+      <div id="msgIcon" class="verify-icon" data-state="success">
+        <svg class="verify-icon-pending" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 8v5M12 16.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+        <svg class="verify-icon-success" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 12.5L10 17.5L19 7.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+    </div>
+    <div class="auth-header">
+      <h1 class="auth-title" id="msgTitle"></h1>
+      <p class="auth-subtitle" id="msgBody"></p>
+    </div>
+    <a id="msgButton" class="auth-btn auth-btn--primary" href="/login.html"></a>
+  </div>
+
+  <!-- New password form -->
+  <div id="stateReset" hidden>
+    <div class="auth-header">
+      <h1 class="auth-title">Choose a new password</h1>
+      <p class="auth-subtitle">For <span id="resetEmail" class="verify-email-value"></span></p>
+    </div>
+    <div class="auth-card">
+      <form id="resetForm" class="auth-form" novalidate>
+        <label class="auth-field">
+          <span>New password</span>
+          <input type="password" id="newPassword" autocomplete="new-password" minlength="8" required>
+          <p id="passwordError" class="field-error" aria-live="polite"></p>
+        </label>
+        <label class="auth-field">
+          <span>Confirm new password</span>
+          <input type="password" id="confirmPassword" autocomplete="new-password" minlength="8" required>
+          <p id="confirmError" class="field-error" aria-live="polite"></p>
+        </label>
+        <button type="submit" class="auth-btn auth-btn--primary" id="resetBtn">
+          <span class="btn-label">Save new password</span>
+          <span class="btn-spinner" hidden></span>
+        </button>
+        <p id="resetGeneralError" class="auth-btn-error" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  import {
+    getAuth,
+    applyActionCode,
+    verifyPasswordResetCode,
+    confirmPasswordReset,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+
+  // Same public Firebase config as js/auth.js. It is not a secret.
+  const app = initializeApp({
+    apiKey: 'AIzaSyB2K_ST2Crl-u-DoWsN8QoIN2rpBOA2XOs',
+    authDomain: 'cognita-b94eb.firebaseapp.com',
+    projectId: 'cognita-b94eb',
+    storageBucket: 'cognita-b94eb.firebasestorage.app',
+    messagingSenderId: '994240602309',
+    appId: '1:994240602309:web:b21738d56b47f215f9d0ac',
+  });
+  const auth = getAuth(app);
+
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('mode');
+  const code = params.get('oobCode');
+
+  const $ = (id) => document.getElementById(id);
+  const loadingEl = $('stateLoading');
+  const messageEl = $('stateMessage');
+  const resetEl = $('stateReset');
+
+  function showMessage({ ok, title, body, buttonLabel, buttonHref }) {
+    loadingEl.hidden = true;
+    resetEl.hidden = true;
+    $('msgIcon').dataset.state = ok ? 'success' : 'pending';
+    $('msgTitle').textContent = title;
+    $('msgBody').textContent = body;
+    const btn = $('msgButton');
+    btn.textContent = buttonLabel;
+    btn.href = buttonHref;
+    messageEl.hidden = false;
+  }
+
+  function showExpired() {
+    showMessage({
+      ok: false,
+      title: 'This link is no longer valid',
+      body: 'It may have expired or already been used. Request a new one and try again.',
+      buttonLabel: 'Back to sign in',
+      buttonHref: '/login.html',
+    });
+  }
+
+  async function handleVerify() {
+    try {
+      await applyActionCode(auth, code);
+      showMessage({
+        ok: true,
+        title: 'Email confirmed',
+        body: 'Your address is verified. You can start using Cognita.',
+        buttonLabel: 'Continue to Cognita',
+        buttonHref: '/app.html',
+      });
+    } catch (err) {
+      showExpired();
+    }
+  }
+
+  async function handleEmailChange() {
+    try {
+      await applyActionCode(auth, code);
+      showMessage({
+        ok: true,
+        title: 'All done',
+        body: 'Your account email has been updated. Sign in again to continue.',
+        buttonLabel: 'Sign in',
+        buttonHref: '/login.html',
+      });
+    } catch (err) {
+      showExpired();
+    }
+  }
+
+  async function handleReset() {
+    let email;
+    try {
+      email = await verifyPasswordResetCode(auth, code);
+    } catch (err) {
+      showExpired();
+      return;
+    }
+
+    $('resetEmail').textContent = email;
+    loadingEl.hidden = true;
+    resetEl.hidden = false;
+
+    const form = $('resetForm');
+    const btn = $('resetBtn');
+    const pw = $('newPassword');
+    const confirm = $('confirmPassword');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('passwordError').textContent = '';
+      $('confirmError').textContent = '';
+      $('resetGeneralError').textContent = '';
+
+      if (pw.value.length < 8) {
+        $('passwordError').textContent = 'Use at least 8 characters.';
+        return;
+      }
+      if (pw.value !== confirm.value) {
+        $('confirmError').textContent = 'The two passwords do not match.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.querySelector('.btn-label').hidden = true;
+      btn.querySelector('.btn-spinner').hidden = false;
+      try {
+        await confirmPasswordReset(auth, code, pw.value);
+        showMessage({
+          ok: true,
+          title: 'Password updated',
+          body: 'You can now sign in with your new password.',
+          buttonLabel: 'Sign in',
+          buttonHref: '/login.html',
+        });
+      } catch (err) {
+        btn.disabled = false;
+        btn.querySelector('.btn-label').hidden = false;
+        btn.querySelector('.btn-spinner').hidden = true;
+        if (err && err.code === 'auth/weak-password') {
+          $('passwordError').textContent = 'That password is too weak. Try a longer one.';
+        } else if (err && (err.code === 'auth/expired-action-code' || err.code === 'auth/invalid-action-code')) {
+          showExpired();
+        } else {
+          $('resetGeneralError').textContent = 'Could not save your password. Please try again.';
+        }
+      }
+    });
+  }
+
+  if (!code) {
+    showExpired();
+  } else if (mode === 'verifyEmail') {
+    handleVerify();
+  } else if (mode === 'resetPassword') {
+    handleReset();
+  } else if (mode === 'recoverEmail' || mode === 'verifyAndChangeEmail') {
+    handleEmailChange();
+  } else {
+    showExpired();
+  }
+</script>
+</body>
+</html>
