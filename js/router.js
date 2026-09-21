@@ -65,10 +65,26 @@ export async function navigate(view, { replace = false } = {}) {
   currentView = view;
 
   if (!mountedModules[view]) {
-    const mod = await VIEWS[view].load();
-    mountedModules[view] = mod;
-    if (typeof mod.mount === 'function') {
-      await mod.mount();
+    try {
+      const mod = await VIEWS[view].load();
+      mountedModules[view] = mod;
+      if (typeof mod.mount === 'function') {
+        await mod.mount();
+      }
+    } catch (e) {
+      // Forget the half-loaded view so the next visit tries again, and
+      // show a visible message instead of an empty/"loading" screen.
+      delete mountedModules[view];
+      console.error('[router] could not load view "' + view + '":', e);
+      const container = document.getElementById(VIEWS[view].containerId);
+      if (container && !container.querySelector('.view-load-error')) {
+        const box = document.createElement('div');
+        box.className = 'view-load-error';
+        box.style.cssText = 'padding:24px;text-align:center;';
+        box.textContent = 'Sorry, this page could not load. Please refresh and try again.';
+        container.prepend(box);
+      }
+      return null;
     }
   }
 
