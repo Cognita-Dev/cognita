@@ -30,8 +30,23 @@
     {
       "binding": "COGNITA_OAUTH_STATE",
       "id": "110124e1fcf8439a91509e56547c25c3"
+    },
+    // Reminders feature only: the "what's due right now" index plus
+    // short-lived send claims. Kept separate from COGNITA_USAGE so
+    // reminders never compete with existing usage-counter writes for the
+    // free plan's daily KV write quota. REPLACE THE ID BELOW after you
+    // create this namespace in the dashboard (step 2 of the upload order).
+    {
+      "binding": "COGNITA_REMINDERS",
+      "id": "49b4f507e01e47ea85df4f5f1223cebd"
     }
   ],
+
+  // Runs the reminders scheduler. Every 30 minutes keeps this well within
+  // the Workers Free plan's 5-cron-trigger and daily-request limits.
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
 
   "vars": {
     "FIREBASE_PROJECT_ID": "cognita-b94eb",
