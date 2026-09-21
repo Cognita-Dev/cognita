@@ -48,5 +48,5 @@ wrangler.jsonc
 
 recipes/
 emails/
-
-firestore.indexes.json
+reminders/
+pwa/vapid-keygen.html
