@@ -60,6 +60,7 @@ import {
   handleNoteSessionSegment,
   handleNoteChunkTranscribe,
 } from './note-taker-endpoint.js';
+import { handleSendVerificationEmail, handleSendPasswordReset } from './emails/auth-email-endpoint.js';
 import {
   handleConnectorStart,
   handleConnectorCallback,
@@ -92,6 +93,14 @@ export default {
 
   if (request.method === 'GET' && url.pathname === '/') {
       return new Response('Cognita Worker is running.', { status: 200 });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/send-verification') {
+      return handleSendVerificationEmail(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/send-password-reset') {
+      return handleSendPasswordReset(request, env);
     }
 
     if (request.method === 'GET' && url.pathname === '/api/plans') {
