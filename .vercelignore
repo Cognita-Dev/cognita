@@ -54,3 +54,7 @@ emails/
 reminders/
 
 pwa/vapid-keygen.html
+
+# Added: new Worker-only file and test suite must not be served by Vercel
+paystack-client.js
+tests/
