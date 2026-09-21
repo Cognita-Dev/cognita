@@ -1,8 +1,15 @@
 // cancel-endpoint.js
 
 import { requireAuth, describeAuthError } from './auth-middleware.js';
-import { fsGet, fsUpdate } from './firestore-rest.js';
+import { fsUpdate } from './firestore-rest.js';
+import { getAccount } from './subscription.js';
 import { sendSubscriptionCancelledEmail } from './emails/billing-emails.js';
+import {
+  disablePaystackSubscription,
+  findSubscriptionForCustomer,
+  resolvePaystackPlanCode,
+  saneNextDate,
+} from './paystack-client.js';
 
 export async function handleSubscriptionCancel(request, env) {
   let identity;
@@ -18,15 +25,16 @@ export async function handleSubscriptionCancel(request, env) {
     return _jsonError('Could not process cancellation right now.', 500, env);
   }
 
+  // getAccount applies expiry rules, so an already-expired plan is seen as free.
   let account;
   try {
-    account = await fsGet('accounts/' + identity.uid, env);
+    account = await getAccount(identity.uid, env);
   } catch (e) {
     console.error('[cancel] account lookup failed:', e.message);
     return _jsonError('Could not load your account. Please try again.', 500, env);
   }
 
-  if (!account || account.planId === 'free') {
+  if (!account || account.planId === 'free' || account.status === 'expired' || account.status === 'none') {
     return _jsonError('You do not have an active paid subscription to cancel.', 400, env);
   }
 
@@ -38,60 +46,60 @@ export async function handleSubscriptionCancel(request, env) {
     }), { status: 200, headers: _corsJsonHeaders(env) });
   }
 
-  if (!account.paystackSubscriptionCode) {
-    console.error('[cancel] active paid account with no paystackSubscriptionCode: uid=' + identity.uid);
+  // The code must be a real subscription code (SUB_...). Older records could
+  // hold nothing, or a plan code by mistake, so recover it from Paystack.
+  let subscriptionCode = String(account.paystackSubscriptionCode || '').startsWith('SUB_')
+    ? account.paystackSubscriptionCode
+    : null;
+
+  if (!subscriptionCode && account.paystackCustomerCode) {
+    try {
+      const planCode = account.paystackPlanCode || resolvePaystackPlanCode(account.planId, env);
+      const found = await findSubscriptionForCustomer(env, account.paystackCustomerCode, planCode);
+      if (found && found.subscription_code) {
+        subscriptionCode = found.subscription_code;
+        try {
+          await fsUpdate('accounts/' + identity.uid, {
+            paystackSubscriptionCode: subscriptionCode,
+            updatedAt: new Date().toISOString(),
+          }, env);
+        } catch (e) {
+          console.warn('[cancel] could not save recovered subscription code:', e.message);
+        }
+      }
+    } catch (e) {
+      console.error('[cancel] subscription recovery failed:', e.message);
+      return _jsonError('Could not process cancellation right now. Please try again.', 502, env);
+    }
+  }
+
+  if (!subscriptionCode) {
+    console.error('[cancel] active paid account with no findable subscription: uid=' + identity.uid);
     return _jsonError(
       'Could not find your subscription details. Please contact support so we can cancel this for you.',
       500, env
     );
   }
 
-  let emailToken;
+  let result;
   try {
-    const subRes = await fetch(
-      'https://api.paystack.co/subscription/' + encodeURIComponent(account.paystackSubscriptionCode),
-      { headers: { Authorization: 'Bearer ' + env.PAYSTACK_SECRET_KEY } }
-    );
-    if (!subRes.ok) {
-      const text = await subRes.text().catch(() => '');
-      throw new Error('Paystack subscription lookup failed (' + subRes.status + '): ' + text.slice(0, 200));
-    }
-    const subData = await subRes.json();
-    emailToken = subData?.data?.email_token;
-    if (!emailToken) throw new Error('No email_token in Paystack subscription response.');
+    result = await disablePaystackSubscription(env, subscriptionCode);
   } catch (e) {
-    console.error('[cancel] could not fetch subscription details:', e.message);
-    return _jsonError('Could not process cancellation right now. Please try again.', 502, env);
-  }
-
-  try {
-    const disableRes = await fetch('https://api.paystack.co/subscription/disable', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + env.PAYSTACK_SECRET_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: account.paystackSubscriptionCode,
-        token: emailToken,
-      }),
-    });
-
-    if (!disableRes.ok) {
-      const text = await disableRes.text().catch(() => '');
-      throw new Error('Paystack disable failed (' + disableRes.status + '): ' + text.slice(0, 200));
-    }
-  } catch (e) {
-    console.error('[cancel] Paystack disable call failed:', e.message);
+    console.error('[cancel] Paystack disable failed:', e.message);
     return _jsonError('Could not cancel your subscription right now. Please try again.', 502, env);
   }
+
+  // Keep access until the date Paystack would have charged next.
+  const periodEnd = saneNextDate(result.nextPaymentDate, new Date()) || account.periodEnd;
 
   try {
     await fsUpdate('accounts/' + identity.uid, {
       status: 'cancelled',
+      periodEnd: periodEnd || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }, env);
   } catch (e) {
+    // Paystack has stopped billing; the subscription.not_renew webhook will bring Firestore in line.
     console.error('[cancel] Paystack cancelled but Firestore update failed:', e.message);
   }
 
@@ -99,13 +107,13 @@ export async function handleSubscriptionCancel(request, env) {
     uid: identity.uid,
     email: identity.email,
     planId: account.planId,
-    periodEnd: account.periodEnd,
+    periodEnd,
   });
 
   return new Response(JSON.stringify({
     status: 'cancelled',
-    periodEnd: account.periodEnd,
-    message: 'Your subscription has been cancelled. You\'ll keep access until ' + _formatDate(account.periodEnd) + '.',
+    periodEnd,
+    message: 'Your subscription has been cancelled. You\'ll keep access until ' + _formatDate(periodEnd) + '.',
   }), { status: 200, headers: _corsJsonHeaders(env) });
 }
 
