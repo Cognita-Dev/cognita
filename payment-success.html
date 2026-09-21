@@ -27,7 +27,8 @@
 
   const statusEl = document.getElementById('paymentStatus');
   const params = new URLSearchParams(window.location.search);
-  const reference = params.get('reference') || params.get('trxref');
+  // Only safe characters are kept: the reference is shown in messages below.
+  const reference = (params.get('reference') || params.get('trxref') || '').replace(/[^A-Za-z0-9.=-]/g, '');
 
   const MAX_ATTEMPTS = 12;   // ~24 seconds of polling
   const POLL_INTERVAL_MS = 2000;
@@ -44,7 +45,7 @@
     statusEl.innerHTML =
       '<i class="ph ph-clock" style="font-size:2.5rem;color:var(--warning);"></i>' +
       '<h1>Almost there</h1>' +
-      '<p>Your payment was received and is still being confirmed. This page will update automatically — you can also check back in your account in a minute.</p>' +
+      '<p>Your payment is still being confirmed. You can check back in your account in a minute. If your plan has not appeared after a few minutes, contact support.</p>' +
       '<a href="/account.html" class="payment-retry-btn">Go to account</a>';
   }
 
@@ -63,23 +64,35 @@
     showError('No payment reference was found. If you completed a payment, check your account page in a minute.');
   } else {
     let attempts = 0;
-    let lastKnownPlanId = null;
 
-    // Poll /api/account rather than trusting the redirect itself — the
-    // Paystack webhook is the only thing that actually activates the plan,
-    // and it may land a moment after this page loads.
+    // Ask the server about THIS payment reference. The server checks its own
+    // records and, if the webhook is late, asks Paystack directly. We never
+    // trust the redirect itself, and we never confuse this payment with a
+    // plan the person already had.
     async function pollAccount() {
       attempts++;
       try {
-        const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
+        const res = await window.Auth.authedFetch(
+          WORKER_URL + '/api/payment/status?reference=' + encodeURIComponent(reference)
+        );
         const data = await res.json();
 
-        if (res.ok && data.status === 'active' && data.planId !== 'free') {
+        if (res.ok && data.status === 'success') {
           showSuccess(data.planName);
           return;
         }
-
-        lastKnownPlanId = data.planId;
+        if (res.ok && data.status === 'failed') {
+          showError('This payment was not completed, so you have not been charged. You can try again from the plans page.');
+          return;
+        }
+        if (res.ok && data.status === 'review') {
+          showError('Your payment was received but needs a quick manual check before your plan can be activated. Please contact support and quote reference ' + reference + '.');
+          return;
+        }
+        if (res.status === 404 || res.status === 400) {
+          showError('We could not find this payment. If you were charged, please contact support and quote reference ' + reference + '.');
+          return;
+        }
       } catch (e) {
         console.error('[payment-success] poll error:', e.message);
       }
