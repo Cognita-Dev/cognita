@@ -22,8 +22,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Cognita';
   const options = {
     body: data.body || '',
-    icon: '/pwa/icons/icon-192.png',
-    badge: '/pwa/icons/icon-192.png',
+    icon: '/pwa/icons/cognita.png',
+    badge: '/pwa/icons/cognita.png',
     data: { url: data.url || '/app.html?view=reminders' },
     tag: data.tag || undefined,
   };
