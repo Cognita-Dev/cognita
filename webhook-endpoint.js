@@ -2,6 +2,11 @@
 
 import { fsGet, fsSet, fsUpdate } from './firestore-rest.js';
 import { PLAN_HIERARCHY } from './entitlements.js';
+import {
+  sendPaymentReceiptEmail,
+  sendPaymentFailedEmail,
+  sendSubscriptionCancelledEmail,
+} from './emails/billing-emails.js';
 
 async function _verifyPaystackSignature(rawBody, signatureHeader, secretKey) {
   if (!signatureHeader) return false;
@@ -120,6 +125,16 @@ async function _handleChargeSuccess(data, env) {
   if (attempt) {
     await fsUpdate('paymentAttempts/' + reference, { status: 'completed' }, env);
   }
+
+  await sendPaymentReceiptEmail(env, {
+    uid,
+    email: data.customer?.email,
+    planId,
+    amountKobo: data.amount,
+    reference,
+    paidAt: data.paid_at,
+    periodEnd: periodEnd.toISOString(),
+  });
 }
 
 async function _handleRenewalSuccess(data, env) {
@@ -140,6 +155,17 @@ async function _handleRenewalSuccess(data, env) {
     periodEnd: periodEnd.toISOString(),
     updatedAt: new Date().toISOString(),
   }, env);
+
+  const renewedAccount = await fsGet('accounts/' + uid, env);
+  await sendPaymentReceiptEmail(env, {
+    uid,
+    email: data.customer?.email,
+    planId: renewedAccount?.planId,
+    amountKobo: data.amount,
+    paidAt: data.paid_at,
+    periodEnd: periodEnd.toISOString(),
+    renewal: true,
+  });
 }
 
 async function _handleSubscriptionCancelled(data, env) {
@@ -155,6 +181,13 @@ async function _handleSubscriptionCancelled(data, env) {
     periodEnd: account?.periodEnd || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }, env);
+
+  await sendSubscriptionCancelledEmail(env, {
+    uid,
+    email: data.customer?.email,
+    planId: account?.planId,
+    periodEnd: account?.periodEnd,
+  });
 }
 
 async function _handlePaymentFailed(data, env) {
@@ -168,6 +201,13 @@ async function _handlePaymentFailed(data, env) {
     status: 'past_due',
     updatedAt: new Date().toISOString(),
   }, env);
+
+  const failedAccount = await fsGet('accounts/' + uid, env);
+  await sendPaymentFailedEmail(env, {
+    uid,
+    email: data.customer?.email,
+    planId: failedAccount?.planId,
+  });
 }
 
 async function _findUidByCustomerCode(customerCode, env) {
