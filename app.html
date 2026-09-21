@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/reminders.css">
 <link rel="stylesheet" href="/css/resource-renderers.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
@@ -621,27 +622,25 @@
 
     <div class="resources-scroll">
 
-      <!-- ── Notifications status ── -->
-      <section class="resources-generate-panel" id="remindersNotifBanner" hidden>
-        <div class="reminders-notif-row">
-          <div>
-            <h2 class="resources-heading" id="remindersNotifTitle">Notifications</h2>
-            <p class="resources-subheading" id="remindersNotifText"></p>
-          </div>
-          <button type="button" class="modal-submit-btn" id="remindersEnableNotifBtn" style="width:auto; padding:var(--space-3) var(--space-5);">
-            Turn on notifications
-          </button>
+      <!-- ── Notifications status: one consolidated, always-actionable card.
+           (Previously this was two stacked panels, and the first one's text
+           said "see above" to point at the second — which didn't reliably
+           sit above it and had no way to actually jump there. The how-to
+           steps now live inside this single card, and "Show me how" is a
+           real button, not a dead cross-reference.) ── -->
+      <section class="reminders-notice" id="remindersNotifBanner" hidden>
+        <div class="reminders-notice-icon"><i class="ph ph-bell-simple-ringing" id="remindersNotifIcon"></i></div>
+        <div class="reminders-notice-content">
+          <h2 class="reminders-notice-title" id="remindersNotifTitle">Notifications</h2>
+          <p class="reminders-notice-text" id="remindersNotifText"></p>
+          <ol class="reminders-ios-steps" id="remindersIosSteps" hidden>
+            <li><i class="ph ph-export"></i><span>Tap <strong>Share</strong> in Safari's toolbar</span></li>
+            <li><i class="ph ph-plus-square"></i><span>Choose <strong>Add to Home Screen</strong></span></li>
+            <li><i class="ph ph-house-simple"></i><span>Open Cognita from that new icon</span></li>
+          </ol>
+          <button type="button" class="reminders-notice-dismiss" id="remindersIosHintDismiss" hidden>Got it</button>
         </div>
-      </section>
-
-      <!-- ── iOS install hint (shown once, on iPhone Safari, not yet installed) ── -->
-      <section class="resources-generate-panel" id="remindersIosHint" hidden>
-        <h2 class="resources-heading">Install Cognita to get notifications</h2>
-        <p class="resources-subheading">
-          On iPhone, notifications only work once Cognita is added to your Home Screen.
-          Tap <i class="ph ph-export"></i> Share, then "Add to Home Screen" &mdash; open Cognita from that icon afterward.
-        </p>
-        <button type="button" class="resource-form-back" id="remindersIosHintDismiss">Got it</button>
+        <button type="button" class="reminders-notice-action" id="remindersEnableNotifBtn">Turn on notifications</button>
       </section>
 
       <section class="resources-generate-panel">
@@ -650,7 +649,7 @@
             <h2 class="resources-heading">Upcoming</h2>
             <p class="resources-subheading">Deadlines, exams, meetings &mdash; anything with a date.</p>
           </div>
-          <button type="button" class="modal-submit-btn" id="remindersAddBtn" style="width:auto; padding:var(--space-3) var(--space-5);">
+          <button type="button" class="modal-submit-btn" id="remindersAddBtn">
             <i class="ph ph-plus"></i> Add reminder
           </button>
         </div>
@@ -716,7 +715,7 @@
         </label>
 
         <div style="display:flex; gap:var(--space-3);">
-          <button type="button" class="resource-form-back" id="reminderDeleteBtn" style="display:none; color:var(--danger);">
+          <button type="button" class="resource-form-back" id="reminderDeleteBtn" aria-label="Delete reminder" title="Delete reminder" style="display:none; color:var(--danger);">
             <i class="ph ph-trash"></i> Delete
           </button>
           <button type="button" class="modal-submit-btn" id="reminderSaveBtn" style="flex:1;">Save reminder</button>
