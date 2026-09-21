@@ -10,8 +10,6 @@ import {
   updateProfile,
   signOut,
   onAuthStateChanged,
-  sendPasswordResetEmail,
-  sendEmailVerification,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 // Firebase web config is NOT a secret — it's meant to be public and is
@@ -36,6 +34,30 @@ const GOOGLE_WEB_CLIENT_ID =
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
+// Account emails (verify email, reset password) are sent by our own Worker
+// from our own domain, not by Firebase. See emails/auth-email-endpoint.js.
+const AUTH_MAIL_API = 'https://api.cognita.com.ng';
+
+async function _requestAuthEmail(path, body, user) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (user) headers.Authorization = 'Bearer ' + (await user.getIdToken());
+  const res = await fetch(AUTH_MAIL_API + path, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) {
+    let message = 'Could not send the email. Please try again.';
+    try {
+      const data = await res.json();
+      if (data && data.error) message = data.error;
+    } catch (_) { /* keep default message */ }
+    const err = new Error(message);
+    if (res.status === 429) err.code = 'auth/too-many-requests';
+    throw err;
+  }
+}
 
 // ── Session state ──────────────────────────────────────────────────────
 //
@@ -242,7 +264,7 @@ async function signUpWithEmail(email, password, name) {
   // person still gets reminded on their next visit — see the "unverified
   // email" banner wired up in requireAuthOrRedirect() below.
   try {
-    await sendEmailVerification(result.user);
+    await _requestAuthEmail('/api/auth/send-verification', {}, result.user);
   } catch (e) {
     console.warn('[Auth] Could not send verification email (non-fatal):', e.message);
   }
@@ -250,7 +272,7 @@ async function signUpWithEmail(email, password, name) {
 }
 
 async function resetPassword(email) {
-  await sendPasswordResetEmail(auth, email);
+  await _requestAuthEmail('/api/auth/send-password-reset', { email });
 }
 
 /**
@@ -262,7 +284,7 @@ async function resetPassword(email) {
 async function resendVerificationEmail() {
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in.');
-  await sendEmailVerification(user);
+  await _requestAuthEmail('/api/auth/send-verification', {}, user);
 }
 
 /**
