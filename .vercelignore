@@ -28,7 +28,6 @@ providers.js
 subscription.js
 usage.js
 library-cache.js
-excerpt-builder.js
 download-proxy.js
 
 connectors.js
@@ -42,6 +41,10 @@ google-tools.js
 docx-builder.js
 pdf-builder.js
 pptx-builder.js
+
+# NOTE: excerpt-builder.js is intentionally NOT listed here. It is shared:
+# the Worker bundles it, AND the browser imports it (js/resources.js).
+# Ignoring it makes the Resources page fail to load on Vercel.
 
 worker.js
 wrangler.jsonc
