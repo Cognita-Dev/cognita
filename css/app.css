@@ -1480,12 +1480,217 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 }
 
 
-/* Note Taker */
-.note-taker-modal{position:fixed;inset:0;z-index:100;background:color-mix(in srgb,var(--bg-base) 72%,transparent);display:grid;place-items:center;padding:16px}.note-taker-modal[hidden]{display:none}.note-taker-panel{width:min(760px,100%);max-height:min(860px,calc(100dvh - 32px));overflow:auto;background:var(--bg-elevated);border:1px solid var(--border);border-radius:20px;box-shadow:0 24px 80px #0002;padding:28px}.note-taker-header,.note-taker-complete-head,.note-taker-status,.note-taker-controls,.note-taker-actions{display:flex;align-items:center;gap:12px}.note-taker-header,.note-taker-complete-head{justify-content:space-between}.note-taker-header h2,.note-taker-complete h3{margin:0;font-size:1.6rem;letter-spacing:-.04em}.note-taker-header p:not(.eyebrow),.note-taker-complete-head p{margin:6px 0 0;color:var(--text-3);font-size:var(--text-sm)}.eyebrow{margin:0 0 6px;color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}.note-taker-icon-btn{width:34px;height:34px;border-radius:10px;color:var(--text-3)}.note-taker-recovery{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-top:20px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg-subtle)}.note-taker-recovery p{margin:0;color:var(--text-2);font-size:var(--text-sm)}.note-taker-recovery-actions{display:flex;gap:8px;flex-shrink:0}.note-taker-setup{display:grid;gap:16px;margin-top:32px}.note-taker-setup label{display:grid;gap:8px;color:var(--text-2);font-size:var(--text-sm);font-weight:600}.note-taker-setup input,.note-taker-setup select,.note-taker-editor{border:1px solid var(--border);border-radius:10px;background:var(--bg-base);color:var(--text-1);padding:12px;font:inherit}.note-taker-privacy{margin:0;color:var(--text-3);font-size:var(--text-sm);display:flex;gap:8px;align-items:flex-start}.note-taker-primary,.note-taker-secondary,.note-taker-stop{border-radius:10px;padding:11px 15px;font-weight:600}.note-taker-primary{background:var(--accent);color:white}.note-taker-secondary{background:var(--bg-subtle);color:var(--text-2)}.note-taker-stop{margin-left:auto;background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}.note-taker-status{margin:28px 0 16px;flex-wrap:wrap;color:var(--text-2)}.note-taker-status strong{color:var(--text-1)}.note-taker-status>span:last-child{margin-left:auto;color:var(--text-3);font-size:var(--text-sm)}.note-taker-pulse{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 calc(8px + var(--level,0)*14px) var(--accent)}.note-taker-transcript{min-height:320px;max-height:48dvh;overflow:auto;padding:18px 4px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}.note-segment{display:grid;grid-template-columns:64px 1fr;gap:18px;margin:0 0 20px;line-height:1.7}.note-segment time{font-size:12px;color:var(--text-4);padding-top:4px}.note-segment.interim{opacity:.48}.note-taker-empty{color:var(--text-4);text-align:center;padding:80px 20px}.note-taker-controls{padding-top:18px}.note-taker-editor{width:100%;min-height:320px;margin:24px 0;resize:vertical;line-height:1.7}.note-taker-actions{justify-content:flex-end}.attach-menu-item small{display:block;color:var(--text-4);font-size:11px;font-weight:400;margin-top:2px}.attach-menu-item strong{display:block}@media(max-width:600px){.note-taker-modal{padding:0;align-items:end}.note-taker-panel{border-radius:20px 20px 0 0;max-height:calc(100dvh - 8px);padding:22px 16px;padding-bottom:calc(22px + env(safe-area-inset-bottom))}.note-taker-transcript{min-height:260px}.note-taker-status>span:last-child{width:100%;margin-left:22px}.note-taker-controls{position:sticky;bottom:0;background:var(--bg-elevated);padding-bottom:4px}.note-taker-stop{padding:13px 12px}.note-segment{grid-template-columns:48px 1fr;gap:10px}}
+/* ══════════════════════════════════════════════════════════════
+   Note Taker — redone for a tighter, native-iOS-sheet feel.
+   Rewritten (not minified) on purpose: this block used to be one
+   1900-character line, which made every future diff unreviewable.
+   Sizes below are deliberately ~15–20% smaller across the board —
+   the old version read as "everything is big" because every
+   element (title, inputs, buttons, transcript rows) independently
+   reached for a generous size with nothing to anchor it back down.
+   ══════════════════════════════════════════════════════════════ */
+.note-taker-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: color-mix(in srgb, var(--bg-base) 72%, transparent);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+.note-taker-modal[hidden] { display: none; }
+.note-taker-panel {
+  width: min(560px, 100%);
+  max-height: min(700px, calc(100dvh - 32px));
+  overflow: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+}
+.note-taker-header,
+.note-taker-complete-head,
+.note-taker-status,
+.note-taker-controls,
+.note-taker-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.note-taker-header,
+.note-taker-complete-head { justify-content: space-between; align-items: flex-start; }
+.note-taker-header h2,
+.note-taker-complete h3 {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+}
+.note-taker-header p:not(.eyebrow),
+.note-taker-complete-head p {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.note-taker-icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.note-taker-icon-btn:hover { color: var(--text-1); background: var(--bg-subtle); }
+.note-taker-recovery {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+.note-taker-recovery p { margin: 0; color: var(--text-2); font-size: var(--text-sm); }
+.note-taker-recovery-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
+.note-taker-setup { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
+.note-taker-setup label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.note-taker-setup input,
+.note-taker-setup select,
+.note-taker-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-1);
+  padding: var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+.note-taker-setup input:focus,
+.note-taker-setup select:focus,
+.note-taker-editor:focus { border-color: var(--accent-2); background: var(--bg-elevated); }
+.note-taker-setup select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: var(--space-7);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238c8c86' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+}
+.note-taker-privacy {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+.note-taker-privacy i { flex-shrink: 0; margin-top: 1px; }
+.note-taker-primary,
+.note-taker-secondary,
+.note-taker-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+.note-taker-primary { background: var(--accent); color: #fff; width: 100%; }
+.note-taker-primary:hover { background: var(--accent-hover); }
+.note-taker-secondary { background: var(--bg-subtle); color: var(--text-2); }
+.note-taker-secondary:hover { color: var(--text-1); }
+.note-taker-stop { margin-left: auto; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.note-taker-status {
+  margin: var(--space-5) 0 var(--space-3);
+  flex-wrap: wrap;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+.note-taker-status strong { color: var(--text-1); }
+.note-taker-status > span:last-child { margin-left: auto; color: var(--text-3); font-size: var(--text-xs); }
+.note-taker-pulse {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 calc(6px + var(--level, 0) * 12px) var(--accent);
+}
+.note-taker-transcript {
+  min-height: 220px;
+  max-height: 44dvh;
+  overflow: auto;
+  padding: var(--space-4) 2px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.note-segment {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  line-height: 1.6;
+  font-size: var(--text-sm);
+}
+.note-segment time { font-size: 11px; color: var(--text-4); padding-top: 3px; }
+.note-segment.interim { opacity: 0.48; }
+.note-taker-empty { color: var(--text-4); text-align: center; padding: var(--space-8) var(--space-4); font-size: var(--text-sm); }
+.note-taker-controls { padding-top: var(--space-4); }
+.note-taker-editor { width: 100%; min-height: 220px; margin: var(--space-4) 0; resize: vertical; line-height: 1.6; }
+.note-taker-actions { justify-content: flex-end; flex-wrap: wrap; }
+.attach-menu-item small { display: block; color: var(--text-4); font-size: 11px; font-weight: 400; margin-top: 2px; }
+.attach-menu-item strong { display: block; }
+
+@media (max-width: 600px) {
+  .note-taker-modal { padding: 0; align-items: end; }
+  .note-taker-panel {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: calc(100dvh - 8px);
+    padding: var(--space-4);
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  }
+  .note-taker-header h2 { font-size: var(--text-lg); }
+  .note-taker-transcript { min-height: 200px; }
+  .note-taker-status > span:last-child { width: 100%; margin-left: 44px; }
+  .note-taker-controls { position: sticky; bottom: 0; background: var(--bg-elevated); padding-bottom: 4px; }
+  .note-segment { grid-template-columns: 40px 1fr; gap: var(--space-2); }
+}
 
 
 /* ══════════════════════════════════════════════════════════════
-   Reminders
+   Reminders — shared bits used across the reminders view.
+   Layout- and component-level rules live in css/reminders.css;
+   this file keeps only the two small pieces of markup (the
+   upcoming/past row layout and the per-row delete button) that
+   were already here so nothing that referenced them breaks.
    ══════════════════════════════════════════════════════════════ */
 .reminders-notif-row {
   display: flex;
@@ -1494,13 +1699,11 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   gap: var(--space-4);
   flex-wrap: wrap;
 }
-.reminder-row {
-  cursor: pointer;
-}
+.reminder-row { cursor: pointer; }
 .reminder-delete-btn {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1508,17 +1711,9 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   color: var(--text-3);
   transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
-.reminder-delete-btn:hover {
-  color: var(--danger);
-  background: var(--danger-subtle);
-}
-.visual-type-option.is-disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.reminder-delete-btn:hover { color: var(--danger); background: var(--danger-subtle); }
+.visual-type-option.is-disabled { opacity: 0.4; cursor: not-allowed; }
 
 @media (prefers-color-scheme: dark) {
-  .reminder-delete-btn:hover {
-    background: color-mix(in srgb, var(--danger) 18%, transparent);
-  }
+  .reminder-delete-btn:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
 }
