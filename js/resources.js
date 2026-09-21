@@ -214,15 +214,23 @@ export async function mount() {
   if (!user) return;
 
   renderAccountInfo(user);
-  await refreshUsage();
-  await refreshAccount();
 
+  // Draw everything that needs no network FIRST, so the recipe (resource
+  // type) cards and the form always appear instantly — even if the
+  // usage/account/list requests below are slow or fail.
   renderResourceTypeGrid();
   wireForm();
   wireResultPanel();
   wireLibraryPreviewPanel();
-  await loadMyResources();
-  await loadRecommendedLibrary();
+
+  // These are independent of each other, so run them side by side. Each
+  // one already handles its own errors, so one failing can't block the rest.
+  await Promise.allSettled([
+    refreshUsage(),
+    refreshAccount(),
+    loadMyResources(),
+    loadRecommendedLibrary(),
+  ]);
 }
 
 async function refreshAccount() {
@@ -1677,7 +1685,13 @@ async function loadMyResources() {
       WORKER_URL + '/api/resources/list'
     );
 
-    if (!res.ok) return;
+    if (!res.ok) {
+      list.innerHTML =
+        '<div class="my-resources-empty">' +
+        'Could not load your resources. Please refresh and try again.' +
+        '</div>';
+      return;
+    }
 
     const data = await res.json();
 
@@ -1773,5 +1787,9 @@ async function loadMyResources() {
       '[resources] could not load resource list:',
       e.message
     );
+    list.innerHTML =
+      '<div class="my-resources-empty">' +
+      'Could not load your resources. Please refresh and try again.' +
+      '</div>';
   }
 }
