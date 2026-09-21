@@ -61,6 +61,7 @@ import {
   handleNoteChunkTranscribe,
 } from './note-taker-endpoint.js';
 import { handleSendVerificationEmail, handleSendPasswordReset } from './emails/auth-email-endpoint.js';
+import { handleSendWelcomeEmail, handlePasswordChangedNotice } from './emails/account-email-endpoint.js';
 import {
   handleConnectorStart,
   handleConnectorCallback,
@@ -101,6 +102,14 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/auth/send-password-reset') {
       return handleSendPasswordReset(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/send-welcome') {
+      return handleSendWelcomeEmail(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/notify-password-changed') {
+      return handlePasswordChangedNotice(request, env);
     }
 
     if (request.method === 'GET' && url.pathname === '/api/plans') {
