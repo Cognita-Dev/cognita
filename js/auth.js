@@ -330,6 +330,28 @@ async function logOut() {
   _clearUserScopedLocalData();
 }
 
+// Asks the server to send the one-time welcome email. The server decides
+// whether it is due (new account, verified, not sent before), so this is
+// safe to call on every protected page load. Once the server gives a final
+// answer we remember it in this browser and stop asking. Never blocks or
+// breaks the page.
+async function _maybeSendWelcomeEmail(user) {
+  const key = 'cognita:welcomeAsked:' + user.uid;
+  try {
+    try { if (localStorage.getItem(key)) return; } catch (_) { /* storage unavailable */ }
+    const token = await user.getIdToken();
+    const res = await fetch(AUTH_MAIL_API + '/api/auth/send-welcome', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    if (data && data.final) {
+      try { localStorage.setItem(key, '1'); } catch (_) { /* storage unavailable */ }
+    }
+  } catch (_) { /* welcome email is a nicety, never a blocker */ }
+}
+
 async function authedFetch(url, options = {}) {
   // Never run before the saved login has been restored.
   await ready();
@@ -544,6 +566,7 @@ async function requireAuthOrRedirect() {
     }
   }
 
+  _maybeSendWelcomeEmail(auth.currentUser || user);
   return user;
 }
 
