@@ -223,7 +223,7 @@ export async function fsDelete(path, env) {
  * fieldName == value, ordered by orderByField descending, limited to
  * limitCount results. Used for "my resources" style listings.
  */
-export async function fsQuery(collectionId, fieldName, value, orderByField, limitCount, env) {
+export async function fsQuery(collectionId, fieldName, value, orderByField, limitCount, env, direction) {
   const token = await _getAccessToken(env);
 
   const structuredQuery = {
@@ -239,7 +239,10 @@ export async function fsQuery(collectionId, fieldName, value, orderByField, limi
   };
 
   if (orderByField) {
-    structuredQuery.orderBy = [{ field: { fieldPath: orderByField }, direction: 'DESCENDING' }];
+    // Every existing caller omits `direction`, so this keeps defaulting to
+    // DESCENDING exactly as before. reminders-storage.js is the first
+    // caller to pass 'ASCENDING' (soonest-first listings).
+    structuredQuery.orderBy = [{ field: { fieldPath: orderByField }, direction: direction || 'DESCENDING' }];
   }
 
   const queryUrl = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID +
