@@ -15,7 +15,7 @@ import {
   handleResourceEdit,
   handleResourceRegenerate,
 } from './resources-endpoint.js';
-import { handlePaymentInitialize } from './payment-endpoint.js';
+import { handlePaymentInitialize, handlePaymentStatus } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
@@ -219,6 +219,10 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/payment/initialize') {
       return handlePaymentInitialize(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/payment/status') {
+      return handlePaymentStatus(request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/payment/webhook') {
