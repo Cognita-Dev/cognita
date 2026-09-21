@@ -91,6 +91,9 @@
   });
   const auth = getAuth(app);
 
+  // Our Worker sends the "your password was changed" email.
+  const AUTH_MAIL_API = 'https://api.cognita.com.ng';
+
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
   const code = params.get('oobCode');
@@ -176,8 +179,10 @@
       $('confirmError').textContent = '';
       $('resetGeneralError').textContent = '';
 
-      if (pw.value.length < 8) {
-        $('passwordError').textContent = 'Use at least 8 characters.';
+      // Same rules as the sign-up page.
+      const value = pw.value;
+      if (value.length < 8 || !/[a-z]/.test(value) || !/[A-Z]/.test(value) || !/[0-9]/.test(value)) {
+        $('passwordError').textContent = 'Use at least 8 characters, with a lowercase letter, an uppercase letter and a number.';
         return;
       }
       if (pw.value !== confirm.value) {
@@ -190,6 +195,18 @@
       btn.querySelector('.btn-spinner').hidden = false;
       try {
         await confirmPasswordReset(auth, code, pw.value);
+
+        // Tell the account owner by email. Fire and forget: the page must
+        // never wait on it or fail because of it.
+        try {
+          fetch(AUTH_MAIL_API + '/api/auth/notify-password-changed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+            keepalive: true,
+          }).catch(() => {});
+        } catch (_) { /* ignore */ }
+
         showMessage({
           ok: true,
           title: 'Password updated',
