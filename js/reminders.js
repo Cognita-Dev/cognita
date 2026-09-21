@@ -322,29 +322,63 @@ function wireNotifications() {
   const dismissBtn = document.getElementById('remindersIosHintDismiss');
   dismissBtn.addEventListener('click', () => {
     localStorage.setItem(IOS_HINT_DISMISSED_KEY, '1');
-    document.getElementById('remindersIosHint').hidden = true;
+    renderIosNotice({ expanded: false });
   });
+}
+
+// Renders the iOS "add to Home Screen" state of the notice card. This
+// replaces the old two-panel layout where one panel's text said
+// "(see above)" to reference a second panel — a reference that broke
+// as soon as anything reordered, and was never clickable to begin
+// with. Now there's one card, and the only cross-reference ("Show me
+// how") is a real button that expands the steps in place.
+function renderIosNotice({ expanded }) {
+  const text = document.getElementById('remindersNotifText');
+  const steps = document.getElementById('remindersIosSteps');
+  const dismissBtn = document.getElementById('remindersIosHintDismiss');
+
+  steps.hidden = !expanded;
+  dismissBtn.hidden = !expanded;
+
+  if (expanded) {
+    text.textContent = 'Add Cognita to your Home Screen to turn on notifications on iPhone:';
+    return;
+  }
+
+  text.innerHTML = '';
+  text.append('Add Cognita to your Home Screen to turn on notifications on iPhone. ');
+  const link = document.createElement('button');
+  link.type = 'button';
+  link.className = 'reminders-inline-link';
+  link.textContent = 'Show me how';
+  link.addEventListener('click', () => {
+    localStorage.removeItem(IOS_HINT_DISMISSED_KEY);
+    renderIosNotice({ expanded: true });
+  });
+  text.append(link);
 }
 
 async function updateNotificationUI() {
   const banner = document.getElementById('remindersNotifBanner');
   const title = document.getElementById('remindersNotifTitle');
   const text = document.getElementById('remindersNotifText');
+  const icon = document.getElementById('remindersNotifIcon');
   const btn = document.getElementById('remindersEnableNotifBtn');
-  const iosHint = document.getElementById('remindersIosHint');
 
   if (isIos() && !isStandalone()) {
-    iosHint.hidden = !!localStorage.getItem(IOS_HINT_DISMISSED_KEY);
     banner.hidden = false;
+    icon.className = 'ph ph-bell-simple-ringing';
     title.textContent = 'Notifications';
-    text.textContent = 'Add Cognita to your Home Screen (see above) to turn on notifications on iPhone.';
+    renderIosNotice({ expanded: !localStorage.getItem(IOS_HINT_DISMISSED_KEY) });
     btn.style.display = 'none';
     return;
   }
-  iosHint.hidden = true;
+  document.getElementById('remindersIosSteps').hidden = true;
+  document.getElementById('remindersIosHintDismiss').hidden = true;
 
   if (!pushSupported()) {
     banner.hidden = false;
+    icon.className = 'ph ph-bell-slash';
     title.textContent = 'Notifications';
     text.textContent = "This browser doesn't support notifications. You can still get reminders by email.";
     btn.style.display = 'none';
@@ -355,6 +389,7 @@ async function updateNotificationUI() {
 
   if (permission === 'denied') {
     banner.hidden = false;
+    icon.className = 'ph ph-bell-slash';
     title.textContent = 'Notifications are blocked';
     text.textContent = 'Allow notifications for Cognita in your browser\u2019s site settings, then reload this page.';
     btn.style.display = 'none';
@@ -376,6 +411,7 @@ async function updateNotificationUI() {
   }
 
   banner.hidden = false;
+  icon.className = 'ph ph-bell-simple-ringing';
   title.textContent = 'Notifications';
   text.textContent = 'Get notified about reminders on this device.';
   btn.style.display = '';
