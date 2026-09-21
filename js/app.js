@@ -124,7 +124,7 @@ export async function mount() {
   wireDocumentModal();
   wireConnectorsModal();
   showConnectorRedirectBanner();
-  wireSuggestionCards();
+  wireComposerSuggestions();
   startPlaceholderTypewriter();
 
   window.addEventListener('cognita:new-chat', startNewConversation);
@@ -1070,10 +1070,44 @@ function renderComposerAttachments() {
   });
 }
 
-function wireSuggestionCards() {
-  document.querySelectorAll('.suggestion-row').forEach((row) => {
-    row.addEventListener('click', () => {
-      sendMessage(row.dataset.prompt);
+// The four prompt chips live at the top of the composer now (not in the
+// empty state), and are meant to be a brief nudge on a fresh sign-in —
+// not a permanent fixture the user has to look past every time they
+// open the chat. sessionStorage means they reappear on the next real
+// login (new tab/session) but not on every view switch within one.
+const SUGGESTIONS_SEEN_KEY = 'cognita:composerSuggestionsSeen';
+const SUGGESTIONS_AUTOHIDE_MS = 6000;
+
+function wireComposerSuggestions() {
+  const el = document.getElementById('composerSuggestions');
+  if (!el) return;
+
+  if (sessionStorage.getItem(SUGGESTIONS_SEEN_KEY)) {
+    el.remove();
+    return;
+  }
+  sessionStorage.setItem(SUGGESTIONS_SEEN_KEY, '1');
+
+  let hidden = false;
+  const hide = () => {
+    if (hidden) return;
+    hidden = true;
+    el.classList.add('is-hidden');
+    setTimeout(() => el.remove(), 400);
+  };
+
+  const autohideTimer = setTimeout(hide, SUGGESTIONS_AUTOHIDE_MS);
+
+  const input = document.getElementById('composerInput');
+  if (input) {
+    input.addEventListener('input', () => { clearTimeout(autohideTimer); hide(); }, { once: true });
+  }
+
+  el.querySelectorAll('.composer-suggestion-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      clearTimeout(autohideTimer);
+      sendMessage(chip.dataset.prompt);
+      hide();
     });
   });
 }
