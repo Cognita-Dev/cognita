@@ -69,7 +69,7 @@ export async function sendPaymentReceiptEmail(env, info) {
       renewal: !!info.renewal,
     });
 
-    const key = 'receipt:' + (info.reference || info.uid + ':' + paidAt.toISOString().slice(0, 10));
+    const key = 'receipt:' + (info.reference || info.dedupeKey || info.uid + ':' + paidAt.toISOString().slice(0, 10));
     await _sendOnce(env, key, SIXTY_DAYS, email, message, 'payment receipt');
   } catch (e) {
     console.error('[billing-email] receipt failed:', e.message);
