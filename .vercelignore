@@ -49,3 +49,5 @@ wrangler.jsonc
 recipes/
 emails/
 reminders/
+
+pwa/vapid-keygen.html
