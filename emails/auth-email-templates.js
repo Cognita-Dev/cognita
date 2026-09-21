@@ -267,6 +267,25 @@ export function buildPaymentFailedEmail({ name, planName }) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// Reminders
+// ══════════════════════════════════════════════════════════════
+
+export function buildReminderEmail({ title, whenText, notes, url }) {
+  const paragraphs = [whenText];
+  if (notes) paragraphs.push(notes);
+  return build(title + ' \u2014 Cognita reminder', {
+    heading: title,
+    greeting: 'Reminder:',
+    paragraphs,
+    buttonLabel: 'Open Reminders',
+    link: url,
+    showLinkFallback: false,
+    note: 'You are getting this because you set a reminder in Cognita. Manage or turn off reminders any time from the Reminders view.',
+    preheader: whenText,
+  });
+}
+
 export function buildSubscriptionCancelledEmail({ name, planName, accessUntilText }) {
   const until = accessUntilText || 'the end of your current billing period';
   return build('Your Cognita subscription was cancelled', {
