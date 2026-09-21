@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Cognita</title>
 <link rel="icon" href="/assets/cognita.png">
+<link rel="manifest" href="/pwa/manifest.json">
+<meta name="theme-color" content="#a8471f">
+<!-- iOS ignores the manifest for home-screen install chrome, so these are
+     also needed for the icon/status-bar to look right once installed. -->
+<link rel="apple-touch-icon" href="/pwa/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cognita">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
@@ -90,6 +98,10 @@
       <a href="/app.html?view=library" class="sidebar-history-item" data-view="library">
         <i class="ph ph-books" style="margin-right:8px;"></i>
         <span>Library</span>
+      </a>
+      <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders">
+        <i class="ph ph-bell" style="margin-right:8px;"></i>
+        <span>Reminders</span>
       </a>
       <!-- Only shown for admins/moderators — app.js unhides this once
            /api/account reports a role, so regular users never see a
@@ -594,6 +606,125 @@
     </div>
   </main>
 
+  <!-- ══════════════════════════════════════════════════════
+       REMINDERS VIEW
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-reminders" hidden>
+
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Reminders</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+
+    <div class="resources-scroll">
+
+      <!-- ── Notifications status ── -->
+      <section class="resources-generate-panel" id="remindersNotifBanner" hidden>
+        <div class="reminders-notif-row">
+          <div>
+            <h2 class="resources-heading" id="remindersNotifTitle">Notifications</h2>
+            <p class="resources-subheading" id="remindersNotifText"></p>
+          </div>
+          <button type="button" class="modal-submit-btn" id="remindersEnableNotifBtn" style="width:auto; padding:var(--space-3) var(--space-5);">
+            Turn on notifications
+          </button>
+        </div>
+      </section>
+
+      <!-- ── iOS install hint (shown once, on iPhone Safari, not yet installed) ── -->
+      <section class="resources-generate-panel" id="remindersIosHint" hidden>
+        <h2 class="resources-heading">Install Cognita to get notifications</h2>
+        <p class="resources-subheading">
+          On iPhone, notifications only work once Cognita is added to your Home Screen.
+          Tap <i class="ph ph-export"></i> Share, then "Add to Home Screen" &mdash; open Cognita from that icon afterward.
+        </p>
+        <button type="button" class="resource-form-back" id="remindersIosHintDismiss">Got it</button>
+      </section>
+
+      <section class="resources-generate-panel">
+        <div class="reminders-notif-row">
+          <div>
+            <h2 class="resources-heading">Upcoming</h2>
+            <p class="resources-subheading">Deadlines, exams, meetings &mdash; anything with a date.</p>
+          </div>
+          <button type="button" class="modal-submit-btn" id="remindersAddBtn" style="width:auto; padding:var(--space-3) var(--space-5);">
+            <i class="ph ph-plus"></i> Add reminder
+          </button>
+        </div>
+        <div class="my-resources-list" id="remindersUpcomingList">
+          <div class="my-resources-empty">Loading reminders...</div>
+        </div>
+      </section>
+
+      <section class="resources-generate-panel" id="remindersPastSection" hidden>
+        <h2 class="resources-heading">Past</h2>
+        <div class="my-resources-list" id="remindersPastList"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ── Add / edit reminder modal ── -->
+  <div class="modal-overlay" id="reminderModal" hidden>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="reminderModalTitle">Add reminder</h2>
+        <button class="modal-close-btn" id="reminderModalClose" aria-label="Close"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="modal-body">
+        <label class="resource-field">
+          <span>Title</span>
+          <input type="text" id="reminderTitleInput" maxlength="120" placeholder="e.g. Term 2 exam submission">
+        </label>
+
+        <div style="display:flex; gap:var(--space-3);">
+          <label class="resource-field" style="flex:1;">
+            <span>Date</span>
+            <input type="date" id="reminderDateInput">
+          </label>
+          <label class="resource-field" style="flex:1;">
+            <span>Time (optional)</span>
+            <input type="time" id="reminderTimeInput">
+          </label>
+        </div>
+
+        <label class="resource-field">
+          <span>Notes (optional)</span>
+          <textarea id="reminderNotesInput" rows="2" maxlength="1000"></textarea>
+        </label>
+
+        <label class="resource-field">
+          <span>How to be reminded</span>
+          <div class="visual-type-toggle">
+            <button type="button" class="visual-type-option" data-channel="push"><i class="ph ph-bell"></i> On this device</button>
+            <button type="button" class="visual-type-option" data-channel="email"><i class="ph ph-envelope-simple"></i> Email</button>
+          </div>
+        </label>
+
+        <label class="resource-field">
+          <span>When to be reminded</span>
+          <div class="visual-type-toggle" id="reminderOffsetsToggle">
+            <button type="button" class="visual-type-option" data-offset="1_week">1 week before</button>
+            <button type="button" class="visual-type-option" data-offset="1_day">1 day before</button>
+            <button type="button" class="visual-type-option" data-offset="morning_of">On the day (morning)</button>
+            <button type="button" class="visual-type-option" data-offset="1_hour">1 hour before</button>
+            <button type="button" class="visual-type-option" data-offset="at_event">At the event time</button>
+          </div>
+        </label>
+
+        <div style="display:flex; gap:var(--space-3);">
+          <button type="button" class="resource-form-back" id="reminderDeleteBtn" style="display:none; color:var(--danger);">
+            <i class="ph ph-trash"></i> Delete
+          </button>
+          <button type="button" class="modal-submit-btn" id="reminderSaveBtn" style="flex:1;">Save reminder</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ── Visual generation modal (diagram / illustration) — chat view ── -->
@@ -699,6 +830,7 @@
   <script type="module" src="/js/note-taker.js"></script>
   <script type="module" src="/js/note-taker-production.js"></script>
   <script type="module" src="/js/auth.js"></script>
+<script type="module" src="/js/pwa-install.js"></script>
 <script src="/js/resource-renderers.js"></script>
 <script src="/js/resource-editor.js"></script>
 <script type="module" src="/js/main.js"></script>
