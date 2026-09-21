@@ -44,6 +44,7 @@ export const PLANS = {
       // (Cloudflare Workers AI, same model as illustration image gen).
       // Free users never get these — text-only flashcards only.
       flashcardImagePerDay: 0,
+      activeReminders: 10,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -86,6 +87,7 @@ export const PLANS = {
       // well below imageGenPerDay since a single flashcard deck can
       // burn through many images in one generation call.
       flashcardImagePerDay: 20,
+      activeReminders: 40,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -121,6 +123,7 @@ export const PLANS = {
       noteTakerSessionsPerDay: 150,
       noteTakerChunksPerDay: 8000,  // roughly 17.8 hours/day
       flashcardImagePerDay: 80,
+      activeReminders: 150,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -166,6 +169,7 @@ export const PLANS = {
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerChunksPerDay: UNLIMITED,
       flashcardImagePerDay: UNLIMITED,
+      activeReminders: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0
