@@ -4,7 +4,7 @@
 // It is only ever called with a uid that came out of auth-middleware.js —
 // never with a client-supplied uid.
 
-import { fsGet, fsSet } from './firestore-rest.js';
+import { fsGet, fsUpdate, fsCreate } from './firestore-rest.js';
 import { getPlan, planSatisfies } from './entitlements.js';
 
 // Role lives at admins/{uid} in Firestore — the exact same doc shape
@@ -20,6 +20,10 @@ import { getPlan, planSatisfies } from './entitlements.js';
 //   'expired'   — grace period or cancellation period has passed
 
 const GRACE_PERIOD_DAYS = 3;
+// Safety net: if an 'active' account is this many days past its period end
+// and no renewal has been recorded, something went wrong (missed webhook).
+// Access stops rather than continuing for free indefinitely.
+const ACTIVE_STALE_DAYS = 7;
 
 /**
  * Reads (and lazily initializes) a user's account document.
@@ -29,15 +33,19 @@ export async function getAccount(uid, env) {
   let doc = await fsGet('accounts/' + uid, env);
 
   if (!doc) {
-    doc = {
+    const fresh = {
       uid,
       planId: 'free',
       status: 'none',
       periodEnd: null,
       createdAt: new Date().toISOString(),
     };
-    await fsSet('accounts/' + uid, doc, env);
-    return doc;
+    // Create-only: if a payment webhook wrote this account in the meantime,
+    // we must NOT overwrite it with a free record.
+    const created = await fsCreate('accounts/' + uid, fresh, env);
+    if (created) return fresh;
+    doc = await fsGet('accounts/' + uid, env);
+    if (!doc) return fresh;
   }
 
   return _resolveEffectivePlan(doc);
@@ -50,20 +58,26 @@ function _resolveEffectivePlan(doc) {
   const now = Date.now();
 
   if (doc.status === 'active') {
+    if (doc.periodEnd) {
+      const staleAt = new Date(doc.periodEnd).getTime() + ACTIVE_STALE_DAYS * 86400000;
+      if (!isNaN(staleAt) && now > staleAt) {
+        return { ...doc, planId: 'free', status: 'expired' };
+      }
+    }
     return doc;
   }
 
   if (doc.status === 'past_due' && doc.periodEnd) {
     const graceEnd = new Date(doc.periodEnd).getTime() + GRACE_PERIOD_DAYS * 86400000;
     if (now <= graceEnd) {
-      return doc; // still within grace — treat as active plan-wise
+      return doc; // still within grace, treat as active plan-wise
     }
     return { ...doc, planId: 'free', status: 'expired' };
   }
 
   if (doc.status === 'cancelled' && doc.periodEnd) {
     if (now <= new Date(doc.periodEnd).getTime()) {
-      return doc; // cancelled but period not over — still has access
+      return doc; // cancelled but period not over, still has access
     }
     return { ...doc, planId: 'free', status: 'expired' };
   }
@@ -72,7 +86,8 @@ function _resolveEffectivePlan(doc) {
     return { ...doc, planId: 'free' };
   }
 
-  return doc;
+  // past_due / cancelled with no period end, or any unknown status: fail closed.
+  return { ...doc, planId: 'free', status: 'expired' };
 }
 
 /**
@@ -86,7 +101,9 @@ export async function reconcileIfExpired(uid, freshDoc, env) {
   const stored = await fsGet('accounts/' + uid, env);
   if (!stored) return;
   if (stored.status !== freshDoc.status || stored.planId !== freshDoc.planId) {
-    await fsSet('accounts/' + uid, { ...stored, planId: freshDoc.planId, status: freshDoc.status }, env);
+    // Partial update of just these two fields. A full overwrite from a stale
+    // read could wipe a payment that landed a moment ago.
+    await fsUpdate('accounts/' + uid, { planId: freshDoc.planId, status: freshDoc.status, updatedAt: new Date().toISOString() }, env);
   }
 }
 
