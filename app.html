@@ -90,7 +90,7 @@
     <nav class="sidebar-history" aria-label="Navigation">
       <a href="/app.html?view=chat" class="sidebar-history-item" data-view="chat">
         <i class="ph ph-chat-circle" style="margin-right:8px;"></i>
-        <span>Chat</span>
+        <span>Current chat</span>
       </a>
       <a href="/app.html?view=resources" class="sidebar-history-item" data-view="resources">
         <i class="ph ph-graduation-cap" style="margin-right:8px;"></i>
@@ -113,6 +113,7 @@
       </a>
     </nav>
 
+    <div class="sidebar-section-label">Chats</div>
     <nav class="sidebar-history" id="sidebarHistory" aria-label="Chat history">
       <!-- Populated by app.js from localStorage, chat view only -->
     </nav>
@@ -185,25 +186,6 @@
           <img src="/assets/cognita.png" alt="" class="empty-state-mark">
           <h1 class="empty-state-title">What are you working on?</h1>
           <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
-
-          <div class="suggestion-list">
-            <button class="suggestion-row" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
-              <i class="ph ph-envelope-simple"></i>
-              <span>Draft an email</span>
-            </button>
-            <button class="suggestion-row" data-prompt="Explain the difference between correlation and causation with a simple example.">
-              <i class="ph ph-lightbulb"></i>
-              <span>Explain a concept</span>
-            </button>
-            <button class="suggestion-row" data-prompt="Create an outline for a business proposal for a new product launch.">
-              <i class="ph ph-file-text"></i>
-              <span>Outline a document</span>
-            </button>
-            <button class="suggestion-row" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
-              <i class="ph ph-chart-line"></i>
-              <span>Think through a decision</span>
-            </button>
-          </div>
         </div>
 
         <div class="message-list" id="messageList" hidden></div>
@@ -212,6 +194,25 @@
       <div class="composer-wrap">
 
         <div class="composer" id="composer">
+          <div class="composer-suggestions" id="composerSuggestions">
+            <button class="composer-suggestion-chip" data-prompt="Draft a professional email declining a meeting invitation while proposing an alternative time.">
+              <i class="ph ph-envelope-simple"></i>
+              <span>Draft an email</span>
+            </button>
+            <button class="composer-suggestion-chip" data-prompt="Explain the difference between correlation and causation with a simple example.">
+              <i class="ph ph-lightbulb"></i>
+              <span>Explain a concept</span>
+            </button>
+            <button class="composer-suggestion-chip" data-prompt="Create an outline for a business proposal for a new product launch.">
+              <i class="ph ph-file-text"></i>
+              <span>Outline a document</span>
+            </button>
+            <button class="composer-suggestion-chip" data-prompt="Give me three angles to analyse a decision about expanding into a new market.">
+              <i class="ph ph-chart-line"></i>
+              <span>Think through a decision</span>
+            </button>
+          </div>
+
           <div class="composer-attachments" id="composerAttachments" hidden></div>
 
           <textarea
