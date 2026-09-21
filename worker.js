@@ -68,6 +68,16 @@ import {
   handleConnectorStatus,
   handleConnectorDisconnect,
 } from './connectors-endpoint.js';
+import {
+  handleReminderCreate,
+  handleReminderList,
+  handleReminderUpdate,
+  handleReminderDelete,
+  handleSubscribe,
+  handleUnsubscribe,
+  handleTestNotification,
+} from './reminders/reminders-endpoint.js';
+import { runReminderScheduler } from './reminders/reminders-scheduler.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -217,6 +227,38 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/subscription/cancel') {
       return handleSubscriptionCancel(request, env);
+    }
+
+    // ── Reminders ──────────────────────────────────────
+
+    if (request.method === 'POST' && url.pathname === '/api/reminders') {
+      return handleReminderCreate(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/reminders') {
+      return handleReminderList(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/reminders/subscribe') {
+      return handleSubscribe(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/reminders/unsubscribe') {
+      return handleUnsubscribe(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/reminders/test-notification') {
+      return handleTestNotification(request, env);
+    }
+
+    if (request.method === 'PATCH' && /^\/api\/reminders\/[^/]+$/.test(url.pathname)) {
+      const reminderId = url.pathname.split('/')[3];
+      return handleReminderUpdate(request, env, reminderId);
+    }
+
+    if (request.method === 'DELETE' && /^\/api\/reminders\/[^/]+$/.test(url.pathname)) {
+      const reminderId = url.pathname.split('/')[3];
+      return handleReminderDelete(request, env, reminderId);
     }
 
     // ── Connectors (GitHub, Google, Figma, Canva) ─────
@@ -373,5 +415,11 @@ export default {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     });
+  },
+
+  // Fires on the Cron Trigger set in wrangler.jsonc. Only the reminders
+  // feature uses this — everything else in the Worker is still request-driven.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runReminderScheduler(env));
   },
 };
