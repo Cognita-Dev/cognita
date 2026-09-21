@@ -1,5 +1,7 @@
 // emails/auth-email-templates.js
-// The look and wording of every account email Cognita sends.
+// The look and wording of every email Cognita sends: account emails
+// (verify, reset, welcome, password changed) and billing emails (payment
+// received, payment failed, subscription cancelled).
 // To change the design, colours or text of an email, edit this file only.
 
 const BRAND = {
@@ -25,10 +27,33 @@ function esc(value) {
 
 const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
 
+// A small grey box of "Label ... Value" rows (used for receipts and for
+// the "what to do first" list in the welcome email).
+function detailsTable(rows) {
+  const body = rows
+    .map(function (row, i) {
+      const divider = i === 0 ? '' : 'border-top:1px solid ' + BRAND.border + ';';
+      return (
+        '<tr>' +
+        '<td valign="top" style="' + divider + 'padding:12px 0;white-space:nowrap;font-family:' + FONT + ';font-size:13px;line-height:20px;color:' + BRAND.muted + ';">' + esc(row[0]) + '</td>' +
+        '<td valign="top" align="right" style="' + divider + 'padding:12px 0 12px 16px;word-break:break-word;font-family:' + FONT + ';font-size:14px;line-height:20px;font-weight:600;color:' + BRAND.ink + ';">' + esc(row[1]) + '</td>' +
+        '</tr>'
+      );
+    })
+    .join('');
+
+  return (
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;">' +
+    '<tr><td style="background:' + BRAND.page + ';border-radius:12px;padding:4px 18px;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' + body + '</table>' +
+    '</td></tr></table>'
+  );
+}
+
 // One shared layout so every email looks the same. Tables and inline
 // styles are used on purpose: that is the only thing every email app
 // (Gmail, Outlook, Apple Mail) renders reliably.
-function layout({ preheader, heading, greeting, paragraphs, buttonLabel, link, note }) {
+function layout({ preheader, heading, greeting, paragraphs, details, buttonLabel, link, showLinkFallback, note }) {
   const paras = paragraphs
     .map(
       (p) =>
@@ -37,6 +62,22 @@ function layout({ preheader, heading, greeting, paragraphs, buttonLabel, link, n
         '</p>'
     )
     .join('');
+
+  const detailsHtml = details && details.length ? detailsTable(details) : '';
+
+  const buttonHtml =
+    buttonLabel && link
+      ? '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 28px 0;">' +
+        '<tr><td align="center" bgcolor="' + BRAND.accent + '" style="border-radius:10px;">' +
+        '<a href="' + esc(link) + '" style="display:inline-block;padding:14px 32px;font-family:' + FONT + ';font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">' + esc(buttonLabel) + '</a>' +
+        '</td></tr></table>'
+      : '<div style="height:16px;line-height:16px;font-size:16px;">&nbsp;</div>';
+
+  const fallbackHtml =
+    buttonLabel && link && showLinkFallback !== false
+      ? '<p style="margin:0 0 4px 0;font-family:' + FONT + ';font-size:13px;line-height:20px;color:' + BRAND.muted + ';">Button not working? Copy this link into your browser:</p>' +
+        '<p style="margin:0 0 24px 0;font-family:' + FONT + ';font-size:12px;line-height:18px;word-break:break-all;"><a href="' + esc(link) + '" style="color:' + BRAND.accent + ';text-decoration:underline;">' + esc(link) + '</a></p>'
+      : '';
 
   return (
 '<!DOCTYPE html>' +
@@ -64,16 +105,9 @@ function layout({ preheader, heading, greeting, paragraphs, buttonLabel, link, n
   '<h1 style="margin:0 0 20px 0;font-family:Georgia,\'Times New Roman\',serif;font-style:italic;font-weight:400;font-size:26px;line-height:32px;letter-spacing:-0.3px;color:' + BRAND.ink + ';">' + esc(heading) + '</h1>' +
   '<p style="margin:0 0 16px 0;font-family:' + FONT + ';font-size:15px;line-height:24px;color:' + BRAND.ink + ';">' + esc(greeting) + '</p>' +
   paras +
-
-  // Button
-  '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 28px 0;">' +
-  '<tr><td align="center" bgcolor="' + BRAND.accent + '" style="border-radius:10px;">' +
-  '<a href="' + esc(link) + '" style="display:inline-block;padding:14px 32px;font-family:' + FONT + ';font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">' + esc(buttonLabel) + '</a>' +
-  '</td></tr></table>' +
-
-  // Fallback link
-  '<p style="margin:0 0 4px 0;font-family:' + FONT + ';font-size:13px;line-height:20px;color:' + BRAND.muted + ';">Button not working? Copy this link into your browser:</p>' +
-  '<p style="margin:0 0 24px 0;font-family:' + FONT + ';font-size:12px;line-height:18px;word-break:break-all;"><a href="' + esc(link) + '" style="color:' + BRAND.accent + ';text-decoration:underline;">' + esc(link) + '</a></p>' +
+  detailsHtml +
+  buttonHtml +
+  fallbackHtml +
 
   '<div style="border-top:1px solid ' + BRAND.border + ';padding-top:20px;">' +
   '<p style="margin:0;font-family:' + FONT + ';font-size:13px;line-height:20px;color:' + BRAND.muted + ';">' + esc(note) + '</p>' +
@@ -94,25 +128,32 @@ function layout({ preheader, heading, greeting, paragraphs, buttonLabel, link, n
 
 // Plain-text twin of each email. Sending both HTML and text lowers the
 // chance of landing in spam and works in apps that cannot show HTML.
-function plainText({ heading, greeting, paragraphs, buttonLabel, link, note }) {
-  return [
-    heading,
-    '',
-    greeting,
-    '',
-    paragraphs.join('\n\n'),
-    '',
-    buttonLabel + ':',
-    link,
-    '',
-    note,
-    '',
-    BRAND.name + '. ' + BRAND.tagline + '.',
-  ].join('\n');
+function plainText({ heading, greeting, paragraphs, details, buttonLabel, link, note }) {
+  const parts = [heading, '', greeting, '', paragraphs.join('\n\n')];
+  if (details && details.length) {
+    parts.push('', details.map((r) => r[0] + ': ' + r[1]).join('\n'));
+  }
+  if (buttonLabel && link) {
+    parts.push('', buttonLabel + ':', link);
+  }
+  parts.push('', note, '', BRAND.name + '. ' + BRAND.tagline + '.');
+  return parts.join('\n');
 }
 
+function build(subject, content) {
+  return { subject, html: layout(content), text: plainText(content) };
+}
+
+function hello(name) {
+  return name ? 'Hi ' + name + ',' : 'Hi there,';
+}
+
+// ══════════════════════════════════════════════════════════════
+// Account emails
+// ══════════════════════════════════════════════════════════════
+
 export function buildVerifyEmail({ name, link }) {
-  const content = {
+  return build('Confirm your email for Cognita', {
     heading: 'Confirm your email address',
     greeting: name ? 'Hi ' + name + ',' : 'Hi there,',
     paragraphs: [
@@ -122,16 +163,11 @@ export function buildVerifyEmail({ name, link }) {
     link,
     note: 'If you did not create a Cognita account, you can safely ignore this email.',
     preheader: 'One click to finish setting up your Cognita account.',
-  };
-  return {
-    subject: 'Confirm your email for Cognita',
-    html: layout(content),
-    text: plainText(content),
-  };
+  });
 }
 
 export function buildResetEmail({ link }) {
-  const content = {
+  return build('Reset your Cognita password', {
     heading: 'Reset your password',
     greeting: 'Hello,',
     paragraphs: [
@@ -142,10 +178,108 @@ export function buildResetEmail({ link }) {
     link,
     note: 'If you did not ask to reset your password, you can safely ignore this email. Your password will stay the same.',
     preheader: 'Choose a new password for your Cognita account.',
-  };
-  return {
-    subject: 'Reset your Cognita password',
-    html: layout(content),
-    text: plainText(content),
-  };
+  });
+}
+
+export function buildWelcomeEmail({ name }) {
+  return build('Welcome to Cognita', {
+    heading: 'Welcome to Cognita',
+    greeting: hello(name),
+    paragraphs: [
+      'Your account is ready. Cognita helps you think, write and build, from a first rough idea to a finished piece of work.',
+      'Three good places to start:',
+    ],
+    details: [
+      ['Write', 'Draft and refine reports, essays and memos.'],
+      ['Research', 'Summarise papers and keep your sources organised.'],
+      ['Analyse', 'Understand your data and prepare clear results.'],
+    ],
+    buttonLabel: 'Open Cognita',
+    link: BRAND.site + '/app.html',
+    showLinkFallback: false,
+    note: 'You are receiving this email because you created a Cognita account.',
+    preheader: 'Your account is ready. Here is where to start.',
+  });
+}
+
+export function buildPasswordChangedEmail({ name, email, when }) {
+  const details = [];
+  if (email) details.push(['Account', email]);
+  if (when) details.push(['Changed', when]);
+  return build('Your Cognita password was changed', {
+    heading: 'Your password was changed',
+    greeting: hello(name),
+    paragraphs: [
+      'The password for your Cognita account was just changed. If this was you, there is nothing more to do. You may need to sign in again on your other devices.',
+      'If you did not make this change, reset your password now and use a password you have not used anywhere else.',
+    ],
+    details,
+    buttonLabel: 'Reset your password',
+    link: BRAND.site + '/login.html',
+    showLinkFallback: false,
+    note: 'Cognita will never ask for your password by email.',
+    preheader: 'The password for your Cognita account was changed.',
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Billing emails
+// ══════════════════════════════════════════════════════════════
+
+export function buildPaymentReceiptEmail({ name, planName, amountText, dateText, periodEndText, reference, renewal }) {
+  const details = [['Plan', planName]];
+  if (amountText) details.push(['Amount', amountText]);
+  if (dateText) details.push(['Date', dateText]);
+  if (periodEndText) details.push(['Valid until', periodEndText]);
+  if (reference) details.push(['Reference', reference]);
+
+  return build(renewal ? 'Your Cognita subscription was renewed' : 'Your Cognita payment receipt', {
+    heading: renewal ? 'Subscription renewed' : 'Payment received',
+    greeting: hello(name),
+    paragraphs: [
+      renewal
+        ? 'Your ' + planName + ' subscription has been renewed. Thank you for staying with us.'
+        : 'Thank you. Your payment was successful and your ' + planName + ' plan is now active.',
+    ],
+    details,
+    buttonLabel: 'View your account',
+    link: BRAND.site + '/account.html',
+    showLinkFallback: false,
+    note: 'Keep this email as your receipt. If anything looks wrong, please contact us.',
+    preheader: renewal ? 'Your Cognita subscription was renewed.' : 'Your payment was successful.',
+  });
+}
+
+export function buildPaymentFailedEmail({ name, planName }) {
+  return build('We could not process your Cognita payment', {
+    heading: 'Payment did not go through',
+    greeting: hello(name),
+    paragraphs: [
+      'We were unable to process the latest payment for your ' + planName + ' plan.',
+      'You have a short grace period before your account moves to the free plan. Open your account to review your subscription.',
+    ],
+    details: [['Plan', planName]],
+    buttonLabel: 'Open your account',
+    link: BRAND.site + '/account.html',
+    showLinkFallback: false,
+    note: 'If you have already sorted this out, you can ignore this email.',
+    preheader: 'The latest payment for your Cognita plan did not go through.',
+  });
+}
+
+export function buildSubscriptionCancelledEmail({ name, planName, accessUntilText }) {
+  const until = accessUntilText || 'the end of your current billing period';
+  return build('Your Cognita subscription was cancelled', {
+    heading: 'Subscription cancelled',
+    greeting: hello(name),
+    paragraphs: [
+      'Your ' + planName + ' subscription has been cancelled and will not renew.',
+      'You keep full access until ' + until + '. After that, your account moves to Cognita Starter, the free plan.',
+    ],
+    buttonLabel: 'Resubscribe',
+    link: BRAND.site + '/pricing.html',
+    showLinkFallback: false,
+    note: 'Changed your mind? You can resubscribe at any time.',
+    preheader: 'You keep access until ' + until + '.',
+  });
 }
