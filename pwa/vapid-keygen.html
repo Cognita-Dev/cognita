@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VAPID key generator (local only — do not deploy)</title>
+<meta name="robots" content="noindex">
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #171717; }
+  h1 { font-size: 20px; }
+  textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; padding: 10px; box-sizing: border-box; }
+  label { display: block; margin-top: 20px; font-weight: 600; }
+  button { margin-top: 20px; padding: 10px 18px; font-size: 15px; cursor: pointer; }
+  .warn { background: #f7ece9; border: 1px solid #eccfc8; padding: 12px 16px; border-radius: 8px; font-size: 14px; }
+  .copy-btn { margin-top: 6px; font-size: 12px; padding: 4px 10px; }
+</style>
+</head>
+<body>
+<h1>VAPID key generator</h1>
+<p class="warn">
+  This page runs entirely in your browser — nothing is sent anywhere. Do not
+  upload this file to your live site (it is already excluded via
+  <code>.vercelignore</code>). Open it locally by double-clicking it, or
+  temporarily by visiting it on a preview deployment you then delete.
+</p>
+
+<button id="genBtn">Generate a new key pair</button>
+
+<label for="pub">Public key — paste into the frontend config as <code>VAPID_PUBLIC_KEY</code></label>
+<textarea id="pub" rows="3" readonly></textarea>
+<button class="copy-btn" data-copy="pub">Copy public key</button>
+
+<label for="priv">Private key — paste into the Cloudflare Worker secret <code>VAPID_PRIVATE_KEY</code> (Worker settings → Variables and Secrets). Never paste this into a chat, a repo, or the frontend.</label>
+<textarea id="priv" rows="6" readonly></textarea>
+<button class="copy-btn" data-copy="priv">Copy private key</button>
+
+<label for="subj">Contact address — paste as the Cloudflare Worker secret <code>VAPID_SUBJECT</code></label>
+<textarea id="subj" rows="1" readonly>mailto:you@cognita.com.ng</textarea>
+<button class="copy-btn" data-copy="subj">Copy contact address</button>
+
+<script>
+function b64url(bytes) {
+  let binary = '';
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function generate() {
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const publicRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+  const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+
+  document.getElementById('pub').value = b64url(publicRaw);
+  document.getElementById('priv').value = JSON.stringify(privateJwk);
+}
+
+document.getElementById('genBtn').addEventListener('click', () => {
+  generate().catch((e) => alert('Could not generate keys: ' + e.message));
+});
+
+document.querySelectorAll('.copy-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const field = document.getElementById(btn.getAttribute('data-copy'));
+    field.select();
+    navigator.clipboard.writeText(field.value).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy ' + (btn.getAttribute('data-copy') === 'pub' ? 'public' : btn.getAttribute('data-copy') === 'priv' ? 'private' : 'contact') + ' key'; }, 1500);
+    });
+  });
+});
+
+// Generate one automatically on load so the page is useful immediately.
+generate();
+</script>
+</body>
+</html>
