@@ -150,7 +150,6 @@ export default {
       return handleFilesList(request, env, conversationId);
     }
 
-    // GET /api/files/:conversationId/:fileId?filename=... -> fetch one file's content.
     if (request.method === 'GET' && /^\/api\/files\/[^/]+\/[^/]+$/.test(url.pathname)) {
       const parts = url.pathname.split('/');
       const conversationId = parts[3];
