@@ -237,7 +237,10 @@ function closeMobileNav() {
 async function loadOverview() {
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/resources');
-    if (!res.ok) return;
+    if (!res.ok) {
+      _showOverviewError();
+      return;
+    }
     const data = await res.json();
     const all = data.resources || [];
 
@@ -278,7 +281,17 @@ async function loadOverview() {
     });
   } catch (e) {
     console.error('[admin] overview load failed:', e.message);
+    _showOverviewError();
   }
+}
+
+// Replaces the "Loading…" placeholders on the Overview tab with a message,
+// so a failed request never leaves the page looking like it's still loading.
+function _showOverviewError() {
+  ['overviewReviewList', 'overviewRecentList'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="admin-empty">Could not load this right now. Please refresh and try again.</div>';
+  });
 }
 
 function renderOverviewRow(r) {
@@ -486,7 +499,10 @@ async function loadResourceList() {
     const res = await window.Auth.authedFetch(
       WORKER_URL + '/api/admin/resources?status=' + encodeURIComponent(currentStatusFilter)
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      list.innerHTML = '<div class="admin-empty">Could not load resources (error ' + res.status + '). Please try again.</div>';
+      return;
+    }
 
     const data = await res.json();
     currentResources = data.resources || [];
@@ -973,7 +989,10 @@ async function loadCollections() {
 
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/collections');
-    if (!res.ok) return;
+    if (!res.ok) {
+      list.innerHTML = '<div class="admin-empty">Could not load collections (error ' + res.status + '). Please try again.</div>';
+      return;
+    }
     const data = await res.json();
     const collections = data.collections || [];
 
@@ -1024,6 +1043,7 @@ async function loadCollections() {
     }
   } catch (e) {
     console.error('[admin] collections load failed:', e.message);
+    list.innerHTML = '<div class="admin-empty">Could not load collections. Please try again.</div>';
   }
 }
 
