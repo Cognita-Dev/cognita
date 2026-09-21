@@ -10,6 +10,9 @@ payment-endpoint.js
 plans-endpoint.js
 resources-endpoint.js
 webhook-endpoint.js
+library-endpoint.js
+connectors-endpoint.js
+note-taker-endpoint.js
 
 admin-resources-endpoint.js
 admin-roles-endpoint.js
@@ -24,6 +27,17 @@ firestore-rest.js
 providers.js
 subscription.js
 usage.js
+library-cache.js
+excerpt-builder.js
+download-proxy.js
+
+connectors.js
+connector-providers.js
+connector-tools.js
+canva-tools.js
+figma-tools.js
+github-tools.js
+google-tools.js
 
 docx-builder.js
 pdf-builder.js
@@ -33,5 +47,6 @@ worker.js
 wrangler.jsonc
 
 recipes/
+emails/
 
 firestore.indexes.json
