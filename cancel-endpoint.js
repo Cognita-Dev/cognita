@@ -2,6 +2,7 @@
 
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { fsGet, fsUpdate } from './firestore-rest.js';
+import { sendSubscriptionCancelledEmail } from './emails/billing-emails.js';
 
 export async function handleSubscriptionCancel(request, env) {
   let identity;
@@ -93,6 +94,13 @@ export async function handleSubscriptionCancel(request, env) {
   } catch (e) {
     console.error('[cancel] Paystack cancelled but Firestore update failed:', e.message);
   }
+
+  await sendSubscriptionCancelledEmail(env, {
+    uid: identity.uid,
+    email: identity.email,
+    planId: account.planId,
+    periodEnd: account.periodEnd,
+  });
 
   return new Response(JSON.stringify({
     status: 'cancelled',
