@@ -17,6 +17,10 @@ const VIEWS = {
     containerId: 'view-library',
     load: () => import('./library.js'),
   },
+  reminders: {
+    containerId: 'view-reminders',
+    load: () => import('./reminders.js'),
+  },
 };
 
 const mountedModules = {};
