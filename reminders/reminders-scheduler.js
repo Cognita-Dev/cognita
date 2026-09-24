@@ -14,6 +14,15 @@ const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutes
 
+// How long after an event we still consider a reminder worth sending.
+// Cron runs every 30 minutes, so an "at the event time" reminder is normally
+// picked up up to ~30 min late; an hour covers that plus a retry. All-day
+// events have no clock time (their instant is 00:00), so they stay valid
+// for the whole day — otherwise "On the day (morning)" would always count
+// as "too late".
+const STALE_GRACE_MS = 60 * 60 * 1000;
+const ALL_DAY_MS = 24 * 60 * 60 * 1000;
+
 import {
   listDueOccurrences,
   removeDueIndexEntry,
@@ -25,7 +34,7 @@ import {
   deleteSubscriptionById,
 } from './reminders-storage.js';
 import { sendWebPush } from './push-vapid.js';
-import { sendEmail, claimOnce } from '../emails/mailer.js';
+import { sendEmail, claimOnce, releaseClaim } from '../emails/mailer.js';
 import { buildReminderEmail } from '../emails/auth-email-templates.js';
 
 function _formatWhen(reminder) {
@@ -93,6 +102,9 @@ async function _sendEmailChannel(env, identityEmail, reminder, occurrence) {
     );
     return { attempted: true, sent: true };
   } catch (e) {
+    // Give the claim back, otherwise the retry sees "already sent", reports
+    // success, and the email is silently never delivered.
+    await releaseClaim(env, claimKey);
     return { attempted: true, sent: false, error: e.message };
   }
 }
@@ -112,15 +124,21 @@ async function _processOccurrence(env, occurrenceId, now) {
   const occurrence = await getOccurrence(env, occurrenceId);
   if (!occurrence || occurrence.status !== 'pending') return; // already handled (e.g. reminder was edited)
 
+  // Leftover index keys (e.g. a retry key from before the reminder was edited)
+  // can point at an occurrence whose real fire time is still in the future.
+  // Leave it alone; its own, correct index key will bring it back on time.
+  if (new Date(occurrence.fireAt).getTime() > now.getTime() + 60 * 1000) return;
+
   const reminder = await getReminder(env, occurrence.reminderId);
   if (!reminder || reminder.status !== 'active') {
     await updateOccurrenceStatus(env, occurrenceId, { status: 'skipped' });
     return;
   }
 
-  // Very late (cron was down): if the event itself already happened, don't
+  // Very late (cron was down): if the event itself is well over, don't
   // send a stale "starts tomorrow" notice — mark it missed instead.
-  if (new Date(reminder.eventAt).getTime() < now.getTime() - 60 * 1000) {
+  const validUntil = new Date(reminder.eventAt).getTime() + (reminder.allDay ? ALL_DAY_MS : STALE_GRACE_MS);
+  if (validUntil < now.getTime()) {
     await updateOccurrenceStatus(env, occurrenceId, { status: 'missed' });
     return;
   }
