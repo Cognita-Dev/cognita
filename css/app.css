@@ -1379,6 +1379,40 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .connectors-modal-footnote { font-size: var(--text-xs); color: var(--text-3); line-height: 1.5; }
 .connectors-modal-footnote a { color: var(--accent); font-weight: 600; }
 
+/* Plan-gate explanation shown at the top of the modal for any plan
+   without connectorTools (see entitlements.js / updateConnectorsAvailability).
+   Deliberately distinct from .connectors-modal-banner, which is a
+   transient OAuth-redirect result message — this one stays up for the
+   whole time a locked account has the modal open. */
+.connectors-modal-plan-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  margin-bottom: var(--space-3);
+}
+.connectors-modal-plan-note i { flex-shrink: 0; font-size: 1rem; color: var(--accent); margin-top: 1px; }
+.connectors-modal-plan-note a { color: var(--accent); font-weight: 600; margin-left: 4px; }
+
+/* A connector row this plan can't actually use yet (not-yet-connected,
+   Free tier). Same dimmed treatment as .attach-menu-item.is-locked and
+   .quality-picker-option.is-locked, applied here instead of a lock
+   badge since the row already carries its own "Upgrade" button. */
+.connector-row.is-locked { opacity: 0.7; }
+.connector-row-cta.is-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+.connector-row-cta.is-locked i { font-size: 0.85em; }
+
 /* ── In-chat tool confirmation (inline trace row) ──
    A pending write no longer floats in its own separate card below the
    reply text — it's the trace's own terminal row (see renderMessage in
