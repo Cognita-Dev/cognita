@@ -42,10 +42,15 @@
     }
   ],
 
-  // Runs the reminders scheduler. Every 30 minutes keeps this well within
-  // the Workers Free plan's 5-cron-trigger and daily-request limits.
+  // Runs the reminders scheduler every 5 minutes, so reminders arrive within
+  // ~5 min of their time. An idle run costs one KV list call and stops (288
+  // runs/day). This is still ONE cron trigger, so the Workers Free plan's
+  // 5-trigger limit is unaffected; check the plan's daily-request and KV
+  // list/write quotas in the Cloudflare dashboard if traffic grows.
+  // To go gentler, "*/10 * * * *" also works now that retries no longer
+  // depend on the claim expiring (see reminders-scheduler.js).
   "triggers": {
-    "crons": ["*/30 * * * *"]
+    "crons": ["*/5 * * * *"]
   },
 
   "vars": {
