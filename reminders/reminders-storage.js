@@ -130,10 +130,10 @@ function _validateReminderInput(input) {
 // ── Occurrences ─────────────────────────────────────────────────────────
 
 /** Builds (but does not save) the occurrence records for a reminder. */
-function _buildOccurrences(reminderId, uid, { eventUtc, dateParts, timezone, offsets, channels }, now) {
+function _buildOccurrences(reminderId, uid, { eventUtc, dateParts, timezone, offsets, channels, allDay }, now) {
   const occurrences = [];
   for (const offsetId of offsets) {
-    const fireAt = computeOffsetFireAt(offsetId, eventUtc, dateParts, timezone);
+    const fireAt = computeOffsetFireAt(offsetId, eventUtc, dateParts, timezone, allDay);
     if (!fireAt) continue;
     const occurrenceId = reminderId + '_' + offsetId;
     const isPast = fireAt.getTime() <= now.getTime();
@@ -263,15 +263,31 @@ export async function deleteReminder(env, uid, reminderId) {
   await fsDelete('reminders/' + reminderId, env);
 }
 
-/** Every reminder belonging to uid, soonest event first. */
-export async function listReminders(env, uid, limit = 200) {
+/**
+ * Every reminder belonging to uid, soonest event first. The cap is generous
+ * because this is oldest-first: with a small cap, a long-time user's newest
+ * (upcoming) reminders would be the ones cut off.
+ */
+export async function listReminders(env, uid, limit = 500) {
   const rows = await fsQuery('reminders', 'uid', uid, 'eventAt', limit, env, 'ASCENDING');
   return rows;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A reminder still "counts" until its event is over (all-day events last the whole day). */
+function _isStillUpcoming(reminder, nowMs) {
+  const endMs = new Date(reminder.eventAt).getTime() + (reminder.allDay ? DAY_MS : 0);
+  return endMs >= nowMs;
+}
+
+// Plan limits are about reminders that can still fire. Reminders whose date
+// has passed stay visible under "Past" but must not keep using up the limit
+// (nothing ever flips their status away from 'active').
 export async function countActiveReminders(env, uid) {
   const rows = await listReminders(env, uid, 500);
-  return rows.filter((r) => r.status === 'active').length;
+  const nowMs = Date.now();
+  return rows.filter((r) => r.status === 'active' && _isStillUpcoming(r, nowMs)).length;
 }
 
 // ── Push subscriptions ──────────────────────────────────────────────────
@@ -287,7 +303,7 @@ export async function upsertSubscription(env, uid, { endpoint, p256dh, auth, use
   const now = new Date().toISOString();
 
   if (!existing) {
-    const current = await fsQuery('pushSubscriptions', 'uid', uid, 'createdAt', 50, env);
+    const current = await fsQuery('pushSubscriptions', 'uid', uid, 'createdAt', 50, env, 'ASCENDING'); // same direction as listSubscriptions, so one index serves both
     if (current.length >= MAX_SUBSCRIPTIONS_PER_USER) {
       throw Object.assign(
         new Error('Too many devices have notifications turned on. Turn it off on an old device first.'),
