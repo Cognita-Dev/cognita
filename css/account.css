@@ -117,6 +117,31 @@
 .settings-row--danger .settings-row-label { color: var(--danger); }
 .settings-row--danger i:first-child { color: var(--danger); }
 
+/* Plan-gate explanation above a settings group — currently only used
+   above the Connections group when the account's plan lacks
+   connectorTools (see entitlements.js and account.html loadConnections()). */
+.settings-plan-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.settings-plan-note i { flex-shrink: 0; font-size: 1rem; color: var(--accent); margin-top: 1px; }
+.settings-plan-note a { color: var(--accent); font-weight: 600; margin-left: 4px; }
+
+/* A settings row this plan can't act on yet (Connect, while locked) —
+   same dimmed treatment used elsewhere for plan-gated options. */
+.settings-row.is-locked { opacity: 0.7; }
+.settings-row-cta.is-locked { color: var(--text-3); }
+.settings-row-cta.is-locked i { font-size: 0.85em; }
+
 /* Usage row — icon, label + count on one line, thin bar beneath */
 .settings-row--usage {
   align-items: flex-start;
