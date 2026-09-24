@@ -70,6 +70,12 @@
 
   <!-- ── Connections ── -->
   <div class="settings-group-label">Connections</div>
+  <p class="settings-plan-note" id="connectionsPlanNote" hidden>
+    <i class="ph ph-lock-simple"></i>
+    Connected apps require Cognita Plus or higher. You can still browse and disconnect
+    anything below, but Cognita won't use a new connection in chat until you upgrade.
+    <a href="/pricing.html">Upgrade</a>
+  </p>
   <div class="settings-group" id="connectionsGrid">
     <div class="settings-row skeleton" style="height:52px;"></div>
     <div class="settings-row skeleton" style="height:52px;"></div>
@@ -98,6 +104,21 @@
 
   document.getElementById('detailEmail').textContent = user.email || '—';
 
+  // Whether this plan can actually use connected-app tools in chat
+  // (entitlements.js features.connectorTools). Set inside loadAccount()
+  // and read by loadConnections(), which runs independently — see the
+  // ordering note on accountReadyPromise below.
+  let currentAccountHasConnectorTools = false;
+  // loadAccount() and loadConnections() each want data from the same
+  // /api/account response but are kicked off independently (loadAccount
+  // for the plan-status row, loadConnections for the Connections gate).
+  // Rather than fetching /api/account twice or hoping loadAccount()
+  // happens to finish first, loadAccount() resolves this promise once
+  // it knows currentAccountHasConnectorTools, and loadConnections()
+  // awaits it before rendering rows.
+  let _resolveConnectorEntitlement;
+  const accountReadyPromise = new Promise((resolve) => { _resolveConnectorEntitlement = resolve; });
+
   // ── Connections ──────────────────────────────────────────────────
   // Metadata only lives here for display — the actual scopes, OAuth
   // URLs, and everything security-relevant are server-side
@@ -114,10 +135,11 @@
   };
   const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
 
-  function connectionRow(provider, connected) {
+  function connectionRow(provider, connected, locked) {
     const meta = CONNECTOR_META[provider];
+    const isLockedRow = locked && !connected;
     return (
-      '<div class="settings-row" data-provider="' + provider + '">' +
+      '<div class="settings-row' + (isLockedRow ? ' is-locked' : '') + '" data-provider="' + provider + '">' +
         '<i class="ph ' + meta.icon + '"></i>' +
         '<div class="settings-row-usage-text">' +
           '<span class="settings-row-label">' + meta.label + '</span>' +
@@ -130,19 +152,29 @@
         '</div>' +
         (connected
           ? '<button class="settings-row-cta settings-row--danger connector-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
-          : '<button class="settings-row-cta connector-connect-btn" data-provider="' + provider + '">Connect</button>') +
+          : '<button class="settings-row-cta' + (isLockedRow ? ' is-locked' : '') + ' connector-connect-btn" data-provider="' + provider + '">' +
+              (isLockedRow ? '<i class="ph ph-lock-simple"></i> Upgrade' : 'Connect') +
+            '</button>') +
       '</div>'
     );
   }
 
   async function loadConnections() {
     const grid = document.getElementById('connectionsGrid');
+    const planNote = document.getElementById('connectionsPlanNote');
+    // Wait for loadAccount() to know the plan before rendering rows, so
+    // we never flash an unlocked "Connect" button and then re-render it
+    // as locked a moment later.
+    await accountReadyPromise;
+    if (planNote) planNote.hidden = currentAccountHasConnectorTools;
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/status');
       const status = await res.json();
       if (!res.ok) throw new Error(status.error || 'Failed to load connections.');
 
-      grid.innerHTML = CONNECTOR_ORDER.map((p) => connectionRow(p, !!status[p])).join('');
+      grid.innerHTML = CONNECTOR_ORDER
+        .map((p) => connectionRow(p, !!status[p], !currentAccountHasConnectorTools))
+        .join('');
     } catch (e) {
       grid.innerHTML = '<p style="color:var(--text-3); padding: var(--space-4);">Could not load connections.</p>';
       console.error('[account] ' + e.message);
@@ -158,6 +190,16 @@
 
     if (connectBtn) {
       const provider = connectBtn.dataset.provider;
+
+      // Same reasoning as js/app.js's connectors modal: keep the button
+      // clickable so a locked plan gets a clear explanation instead of
+      // a dead click, but never start the OAuth flow. connectors-endpoint.js
+      // enforces this same check server-side too.
+      if (!currentAccountHasConnectorTools) {
+        alert('Connected apps require Cognita Plus or higher. Upgrade to connect ' + CONNECTOR_META[provider].label + '.');
+        return;
+      }
+
       connectBtn.disabled = true;
       connectBtn.textContent = 'Connecting…';
       try {
@@ -315,6 +357,12 @@
 
       document.getElementById('planStatusLine').textContent = data.planName + ' — ' + statusLabel;
 
+      // features.connectorTools comes from account-endpoint.js (mirrors
+      // entitlements.js) — see the accountReadyPromise note above for
+      // why loadConnections() waits on this instead of racing it.
+      currentAccountHasConnectorTools = !!(data.features && data.features.connectorTools);
+      _resolveConnectorEntitlement();
+
       const actionBtn = document.getElementById('planActionBtn');
       const cancelBtn = document.getElementById('cancelPlanBtn');
 
@@ -331,6 +379,10 @@
     } catch (e) {
       document.getElementById('planStatusLine').textContent = 'Could not load plan details.';
       console.error('[account] ' + e.message);
+      // Resolve even on failure — currentAccountHasConnectorTools stays
+      // false (the safer default), and loadConnections() must not hang
+      // forever waiting on a promise that only resolves on success.
+      _resolveConnectorEntitlement();
     }
   }
 
