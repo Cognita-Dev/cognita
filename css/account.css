@@ -8,6 +8,7 @@
 }
 .account-topbar {
   padding: var(--space-4) var(--space-5);
+  padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); /* iPhone home-screen status bar */
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
 }
