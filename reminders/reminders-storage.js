@@ -51,7 +51,10 @@ const TIME_ONLY_OFFSETS = new Set(['1_hour', 'at_event']);
 // same idea as `fileUploadsPerDay` being separate from storage limits.
 const MAX_SUBSCRIPTIONS_PER_USER = 8;
 
-const CLAIM_TTL_SECONDS = 600; // generous vs. a 20-30 min cron cadence
+// The claim only has to outlast one scheduler run (seconds), so 10 minutes is
+// plenty of safety margin. It must NOT be relied on to expire before a retry
+// comes due: the scheduler releases it explicitly when it schedules a retry.
+const CLAIM_TTL_SECONDS = 600;
 
 function _requireKv(env) {
   if (!env.COGNITA_REMINDERS) {
@@ -394,6 +397,12 @@ export async function claimOccurrence(env, occurrenceId) {
   if (existing) return false;
   await kv.put(key, '1', { expirationTtl: CLAIM_TTL_SECONDS });
   return true;
+}
+
+/** Gives a claim back early, e.g. because a retry was scheduled and must be able to claim it again. */
+export async function releaseOccurrenceClaim(env, occurrenceId) {
+  const kv = _requireKv(env);
+  await kv.delete('claim:' + occurrenceId).catch(() => {});
 }
 
 export async function getOccurrence(env, occurrenceId) {
