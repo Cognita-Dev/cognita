@@ -90,6 +90,12 @@ let currentAccountPlanId = null;
 let currentAccountHasVision = false;
 let currentAccountHasDocExport = false;
 let currentAccountChatTiers = ['fast'];
+// Can this plan actually use connected-app tools (GitHub/Google/Figma/
+// Canva) in chat? Mirrors entitlements.js features.connectorTools —
+// see updateConnectorsAvailability, which uses this to lock the
+// "Connected apps" entry point instead of letting a Free-tier user
+// walk through an OAuth flow that chat will never use.
+let currentAccountHasConnectorTools = false;
 let visualKind = 'diagram';
 let documentDocType = 'letter';
 let documentFormat = 'docx';
@@ -155,6 +161,7 @@ async function refreshAccount() {
     currentAccountHasVision = !!(data.models && data.models.vision);
     currentAccountHasDocExport = !!(data.features && data.features.documentExport);
     currentAccountChatTiers = (data.models && Array.isArray(data.models.chat)) ? data.models.chat : ['fast'];
+    currentAccountHasConnectorTools = !!(data.features && data.features.connectorTools);
 
     // Reveal the admin-panel shortcut for curation staff only. Purely
     // cosmetic — admin.html's own server-side checks (requireAdmin) are
@@ -175,6 +182,11 @@ async function refreshAccount() {
     // actually have access to, instead of letting the person pick one
     // and silently get a lower tier back with no explanation.
     updateQualityPickerAvailability();
+    // Same idea again for connected apps: Free-tier chat can never
+    // actually call a connector tool (see chat-endpoint.js
+    // connectorToolsEnabled), so reflect that up front instead of
+    // letting the person complete a whole OAuth flow for nothing.
+    updateConnectorsAvailability();
   } catch (e) {
     console.error('[app] Could not load account:', e.message);
   }
@@ -224,6 +236,27 @@ function updateQualityPickerAvailability() {
     // selected, fall back to standard instead of leaving the picker
     // showing a quality the account can no longer use.
     if (!hasV0 && currentQuality === 'v0') setQuality('standard');
+  }
+}
+
+// Locks the "Connected apps" attach-menu entry the same way the
+// illustration/quality-picker entries are locked: dimmed, with a lock
+// badge and an explanatory tooltip, rather than looking identical to
+// every other (fully usable) attach option. Unlike those, this item
+// still opens the modal when locked (see wireAttachMenu) rather than
+// blocking the click outright, because the modal itself is also where
+// someone who downgraded mid-subscription would go to disconnect an
+// app they can no longer use — that management action has to stay
+// reachable regardless of plan. loadConnectorsList() and
+// wireConnectorsModal() are what actually stop a Free-tier user from
+// finishing a *new* connection once the modal is open.
+function updateConnectorsAvailability() {
+  const connectorsItem = document.getElementById('attachConnectorsItem');
+  if (connectorsItem) {
+    connectorsItem.classList.toggle('is-locked', !currentAccountHasConnectorTools);
+    connectorsItem.title = currentAccountHasConnectorTools
+      ? 'View and manage connected apps'
+      : 'Connecting apps requires Cognita Plus or higher. You can still view this here.';
   }
 }
 
@@ -2558,10 +2591,20 @@ const CONNECTOR_META = {
 };
 const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
 
-function connectorRowHtml(provider, connected) {
+// `locked` = this plan's connectorTools feature is off (see
+// currentAccountHasConnectorTools). A locked, not-yet-connected row
+// still gets a real "Connect" button rather than a disabled one — same
+// reasoning as the quality picker's locked options — so a screen
+// reader or a quick tap still gets the upgrade explanation instead of
+// silent nothing. wireConnectorsModal is what actually stops the
+// connect action when locked. A row that's already connected (e.g. the
+// account was Plus and just downgraded) is never locked — disconnecting
+// must always stay available.
+function connectorRowHtml(provider, connected, locked) {
   const meta = CONNECTOR_META[provider];
+  const isLockedRow = locked && !connected;
   return (
-    '<div class="connector-row" data-provider="' + provider + '">' +
+    '<div class="connector-row' + (isLockedRow ? ' is-locked' : '') + '" data-provider="' + provider + '">' +
       '<i class="ph ' + meta.icon + '"></i>' +
       '<div class="connector-row-text">' +
         '<span class="connector-row-name">' + meta.label + '</span>' +
@@ -2572,19 +2615,30 @@ function connectorRowHtml(provider, connected) {
       '</div>' +
       (connected
         ? '<button class="connector-row-cta is-danger connector-modal-disconnect-btn" data-provider="' + provider + '">Disconnect</button>'
-        : '<button class="connector-row-cta connector-modal-connect-btn" data-provider="' + provider + '">Connect</button>') +
+        : '<button class="connector-row-cta' + (isLockedRow ? ' is-locked' : '') + ' connector-modal-connect-btn" data-provider="' + provider + '">' +
+            (isLockedRow ? '<i class="ph ph-lock-simple"></i> Upgrade' : 'Connect') +
+          '</button>') +
     '</div>'
   );
 }
 
 async function loadConnectorsList() {
   const list = document.getElementById('connectorsList');
+  const planNote = document.getElementById('connectorsPlanNote');
+  if (planNote) {
+    // Only Free-tier users need the explanation — Plus/Studio/Admin all
+    // have connectorTools, so hide it for everyone else rather than
+    // showing a permanently-true banner.
+    planNote.hidden = currentAccountHasConnectorTools;
+  }
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/connectors/status');
     const status = await res.json();
     if (!res.ok) throw new Error(status.error || 'Failed to load connected apps.');
 
-    list.innerHTML = CONNECTOR_ORDER.map((p) => connectorRowHtml(p, !!status[p])).join('');
+    list.innerHTML = CONNECTOR_ORDER
+      .map((p) => connectorRowHtml(p, !!status[p], !currentAccountHasConnectorTools))
+      .join('');
   } catch (e) {
     list.innerHTML = '<p style="color:var(--text-3); padding: var(--space-3);">Could not load connected apps.</p>';
     console.error('[app] connectors status failed:', e.message);
@@ -2613,6 +2667,19 @@ function wireConnectorsModal() {
 
     if (connectBtn) {
       const provider = connectBtn.dataset.provider;
+
+      // Same pattern as the quality picker's locked options: the
+      // button stays clickable so the person gets an explanation
+      // instead of a dead click, but the actual OAuth flow never
+      // starts. connectors-endpoint.js enforces this same check
+      // server-side too, so this is purely about giving a clear
+      // reason here rather than a generic failure after redirecting
+      // away to the provider.
+      if (!currentAccountHasConnectorTools) {
+        showToast('Connected apps require Cognita Plus or higher. Upgrade to connect ' + CONNECTOR_META[provider].label + '.');
+        return;
+      }
+
       connectBtn.disabled = true;
       connectBtn.textContent = 'Connecting…';
       try {
