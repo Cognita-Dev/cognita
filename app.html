@@ -619,30 +619,33 @@
       </button>
       <h1 class="conversation-title">Reminders</h1>
       <div class="topbar-spacer"></div>
-    </header>
 
-    <div class="resources-scroll">
+      <!-- Notifications: a small bell instead of a big card. The bell only
+           appears when there is something useful to do (turn on, install on
+           iPhone, or unblock). Tapping it opens a compact popover. -->
+      <div class="reminders-notif-wrap" id="remindersNotifWrap" hidden>
+        <button type="button" class="reminders-bell-btn" id="remindersNotifBtn"
+                aria-label="Notification settings" aria-haspopup="true"
+                aria-expanded="false" aria-controls="remindersNotifPopover">
+          <i class="ph ph-bell-simple-ringing" id="remindersNotifIcon"></i>
+          <span class="reminders-bell-dot" id="remindersNotifDot" hidden></span>
+        </button>
 
-      <!-- ── Notifications status: one consolidated, always-actionable card.
-           (Previously this was two stacked panels, and the first one's text
-           said "see above" to point at the second — which didn't reliably
-           sit above it and had no way to actually jump there. The how-to
-           steps now live inside this single card, and "Show me how" is a
-           real button, not a dead cross-reference.) ── -->
-      <section class="reminders-notice" id="remindersNotifBanner" hidden>
-        <div class="reminders-notice-icon"><i class="ph ph-bell-simple-ringing" id="remindersNotifIcon"></i></div>
-        <div class="reminders-notice-content">
-          <h2 class="reminders-notice-title" id="remindersNotifTitle">Notifications</h2>
-          <p class="reminders-notice-text" id="remindersNotifText"></p>
+        <div class="reminders-notif-popover" id="remindersNotifPopover" role="dialog" aria-label="Notifications" hidden>
+          <h2 class="reminders-notif-title" id="remindersNotifTitle">Notifications</h2>
+          <p class="reminders-notif-text" id="remindersNotifText"></p>
           <ol class="reminders-ios-steps" id="remindersIosSteps" hidden>
             <li><i class="ph ph-export"></i><span>Tap <strong>Share</strong> in Safari's toolbar</span></li>
             <li><i class="ph ph-plus-square"></i><span>Choose <strong>Add to Home Screen</strong></span></li>
             <li><i class="ph ph-house-simple"></i><span>Open Cognita from that new icon</span></li>
           </ol>
-          <button type="button" class="reminders-notice-dismiss" id="remindersIosHintDismiss" hidden>Got it</button>
+          <button type="button" class="reminders-notif-action" id="remindersEnableNotifBtn" hidden>Turn on notifications</button>
+          <button type="button" class="reminders-notif-close" id="remindersIosHintDismiss" hidden>Got it</button>
         </div>
-        <button type="button" class="reminders-notice-action" id="remindersEnableNotifBtn">Turn on notifications</button>
-      </section>
+      </div>
+    </header>
+
+    <div class="resources-scroll">
 
       <section class="resources-generate-panel">
         <div class="reminders-notif-row">
