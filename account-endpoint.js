@@ -8,7 +8,7 @@
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole } from './subscription.js';
 import { getUsageBatch } from './usage.js';
-import { getPlan, planHasFlashcardImages } from './entitlements.js';
+import { getPlan, planHasFlashcardImages, planHasConnectorTools } from './entitlements.js';
 
 export async function handleAccountRequest(request, env) {
   let identity;
@@ -56,6 +56,13 @@ export async function handleAccountRequest(request, env) {
     features: {
       documentExport: plan.features.documentExport,
       designTemplates: plan.features.designTemplates,
+      // Lets the frontend lock the "Connected apps" entry point (chat
+      // composer + account settings) instead of letting a Free-tier
+      // user go through the whole OAuth flow for a connector that
+      // chat-endpoint.js will never actually use (see
+      // planHasConnectorTools there — connectorToolsEnabled is false
+      // for any plan without this).
+      connectorTools: planHasConnectorTools(account.planId),
     },
   }), {
     status: 200,
