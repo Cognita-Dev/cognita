@@ -49,57 +49,72 @@
   margin-bottom: var(--space-3);
 }
 
-/* ── Notifications notice card ───────────────────────────────────
-   One consolidated card instead of two stacked, ambiguous panels.
-   Previously the generic banner said "(see above)" pointing at a
-   second, separate panel that didn't reliably render above it and
-   had no way to jump to it — a dead reference. Now the how-to steps
-   live inside the same card as the message that mentions them, and
-   the only cross-reference left ("Show me how") is a real button. */
-.reminders-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.reminders-notice-icon {
+/* ── Notifications: bell + popover ──────────────────────────────
+   Notification setup is a rare, one-time task, so it no longer gets a
+   permanent card on the page. It lives behind a small bell in the top
+   bar (shown only when there's something to do) and opens a compact
+   popover. Nothing on the page moves when it appears. */
+.reminders-notif-wrap { position: relative; flex-shrink: 0; }
+.reminders-notif-wrap[hidden],
+.reminders-notif-popover[hidden],
+.reminders-bell-dot[hidden],
+.reminders-ios-steps[hidden],
+.reminders-notif-action[hidden],
+.reminders-notif-close[hidden] { display: none; }
+
+.reminders-bell-btn {
+  position: relative;
   width: 34px;
   height: 34px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-full);
-  background: var(--accent-subtle);
-  color: var(--accent);
-  font-size: 16px;
+  color: var(--text-2);
+  font-size: 18px;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.reminders-notice-content { flex: 1; min-width: 0; }
-.reminders-notice-title {
+.reminders-bell-btn:hover,
+.reminders-bell-btn[aria-expanded="true"] { background: var(--bg-subtle); color: var(--text-1); }
+
+/* Small dot = "there's something you can turn on". */
+.reminders-bell-dot {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-sizing: content-box;
+  transform: translate(25%, -25%);
+}
+
+.reminders-notif-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 60;
+  width: min(300px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.reminders-notif-title {
   font-size: var(--text-sm);
   font-weight: 700;
   color: var(--text-1);
   margin: 0 0 2px;
 }
-.reminders-notice-text {
+.reminders-notif-text {
   font-size: var(--text-sm);
   color: var(--text-3);
   line-height: 1.5;
   margin: 0;
 }
-/* The only piece of body text that's actually clickable — styled to
-   look like it, unlike the plain grey "(see above)" it replaces. */
-.reminders-inline-link {
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.reminders-inline-link:hover { color: var(--accent-hover); }
 
 .reminders-ios-steps {
   list-style: none;
@@ -130,33 +145,21 @@
 }
 .reminders-ios-steps strong { color: var(--text-1); font-weight: 600; }
 
-.reminders-notice-dismiss {
+.reminders-notif-action,
+.reminders-notif-close {
   margin-top: var(--space-3);
-  color: var(--accent);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.reminders-notice-dismiss:hover { color: var(--accent-hover); }
-
-.reminders-notice-action {
-  flex-shrink: 0;
-  align-self: center;
-  padding: 8px 14px;
+  width: 100%;
+  padding: 9px var(--space-3);
   border-radius: var(--radius-full);
-  background: var(--text-1);
-  color: var(--bg-base);
   font-size: var(--text-sm);
   font-weight: 600;
-  white-space: nowrap;
+  text-align: center;
 }
-.reminders-notice-action:hover { opacity: 0.85; }
-
-@media (max-width: 480px) {
-  .reminders-notice { flex-wrap: wrap; }
-  .reminders-notice-action { width: 100%; }
-}
+.reminders-notif-action { background: var(--accent); color: #fff; }
+.reminders-notif-action:hover { background: var(--accent-hover); }
+.reminders-notif-action:disabled { opacity: 0.6; cursor: default; }
+.reminders-notif-close { background: var(--bg-subtle); color: var(--text-1); }
+.reminders-notif-close:hover { opacity: 0.85; }
 
 /* ── Reminder rows ────────────────────────────────────────────── */
 #view-reminders .my-resource-row { padding: var(--space-3); }
