@@ -12,11 +12,15 @@
 const BATCH_SIZE = 5;
 
 const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutes
+// Wait time before retry #1, then before retry #2. Backing off (instead of
+// retrying every 10 min) keeps 3 attempts useful against a real outage of the
+// push service or email provider, even though cron now runs every 5 minutes.
+const RETRY_DELAYS_MS = [10 * 60 * 1000, 30 * 60 * 1000];
 
 // How long after an event we still consider a reminder worth sending.
-// Cron runs every 30 minutes, so an "at the event time" reminder is normally
-// picked up up to ~30 min late; an hour covers that plus a retry. All-day
+// Cron runs every 5 minutes, so an "at the event time" reminder is normally
+// picked up within ~5 min; an hour comfortably covers that plus every retry
+// (the last one lands about 40 minutes after the first attempt). All-day
 // events have no clock time (their instant is 00:00), so they stay valid
 // for the whole day — otherwise "On the day (morning)" would always count
 // as "too late".
@@ -30,6 +34,7 @@ import {
   getOccurrence,
   getReminder,
   updateOccurrenceStatus,
+  releaseOccurrenceClaim,
   listSubscriptions,
   deleteSubscriptionById,
 } from './reminders-storage.js';
@@ -175,10 +180,15 @@ async function _processOccurrence(env, occurrenceId, now) {
 
   // Retry: back to pending, re-indexed a bit later so this tick's budget
   // isn't burned retrying the same thing immediately.
-  const retryAt = new Date(now.getTime() + RETRY_DELAY_MS);
+  const delayMs = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)];
+  const retryAt = new Date(now.getTime() + delayMs);
   await updateOccurrenceStatus(env, occurrenceId, { status: 'pending', attempts, lastError });
   const kv = env.COGNITA_REMINDERS;
   await kv.put('rq:' + retryAt.toISOString().slice(0, 16) + ':' + occurrenceId, '1');
+  // Give the claim back now. Otherwise it is still held when the retry comes
+  // due (its 10-minute lifetime can outlast the retry delay), the retry sees
+  // "already claimed", and the attempt is silently lost.
+  await releaseOccurrenceClaim(env, occurrenceId);
 }
 
 /** Entry point called from worker.js's scheduled() handler. */
@@ -193,11 +203,14 @@ export async function runReminderScheduler(env) {
 
   for (const { occurrenceId, kvKey } of due) {
     const claimed = await claimOccurrence(env, occurrenceId);
-    // Always drop the due-index entry once claimed (or already claimed by
-    // an overlapping run) — retries get their own fresh key with a later
-    // bucket, so this key's job is done either way.
-    await removeDueIndexEntry(env, kvKey);
+    // Someone else holds the claim right now (an overlapping run). Leave the
+    // index entry alone: deleting it would mean that if the other run fails
+    // to finish the job, nothing would ever pick it up again. Once the claim
+    // frees up, a later run handles it (or sees it is already done).
     if (!claimed) continue;
+    // Claimed by us: this entry's job is done. Retries get their own fresh
+    // key with a later bucket.
+    await removeDueIndexEntry(env, kvKey);
 
     try {
       await _processOccurrence(env, occurrenceId, now);
