@@ -4,6 +4,8 @@
 // (per-provider protocol). This file only translates Requests/Responses.
 
 import { requireAuth, describeAuthError } from './auth-middleware.js';
+import { resolveAccountWithRole } from './subscription.js';
+import { planHasConnectorTools } from './entitlements.js';
 import {
   CONNECTOR_PROVIDERS,
   ALLOWED_RETURN_TARGETS,
@@ -69,6 +71,25 @@ export async function handleConnectorStart(request, env, provider) {
   } catch (e) {
     const _authErr = describeAuthError(e);
     return _jsonError(_authErr.message, _authErr.status, env);
+  }
+
+  // Belt-and-suspenders: chat-endpoint.js already refuses to ever call a
+  // connected tool for a plan without connectorTools (connectorToolsEnabled
+  // there), so a Free-tier user who somehow reaches this endpoint would
+  // just be spending an OAuth round-trip on a connection Cognita will
+  // never use. The frontend is expected to lock this entry point before
+  // it gets here (see updateConnectorsAvailability in js/app.js), but the
+  // real gate has to live here too, since a client-side lock can always
+  // be bypassed by calling the API directly.
+  let account;
+  try {
+    account = await resolveAccountWithRole(identity.uid, env);
+  } catch (e) {
+    console.error('[connectors] account resolution failed:', e.message);
+    return _jsonError('Could not verify your plan. Please try again.', 500, env);
+  }
+  if (!planHasConnectorTools(account.planId)) {
+    return _jsonError('Connected apps require Cognita Plus or higher. Upgrade to connect ' + provider + '.', 403, env);
   }
 
   const url = new URL(request.url);
