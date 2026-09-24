@@ -20,7 +20,6 @@ const OFFSET_LABELS = {
   at_event: 'At the event time',
 };
 const TIME_ONLY_OFFSETS = new Set(['1_hour', 'at_event']);
-const IOS_HINT_DISMISSED_KEY = 'cognita:reminders:iosHintDismissed';
 
 let reminders = [];
 let editingId = null; // null = creating a new reminder
@@ -298,7 +297,10 @@ async function deleteReminder(id, fromModal = false) {
 /* ── Notifications: support detection, permission, subscribe ── */
 
 function isIos() {
-  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  // iPadOS 13+ reports itself as a Mac, so also check for a touch screen.
+  const iDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const iPadOs = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return (iDevice || iPadOs) && !window.MSStream;
 }
 function isStandalone() {
   return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -317,82 +319,80 @@ function urlBase64ToUint8Array(base64url) {
 }
 
 function wireNotifications() {
-  document.getElementById('remindersEnableNotifBtn').addEventListener('click', enableNotifications);
+  const btn = document.getElementById('remindersNotifBtn');
+  const popover = document.getElementById('remindersNotifPopover');
 
-  const dismissBtn = document.getElementById('remindersIosHintDismiss');
-  dismissBtn.addEventListener('click', () => {
-    localStorage.setItem(IOS_HINT_DISMISSED_KEY, '1');
-    renderIosNotice({ expanded: false });
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPopoverOpen(popover.hidden); // toggle
+  });
+  document.getElementById('remindersEnableNotifBtn').addEventListener('click', enableNotifications);
+  document.getElementById('remindersIosHintDismiss').addEventListener('click', () => setPopoverOpen(false));
+
+  // Tap anywhere outside the popover, or press Escape, to close it.
+  document.addEventListener('click', (e) => {
+    if (!popover.hidden && !e.target.closest('#remindersNotifWrap')) setPopoverOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !popover.hidden) {
+      setPopoverOpen(false);
+      btn.focus();
+    }
   });
 }
 
-// Renders the iOS "add to Home Screen" state of the notice card. This
-// replaces the old two-panel layout where one panel's text said
-// "(see above)" to reference a second panel — a reference that broke
-// as soon as anything reordered, and was never clickable to begin
-// with. Now there's one card, and the only cross-reference ("Show me
-// how") is a real button that expands the steps in place.
-function renderIosNotice({ expanded }) {
-  const text = document.getElementById('remindersNotifText');
-  const steps = document.getElementById('remindersIosSteps');
-  const dismissBtn = document.getElementById('remindersIosHintDismiss');
+function setPopoverOpen(open) {
+  document.getElementById('remindersNotifPopover').hidden = !open;
+  document.getElementById('remindersNotifBtn').setAttribute('aria-expanded', String(open));
+}
 
-  steps.hidden = !expanded;
-  dismissBtn.hidden = !expanded;
-
-  if (expanded) {
-    text.textContent = 'Add Cognita to your Home Screen to turn on notifications on iPhone:';
-    return;
-  }
-
-  text.innerHTML = '';
-  text.append('Add Cognita to your Home Screen to turn on notifications on iPhone. ');
-  const link = document.createElement('button');
-  link.type = 'button';
-  link.className = 'reminders-inline-link';
-  link.textContent = 'Show me how';
-  link.addEventListener('click', () => {
-    localStorage.removeItem(IOS_HINT_DISMISSED_KEY);
-    renderIosNotice({ expanded: true });
-  });
-  text.append(link);
+// One place that decides what the popover shows. Anything not passed in is
+// hidden, so a state can never show leftovers from a previous one.
+//   wrapVisible: whether the bell is shown at all
+//   dot:         small "something to do" dot on the bell
+function renderNotice({ wrapVisible, icon, dot = false, title = 'Notifications', text = '', steps = false, enable = false, gotIt = false }) {
+  document.getElementById('remindersNotifWrap').hidden = !wrapVisible;
+  document.getElementById('remindersNotifIcon').className = 'ph ' + icon;
+  document.getElementById('remindersNotifDot').hidden = !dot;
+  document.getElementById('remindersNotifTitle').textContent = title;
+  document.getElementById('remindersNotifText').textContent = text;
+  document.getElementById('remindersIosSteps').hidden = !steps;
+  document.getElementById('remindersEnableNotifBtn').hidden = !enable;
+  document.getElementById('remindersIosHintDismiss').hidden = !gotIt;
+  if (!wrapVisible) setPopoverOpen(false);
 }
 
 async function updateNotificationUI() {
-  const banner = document.getElementById('remindersNotifBanner');
-  const title = document.getElementById('remindersNotifTitle');
-  const text = document.getElementById('remindersNotifText');
-  const icon = document.getElementById('remindersNotifIcon');
-  const btn = document.getElementById('remindersEnableNotifBtn');
-
+  // iPhone/iPad in Safari: push only works once the app is on the Home Screen.
   if (isIos() && !isStandalone()) {
-    banner.hidden = false;
-    icon.className = 'ph ph-bell-simple-ringing';
-    title.textContent = 'Notifications';
-    renderIosNotice({ expanded: !localStorage.getItem(IOS_HINT_DISMISSED_KEY) });
-    btn.style.display = 'none';
+    renderNotice({
+      wrapVisible: true,
+      icon: 'ph-bell-simple-ringing',
+      dot: true,
+      title: 'Get reminder notifications',
+      text: 'On iPhone, add Cognita to your Home Screen first:',
+      steps: true,
+      gotIt: true,
+    });
     return;
   }
-  document.getElementById('remindersIosSteps').hidden = true;
-  document.getElementById('remindersIosHintDismiss').hidden = true;
 
+  // Browser can't do push at all (non-iOS): nothing useful to show.
+  // Reminders can still be sent by email, chosen when adding a reminder.
   if (!pushSupported()) {
-    banner.hidden = false;
-    icon.className = 'ph ph-bell-slash';
-    title.textContent = 'Notifications';
-    text.textContent = "This browser doesn't support notifications. You can still get reminders by email.";
-    btn.style.display = 'none';
+    renderNotice({ wrapVisible: false, icon: 'ph-bell-slash' });
     return;
   }
 
   const permission = Notification.permission;
 
   if (permission === 'denied') {
-    banner.hidden = false;
-    icon.className = 'ph ph-bell-slash';
-    title.textContent = 'Notifications are blocked';
-    text.textContent = 'Allow notifications for Cognita in your browser\u2019s site settings, then reload this page.';
-    btn.style.display = 'none';
+    renderNotice({
+      wrapVisible: true,
+      icon: 'ph-bell-slash',
+      title: 'Notifications are blocked',
+      text: 'Allow notifications for Cognita in your browser\u2019s site settings, then reload this page.',
+    });
     return;
   }
 
@@ -406,17 +406,20 @@ async function updateNotificationUI() {
   }
 
   if (permission === 'granted' && hasSubscription) {
-    banner.hidden = true; // already set up — nothing to ask
+    renderNotice({ wrapVisible: false, icon: 'ph-bell-simple-ringing' }); // already set up — nothing to ask
     return;
   }
 
-  banner.hidden = false;
-  icon.className = 'ph ph-bell-simple-ringing';
-  title.textContent = 'Notifications';
-  text.textContent = 'Get notified about reminders on this device.';
-  btn.style.display = '';
+  const btn = document.getElementById('remindersEnableNotifBtn');
   btn.disabled = false;
   btn.textContent = 'Turn on notifications';
+  renderNotice({
+    wrapVisible: true,
+    icon: 'ph-bell-simple-ringing',
+    dot: true,
+    text: 'Get notified about reminders on this device.',
+    enable: true,
+  });
 }
 
 async function enableNotifications() {
