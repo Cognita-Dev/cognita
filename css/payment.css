@@ -7,6 +7,8 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
+  padding-top: calc(var(--space-5) + env(safe-area-inset-top, 0px)); /* iPhone home-screen status bar */
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
 }
 
 .payment-shell {
