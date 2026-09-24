@@ -163,7 +163,6 @@ export default {
       return handleDocumentRequest(request, env);
     }
 
-    // GET /api/files/:conversationId -> list generated files for that chat
     if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
       const conversationId = url.pathname.split('/')[3];
       return handleFilesList(request, env, conversationId);
