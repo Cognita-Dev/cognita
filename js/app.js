@@ -1075,6 +1075,13 @@ function renderComposerAttachments() {
 // not a permanent fixture the user has to look past every time they
 // open the chat. sessionStorage means they reappear on the next real
 // login (new tab/session) but not on every view switch within one.
+//
+// Behaviour:
+//  - Tapping a chip only FILLS the message box with that prompt (and
+//    focuses it) so the user can edit it before sending. Nothing is sent.
+//  - The auto-hide countdown is paused while the user is interacting
+//    with the chips (touching, scrolling, hovering, keyboard focus) and
+//    starts again from the full delay once they let go.
 const SUGGESTIONS_SEEN_KEY = 'cognita:composerSuggestionsSeen';
 const SUGGESTIONS_AUTOHIDE_MS = 6000;
 
@@ -1088,25 +1095,62 @@ function wireComposerSuggestions() {
   }
   sessionStorage.setItem(SUGGESTIONS_SEEN_KEY, '1');
 
+  const input = document.getElementById('composerInput');
+
   let hidden = false;
+  let autohideTimer = null;
+
+  const stopTimer = () => {
+    if (autohideTimer) { clearTimeout(autohideTimer); autohideTimer = null; }
+  };
   const hide = () => {
     if (hidden) return;
     hidden = true;
+    stopTimer();
     el.classList.add('is-hidden');
     setTimeout(() => el.remove(), 400);
   };
+  // (Re)starts the full countdown. Calling it again always resets it.
+  const startTimer = () => {
+    if (hidden) return;
+    stopTimer();
+    autohideTimer = setTimeout(hide, SUGGESTIONS_AUTOHIDE_MS);
+  };
 
-  const autohideTimer = setTimeout(hide, SUGGESTIONS_AUTOHIDE_MS);
+  startTimer();
 
-  const input = document.getElementById('composerInput');
+  // Pause while the user is interacting with the chips; restart the
+  // countdown once they stop.
+  el.addEventListener('pointerdown', stopTimer);
+  el.addEventListener('pointerup', startTimer);
+  el.addEventListener('pointercancel', startTimer); // browser took over the touch to scroll
+  el.addEventListener('mouseenter', stopTimer);
+  el.addEventListener('mouseleave', startTimer);
+  el.addEventListener('focusin', stopTimer);
+  el.addEventListener('focusout', startTimer);
+  // Sideways swiping (including the momentum after the finger lifts):
+  // every scroll tick resets the countdown, so it only runs once the
+  // strip has stopped moving.
+  el.addEventListener('scroll', startTimer, { passive: true });
+
+  // As soon as the user types anything themselves, the chips have done
+  // their job.
   if (input) {
-    input.addEventListener('input', () => { clearTimeout(autohideTimer); hide(); }, { once: true });
+    input.addEventListener('input', hide, { once: true });
   }
 
   el.querySelectorAll('.composer-suggestion-chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      clearTimeout(autohideTimer);
-      sendMessage(chip.dataset.prompt);
+      if (!input) return;
+      input.value = chip.dataset.prompt || '';
+      // Fire the normal "input" handler so the box resizes to fit the
+      // text, the send button becomes enabled, and the animated
+      // placeholder stops — exactly as if the user had typed it.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      // Put the cursor at the end so the user can keep typing/editing.
+      const end = input.value.length;
+      input.setSelectionRange(end, end);
       hide();
     });
   });
