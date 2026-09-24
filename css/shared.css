@@ -203,6 +203,19 @@ select {
   font: inherit;
   color: inherit;
 }
+/* Stop mobile browsers (iOS Safari especially) from zooming the whole page
+   when a text field is focused. They do this whenever a field's text is
+   smaller than 16px. Page-specific rules set fields to 14px, so this rule
+   uses !important to win. Only touch devices are affected; desktop keeps the
+   smaller sizing. Pinch-zoom is still allowed (we don't touch the viewport). */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="button"]):not([type="submit"]),
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: 16px !important;
+  }
+}
 button {
   cursor: pointer;
   border: none;
