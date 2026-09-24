@@ -8,9 +8,12 @@
    width. Never flush to the top, never full-bleed on mobile. The
    trigger opens a full-screen overlay menu rather than a dropdown.
 ═══════════════════════════════════════════════ */
+/* Keep page content clear of the iPhone home-screen status bar. */
+body { padding-top: env(safe-area-inset-top, 0px); }
+
 .site-header {
   position: fixed;
-  top: var(--space-4);
+  top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
   left: var(--space-4);
   right: var(--space-4);
   max-width: 640px;
@@ -182,7 +185,7 @@ body.nav-open { overflow: hidden; }
    Header shrinks its inset margins slightly and drops max-width. */
 @media (max-width: 760px) {
   .site-header {
-    top: var(--space-3);
+    top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
     left: var(--space-3);
     right: var(--space-3);
     max-width: none;
