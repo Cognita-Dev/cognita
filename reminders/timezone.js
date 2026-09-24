@@ -93,14 +93,29 @@ export const MORNING_OFFSET_HOUR = 8;
  * @param {Date} eventUtc - the event's own UTC instant (start of day for all-day events)
  * @param {{y:number,m:number,d:number}} eventDate - the event's local calendar date
  * @param {string} timezone - IANA timezone name
+ * @param {boolean} [allDay] - all-day events have no clock time, so "1 week / 1 day
+ *   before" fire at the morning hour of that earlier day rather than at midnight
+ *   (which would buzz people's phones at 00:00).
  * @returns {Date}
  */
-export function computeOffsetFireAt(presetId, eventUtc, eventDate, timezone) {
+export function computeOffsetFireAt(presetId, eventUtc, eventDate, timezone, allDay = false) {
   switch (presetId) {
     case '1_week':
-      return new Date(eventUtc.getTime() - 7 * DAY_MS);
-    case '1_day':
-      return new Date(eventUtc.getTime() - DAY_MS);
+    case '1_day': {
+      if (allDay) {
+        const daysBefore = presetId === '1_week' ? 7 : 1;
+        const earlier = new Date(Date.UTC(eventDate.y, eventDate.m - 1, eventDate.d - daysBefore));
+        return zonedTimeToUtc(
+          earlier.getUTCFullYear(),
+          earlier.getUTCMonth() + 1,
+          earlier.getUTCDate(),
+          MORNING_OFFSET_HOUR,
+          0,
+          timezone
+        );
+      }
+      return new Date(eventUtc.getTime() - (presetId === '1_week' ? 7 : 1) * DAY_MS);
+    }
     case 'morning_of':
       return zonedTimeToUtc(eventDate.y, eventDate.m, eventDate.d, MORNING_OFFSET_HOUR, 0, timezone);
     case '1_hour':
