@@ -23,6 +23,9 @@ const TIME_ONLY_OFFSETS = new Set(['1_hour', 'at_event']);
 
 let reminders = [];
 let editingId = null; // null = creating a new reminder
+let editingTimezone = null; // the timezone an edited reminder was saved in
+let pushReady = false; // this device is fully set up to receive push
+let subscriptionSynced = false;
 let selectedChannels = { push: true, email: false };
 let selectedOffsets = new Set(['1_day', 'morning_of']);
 
@@ -55,8 +58,11 @@ async function loadReminders() {
     reminders = data.reminders || [];
 
     const now = Date.now();
-    const upcoming = reminders.filter((r) => new Date(r.eventAt).getTime() >= now);
-    const past = reminders.filter((r) => new Date(r.eventAt).getTime() < now);
+    // An all-day event stays "upcoming" for the whole day (its stored time is 00:00).
+    const isOver = (r) => new Date(r.eventAt).getTime() + (r.allDay ? 24 * 60 * 60 * 1000 : 0) < now;
+    const byDate = (a, b) => new Date(a.eventAt) - new Date(b.eventAt);
+    const upcoming = reminders.filter((r) => !isOver(r)).sort(byDate); // soonest first
+    const past = reminders.filter(isOver).sort((a, b) => byDate(b, a)); // most recent first
 
     renderRows(upcomingList, upcoming, 'Nothing coming up. Tap "Add reminder" to create one.');
 
@@ -72,12 +78,50 @@ async function loadReminders() {
   }
 }
 
+// Show the date/time in the timezone the reminder was saved in, so it reads
+// the same on every device (and matches what the notification will say).
 function formatWhen(reminder) {
   const d = new Date(reminder.eventAt);
-  const dateText = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const dateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
+  const timeOpts = { hour: '2-digit', minute: '2-digit' };
+  let dateText;
+  let timeText;
+  try {
+    dateText = d.toLocaleDateString(undefined, { ...dateOpts, timeZone: reminder.timezone });
+    timeText = d.toLocaleTimeString(undefined, { ...timeOpts, timeZone: reminder.timezone });
+  } catch (_) {
+    // Unknown timezone name on this device: fall back to the device's own.
+    dateText = d.toLocaleDateString(undefined, dateOpts);
+    timeText = d.toLocaleTimeString(undefined, timeOpts);
+  }
   if (reminder.allDay) return dateText;
-  const timeText = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return dateText + ' \u00b7 ' + timeText;
+}
+
+// Reads the wall-clock date ("YYYY-MM-DD") and time ("HH:MM") of an instant
+// in a given timezone, using Intl parts rather than parsing a locale string
+// (which browsers format differently).
+function zonedDateTimeParts(date, timeZone) {
+  const make = (tz) =>
+    new Intl.DateTimeFormat('en-US', {
+      ...(tz ? { timeZone: tz } : {}),
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(date);
+  let parts;
+  try {
+    parts = make(timeZone);
+  } catch (_) {
+    parts = make(null);
+  }
+  const p = {};
+  parts.forEach((x) => { p[x.type] = x.value; });
+  const hour = p.hour === '24' ? '00' : p.hour; // some engines render midnight as 24
+  return { date: p.year + '-' + p.month + '-' + p.day, time: hour + ':' + p.minute };
 }
 
 function renderRows(container, list, emptyText) {
@@ -177,6 +221,7 @@ function syncOffsetButtons() {
 
 function openCreateModal() {
   editingId = null;
+  editingTimezone = null;
   document.getElementById('reminderModalTitle').textContent = 'Add reminder';
   document.getElementById('reminderDeleteBtn').style.display = 'none';
   document.getElementById('reminderTitleInput').value = '';
@@ -195,20 +240,16 @@ function openEditModal(id) {
   const reminder = reminders.find((r) => r.id === id);
   if (!reminder) return;
   editingId = id;
+  editingTimezone = reminder.timezone || null;
 
   document.getElementById('reminderModalTitle').textContent = 'Edit reminder';
   document.getElementById('reminderDeleteBtn').style.display = '';
   document.getElementById('reminderTitleInput').value = reminder.title;
   document.getElementById('reminderNotesInput').value = reminder.notes || '';
 
-  const d = new Date(reminder.eventAt);
-  const localDate = new Date(d.toLocaleString('en-US', { timeZone: reminder.timezone }));
-  const pad = (n) => String(n).padStart(2, '0');
-  document.getElementById('reminderDateInput').value =
-    localDate.getFullYear() + '-' + pad(localDate.getMonth() + 1) + '-' + pad(localDate.getDate());
-  document.getElementById('reminderTimeInput').value = reminder.allDay
-    ? ''
-    : pad(localDate.getHours()) + ':' + pad(localDate.getMinutes());
+  const when = zonedDateTimeParts(new Date(reminder.eventAt), reminder.timezone);
+  document.getElementById('reminderDateInput').value = when.date;
+  document.getElementById('reminderTimeInput').value = reminder.allDay ? '' : when.time;
 
   selectedChannels = { ...reminder.channels };
   selectedOffsets = new Set(reminder.offsets || []);
@@ -236,7 +277,10 @@ async function saveReminder() {
     date,
     time: time || null,
     notes,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // The form shows the reminder's own wall-clock time, so an edit must keep
+    // its timezone — otherwise editing from a device in another timezone
+    // would silently move the event.
+    timezone: (editingId && editingTimezone) || Intl.DateTimeFormat().resolvedOptions().timeZone,
     channels: selectedChannels,
     offsets: [...selectedOffsets],
   };
@@ -260,11 +304,12 @@ async function saveReminder() {
       return;
     }
 
-    if (data.skipped && data.skipped.length) {
-      showToast('Saved. Already in the past, so not sent: ' + data.skipped.join(', '));
-    } else {
-      showToast('Reminder saved.');
-    }
+    let message = data.skipped && data.skipped.length
+      ? 'Saved. Already in the past, so not sent: ' + data.skipped.join(', ') + '.'
+      : 'Reminder saved.';
+    const hint = pushHint();
+    if (hint) message += ' ' + hint;
+    showToast(message);
 
     closeModal();
     await loadReminders();
@@ -318,6 +363,36 @@ function urlBase64ToUint8Array(base64url) {
   return bytes;
 }
 
+// If a reminder relies on device notifications but this device isn't set up
+// for them, say so instead of letting it fail silently later.
+function pushHint() {
+  if (!selectedChannels.push || selectedChannels.email || pushReady) return '';
+  if (isIos() && !isStandalone()) return 'Tap the bell at the top to set up notifications on iPhone, or add Email.';
+  if (!pushSupported()) return 'This browser can\u2019t show notifications, so add Email to receive it.';
+  if (Notification.permission === 'denied') return 'Notifications are blocked here. Tap the bell for help, or add Email.';
+  return 'Tap the bell at the top to turn on notifications so it reaches you.';
+}
+
+// Tells the server this device (still) belongs to the signed-in person. Needed
+// because a browser keeps its push subscription across sign-outs: without
+// this, someone signing in on a shared device would never get their reminders
+// there, and the previous person's would keep arriving. Safe to repeat.
+async function syncSubscription(sub) {
+  if (subscriptionSynced) return;
+  subscriptionSynced = true;
+  try {
+    const subJson = sub.toJSON();
+    await window.Auth.authedFetch(WORKER_URL + '/api/reminders/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: subJson.endpoint, keys: subJson.keys, userAgent: navigator.userAgent }),
+    });
+  } catch (e) {
+    subscriptionSynced = false; // try again next time
+    console.error('[reminders] subscription sync failed:', e.message);
+  }
+}
+
 function wireNotifications() {
   const btn = document.getElementById('remindersNotifBtn');
   const popover = document.getElementById('remindersNotifPopover');
@@ -363,6 +438,7 @@ function renderNotice({ wrapVisible, icon, dot = false, title = 'Notifications',
 }
 
 async function updateNotificationUI() {
+  pushReady = false;
   // iPhone/iPad in Safari: push only works once the app is on the Home Screen.
   if (isIos() && !isStandalone()) {
     renderNotice({
@@ -397,15 +473,18 @@ async function updateNotificationUI() {
   }
 
   let hasSubscription = false;
+  let currentSub = null;
   try {
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    hasSubscription = !!sub;
+    currentSub = await reg.pushManager.getSubscription();
+    hasSubscription = !!currentSub;
   } catch (_) {
     hasSubscription = false;
   }
 
   if (permission === 'granted' && hasSubscription) {
+    pushReady = true;
+    syncSubscription(currentSub); // no await: never block the page on this
     renderNotice({ wrapVisible: false, icon: 'ph-bell-simple-ringing' }); // already set up — nothing to ask
     return;
   }
@@ -458,6 +537,7 @@ async function enableNotifications() {
       showToast(data.error || 'Could not turn on notifications.');
       return;
     }
+    subscriptionSynced = true; // just registered with the server
     showToast('Notifications turned on.');
   } catch (e) {
     console.error('[reminders] enable notifications failed:', e.message);
