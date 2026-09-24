@@ -328,6 +328,9 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
+  /* iPhone home-screen app: the status bar is transparent and draws over the
+     page, so push the top bar down by the height of that area. */
+  padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -1453,6 +1456,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
     height: 100dvh;
     width: 272px !important;
     padding: var(--space-4) var(--space-3) !important;
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)) !important;
     z-index: 200;
     transform: translateX(-100%);
     transition: transform var(--duration-base) var(--ease);
