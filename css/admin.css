@@ -108,6 +108,7 @@
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-5) var(--space-6);
+  padding-top: calc(var(--space-5) + env(safe-area-inset-top, 0px)); /* iPhone home-screen status bar */
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -502,6 +503,7 @@
   position: fixed;
   top: 0; right: 0; bottom: 0;
   width: min(720px, 100vw);
+  padding-top: env(safe-area-inset-top, 0px);
   background: var(--bg-elevated);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
@@ -577,6 +579,7 @@
     top: 0; bottom: 0; left: 0;
     width: 272px;
     height: 100vh; height: 100dvh;
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
     z-index: 400;
     transform: translateX(-100%);
     transition: transform var(--duration-base) var(--ease);
@@ -598,7 +601,7 @@
   .admin-detail-panel { width: 100vw; }
   .admin-detail-body { flex-direction: column; }
   .admin-detail-side { width: 100%; }
-  .admin-topbar { padding: var(--space-4); }
+  .admin-topbar { padding: var(--space-4); padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); }
 }
 @media (max-width: 560px) {
   .admin-stat-grid { grid-template-columns: 1fr 1fr; }
