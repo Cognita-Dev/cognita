@@ -200,8 +200,6 @@ export default {
       return handleResourceCardImage(request, env, parts[3], parts[5]);
     }
 
-    // Flashcard pictures (stored in B2, served through a signed link so a
-    // plain <img> tag can load them).
     if (request.method === 'GET' && /^\/api\/resources\/[^/]+\/image$/.test(url.pathname)) {
       const resourceId = url.pathname.split('/')[3];
       return handleResourceImageProxy(request, env, resourceId);
