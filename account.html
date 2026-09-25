@@ -85,6 +85,18 @@
     Connect an account to let Cognita use it in chat — for example, reading a file from Drive or listing your GitHub repos. Cognita only acts when you ask it to, and always asks first before making any change on your behalf.
   </p>
 
+  <!-- ── Social Scheduler ── -->
+  <div class="settings-group-label">Social Scheduler</div>
+  <div class="settings-group">
+    <a href="/scheduler.html" class="settings-row settings-row--button">
+      <span class="settings-row-text">
+        <span class="settings-row-label"><i class="ph ph-calendar-check"></i> Schedule Facebook & Instagram posts</span>
+        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">Requires Facebook connected above.</span>
+      </span>
+      <i class="ph ph-caret-right"></i>
+    </a>
+  </div>
+
   <!-- ── Sign out ── -->
   <div class="settings-group-label">Session</div>
   <div class="settings-group">
@@ -130,10 +142,10 @@
       hint: 'You need to be signed in to GitHub in this browser to connect it.',
     },
     google: { label: 'Google', icon: 'ph-google-logo', desc: 'Calendar (full read/write), Drive (files Cognita creates), and Gmail (send + labels only).' },
-    figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
+    facebook: { label: 'Facebook & Instagram', icon: 'ph-facebook-logo', desc: 'Post to a Facebook Page and its linked Instagram account, and schedule posts.' },
     canva: { label: 'Canva', icon: 'ph-image-square', desc: 'Read and create designs.' },
   };
-  const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
+  const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
 
   function connectionRow(provider, connected, locked) {
     const meta = CONNECTOR_META[provider];
