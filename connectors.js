@@ -1,5 +1,5 @@
 // connectors.js
-// Storage layer for third-party connector tokens (GitHub, Google, Figma,
+// Storage layer for third-party connector tokens (GitHub, Google, Facebook,
 // Canva). Two separate stores, deliberately never mixed:
 //
 //   - Firestore (`connectors/{uid}/providers/{provider}`) — the actual
@@ -28,10 +28,12 @@ import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToke
 // The only four providers this app knows about. Kept as a single exported
 // list so routing, the account-page UI data, and validation all check
 // against the same source of truth instead of re-typing provider names.
-// Slack and Dropbox were removed (2026) — see project notes; do not
-// re-add provider names here without also wiring up connector-providers.js,
-// a *-tools.js executor, and every frontend CONNECTOR_META/CONNECTOR_ORDER.
-export const CONNECTOR_PROVIDERS = ['github', 'google', 'figma', 'canva'];
+// Slack and Dropbox were removed (2026) — see project notes; Figma was
+// replaced by Facebook (2026-09), see project notes — do not re-add or
+// remove a provider name here without also wiring up
+// connector-providers.js, a *-tools.js executor, and every frontend
+// CONNECTOR_META/CONNECTOR_ORDER.
+export const CONNECTOR_PROVIDERS = ['github', 'google', 'facebook', 'canva'];
 
 // Where the OAuth flow should send the user back to after the provider's
 // redirect completes. This is the ONLY set of values `returnTo` may ever
