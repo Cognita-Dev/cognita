@@ -21,7 +21,7 @@ import {
 // (see auth-middleware.js) — never from hiding this.
 const firebaseConfig = {
   apiKey: 'AIzaSyB2K_ST2Crl-u-DoWsN8QoIN2rpBOA2XOs',
-  authDomain: 'cognita-b94eb.firebaseapp.com',
+  authDomain: 'auth.cognita.com.ng',
   projectId: 'cognita-b94eb',
   storageBucket: 'cognita-b94eb.firebasestorage.app',
   messagingSenderId: '994240602309',
