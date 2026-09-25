@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Social Scheduler — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/account.css">
+<link rel="stylesheet" href="/css/scheduler.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="account-page">
+
+<header class="account-topbar">
+  <a href="/app.html" class="account-back">
+    <i class="ph ph-arrow-left"></i> Back to Cognita
+  </a>
+</header>
+
+<main class="account-shell">
+  <h1 class="account-page-title">Social Scheduler</h1>
+
+  <!-- ── Not connected / not entitled state ── -->
+  <div class="settings-group" id="schedulerBlockedNotice" hidden>
+    <div class="settings-row">
+      <span class="settings-row-text">
+        <span class="settings-row-label" id="schedulerBlockedTitle">Facebook isn't connected yet</span>
+        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);" id="schedulerBlockedDesc">
+          Connect Facebook in Account Settings to schedule posts to a Page and its linked Instagram account.
+        </span>
+      </span>
+    </div>
+    <a href="/account.html" class="settings-row settings-row--button">
+      <span class="settings-row-label">Go to Account Settings</span>
+      <i class="ph ph-caret-right"></i>
+    </a>
+  </div>
+
+  <!-- ── Composer ── -->
+  <div id="schedulerComposerWrap" hidden>
+    <div class="settings-group-label">Schedule a post</div>
+    <form class="settings-group scheduler-composer" id="composerForm">
+
+      <div class="scheduler-field">
+        <label class="scheduler-label" for="targetPage">Post to</label>
+        <select id="targetPage" class="scheduler-input" required></select>
+      </div>
+
+      <div class="scheduler-field" id="messageField">
+        <label class="scheduler-label" for="postMessage">Text</label>
+        <textarea id="postMessage" class="scheduler-input scheduler-textarea" maxlength="2200" placeholder="What do you want to say?"></textarea>
+      </div>
+
+      <div class="scheduler-field" id="imageField" hidden>
+        <label class="scheduler-label" for="postImageUrl">Image URL</label>
+        <input id="postImageUrl" class="scheduler-input" type="url" placeholder="https://…/photo.jpg">
+        <span class="scheduler-hint">Instagram needs a publicly reachable image link — not a file upload.</span>
+      </div>
+
+      <div class="scheduler-field" id="linkField">
+        <label class="scheduler-label" for="postLink">Link (optional)</label>
+        <input id="postLink" class="scheduler-input" type="url" placeholder="https://…">
+      </div>
+
+      <div class="scheduler-field-row">
+        <div class="scheduler-field">
+          <label class="scheduler-label" for="postDate">Date</label>
+          <input id="postDate" class="scheduler-input" type="date" required>
+        </div>
+        <div class="scheduler-field">
+          <label class="scheduler-label" for="postTime">Time</label>
+          <input id="postTime" class="scheduler-input" type="time" required>
+        </div>
+      </div>
+
+      <p class="scheduler-error" id="composerError" hidden></p>
+
+      <button type="submit" class="settings-row settings-row--button scheduler-submit" id="composerSubmit">
+        <span class="settings-row-label"><i class="ph ph-calendar-plus"></i> Schedule post</span>
+      </button>
+    </form>
+  </div>
+
+  <!-- ── Scheduled posts list ── -->
+  <div id="schedulerListWrap" hidden>
+    <div class="settings-group-label">Scheduled &amp; recent posts</div>
+    <div class="settings-group" id="scheduledPostsGrid">
+      <div class="settings-row skeleton" style="height:52px;"></div>
+    </div>
+    <p class="settings-footnote">Posts publish automatically, within a few minutes of their scheduled time. Canceling only works before a post has gone out.</p>
+  </div>
+
+</main>
+
+<script type="module" src="/js/auth.js"></script>
+<script type="module">
+  const WORKER_URL = 'https://api.cognita.com.ng';
+
+  const user = await window.Auth.requireAuthOrRedirect();
+  if (!user) throw new Error('redirecting');
+
+  const blockedNotice = document.getElementById('schedulerBlockedNotice');
+  const blockedTitle = document.getElementById('schedulerBlockedTitle');
+  const blockedDesc = document.getElementById('schedulerBlockedDesc');
+  const composerWrap = document.getElementById('schedulerComposerWrap');
+  const listWrap = document.getElementById('schedulerListWrap');
+  const targetPageSelect = document.getElementById('targetPage');
+  const messageField = document.getElementById('messageField');
+  const imageField = document.getElementById('imageField');
+  const linkField = document.getElementById('linkField');
+  const postMessage = document.getElementById('postMessage');
+  const postImageUrl = document.getElementById('postImageUrl');
+  const postLink = document.getElementById('postLink');
+  const postDate = document.getElementById('postDate');
+  const postTime = document.getElementById('postTime');
+  const composerError = document.getElementById('composerError');
+  const composerForm = document.getElementById('composerForm');
+  const composerSubmit = document.getElementById('composerSubmit');
+  const scheduledPostsGrid = document.getElementById('scheduledPostsGrid');
+
+  // Default the date/time picker to an hour from now, in the visitor's
+  // own local time zone — the browser's date/time inputs are always
+  // local, and scheduledFor is sent as a real ISO instant below.
+  (function seedDefaultTime() {
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    postDate.value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    postTime.value = pad(d.getHours()) + ':' + pad(d.getMinutes());
+  })();
+
+  let pages = []; // [{ id, name, instagram: { id, username } | null }]
+
+  function optionsForPages() {
+    const opts = [];
+    for (const p of pages) {
+      opts.push({ value: 'facebook:' + p.id, label: p.name + ' — Facebook Page' });
+      if (p.instagram) {
+        opts.push({ value: 'instagram:' + p.id, label: p.name + ' — Instagram (@' + (p.instagram.username || p.instagram.id) + ')' });
+      }
+    }
+    return opts;
+  }
+
+  function renderPagePicker() {
+    const opts = optionsForPages();
+    targetPageSelect.innerHTML = opts.map((o) => '<option value="' + o.value + '">' + o.label + '</option>').join('');
+    updateFieldsForTarget();
+  }
+
+  function currentTarget() {
+    const [target, pageId] = (targetPageSelect.value || '').split(':');
+    return { target, pageId };
+  }
+
+  function updateFieldsForTarget() {
+    const { target } = currentTarget();
+    const isInstagram = target === 'instagram';
+    imageField.hidden = !isInstagram;
+    linkField.hidden = isInstagram; // Facebook-only field
+    postMessage.placeholder = isInstagram ? 'Write a caption…' : 'What do you want to say?';
+  }
+  targetPageSelect.addEventListener('change', updateFieldsForTarget);
+
+  async function loadPages() {
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/social/pages');
+      if (res.status === 403) {
+        blockedTitle.textContent = 'Social Scheduler needs a higher plan';
+        blockedDesc.textContent = 'Upgrade to Cognita Plus or higher to schedule Facebook & Instagram posts.';
+        blockedNotice.hidden = false;
+        return false;
+      }
+      if (res.status === 409) {
+        blockedTitle.textContent = "Facebook isn't connected yet";
+        blockedDesc.textContent = 'Connect Facebook in Account Settings to schedule posts to a Page and its linked Instagram account.';
+        blockedNotice.hidden = false;
+        return false;
+      }
+      if (!res.ok) throw new Error('Could not load your Facebook Pages.');
+      const data = await res.json();
+      pages = data.pages || [];
+      if (pages.length === 0) {
+        blockedTitle.textContent = 'No Facebook Pages found';
+        blockedDesc.textContent = "Your Facebook connection doesn't have any Pages on it yet — create or get admin access to a Page, then reconnect.";
+        blockedNotice.hidden = false;
+        return false;
+      }
+      renderPagePicker();
+      return true;
+    } catch (e) {
+      blockedTitle.textContent = 'Could not load your Facebook Pages';
+      blockedDesc.textContent = e.message || 'Please try again.';
+      blockedNotice.hidden = false;
+      return false;
+    }
+  }
+
+  function statusBadge(status) {
+    const labels = {
+      pending: 'Scheduled', publishing: 'Publishing…', published: 'Published',
+      failed: 'Failed', canceled: 'Canceled', missed: 'Missed',
+    };
+    return '<span class="scheduler-badge scheduler-badge--' + status + '">' + (labels[status] || status) + '</span>';
+  }
+
+  function formatWhen(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function postRowHtml(post) {
+    const preview = (post.message || '').slice(0, 80) || (post.target === 'instagram' ? '(image post)' : '');
+    return (
+      '<div class="settings-row scheduler-post-row" data-id="' + post.id + '">' +
+        '<div class="settings-row-text">' +
+          '<span class="settings-row-label">' + post.pageLabel + ' ' + statusBadge(post.status) + '</span>' +
+          '<span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">' +
+            formatWhen(post.scheduledFor) + (preview ? ' — "' + preview + (preview.length === 80 ? '…' : '') + '"' : '') +
+          '</span>' +
+          (post.status === 'failed' && post.lastError
+            ? '<span style="display:block; font-size: var(--text-xs); color: var(--accent);">' + post.lastError + '</span>'
+            : '') +
+        '</div>' +
+        (post.status === 'pending'
+          ? '<button type="button" class="scheduler-cancel-btn" data-id="' + post.id + '"><i class="ph ph-x"></i></button>'
+          : '') +
+      '</div>'
+    );
+  }
+
+  async function loadScheduledPosts() {
+    scheduledPostsGrid.innerHTML = '<div class="settings-row skeleton" style="height:52px;"></div>';
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/social/schedule');
+      if (!res.ok) throw new Error('Could not load your scheduled posts.');
+      const data = await res.json();
+      const posts = data.posts || [];
+      scheduledPostsGrid.innerHTML = posts.length
+        ? posts.map(postRowHtml).join('')
+        : '<div class="settings-row"><span class="settings-row-text"><span class="settings-row-value" style="color: var(--text-3);">Nothing scheduled yet.</span></span></div>';
+    } catch (e) {
+      scheduledPostsGrid.innerHTML = '<div class="settings-row"><span class="settings-row-text"><span class="settings-row-value" style="color: var(--accent);">' + e.message + '</span></span></div>';
+    }
+  }
+
+  scheduledPostsGrid.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('.scheduler-cancel-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/social/schedule/' + btn.dataset.id, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Could not cancel that post.');
+      await loadScheduledPosts();
+    } catch (e) {
+      btn.disabled = false;
+      alert(e.message);
+    }
+  });
+
+  composerForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    composerError.hidden = true;
+    composerSubmit.disabled = true;
+
+    try {
+      const { target, pageId } = currentTarget();
+      if (!target || !pageId) throw new Error('Choose where to post first.');
+
+      // The date/time inputs are local-time; combine and convert to a
+      // real instant so the server never has to guess the visitor's zone.
+      const localDate = new Date(postDate.value + 'T' + postTime.value);
+      if (isNaN(localDate.getTime())) throw new Error('Pick a valid date and time.');
+
+      const body = {
+        target, pageId,
+        message: postMessage.value.trim(),
+        scheduledFor: localDate.toISOString(),
+      };
+      if (target === 'instagram') body.imageUrl = postImageUrl.value.trim();
+      if (target === 'facebook' && postLink.value.trim()) body.link = postLink.value.trim();
+
+      const res = await window.Auth.authedFetch(WORKER_URL + '/api/social/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not schedule that post.');
+
+      postMessage.value = '';
+      postImageUrl.value = '';
+      postLink.value = '';
+      await loadScheduledPosts();
+    } catch (e) {
+      composerError.textContent = e.message;
+      composerError.hidden = false;
+    } finally {
+      composerSubmit.disabled = false;
+    }
+  });
+
+  const ok = await loadPages();
+  if (ok) {
+    composerWrap.hidden = false;
+    listWrap.hidden = false;
+    loadScheduledPosts();
+  }
+</script>
+</body>
+</html>
