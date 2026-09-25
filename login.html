@@ -37,6 +37,18 @@
       </span>
     </button>
     <p id="googleError" class="field-error" aria-live="polite"></p>
+    <button id="facebookBtn" class="auth-btn auth-btn--google" type="button">
+      <span class="google-btn-content">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#1877F2" d="M18 9a9 9 0 1 0-10.4 8.9v-6.3H5.3V9h2.3V6.9c0-2.3 1.4-3.6 3.5-3.6.7 0 1.5.1 2.2.2v2.4h-1.2c-1.2 0-1.5.7-1.5 1.5V9h2.6l-.4 2.6h-2.2v6.3A9 9 0 0 0 18 9Z"/>
+        </svg>
+        <span>Continue with Facebook</span>
+      </span>
+      <span class="google-loader" hidden aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+    </button>
+    <p id="facebookError" class="field-error" aria-live="polite"></p>
     <div class="auth-divider"><span>or</span></div>
     <form id="loginForm" class="auth-form" novalidate>
       <label class="auth-field">
@@ -81,6 +93,7 @@
   const form = document.getElementById('loginForm');
   const submitBtn = document.getElementById('submitBtn');
   const googleBtn = document.getElementById('googleBtn');
+  const facebookBtn = document.getElementById('facebookBtn');
   const forgotBtn = document.getElementById('forgotBtn');
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
@@ -153,6 +166,7 @@
     email: document.getElementById('emailError'),
     password: document.getElementById('passwordError'),
     google: document.getElementById('googleError'),
+    facebook: document.getElementById('facebookError'),
     general: document.getElementById('generalError'),
   };
 
@@ -176,6 +190,12 @@
     googleBtn.disabled = isLoading;
     googleBtn.querySelector('.google-btn-content').hidden = isLoading;
     googleBtn.querySelector('.google-loader').hidden = !isLoading;
+  }
+
+  function setFacebookLoading(isLoading) {
+    facebookBtn.disabled = isLoading;
+    facebookBtn.querySelector('.google-btn-content').hidden = isLoading;
+    facebookBtn.querySelector('.google-loader').hidden = !isLoading;
   }
 
   emailInput.addEventListener('input', () => {
@@ -245,6 +265,21 @@
       window.location.replace(await resolvePostAuthDestination(googleUser));
     } catch (err) {
       setGoogleLoading(false);
+      showError(err);
+      signingIn = false;
+    }
+  });
+
+  facebookBtn.addEventListener('click', async () => {
+    if (signingIn) return;
+    clearErrors();
+    signingIn = true;
+    setFacebookLoading(true);
+    try {
+      const fbUser = await Auth.signInWithFacebook();
+      window.location.replace(await resolvePostAuthDestination(fbUser));
+    } catch (err) {
+      setFacebookLoading(false);
       showError(err);
       signingIn = false;
     }
