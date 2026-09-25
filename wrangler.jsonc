@@ -39,6 +39,14 @@
     {
       "binding": "COGNITA_REMINDERS",
       "id": "49b4f507e01e47ea85df4f5f1223cebd"
+    },
+    // Social Scheduler feature only: same "due index" idea as
+    // COGNITA_REMINDERS above, kept in its own namespace for the same
+    // reason. REPLACE THE ID BELOW with the id Cloudflare gives you when
+    // you create this namespace — see the deployment steps.
+    {
+      "binding": "COGNITA_SOCIAL_SCHEDULE",
+      "id": "8b67897786d742b1ae7ebc656cadfc82"
     }
   ],
 
