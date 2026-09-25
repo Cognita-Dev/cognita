@@ -78,6 +78,13 @@ import {
   handleTestNotification,
 } from './reminders/reminders-endpoint.js';
 import { runReminderScheduler } from './reminders/reminders-scheduler.js';
+import {
+  handleSocialPagesList,
+  handleScheduleCreate,
+  handleScheduleList,
+  handleScheduleCancel,
+} from './social-scheduler-endpoint.js';
+import { runSocialScheduler } from './social-scheduler.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -262,7 +269,29 @@ export default {
       return handleReminderDelete(request, env, reminderId);
     }
 
-    // ── Connectors (GitHub, Google, Figma, Canva) ─────
+    // ── Social Scheduler (Facebook/Instagram, via the Facebook connector) ─
+    // Placed above the generic /api/connectors/:provider routes below only
+    // because it lives right next to them conceptually — order doesn't
+    // matter here since none of these paths overlap /api/connectors/*.
+
+    if (request.method === 'GET' && url.pathname === '/api/social/pages') {
+      return handleSocialPagesList(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/social/schedule') {
+      return handleScheduleCreate(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/social/schedule') {
+      return handleScheduleList(request, env);
+    }
+
+    if (request.method === 'DELETE' && /^\/api\/social\/schedule\/[^/]+$/.test(url.pathname)) {
+      const postId = url.pathname.split('/')[4];
+      return handleScheduleCancel(request, env, postId);
+    }
+
+    // ── Connectors (GitHub, Google, Facebook, Canva) ─────
 
     // Must come before the /:provider/start check below, since both
     // match a "/api/connectors/<segment>" shape.
@@ -422,5 +451,6 @@ export default {
   // feature uses this — everything else in the Worker is still request-driven.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runReminderScheduler(env));
+    ctx.waitUntil(runSocialScheduler(env));
   },
 };
