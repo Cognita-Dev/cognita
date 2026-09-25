@@ -254,7 +254,7 @@ function _systemPromptBase(userFirstName) {
 function _systemPromptToolsAddendum() {
   return (
     ' You may have tools available to act on the user\'s connected apps ' +
-    '(GitHub, Google, Figma, Canva). If a tool result comes back empty or ' +
+    '(GitHub, Google, Facebook/Instagram, Canva). If a tool result comes back empty or ' +
     'thin, check it for a "note" field before concluding anything — some ' +
     'tools attach one explaining why a result might be incomplete (for ' +
     'example, a stale connection hiding results), and you should relay ' +
@@ -390,7 +390,7 @@ function _cleanReasoningForDisplay(raw) {
 const _PROVIDER_LABELS = {
   github: 'GitHub repositories',
   google: 'Google account',
-  figma: 'Figma files',
+  facebook: 'Facebook & Instagram',
   canva: 'Canva designs',
 };
 
