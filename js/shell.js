@@ -56,10 +56,10 @@ function wireAccountMenu() {
 
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    menu.hidden = !menu.hidden;
+    menu.classList.toggle('is-open');
   });
 
-  document.addEventListener('click', () => { menu.hidden = true; });
+  document.addEventListener('click', () => { menu.classList.remove('is-open'); });
 
   document.getElementById('logOutBtn').addEventListener('click', async () => {
     await window.Auth.logOut();
