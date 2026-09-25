@@ -89,26 +89,26 @@
 
     <nav class="sidebar-history" aria-label="Navigation">
       <a href="/app.html?view=chat" class="sidebar-history-item" data-view="chat">
-        <i class="ph ph-chat-circle" style="margin-right:8px;"></i>
+        <i class="ph ph-chat-circle"></i>
         <span>Current chat</span>
       </a>
       <a href="/app.html?view=resources" class="sidebar-history-item" data-view="resources">
-        <i class="ph ph-graduation-cap" style="margin-right:8px;"></i>
+        <i class="ph ph-graduation-cap"></i>
         <span>Resources</span>
       </a>
       <a href="/app.html?view=library" class="sidebar-history-item" data-view="library">
-        <i class="ph ph-books" style="margin-right:8px;"></i>
+        <i class="ph ph-books"></i>
         <span>Library</span>
       </a>
       <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders">
-        <i class="ph ph-bell" style="margin-right:8px;"></i>
+        <i class="ph ph-bell"></i>
         <span>Reminders</span>
       </a>
       <!-- Only shown for admins/moderators — app.js unhides this once
            /api/account reports a role, so regular users never see a
            dead link to a page the server would 401/403 them from. -->
       <a href="/admin.html" class="sidebar-history-item" id="adminPanelLink" hidden>
-        <i class="ph ph-shield-star" style="margin-right:8px;"></i>
+        <i class="ph ph-shield-star"></i>
         <span>Admin panel</span>
       </a>
     </nav>
@@ -149,7 +149,7 @@
         <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
       </button>
 
-      <div class="account-menu" id="accountMenu" hidden>
+      <div class="account-menu" id="accountMenu">
         <a href="/account.html"><i class="ph ph-gear"></i> Settings</a>
         <a href="/pricing.html"><i class="ph ph-arrow-up-circle"></i> Plans</a>
         <button id="logOutBtn"><i class="ph ph-sign-out"></i> Sign out</button>
