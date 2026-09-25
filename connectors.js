@@ -85,12 +85,50 @@ export async function saveConnectorToken(uid, provider, data, env) {
     providerAccountId: data.providerAccountId || null,
   };
   await fsSet(_tokenPath(uid, provider), record, env);
+
+  // Facebook only: keep a Facebook-user-id -> uid reverse index so Meta's
+  // Data Deletion Request callback (facebook-data-deletion.js), which is
+  // only ever handed the Facebook-side id, can find and erase this
+  // person's connector data. Best-effort — a hiccup here must not fail
+  // the connection itself; the callback simply finds nothing to delete
+  // yet, which it treats as a valid outcome, not an error.
+  if (provider === 'facebook' && record.providerAccountId) {
+    try {
+      await fsSet('fb_connector_index/' + record.providerAccountId, {
+        uid,
+        linkedAt: record.connectedAt,
+      }, env);
+    } catch (e) {
+      console.error('[connectors] could not write fb_connector_index for uid ' + uid + ':', e.message);
+    }
+  }
+
   return record;
 }
 
-/** Removes a provider's token record. Safe to call even if none exists. */
+/**
+ * Removes a provider's token record. Safe to call even if none exists.
+ * For Facebook specifically, this also removes the matching
+ * fb_connector_index entry (see saveConnectorToken above) — reading the
+ * existing record first so we know which Facebook user id to clear, since
+ * that id is never passed in by callers.
+ */
 export async function deleteConnectorToken(uid, provider, env) {
   _assertKnownProvider(provider);
+  if (provider === 'facebook') {
+    try {
+      const existing = await getConnectorToken(uid, provider, env);
+      if (existing && existing.providerAccountId) {
+        await fsDelete('fb_connector_index/' + existing.providerAccountId, env);
+      }
+    } catch (e) {
+      // Non-fatal: the token record itself still gets deleted below even
+      // if the index cleanup lookup failed (e.g. a transient Firestore
+      // error) — better to leave a stale, harmless index entry than to
+      // block disconnecting/deleting the actual token.
+      console.error('[connectors] could not clean up fb_connector_index for uid ' + uid + ':', e.message);
+    }
+  }
   await fsDelete(_tokenPath(uid, provider), env);
   return true;
 }
