@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Data deletion status — Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/payment.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+</head>
+<body class="payment-page">
+
+<div class="payment-shell">
+  <img src="/assets/cognita.png" alt="Cognita" class="payment-logo">
+
+  <div class="payment-status" id="statusBox">
+    <span class="btn-spinner btn-spinner--dark"></span>
+    <h1>Checking status…</h1>
+    <p>One moment.</p>
+  </div>
+</div>
+
+<script type="module">
+  // Deliberately does NOT import js/auth.js or require sign-in: this page
+  // is reached from a confirmation link/code Meta shows someone right
+  // after they remove Cognita's Facebook Login or disconnect the
+  // Facebook/Instagram connector — at that point they may not be signed
+  // in here at all, and Meta's own reviewers need to be able to open it
+  // too. The record behind the code holds no tokens or profile data, only
+  // a status and two timestamps, so this is safe to serve without auth.
+  const WORKER_URL = 'https://api.cognita.com.ng';
+  const statusEl = document.getElementById('statusBox');
+
+  const params = new URLSearchParams(window.location.search);
+  const code = (params.get('id') || params.get('code') || '').replace(/[^A-Za-z0-9_-]/g, '');
+
+  function show(iconClass, iconColorVar, title, message) {
+    statusEl.innerHTML =
+      '<i class="' + iconClass + '" style="font-size:2.5rem;color:var(' + iconColorVar + ');"></i>' +
+      '<h1>' + title + '</h1>' +
+      '<p>' + message + '</p>' +
+      '<a href="/index.html" class="payment-retry-btn">Back to Cognita</a>';
+  }
+
+  function formatWhen(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString();
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  if (!code) {
+    show('ph ph-warning-circle', '--danger', 'No confirmation code found', 'This link is missing its confirmation code. If you followed a link from Facebook or Instagram, please go back and tap it again.');
+  } else {
+    try {
+      const res = await fetch(WORKER_URL + '/api/data-deletion-status/' + encodeURIComponent(code));
+      const data = await res.json();
+
+      if (res.ok && data.status === 'completed') {
+        show(
+          'ph ph-check-circle',
+          '--success',
+          'Deletion complete',
+          'The data Cognita received through Facebook for this request has been deleted.' +
+            (data.completedAt ? ' Completed on ' + formatWhen(data.completedAt) + '.' : '')
+        );
+      } else if (res.status === 404) {
+        show('ph ph-warning-circle', '--danger', 'Confirmation code not found', 'We could not find a deletion request for code ' + code + '. If you believe this is a mistake, please contact support.');
+      } else {
+        show('ph ph-clock', '--warning', 'Still processing', 'This deletion request is still being processed. Please check back shortly.');
+      }
+    } catch (e) {
+      show('ph ph-warning-circle', '--danger', 'Something went wrong', 'We could not check this request right now. Please try again in a moment.');
+    }
+  }
+</script>
+
+</body>
+</html>
