@@ -193,9 +193,21 @@ export const PLANS = {
   },
 };
 
-// Can this plan use connected-app tools (GitHub/Google/Figma/Canva)
+// Can this plan use connected-app tools (GitHub/Google/Facebook/Canva)
 export function planHasConnectorTools(planId) {
   return !!getPlan(planId).features.connectorTools;
+}
+
+// The Social Scheduler (social-scheduler-endpoint.js) is gated on the
+// same flag as connector tools generally, rather than a new per-plan
+// field — it depends on the Facebook connector exactly the same way the
+// in-chat Facebook/Instagram tools do, so there is no plan configuration
+// where these two should ever disagree. Kept as its own named function
+// (instead of every caller importing planHasConnectorTools directly) so
+// that if scheduling ever does need its own flag, only this one line
+// changes.
+export function planHasSocialScheduling(planId) {
+  return planHasConnectorTools(planId);
 }
 
 // Internal model tier -> actual provider/model mapping.
