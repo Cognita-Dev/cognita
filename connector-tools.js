@@ -26,7 +26,7 @@
 import { CONNECTOR_PROVIDERS, listConnectedProviders } from './connectors.js';
 import * as githubTools from './github-tools.js';
 import * as googleTools from './google-tools.js';
-import * as figmaTools from './figma-tools.js';
+import * as metaTools from './meta-tools.js';
 import * as canvaTools from './canva-tools.js';
 
 // Keyed by the same provider names as CONNECTOR_PROVIDERS (connectors.js)
@@ -38,7 +38,7 @@ import * as canvaTools from './canva-tools.js';
 const REGISTRY = {
   github: githubTools,
   google: googleTools,
-  figma: figmaTools,
+  facebook: metaTools,
   canva: canvaTools,
 };
 
@@ -75,7 +75,7 @@ for (const provider of CONNECTOR_PROVIDERS) {
 // Below this many total connected tools, every connected tool is always
 // offered — no routing, no risk of hiding the tool the user needed. This
 // only starts mattering for a user with several providers connected at
-// once (e.g. GitHub + Google's 25 + Figma + Canva); a single-connector
+// once (e.g. GitHub + Google's 25 + Facebook + Canva); a single-connector
 // user never crosses it. Tune by watching [chat][tools] toolCount= in
 // logs; raise it if models keep choosing well past this count, lower it
 // if selection accuracy visibly degrades before hitting it.
@@ -90,7 +90,7 @@ const ROUTER_THRESHOLD = 60;
 const PROVIDER_KEYWORDS = {
   github: ['github', 'repo', 'repository', 'pull request', ' pr ', 'commit', 'branch', 'issue', 'workflow', ' ci ', 'merge'],
   google: ['google', 'calendar', 'event', 'meeting', 'schedule', 'appointment', 'drive', 'gmail', 'email', 'mail', 'inbox', 'attachment', 'doc', 'sheet', 'spreadsheet', 'folder'],
-  figma: ['figma', 'frame', 'design file'],
+  facebook: ['facebook', 'instagram', 'social media', 'social post', ' ig ', 'reel', 'caption', 'schedule a post', 'page insights'],
   canva: ['canva', 'design', 'template', 'poster', 'flyer'],
 };
 
