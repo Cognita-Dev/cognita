@@ -69,6 +69,11 @@ import {
   handleConnectorDisconnect,
 } from './connectors-endpoint.js';
 import {
+  handleFacebookDataDeletion,
+  handleDataDeletionStatus,
+  handleLinkFacebookLogin,
+} from './facebook-data-deletion.js';
+import {
   handleReminderCreate,
   handleReminderList,
   handleReminderUpdate,
@@ -315,6 +320,29 @@ export default {
     if (request.method === 'GET' && /^\/auth\/[^/]+\/callback$/.test(url.pathname)) {
       const provider = url.pathname.split('/')[2];
       return handleConnectorCallback(request, env, provider);
+    }
+
+    // ── Meta "Data Deletion Request" callback ──────────────────────────
+    // Hit directly by Meta's servers (both the login app and the social/
+    // connector app point at this same URL — see facebook-data-deletion.js
+    // for how it tells the two apart). No Authorization header, no CORS
+    // concerns: this is a server-to-server POST, never a browser fetch.
+    if (request.method === 'POST' && url.pathname === '/auth/facebook/data-deletion') {
+      return handleFacebookDataDeletion(request, env);
+    }
+
+    // Public status lookup for the confirmation code the callback above
+    // hands back to Meta (and that a person may be shown by Meta's UI).
+    if (request.method === 'GET' && /^\/api\/data-deletion-status\/[^/]+$/.test(url.pathname)) {
+      const code = url.pathname.split('/')[3];
+      return handleDataDeletionStatus(request, env, code);
+    }
+
+    // Called by the frontend right after "Continue with Facebook" signs
+    // someone in, so a later data-deletion callback from the login app
+    // can be traced back to this uid. Authenticated — see js/auth.js.
+    if (request.method === 'POST' && url.pathname === '/api/auth/link-facebook') {
+      return handleLinkFacebookLogin(request, env);
     }
 
     // ── One-time first-admin bootstrap ────────────────────────────────
