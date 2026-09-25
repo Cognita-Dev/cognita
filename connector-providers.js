@@ -14,9 +14,13 @@
 const ENV_VARS = {
   github: { id: 'GITHUB_CLIENT_ID', secret: 'GITHUB_CLIENT_SECRET' },
   google: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
-  figma: { id: 'FIGMA_CLIENT_ID', secret: 'FIGMA_CLIENT_SECRET' },
+  facebook: { id: 'FACEBOOK_CLIENT_ID', secret: 'FACEBOOK_CLIENT_SECRET' },
   canva: { id: 'CANVA_CLIENT_ID', secret: 'CANVA_CLIENT_SECRET' },
 };
+
+// Graph API version pinned in one place — bump this, not the literal
+// string, when Meta deprecates the current version.
+const META_GRAPH_VERSION = 'v21.0';
 
 function _creds(provider, env) {
   const vars = ENV_VARS[provider];
@@ -84,7 +88,25 @@ const SCOPES = {
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.labels',
   ].join(' '),
-  figma: 'file_read',
+  // A single Facebook Login for Business consent screen grants both the
+  // Page-management scopes and the Instagram ones together — Instagram
+  // posting is done through a Page's linked Instagram Business Account,
+  // there is no separate "Instagram OAuth". Kept to exactly what
+  // meta-tools.js uses:
+  //   - pages_show_list / pages_read_engagement: list the user's Pages
+  //     and read basic engagement metrics.
+  //   - pages_manage_posts / pages_manage_metadata: create Page feed
+  //     posts and read the Page's own metadata (incl. its linked IG
+  //     account id via the instagram_business_account field).
+  //   - instagram_basic / instagram_content_publish: read the linked IG
+  //     Business account and publish media to it.
+  //   - read_insights: Page and IG account insights (reach, impressions).
+  //   - business_management: required by Meta for most Page-posting
+  //     scopes when the Page is owned by a Business Portfolio.
+  facebook: [
+    'pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_metadata',
+    'instagram_basic', 'instagram_content_publish', 'read_insights', 'business_management',
+  ].join(','),
   canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
 };
 
@@ -116,7 +138,21 @@ export function hasSufficientScope(provider, storedScope) {
       granted.includes('https://www.googleapis.com/auth/gmail.labels')
     );
   }
-  return true; // not implemented for figma/canva yet
+  if (provider === 'facebook') {
+    // Facebook returns granted scopes comma-separated. The three scopes
+    // that actually gate what meta-tools.js can do (list Pages, post to
+    // a Page, publish to Instagram) — if a pre-existing connection is
+    // missing any of these (e.g. connected before Instagram publishing
+    // was added), force a reconnect rather than letting posting silently
+    // fail with a Graph API permission error mid-tool-call.
+    const granted = (storedScope || '').split(',').map((s) => s.trim());
+    return (
+      granted.includes('pages_manage_posts') &&
+      granted.includes('instagram_content_publish') &&
+      granted.includes('pages_show_list')
+    );
+  }
+  return true; // not implemented for canva yet
 }
 
 // ── 1. Authorize URL (redirect the user here) ──────────────────────
@@ -149,9 +185,9 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
     });
   }
 
-  if (provider === 'figma') {
-    return 'https://www.figma.com/oauth?' + _form({
-      client_id: id, redirect_uri: redirectUri, scope, state, response_type: 'code',
+  if (provider === 'facebook') {
+    return 'https://www.facebook.com/' + META_GRAPH_VERSION + '/dialog/oauth?' + _form({
+      client_id: id, redirect_uri: redirectUri, state, scope, response_type: 'code',
     });
   }
 
@@ -213,17 +249,47 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
     };
   }
 
-  if (provider === 'figma') {
-    const res = await fetch('https://www.figma.com/api/oauth/token?' + _form({
-      client_id: id, client_secret: secret, redirect_uri: redirectUri, code, grant_type: 'authorization_code',
-    }), { method: 'POST' });
-    const data = await _mustJson(res, 'figma');
+  if (provider === 'facebook') {
+    // Step 1: exchange the code for a short-lived (~1-2h) user token.
+    // This is a GET on Meta's endpoint, not a POST — unlike every other
+    // provider here.
+    const shortRes = await fetch('https://graph.facebook.com/' + META_GRAPH_VERSION + '/oauth/access_token?' + _form({
+      client_id: id, client_secret: secret, redirect_uri: redirectUri, code,
+    }));
+    const shortData = await _mustJson(shortRes, 'facebook');
+    if (shortData.error) throw new Error('facebook_oauth_error:' + shortData.error.message);
+
+    // Step 2: immediately exchange that for a long-lived (~60 day) user
+    // token — this is what actually gets stored. Page tokens derived
+    // from a long-lived user token (see meta-tools.js listPages) are
+    // themselves effectively non-expiring, so this single exchange is
+    // what makes scheduled posts able to publish unattended weeks later.
+    const longData = await _exchangeLongLivedToken(id, secret, shortData.access_token);
+
+    // providerAccountId: the Facebook user id, purely for diagnostic
+    // logging (see connectors.js handleCallback) — never used for auth.
+    let providerAccountId = null;
+    try {
+      const meRes = await fetch('https://graph.facebook.com/' + META_GRAPH_VERSION + '/me?' + _form({
+        access_token: longData.access_token, fields: 'id',
+      }));
+      const meData = await meRes.json().catch(() => null);
+      providerAccountId = meData && meData.id ? meData.id : null;
+    } catch (e) {
+      // Non-fatal — the connection still works without this.
+    }
+
     return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || null,
-      expiresAt: now + (data.expires_in || 3600) * 1000,
-      scope: SCOPES.figma,
-      providerAccountId: data.user_id || null,
+      accessToken: longData.access_token,
+      // Meta has no separate refresh-token concept for this flow; the
+      // long-lived user token itself is what gets re-exchanged to renew
+      // it (see refreshAccessToken below), so it doubles as its own
+      // "refresh token" here purely so the generic storage/refresh shape
+      // in connectors.js keeps working unmodified for this provider too.
+      refreshToken: longData.access_token,
+      expiresAt: now + (longData.expires_in || 5184000) * 1000, // ~60 days
+      scope: SCOPES.facebook,
+      providerAccountId,
     };
   }
 
@@ -285,16 +351,18 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
     };
   }
 
-  if (provider === 'figma') {
-    const res = await fetch('https://www.figma.com/api/oauth/refresh?' + _form({
-      client_id: id, client_secret: secret, refresh_token: refreshTokenValue,
-    }), { method: 'POST' });
-    const data = await _mustJson(res, 'figma');
+  if (provider === 'facebook') {
+    // "Refreshing" here means re-running the long-lived-token exchange
+    // using the current (not-yet-expired) long-lived token as input —
+    // this resets its ~60-day clock. Meta rejects this once the token
+    // has actually expired, which correctly surfaces as NEEDS_RECONNECT
+    // via the catch in connectors.js getValidToken.
+    const longData = await _exchangeLongLivedToken(id, secret, refreshTokenValue);
     return {
-      accessToken: data.access_token,
-      refreshToken: refreshTokenValue, // Figma refresh doesn't rotate the refresh token itself
-      expiresAt: now + (data.expires_in || 3600) * 1000,
-      scope: SCOPES.figma,
+      accessToken: longData.access_token,
+      refreshToken: longData.access_token,
+      expiresAt: now + (longData.expires_in || 5184000) * 1000,
+      scope: SCOPES.facebook,
       providerAccountId: null,
     };
   }
@@ -361,9 +429,23 @@ export async function revokeToken(provider, env, token) {
     });
     return;
   }
-  // Figma has no documented single-call revoke endpoint — deleting the
-  // local record is all that's possible; the token remains valid
-  // provider-side until it naturally expires.
+  if (provider === 'facebook') {
+    // Revokes every permission this app was granted, not just one scope
+    // — matches the "disconnect fully" intent of the disconnect button.
+    await fetch('https://graph.facebook.com/' + META_GRAPH_VERSION + '/me/permissions?' + _form({ access_token: token }), {
+      method: 'DELETE',
+    });
+    return;
+  }
+}
+
+async function _exchangeLongLivedToken(clientId, clientSecret, shortLivedToken) {
+  const res = await fetch('https://graph.facebook.com/' + META_GRAPH_VERSION + '/oauth/access_token?' + _form({
+    grant_type: 'fb_exchange_token', client_id: clientId, client_secret: clientSecret, fb_exchange_token: shortLivedToken,
+  }));
+  const data = await _mustJson(res, 'facebook');
+  if (data.error) throw new Error('facebook_oauth_error:' + data.error.message);
+  return data;
 }
 
 async function _mustJson(res, provider) {
