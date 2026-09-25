@@ -90,7 +90,7 @@ let currentAccountPlanId = null;
 let currentAccountHasVision = false;
 let currentAccountHasDocExport = false;
 let currentAccountChatTiers = ['fast'];
-// Can this plan actually use connected-app tools (GitHub/Google/Figma/
+// Can this plan actually use connected-app tools (GitHub/Google/Facebook/
 // Canva) in chat? Mirrors entitlements.js features.connectorTools —
 // see updateConnectorsAvailability, which uses this to lock the
 // "Connected apps" entry point instead of letting a Free-tier user
@@ -2586,10 +2586,10 @@ const CONNECTOR_META = {
     hint: 'You need to be signed in to GitHub in this browser to connect it.',
   },
   google: { label: 'Google', icon: 'ph-google-logo', desc: 'Calendar (full read/write), Drive (files Cognita creates), and Gmail (send + labels only).' },
-  figma: { label: 'Figma', icon: 'ph-figma-logo', desc: 'Read design files and comments.' },
+  facebook: { label: 'Facebook & Instagram', icon: 'ph-facebook-logo', desc: 'Post to a Facebook Page and its linked Instagram account, and schedule posts.' },
   canva: { label: 'Canva', icon: 'ph-image-square', desc: 'List and create designs.' },
 };
-const CONNECTOR_ORDER = ['github', 'google', 'figma', 'canva'];
+const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
 
 // `locked` = this plan's connectorTools feature is off (see
 // currentAccountHasConnectorTools). A locked, not-yet-connected row
