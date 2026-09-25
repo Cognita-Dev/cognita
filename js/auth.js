@@ -4,7 +4,9 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getAuth,
   GoogleAuthProvider,
+  OAuthProvider,
   signInWithCredential,
+  signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -34,6 +36,11 @@ const GOOGLE_WEB_CLIENT_ID =
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
+// Same worker origin used everywhere else in the frontend (app.js,
+// account.html). Needed here only for the one best-effort call
+// signInWithFacebook makes right after a successful sign-in — see below.
+const WORKER_URL = 'https://api.cognita.com.ng';
 
 // Account emails (verify email, reset password) are sent by our own Worker
 // from our own domain, not by Firebase. See emails/auth-email-endpoint.js.
@@ -229,6 +236,62 @@ async function signInWithGoogle() {
     if (!err.authField) err.authField = 'google';
     throw err;
   }
+}
+
+/**
+ * Starts Facebook sign-in via Firebase's own OAuthProvider popup flow.
+ * Unlike Google above, this does NOT talk to the Facebook JS SDK
+ * directly — Firebase handles the whole redirect/popup dance itself,
+ * using the Facebook App ID/Secret configured in the Firebase Console
+ * (Authentication -> Sign-in method -> Facebook). That's a DIFFERENT
+ * Meta app from the one connectors.js/connector-providers.js use for the
+ * Page/Instagram connector: this one only ever needs Facebook's default
+ * "public_profile" + "email" permissions, so it never requires Meta App
+ * Review, and its OAuth redirect lives on Firebase's own domain
+ * (https://<project>.firebaseapp.com/__/auth/handler) — nothing to add
+ * to Cloudflare for it.
+ *
+ * After a successful sign-in, this also tells the backend which
+ * Facebook user id now maps to this uid (best-effort, non-fatal): that
+ * mapping is the ONLY way Meta's Data Deletion Request callback can
+ * later find and erase this person's data, since that callback only
+ * ever receives the Facebook-side id, never our uid. See
+ * facebook-data-deletion.js / handleLinkFacebookLogin.
+ */
+async function signInWithFacebook() {
+  const provider = new OAuthProvider('facebook.com');
+  provider.setCustomParameters({ display: 'popup' });
+
+  let result;
+  try {
+    result = await signInWithPopup(auth, provider);
+  } catch (err) {
+    if (!err.authField) err.authField = 'facebook';
+    throw err;
+  }
+
+  try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
+
+  try {
+    const fbProfile = (result.user.providerData || []).find((p) => p.providerId === 'facebook.com');
+    if (fbProfile && fbProfile.uid) {
+      const idToken = await result.user.getIdToken();
+      await fetch(WORKER_URL + '/api/auth/link-facebook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + idToken },
+        body: JSON.stringify({ fbUserId: fbProfile.uid }),
+      });
+    }
+  } catch (e) {
+    // Non-fatal: the person is still fully signed in either way. Worst
+    // case, a future data-deletion request from Meta for this person
+    // finds no index entry and correctly does nothing — see
+    // facebook-data-deletion.js. Log so it's visible, but never block
+    // sign-in on this.
+    console.warn('[Auth] Could not record Facebook login link (non-fatal):', e.message);
+  }
+
+  return result.user;
 }
 
 async function signInWithEmail(email, password) {
@@ -592,6 +655,12 @@ function classifyAuthError(error) {
     'auth/invalid-login-credentials': { field: 'password', message: 'Incorrect email or password.' },
     'auth/email-already-in-use': { field: 'email', message: 'An account already exists with that email.' },
     'auth/weak-password': { field: 'password', message: 'Please choose a stronger password.' },
+    // These three can be thrown by EITHER popup-based provider (Google's
+    // signInWithCredential flow, or Facebook's signInWithPopup flow).
+    // `field` here is a fallback only — the block below overrides it with
+    // error.authField ('google' or 'facebook') whenever that's set, so
+    // the message lands under whichever button the person actually
+    // tapped instead of always under Google's.
     'auth/popup-closed-by-user': { field: 'google', message: 'Sign-in was cancelled.' },
     'auth/popup-blocked': { field: 'google', message: 'Popup blocked. Please allow popups for this site.' },
     'auth/cancelled-popup-request': { field: 'google', message: 'Sign-in was cancelled.' },
@@ -601,9 +670,16 @@ function classifyAuthError(error) {
       field: 'google',
       message: 'An account already exists with this email using a different sign-in method.',
     },
+    'auth/auth-domain-config-required': { field: 'facebook', message: 'Facebook sign-in isn\u2019t set up correctly. Please try again later.' },
+    'auth/operation-not-supported-in-this-environment': { field: 'facebook', message: 'Facebook sign-in isn\u2019t supported in this browser.' },
   };
 
-  if (codeMap[code]) return codeMap[code];
+  if (codeMap[code]) {
+    const mapped = codeMap[code];
+    // See the comment above codeMap: prefer the provider that actually
+    // threw this error over the hardcoded fallback field.
+    return error?.authField ? { field: error.authField, message: mapped.message } : mapped;
+  }
 
   if (error?.authField) {
     return { field: error.authField, message: error.message || 'Something went wrong. Please try again.' };
@@ -644,6 +720,7 @@ const Auth = {
   getCurrentUser,
   getIdToken,
   signInWithGoogle,
+  signInWithFacebook,
   signInWithEmail,
   signUpWithEmail,
   resetPassword,
