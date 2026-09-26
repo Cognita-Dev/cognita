@@ -248,9 +248,19 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
     // pages_read_user_content" regardless of what scope actually
     // contains, because Business Login doesn't evaluate a scope param
     // at all.
+    //
+    // override_default_response_type=true is REQUIRED alongside
+    // response_type here — a config_id has its own default response
+    // type, and Meta silently ignores our explicit response_type=code
+    // unless this flag tells it to defer to what we passed instead of
+    // the config's default. Omitting this produces a generic Facebook
+    // "Sorry, something went wrong" error with no useful detail, rather
+    // than a clean rejection — see Meta's Facebook Login for Business
+    // docs (FB.login() examples all pair response_type with this flag).
     const configId = _facebookConfigId(env);
     return 'https://www.facebook.com/' + META_GRAPH_VERSION + '/dialog/oauth?' + _form({
-      client_id: id, redirect_uri: redirectUri, state, config_id: configId, response_type: 'code',
+      client_id: id, redirect_uri: redirectUri, state, config_id: configId,
+      response_type: 'code', override_default_response_type: true,
     });
   }
 
