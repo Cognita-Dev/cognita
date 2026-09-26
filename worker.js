@@ -167,10 +167,7 @@ export default {
       return handleUsageRequest(request, env);
     }
 
-    // Self-serve "delete my account" — see account.html's delete-account
-    // modal for the multi-step confirmation UI, and account-deletion.js
-    // for exactly what this purges. Distinct from the Meta-initiated
-    // callback below, which fires from Facebook's own settings instead.
+    // Self-serve "delete my account"
     if (request.method === 'POST' && url.pathname === '/api/account/delete') {
       return handleAccountDeletionRequest(request, env);
     }
