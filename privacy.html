@@ -84,6 +84,31 @@
   disconnect a linked Page or account at any time.
 </p>
 <p>
+  <strong>Connected Google account data.</strong> If you choose to connect
+  your Google Account to Cognita's Google connector, we receive an OAuth
+  access token and refresh token from Google, scoped only to the specific
+  permissions ("scopes") you grant during the Google consent screen. Cognita
+  currently requests only the following scopes: Google Calendar events on
+  calendars you can see (read and write, including listing your calendars);
+  Google Drive access limited to files that Cognita itself creates (Cognita
+  cannot browse, search, or read pre-existing files in your Drive); and
+  Gmail access limited to sending email on your behalf and creating,
+  listing, or renaming Gmail labels (Cognita cannot read, search, or open
+  your existing emails or drafts). We use this access only to provide the
+  Google-connected features you have enabled, such as showing or managing
+  your calendar, saving a file Cognita created for you, or sending an email
+  you asked Cognita to send. Our access to, and use of, information received
+  through Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+  including its Limited Use requirements: we do not use Google user data to
+  serve advertising, we do not sell or transfer Google user data except as
+  necessary to provide the features described here, for security purposes,
+  or to comply with law, and we do not allow humans to read your Google
+  data except with your affirmative agreement, to investigate a security
+  issue or abuse, or to comply with applicable law. You can disconnect your
+  Google Account from Cognita at any time; see Section 12 below.
+</p>
+<p>
   <strong>Content you provide.</strong> When you use Cognita, you may provide text prompts,
   uploaded files, images, documents, social media posts or messages you choose to send through
   the Service, and other information that you choose to submit to the Service ("Input"). We may
@@ -125,6 +150,9 @@
   <li>Authenticate users and protect accounts from unauthorized access;</li>
   <li>Connect, manage, and disconnect your Facebook Pages and Instagram accounts when you
       choose to use Cognita's social features;</li>
+  <li>Connect, manage, and disconnect your Google Account, and carry out the specific
+      Google Calendar, Google Drive, or Gmail actions you request, when you choose to use
+      Cognita's Google connector;</li>
   <li>Process payments and manage subscriptions;</li>
   <li>Enforce plan features, entitlements, and usage limits;</li>
   <li>Process your requests and generate AI responses;</li>
@@ -183,6 +211,13 @@
     <strong>Meta Platforms</strong>, when you connect a Facebook Page or Instagram account,
     only to the extent needed to provide the social features you have enabled. Cognita's use
     of information received from Meta is governed by the Meta Platforms Terms.
+  </li>
+  <li>
+    <strong>Google</strong>, when you connect your Google Account, only to the extent needed
+    to carry out the Google Calendar, Google Drive, or Gmail action you have requested (for
+    example, creating a calendar event or sending an email you composed). Cognita's use of
+    information received via Google APIs is governed by the Google API Services User Data
+    Policy, including its Limited Use requirements, as described in Section 2 above.
   </li>
   <li>
     <strong>AI infrastructure providers</strong> that process requests submitted through
@@ -272,6 +307,14 @@
   Meta notifies us of a deletion request.
 </p>
 <p>
+  Google OAuth access tokens and refresh tokens are retained only while your Google
+  connection is active and are deleted when you disconnect your Google Account or delete
+  your Cognita account. Any calendar events, Gmail messages, or Drive files created through
+  the connector live in your own Google Account, governed by Google's own retention
+  practices, not ours; Cognita does not keep a separate copy of that content beyond what is
+  briefly needed to complete the requested action.
+</p>
+<p>
   Certain information may need to be retained after account deletion where required by law,
   necessary to resolve disputes, prevent fraud or abuse, enforce our agreements, or protect
   our legitimate interests.
@@ -354,7 +397,34 @@
 </p>
   </section>
   <section>
-    <h2>12. Children's Privacy</h2>
+    <h2>12. Google Account Connection and Disconnection</h2>
+<p>
+  If you connect your Google Account to Cognita's Google connector, you can revoke Cognita's
+  access at any time in two ways:
+</p>
+<ul>
+  <li>
+    In Cognita, go to <strong>Account &rarr; Connected apps</strong> and disconnect Google, or
+    delete your Cognita account entirely; or
+  </li>
+  <li>
+    In your Google Account settings, go to
+    <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Security &rarr; Third-party apps with account access</a>
+    and remove Cognita's access directly with Google.
+  </li>
+</ul>
+<p>
+  Either path immediately revokes the associated Google OAuth access and refresh tokens.
+  Disconnecting through your Google Account settings does not automatically notify Cognita,
+  so we also recommend disconnecting Google within Cognita, or emailing
+  <a href="mailto:info@cognita.com.ng">info@cognita.com.ng</a>, so we can promptly delete the
+  corresponding token and connection record on our side. We do not otherwise retain a copy of
+  your Google Calendar, Drive, or Gmail content beyond what a given feature needs while your
+  connection is active, consistent with the Limited Use requirements described in Section 2.
+</p>
+  </section>
+  <section>
+    <h2>13. Children's Privacy</h2>
 <p>
   Cognita is not directed to individuals under 18 years of age, and we do not knowingly
   collect personal information from children under 18.
@@ -368,7 +438,7 @@
 </p>
   </section>
   <section>
-    <h2>13. International Data Transfers</h2>
+    <h2>14. International Data Transfers</h2>
 <p>
   Cognita and the service providers we use may process or store information in countries
   other than the country in which you live. As a result, your information may be transferred
@@ -381,12 +451,15 @@
 </p>
   </section>
   <section>
-    <h2>14. Third-Party Services</h2>
+    <h2>15. Third-Party Services</h2>
 <p>
   Cognita may rely on third-party services to provide authentication, payments, hosting,
-  storage, AI processing, social platform integration (including Meta Platforms), analytics,
+  storage, AI processing, social platform integration (including Meta Platforms), Google
+  Workspace connector integration (Google Calendar, Google Drive, and Gmail), analytics,
   security, and other functionality. These providers may process information on our behalf or
-  independently in accordance with their own applicable terms and privacy policies.
+  independently in accordance with their own applicable terms and privacy policies. Our use of
+  information obtained through Google APIs is additionally governed by the Google API Services
+  User Data Policy, including its Limited Use requirements.
 </p>
 <p>
   Third-party websites or services linked from Cognita are not controlled by us. If you follow
@@ -395,7 +468,7 @@
 </p>
   </section>
   <section>
-    <h2>15. Changes to This Privacy Policy</h2>
+    <h2>16. Changes to This Privacy Policy</h2>
 <p>
   We may update this Privacy Policy from time to time to reflect changes to the Service, our
   data practices, or applicable legal requirements.
@@ -407,7 +480,7 @@
 </p>
   </section>
   <section>
-    <h2>16. Contact Us</h2>
+    <h2>17. Contact Us</h2>
 <p>
   If you have questions about this Privacy Policy, want to exercise a privacy right, or have
   concerns about how Cognita handles your information, please contact:
