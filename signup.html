@@ -7,7 +7,7 @@
 <link rel="icon" href="/assets/cognita.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&family=Roboto:wght@500&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/auth.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -23,8 +23,8 @@
   </div>
   <div class="auth-card">
     <button id="googleBtn" class="auth-btn auth-btn--google" type="button">
-      <span class="google-btn-content">
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+      <span class="oauth-btn-content">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.84 2.09-1.79 2.73v2.27h2.9c1.7-1.56 2.69-3.87 2.69-6.64z"/>
           <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.27c-.81.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.34C2.44 15.98 5.48 18 9 18z"/>
           <path fill="#FBBC05" d="M3.95 10.69A5.4 5.4 0 0 1 3.68 9c0-.59.1-1.16.27-1.69V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.34z"/>
@@ -32,19 +32,19 @@
         </svg>
         <span>Continue with Google</span>
       </span>
-      <span class="google-loader" hidden aria-hidden="true">
+      <span class="oauth-loader" hidden aria-hidden="true">
         <span></span><span></span><span></span><span></span>
       </span>
     </button>
     <p id="googleError" class="field-error" aria-live="polite"></p>
-    <button id="facebookBtn" class="auth-btn auth-btn--google" type="button">
-      <span class="google-btn-content">
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+    <button id="facebookBtn" class="auth-btn auth-btn--facebook" type="button">
+      <span class="oauth-btn-content">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path fill="#1877F2" d="M18 9a9 9 0 1 0-10.4 8.9v-6.3H5.3V9h2.3V6.9c0-2.3 1.4-3.6 3.5-3.6.7 0 1.5.1 2.2.2v2.4h-1.2c-1.2 0-1.5.7-1.5 1.5V9h2.6l-.4 2.6h-2.2v6.3A9 9 0 0 0 18 9Z"/>
         </svg>
         <span>Continue with Facebook</span>
       </span>
-      <span class="google-loader" hidden aria-hidden="true">
+      <span class="oauth-loader" hidden aria-hidden="true">
         <span></span><span></span><span></span><span></span>
       </span>
     </button>
@@ -212,14 +212,14 @@
 
   function setGoogleLoading(isLoading) {
     googleBtn.disabled = isLoading;
-    googleBtn.querySelector('.google-btn-content').hidden = isLoading;
-    googleBtn.querySelector('.google-loader').hidden = !isLoading;
+    googleBtn.querySelector('.oauth-btn-content').hidden = isLoading;
+    googleBtn.querySelector('.oauth-loader').hidden = !isLoading;
   }
 
   function setFacebookLoading(isLoading) {
     facebookBtn.disabled = isLoading;
-    facebookBtn.querySelector('.google-btn-content').hidden = isLoading;
-    facebookBtn.querySelector('.google-loader').hidden = !isLoading;
+    facebookBtn.querySelector('.oauth-btn-content').hidden = isLoading;
+    facebookBtn.querySelector('.oauth-loader').hidden = !isLoading;
   }
 
   let nameValid = false;
