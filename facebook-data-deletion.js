@@ -31,7 +31,7 @@
 // account is this," which is unavoidable because Meta's callback only
 // ever gives us the Facebook-side id.
 
-import { fsGet, fsSet, fsDelete } from './firestore-rest.js';
+import { fsGet, fsSet, fsDelete, getGoogleAccessToken } from './firestore-rest.js';
 import { deleteConnectorToken } from './connectors.js';
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 
@@ -112,6 +112,31 @@ function _jsonError(message, status, env) {
 
 function _confirmationCode() {
   return 'fbdel_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+}
+
+// Facebook only ever hands Firebase an email when the person's Facebook
+// account has one AND it's verified — plenty of real accounts (especially
+// ones set up by phone number) have neither, so Firebase's own user.email
+// silently comes back null. That's a long-standing gap in Firebase's
+// Facebook integration itself, not something wrong with this app's setup.
+//
+// The fix: fetch the email straight from Facebook's Graph API using the
+// Facebook access token (js/auth.js does this), then write it onto the
+// Firebase user record ourselves via the Identity Toolkit admin API. Once
+// written this way, every future ID token for this uid includes it in the
+// standard "email" claim automatically — no different from a Google or
+// email/password account after that point.
+async function _setFirebaseUserEmail(uid, email, env) {
+  const accessToken = await getGoogleAccessToken(env, 'https://www.googleapis.com/auth/identitytoolkit');
+  const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+    body: JSON.stringify({ localId: uid, email, emailVerified: false }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error('Identity Toolkit accounts:update failed (' + res.status + '): ' + text);
+  }
 }
 
 // ── POST /auth/facebook/data-deletion ──────────────────────────────────
@@ -211,11 +236,18 @@ export async function handleDataDeletionStatus(request, env, code) {
   }), { status: 200, headers: _corsJsonHeaders(env) });
 }
 
-// ── POST /api/auth/link-facebook ───────────────────────────────────────
-// Called once by the frontend right after Auth.signInWithFacebook()
-// resolves (see js/auth.js). Requires a valid Firebase session — the uid
-// it records always comes from the verified token, never from the
-// request body, so a person can only ever link their OWN account.
+/**
+ * Called once by the frontend right after Auth.signInWithFacebook() resolves
+ * (see js/auth.js). Requires a valid Firebase session — the uid it records
+ * always comes from the verified token, never from the request body, so a
+ * person can only ever link their OWN account.
+ *
+ * Also accepts an optional `email`, which js/auth.js fetches directly from
+ * Facebook's Graph API (bypassing Firebase's own often-empty email claim —
+ * see the comment above _setFirebaseUserEmail). When present, it's written
+ * onto the Firebase user record so it shows up everywhere Cognita reads a
+ * person's email from their ID token, exactly like a Google account does.
+ */
 export async function handleLinkFacebookLogin(request, env) {
   let identity;
   try {
@@ -233,6 +265,7 @@ export async function handleLinkFacebookLogin(request, env) {
   }
   const fbUserId = String(body?.fbUserId || '').trim();
   if (!fbUserId) return _jsonError('fbUserId is required.', 400, env);
+  const email = String(body?.email || '').trim();
 
   try {
     await fsSet('fb_login_index/' + fbUserId, {
@@ -242,6 +275,18 @@ export async function handleLinkFacebookLogin(request, env) {
   } catch (e) {
     console.error('[facebook-data-deletion] could not save login index:', e.message);
     return _jsonError('Could not save that right now. Please try again.', 500, env);
+  }
+
+  if (email) {
+    try {
+      await _setFirebaseUserEmail(identity.uid, email, env);
+    } catch (e) {
+      // Non-fatal: the person is already fully signed in either way, and
+      // this can legitimately fail (e.g. EMAIL_EXISTS if that address is
+      // already tied to a different account). Log it rather than block
+      // sign-in on what's ultimately a nice-to-have data backfill.
+      console.error('[facebook-data-deletion] could not backfill email for uid ' + identity.uid + ':', e.message);
+    }
   }
 
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers: _corsJsonHeaders(env) });
