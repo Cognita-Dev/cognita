@@ -304,12 +304,24 @@ async function signInWithFacebook() {
         body: JSON.stringify({ fbUserId: fbProfile.uid, email: fbEmail }),
       });
 
-      // If the backend just wrote a new email onto this account, our
-      // already-fetched token above is now stale (it was minted before
-      // that write). Force one more refresh so the person's OWN next
-      // request already carries the corrected "email" claim, instead of
-      // waiting up to an hour for Firebase's normal token refresh cycle.
+      // If the backend just wrote a new email onto this account, two
+      // separate caches on the client are now stale:
+      //   1. The ID token — minted before that write, so it's still
+      //      missing the "email" claim the Worker reads for things like
+      //      chat-endpoint.js / auth-middleware.js.
+      //   2. The in-memory `user` object's own `.email` field — this is
+      //      what account.html shows on the Account details page, and it
+      //      is NOT updated by getIdToken(); the SDK only refreshes it
+      //      via user.reload() (which calls Identity Toolkit's
+      //      getAccountInfo and copies the result onto the same user
+      //      object in place).
+      // Skipping reload() here was the actual bug: the token refresh
+      // alone meant the *next* signed-in request already had the right
+      // email claim, but this same tab's `result.user.email` — and
+      // anything that read it without a full reload/re-login, like the
+      // Account page right after linking — stayed blank.
       if (fbEmail && linkRes.ok) {
+        try { await result.user.reload(); } catch (_) { /* non-fatal */ }
         try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
       }
     }
