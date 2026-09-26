@@ -24,6 +24,42 @@
 <main class="account-shell">
   <h1 class="account-page-title">Social Scheduler</h1>
 
+  <!-- ── Initial skeleton (shown until we know pages/entitlement state) ── -->
+  <div id="schedulerSkeleton" aria-hidden="true">
+    <div class="settings-group-label skeleton" style="width:120px; height:14px; border-radius:4px;"></div>
+    <div class="settings-group scheduler-composer">
+      <div class="scheduler-field">
+        <span class="skeleton" style="width:60px; height:12px; border-radius:4px;"></span>
+        <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+      </div>
+      <div class="scheduler-field">
+        <span class="skeleton" style="width:40px; height:12px; border-radius:4px;"></span>
+        <div class="skeleton" style="height:96px; border-radius:10px;"></div>
+      </div>
+      <div class="scheduler-field">
+        <span class="skeleton" style="width:90px; height:12px; border-radius:4px;"></span>
+        <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+      </div>
+      <div class="scheduler-field-row">
+        <div class="scheduler-field">
+          <span class="skeleton" style="width:40px; height:12px; border-radius:4px;"></span>
+          <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+        </div>
+        <div class="scheduler-field">
+          <span class="skeleton" style="width:40px; height:12px; border-radius:4px;"></span>
+          <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+        </div>
+      </div>
+      <div class="skeleton" style="height:44px; border-radius:10px;"></div>
+    </div>
+    <div class="settings-group-label skeleton" style="width:180px; height:14px; border-radius:4px; margin-top: var(--space-5);"></div>
+    <div class="settings-group">
+      <div class="settings-row skeleton" style="height:52px;"></div>
+      <div class="settings-row skeleton" style="height:52px;"></div>
+      <div class="settings-row skeleton" style="height:52px;"></div>
+    </div>
+  </div>
+
   <!-- ── Not connected / not entitled state ── -->
   <div class="settings-group" id="schedulerBlockedNotice" hidden>
     <div class="settings-row">
@@ -103,6 +139,7 @@
   const user = await window.Auth.requireAuthOrRedirect();
   if (!user) throw new Error('redirecting');
 
+  const schedulerSkeleton = document.getElementById('schedulerSkeleton');
   const blockedNotice = document.getElementById('schedulerBlockedNotice');
   const blockedTitle = document.getElementById('schedulerBlockedTitle');
   const blockedDesc = document.getElementById('schedulerBlockedDesc');
@@ -307,6 +344,7 @@
   });
 
   const ok = await loadPages();
+  schedulerSkeleton.hidden = true;
   if (ok) {
     composerWrap.hidden = false;
     listWrap.hidden = false;
