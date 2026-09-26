@@ -70,6 +70,11 @@
   text-align: left;
   background: transparent;
 }
+.settings-row-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
 .settings-group > .settings-row:last-child,
 .settings-group > *:last-child .settings-row { border-bottom: none; }
 
