@@ -86,17 +86,34 @@
   transform: scale(0.98);
 }
 
+/* ══════════════════════════════════════════════════════════════
+   "Sign in with Google" button
+   Built to the published spec: developers.google.com/identity/branding-guidelines
+   Light theme: Fill #FFFFFF · Stroke #747775 (1px, inside) · Font #1F1F1F
+   Dark theme:  Fill #131314  · Stroke #8E918F (1px, inside) · Font #E3E3E3
+   Text must be "Sign in with Google" / "Sign up with Google" / "Continue with
+   Google"; logo must stay the standard full-color "G" at fixed proportions.
+   ══════════════════════════════════════════════════════════════ */
 .auth-btn--google {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text-2);
-  min-height: 38px;
+  background: #FFFFFF;
+  border: 1px solid #747775;
+  color: #1F1F1F;
+  min-height: 40px;
+  font-family: 'Google Sans Text', 'Google Sans', Roboto, Arial, sans-serif;
   font-weight: 500;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.15px;
+  padding: 8px 12px;
   gap: 10px;
 }
 .auth-btn--google:hover {
-  background: var(--bg-subtle);
-  color: var(--text-1);
+  background: rgba(66, 133, 244, 0.04);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.30), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+.auth-btn--google:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: 1px;
 }
 .auth-btn--google svg {
   flex-shrink: 0;
@@ -106,39 +123,90 @@
 .auth-btn--google:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+  background: #FFFFFF;
+  box-shadow: none;
+}
+@media (prefers-color-scheme: dark) {
+  .auth-btn--google {
+    background: #131314;
+    border-color: #8E918F;
+    color: #E3E3E3;
+  }
+  .auth-btn--google:hover {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+  }
+  .auth-btn--google:disabled { background: #131314; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   "Continue with Facebook" button
+   Per Meta's Facebook Login guidelines: the approved "f" logo must appear
+   before the call-to-action text, unaltered and in its standard color
+   (#1877F2), and the button must carry the same size/visual weight as the
+   Google button above it. Kept to the app's own neutral surface (an
+   accepted fallback per Meta's docs when the solid blue button isn't used)
+   with the brand blue reserved for the logo itself and the hover accent.
+   ══════════════════════════════════════════════════════════════ */
+.auth-btn--facebook {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  min-height: 40px;
+  font-weight: 500;
+  font-size: var(--text-sm);
+  padding: 8px 12px;
+  gap: 10px;
+}
+.auth-btn--facebook:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
+  border-color: #1877F2;
+}
+.auth-btn--facebook:focus-visible {
+  outline: 2px solid #1877F2;
+  outline-offset: 1px;
+}
+.auth-btn--facebook svg {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+.auth-btn--facebook:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
   background: transparent;
 }
 
-.google-btn-content {
+.oauth-btn-content {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
-.google-loader {
+.oauth-loader {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 3px;
   height: 16px;
 }
-.google-loader span {
+.oauth-loader span {
   width: 3px;
   height: 100%;
   border-radius: 1px;
   background: currentColor;
-  color: var(--text-3);
-  animation: google-loader-bounce 900ms ease-in-out infinite;
+  animation: oauth-loader-bounce 900ms ease-in-out infinite;
 }
-.google-loader span:nth-child(1) { animation-delay: 0ms; }
-.google-loader span:nth-child(2) { animation-delay: 120ms; }
-.google-loader span:nth-child(3) { animation-delay: 240ms; }
-.google-loader span:nth-child(4) { animation-delay: 360ms; }
-@keyframes google-loader-bounce {
+.oauth-loader span:nth-child(1) { animation-delay: 0ms; }
+.oauth-loader span:nth-child(2) { animation-delay: 120ms; }
+.oauth-loader span:nth-child(3) { animation-delay: 240ms; }
+.oauth-loader span:nth-child(4) { animation-delay: 360ms; }
+@keyframes oauth-loader-bounce {
   0%, 100% { transform: scaleY(0.3); }
   50% { transform: scaleY(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .google-loader span {
+  .oauth-loader span {
     animation: none;
     transform: scaleY(0.7);
   }
