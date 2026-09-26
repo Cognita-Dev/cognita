@@ -21,7 +21,7 @@ import {
 // (see auth-middleware.js) — never from hiding this.
 const firebaseConfig = {
   apiKey: 'AIzaSyB2K_ST2Crl-u-DoWsN8QoIN2rpBOA2XOs',
-  authDomain: 'auth.cognita.com.ng',
+  authDomain: 'cognita-b94eb.firebaseapp.com',
   projectId: 'cognita-b94eb',
   storageBucket: 'cognita-b94eb.firebasestorage.app',
   messagingSenderId: '994240602309',
@@ -275,12 +275,43 @@ async function signInWithFacebook() {
   try {
     const fbProfile = (result.user.providerData || []).find((p) => p.providerId === 'facebook.com');
     if (fbProfile && fbProfile.uid) {
+      // Facebook's Firebase credential frequently comes back with NO email
+      // at all — Firebase only fills user.email in when Facebook's own
+      // response happens to include a verified one, and plenty of real
+      // accounts don't have one attached (a long-standing, documented gap
+      // in Firebase's Facebook integration, not something specific to
+      // this app). So: ask Facebook directly, using the Facebook access
+      // token Firebase also handed back — this is the SAME data Facebook
+      // already agreed to share when the person approved the "Email
+      // address" permission on the consent screen.
+      let fbEmail = '';
+      try {
+        const fbCredential = OAuthProvider.credentialFromResult(result);
+        const fbAccessToken = fbCredential && fbCredential.accessToken;
+        if (fbAccessToken) {
+          const graphRes = await fetch(
+            'https://graph.facebook.com/me?fields=email&access_token=' + encodeURIComponent(fbAccessToken)
+          );
+          const graphData = await graphRes.json();
+          if (graphData && graphData.email) fbEmail = graphData.email;
+        }
+      } catch (_) { /* non-fatal — proceed without an email */ }
+
       const idToken = await result.user.getIdToken();
-      await fetch(WORKER_URL + '/api/auth/link-facebook', {
+      const linkRes = await fetch(WORKER_URL + '/api/auth/link-facebook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + idToken },
-        body: JSON.stringify({ fbUserId: fbProfile.uid }),
+        body: JSON.stringify({ fbUserId: fbProfile.uid, email: fbEmail }),
       });
+
+      // If the backend just wrote a new email onto this account, our
+      // already-fetched token above is now stale (it was minted before
+      // that write). Force one more refresh so the person's OWN next
+      // request already carries the corrected "email" claim, instead of
+      // waiting up to an hour for Firebase's normal token refresh cycle.
+      if (fbEmail && linkRes.ok) {
+        try { await result.user.getIdToken(true); } catch (_) { /* non-fatal */ }
+      }
     }
   } catch (e) {
     // Non-fatal: the person is still fully signed in either way. Worst
