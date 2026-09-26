@@ -93,6 +93,7 @@ import {
   handleSocialMediaProxy,
 } from './social-scheduler-endpoint.js';
 import { runSocialScheduler } from './social-scheduler.js';
+import { checkIpRateLimit } from './rate-limit.js';
 import {
   handleInboxList,
   handleInboxSubscribe,
@@ -443,8 +444,22 @@ export default {
     }
 
     // Public status lookup for the confirmation code the callback above
-    // hands back to Meta (and that a person may be shown by Meta's UI).
+    // hands back to Meta (and that a person may be shown by Meta's UI, or
+    // type into data-deletion-status.html's manual-entry form). Codes
+    // themselves are 80-bit random tokens — not practically guessable —
+    // but the endpoint is public and unauthenticated by necessity, so it
+    // gets its own IP-based throttle rather than none at all, to blunt
+    // scripted hammering. 20 requests/minute per IP is generous for a
+    // person checking their own status by hand, and low value for anyone
+    // trying to script abuse.
     if (request.method === 'GET' && /^\/api\/data-deletion-status\/[^/]+$/.test(url.pathname)) {
+      const rl = await checkIpRateLimit(request, env, 'del-status', { limit: 20, windowSeconds: 60 });
+      if (!rl.allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests. Please try again in a minute.' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': String(rl.resetInSeconds) },
+        });
+      }
       const code = url.pathname.split('/')[3];
       return handleDataDeletionStatus(request, env, code);
     }
