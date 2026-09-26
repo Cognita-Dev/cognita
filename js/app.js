@@ -2591,6 +2591,21 @@ const CONNECTOR_META = {
 };
 const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
 
+// Google and Facebook require their brand mark to appear in its standard
+// color, unaltered — a monochrome icon-font glyph doesn't satisfy that, so
+// those two get the real logo as inline SVG here too (mirrors account.html).
+const CONNECTOR_BRAND_SVG = {
+  google: '<svg class="connector-row-icon" width="20" height="20" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.84 2.09-1.79 2.73v2.27h2.9c1.7-1.56 2.69-3.87 2.69-6.64z"/>' +
+    '<path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.27c-.81.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.34C2.44 15.98 5.48 18 9 18z"/>' +
+    '<path fill="#FBBC05" d="M3.95 10.69A5.4 5.4 0 0 1 3.68 9c0-.59.1-1.16.27-1.69V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.34z"/>' +
+    '<path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.97l2.99 2.34C4.66 5.17 6.65 3.58 9 3.58z"/>' +
+    '</svg>',
+  facebook: '<svg class="connector-row-icon" width="20" height="20" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path fill="#1877F2" d="M18 9a9 9 0 1 0-10.4 8.9v-6.3H5.3V9h2.3V6.9c0-2.3 1.4-3.6 3.5-3.6.7 0 1.5.1 2.2.2v2.4h-1.2c-1.2 0-1.5.7-1.5 1.5V9h2.6l-.4 2.6h-2.2v6.3A9 9 0 0 0 18 9Z"/>' +
+    '</svg>',
+};
+
 // `locked` = this plan's connectorTools feature is off (see
 // currentAccountHasConnectorTools). A locked, not-yet-connected row
 // still gets a real "Connect" button rather than a disabled one — same
@@ -2603,9 +2618,10 @@ const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
 function connectorRowHtml(provider, connected, locked) {
   const meta = CONNECTOR_META[provider];
   const isLockedRow = locked && !connected;
+  const icon = CONNECTOR_BRAND_SVG[provider] || ('<i class="ph ' + meta.icon + '"></i>');
   return (
     '<div class="connector-row' + (isLockedRow ? ' is-locked' : '') + '" data-provider="' + provider + '">' +
-      '<i class="ph ' + meta.icon + '"></i>' +
+      icon +
       '<div class="connector-row-text">' +
         '<span class="connector-row-name">' + meta.label + '</span>' +
         '<span class="connector-row-desc' + (connected ? ' is-connected' : '') + '">' +
