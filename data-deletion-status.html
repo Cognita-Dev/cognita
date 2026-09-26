@@ -8,6 +8,23 @@
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/payment.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+  .deletion-code-input {
+    width: 100%;
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-subtle);
+    color: var(--text-1);
+    font-size: var(--text-sm);
+    font-family: inherit;
+  }
+  .deletion-code-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+</style>
 </head>
 <body class="payment-page">
 
@@ -19,28 +36,57 @@
     <h1>Checking status…</h1>
     <p>One moment.</p>
   </div>
+
+  <form class="payment-status" id="codeForm" style="display:none;">
+    <h1>Check a deletion request</h1>
+    <p>Enter the confirmation code you were given to see its status.</p>
+    <input type="text" id="codeInput" class="deletion-code-input" placeholder="e.g. delacct_a1b2c3d4e5f6g7h8i9j0" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button type="submit" class="payment-retry-btn payment-retry-btn--primary">Check status</button>
+  </form>
 </div>
 
 <script type="module">
   // Deliberately does NOT import js/auth.js or require sign-in: this page
-  // is reached from a confirmation link/code Meta shows someone right
-  // after they remove Cognita's Facebook Login or disconnect the
-  // Facebook/Instagram connector — at that point they may not be signed
-  // in here at all, and Meta's own reviewers need to be able to open it
-  // too. The record behind the code holds no tokens or profile data, only
-  // a status and two timestamps, so this is safe to serve without auth.
+  // is reached from a confirmation link/code shown after either (a) someone
+  // removes Cognita's Facebook Login or disconnects the Facebook/Instagram
+  // connector (Meta's callback), or (b) someone deletes their Cognita
+  // account from within the app (account-deletion-endpoint.js) — at that
+  // point they may not be signed in here at all, and Meta's own reviewers
+  // need to be able to open it too. The record behind the code holds no
+  // tokens or profile data, only a status and two timestamps, so this is
+  // safe to serve without auth.
   const WORKER_URL = 'https://api.cognita.com.ng';
   const statusEl = document.getElementById('statusBox');
+  const formEl = document.getElementById('codeForm');
+  const inputEl = document.getElementById('codeInput');
 
-  const params = new URLSearchParams(window.location.search);
-  const code = (params.get('id') || params.get('code') || '').replace(/[^A-Za-z0-9_-]/g, '');
+  function sanitizeCode(raw) {
+    return (raw || '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+  }
 
-  function show(iconClass, iconColorVar, title, message) {
+  function showForm() {
+    statusEl.style.display = 'none';
+    formEl.style.display = '';
+  }
+
+  function showStatus(iconClass, iconColorVar, title, message, { offerRetry } = {}) {
+    formEl.style.display = 'none';
+    statusEl.style.display = '';
     statusEl.innerHTML =
       '<i class="' + iconClass + '" style="font-size:2.5rem;color:var(' + iconColorVar + ');"></i>' +
       '<h1>' + title + '</h1>' +
       '<p>' + message + '</p>' +
+      (offerRetry ? '<a href="/data-deletion-status.html" class="payment-retry-btn">Check another code</a>' : '') +
       '<a href="/index.html" class="payment-retry-btn">Back to Cognita</a>';
+  }
+
+  function showChecking() {
+    formEl.style.display = 'none';
+    statusEl.style.display = '';
+    statusEl.innerHTML =
+      '<span class="btn-spinner btn-spinner--dark"></span>' +
+      '<h1>Checking status…</h1>' +
+      '<p>One moment.</p>';
   }
 
   function formatWhen(iso) {
@@ -52,29 +98,51 @@
     }
   }
 
-  if (!code) {
-    show('ph ph-warning-circle', '--danger', 'No confirmation code found', 'This link is missing its confirmation code. If you followed a link from Facebook or Instagram, please go back and tap it again.');
-  } else {
+  async function checkCode(code) {
+    showChecking();
     try {
       const res = await fetch(WORKER_URL + '/api/data-deletion-status/' + encodeURIComponent(code));
       const data = await res.json();
 
-      if (res.ok && data.status === 'completed') {
-        show(
+      if (res.ok && (data.status === 'completed' || data.status === 'completed_with_warnings')) {
+        const note = data.status === 'completed_with_warnings'
+          ? ' A small number of minor items needed a second pass, but your account and its data have been deleted.'
+          : '';
+        showStatus(
           'ph ph-check-circle',
           '--success',
           'Deletion complete',
-          'The data Cognita received through Facebook for this request has been deleted.' +
-            (data.completedAt ? ' Completed on ' + formatWhen(data.completedAt) + '.' : '')
+          'The data covered by this request has been deleted.' + note +
+            (data.completedAt ? ' Completed on ' + formatWhen(data.completedAt) + '.' : ''),
+          { offerRetry: true }
         );
       } else if (res.status === 404) {
-        show('ph ph-warning-circle', '--danger', 'Confirmation code not found', 'We could not find a deletion request for code ' + code + '. If you believe this is a mistake, please contact support.');
+        showStatus('ph ph-warning-circle', '--danger', 'Confirmation code not found', 'We could not find a deletion request for code ' + code + '. Double-check the code, or contact support if you believe this is a mistake.', { offerRetry: true });
       } else {
-        show('ph ph-clock', '--warning', 'Still processing', 'This deletion request is still being processed. Please check back shortly.');
+        showStatus('ph ph-clock', '--warning', 'Still processing', 'This deletion request is still being processed. Please check back shortly.', { offerRetry: true });
       }
     } catch (e) {
-      show('ph ph-warning-circle', '--danger', 'Something went wrong', 'We could not check this request right now. Please try again in a moment.');
+      showStatus('ph ph-warning-circle', '--danger', 'Something went wrong', 'We could not check this request right now. Please try again in a moment.', { offerRetry: true });
     }
+  }
+
+  formEl.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = sanitizeCode(inputEl.value);
+    if (!code) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', code);
+    window.history.replaceState({}, '', url);
+    checkCode(code);
+  });
+
+  const params = new URLSearchParams(window.location.search);
+  const code = sanitizeCode(params.get('id') || params.get('code') || '');
+
+  if (!code) {
+    showForm();
+  } else {
+    checkCode(code);
   }
 </script>
 
