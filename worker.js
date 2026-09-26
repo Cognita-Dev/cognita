@@ -304,10 +304,6 @@ export default {
     }
 
     // ── Social Scheduler (Facebook/Instagram, via the Facebook connector) ─
-    // Placed above the generic /api/connectors/:provider routes below only
-    // because it lives right next to them conceptually — order doesn't
-    // matter here since none of these paths overlap /api/connectors/*.
-
     if (request.method === 'GET' && url.pathname === '/api/social/pages') {
       return handleSocialPagesList(request, env);
     }
