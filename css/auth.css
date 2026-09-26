@@ -106,6 +106,7 @@
   letter-spacing: 0.15px;
   padding: 8px 12px;
   gap: 10px;
+  margin-bottom: var(--space-2);
 }
 .auth-btn--google:hover {
   background: rgba(66, 133, 244, 0.04);
@@ -141,31 +142,30 @@
 
 /* ══════════════════════════════════════════════════════════════
    "Continue with Facebook" button
-   Per Meta's Facebook Login guidelines: the approved "f" logo must appear
-   before the call-to-action text, unaltered and in its standard color
-   (#1877F2), and the button must carry the same size/visual weight as the
-   Google button above it. Kept to the app's own neutral surface (an
-   accepted fallback per Meta's docs when the solid blue button isn't used)
-   with the brand blue reserved for the logo itself and the hover accent.
+   Per developers.facebook.com/docs/facebook-login/userexperience:
+   the approved "f" logo appears before the call-to-action text, and
+   "button colors are white and Facebook blue: #1877F2" (falling back to
+   black/white only if blue can't be used — not our case here). Same
+   height/padding/weight as the Google button above so both carry equal
+   visual weight, per both platforms' "at least as prominent" requirement.
    ══════════════════════════════════════════════════════════════ */
 .auth-btn--facebook {
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text-2);
+  background: #1877F2;
+  border: 1px solid #1877F2;
+  color: #FFFFFF;
   min-height: 40px;
-  font-weight: 500;
+  font-weight: 600;
   font-size: var(--text-sm);
   padding: 8px 12px;
   gap: 10px;
 }
 .auth-btn--facebook:hover {
-  background: var(--bg-subtle);
-  color: var(--text-1);
-  border-color: #1877F2;
+  background: #166FE0;
+  border-color: #166FE0;
 }
 .auth-btn--facebook:focus-visible {
   outline: 2px solid #1877F2;
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 .auth-btn--facebook svg {
   flex-shrink: 0;
@@ -175,7 +175,7 @@
 .auth-btn--facebook:disabled {
   opacity: 0.65;
   cursor: not-allowed;
-  background: transparent;
+  background: #1877F2;
 }
 
 .oauth-btn-content {
