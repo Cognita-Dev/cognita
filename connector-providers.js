@@ -18,6 +18,28 @@ const ENV_VARS = {
   canva: { id: 'CANVA_CLIENT_ID', secret: 'CANVA_CLIENT_SECRET' },
 };
 
+// This app's Meta product is "Facebook Login for Business" (App Dashboard
+// → Facebook Login for Business), NOT classic Facebook Login. Business
+// Login does not accept a raw `scope` list on /dialog/oauth — it requires
+// a `config_id` referencing a pre-built "Login Connection" configuration
+// (App Dashboard → Facebook Login for Business → Configurations), which
+// is where the actual permission list now lives. Passing `scope` instead
+// of `config_id` is what was producing "Invalid Scopes: pages_read_user_content"
+// regardless of which scopes were actually requested — Facebook wasn't
+// validating our scopes at all, just rejecting the shape of the request.
+// See https://developers.facebook.com/docs/facebook-login/facebook-login-for-business/
+//
+// FACEBOOK_LOGIN_CONFIG_ID is a new Worker secret — set it to the
+// Configuration ID shown after creating that Login Connection, via:
+//   wrangler secret put FACEBOOK_LOGIN_CONFIG_ID
+function _facebookConfigId(env) {
+  const configId = env.FACEBOOK_LOGIN_CONFIG_ID;
+  if (!configId) {
+    throw new Error('Server misconfiguration: FACEBOOK_LOGIN_CONFIG_ID not set. Create a Login Connection under Facebook Login for Business → Configurations in the App Dashboard, then set its Configuration ID as this Worker secret.');
+  }
+  return configId;
+}
+
 // Graph API version pinned in one place — bump this, not the literal
 // string, when Meta deprecates the current version.
 const META_GRAPH_VERSION = 'v21.0';
@@ -103,6 +125,17 @@ const SCOPES = {
   //   - read_insights: Page and IG account insights (reach, impressions).
   //   - business_management: required by Meta for most Page-posting
   //     scopes when the Page is owned by a Business Portfolio.
+  //
+  // NOTE: this list is now REFERENCE ONLY — kept here so
+  // hasSufficientScope()/hasInboxScope() below, and the hardcoded
+  // `scope:` fields returned by exchangeCodeForToken()/refreshAccessToken(),
+  // have a single source of truth for "what this app can do." It is
+  // deliberately no longer sent on the wire in buildAuthorizeUrl(): this
+  // app's Meta product is Facebook Login for Business, which reads the
+  // actual permission list from a `config_id`-referenced Login Connection
+  // configured in the App Dashboard, not from a `scope` query param. Keep
+  // this array and that dashboard configuration in sync by hand — nothing
+  // enforces they match.
   facebook: [
     'pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_metadata',
     'instagram_basic', 'instagram_content_publish', 'read_insights', 'business_management',
@@ -209,8 +242,15 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
   }
 
   if (provider === 'facebook') {
+    // Facebook Login for Business: config_id replaces scope entirely.
+    // See the _facebookConfigId() comment above for why — sending scope
+    // here (as this code used to) produces "Invalid Scopes:
+    // pages_read_user_content" regardless of what scope actually
+    // contains, because Business Login doesn't evaluate a scope param
+    // at all.
+    const configId = _facebookConfigId(env);
     return 'https://www.facebook.com/' + META_GRAPH_VERSION + '/dialog/oauth?' + _form({
-      client_id: id, redirect_uri: redirectUri, state, scope, response_type: 'code',
+      client_id: id, redirect_uri: redirectUri, state, config_id: configId, response_type: 'code',
     });
   }
 
