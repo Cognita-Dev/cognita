@@ -118,6 +118,8 @@
         );
       } else if (res.status === 404) {
         showStatus('ph ph-warning-circle', '--danger', 'Confirmation code not found', 'We could not find a deletion request for code ' + code + '. Double-check the code, or contact support if you believe this is a mistake.', { offerRetry: true });
+      } else if (res.status === 429) {
+        showStatus('ph ph-warning-circle', '--warning', 'Too many attempts', 'Please wait a minute before checking again.', { offerRetry: true });
       } else {
         showStatus('ph ph-clock', '--warning', 'Still processing', 'This deletion request is still being processed. Please check back shortly.', { offerRetry: true });
       }
