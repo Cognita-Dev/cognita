@@ -23,53 +23,47 @@
 
 <main class="account-shell">
   <h1 class="account-page-title">AI Inbox</h1>
+  <p class="inbox-intro">Comments and DMs from your connected Pages, with an AI-drafted reply ready to review and send.</p>
 
   <div id="inboxSkeleton" aria-hidden="true">
-    <div class="settings-group">
-      <div class="settings-row skeleton" style="height:120px;"></div>
-      <div class="settings-row skeleton" style="height:120px;"></div>
-      <div class="settings-row skeleton" style="height:120px;"></div>
-    </div>
+    <div class="inbox-skeleton-card"></div>
+    <div class="inbox-skeleton-card"></div>
+    <div class="inbox-skeleton-card"></div>
   </div>
 
-  <div class="settings-group" id="inboxBlockedNotice" hidden>
-    <div class="settings-row">
-      <span class="settings-row-text">
-        <span class="settings-row-label" id="inboxBlockedTitle">Facebook isn't connected yet</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);" id="inboxBlockedDesc">
-          Connect Facebook in Account Settings to see comments and DMs here.
-        </span>
-      </span>
-    </div>
-    <a href="/account.html" class="settings-row settings-row--button">
-      <span class="settings-row-label">Go to Account Settings</span>
-      <i class="ph ph-caret-right"></i>
+  <div class="inbox-state" id="inboxBlockedNotice" hidden role="status">
+    <i class="ph ph-warning-circle"></i>
+    <span class="inbox-state-title" id="inboxBlockedTitle">Facebook isn't connected yet</span>
+    <span class="inbox-state-desc" id="inboxBlockedDesc">Connect Facebook in Account Settings to see comments and DMs here.</span>
+    <a href="/account.html" class="inbox-btn inbox-btn--primary">
+      Go to Account Settings <i class="ph ph-arrow-right"></i>
     </a>
   </div>
 
   <div id="inboxContentWrap" hidden>
-    <div class="settings-group" id="subscribePrompt" hidden style="margin-bottom: var(--space-4);">
-      <div class="settings-row">
-        <span class="settings-row-text">
-          <span class="settings-row-label">Enable real-time Inbox</span>
-          <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">
-            One-time setup so new comments and DMs start showing up here automatically.
-          </span>
-        </span>
-        <button class="inbox-btn inbox-btn--primary" id="subscribeBtn">Enable</button>
-      </div>
+    <div class="inbox-notice" id="subscribePrompt" hidden>
+      <i class="ph ph-bell-simple"></i>
+      <span class="inbox-notice-text">
+        <span class="inbox-notice-title">Enable real-time Inbox</span>
+        <span class="inbox-notice-desc">One-time setup so new comments and DMs start showing up here automatically.</span>
+      </span>
+      <button class="inbox-btn inbox-btn--primary" id="subscribeBtn">Enable</button>
     </div>
 
-    <div class="inbox-tabs" id="inboxTabs">
-      <button class="inbox-tab inbox-tab--active" data-status="" data-category="">All</button>
-      <button class="inbox-tab" data-status="new" data-category="">Needs Reply</button>
-      <button class="inbox-tab" data-status="" data-category="lead">Leads</button>
-      <button class="inbox-tab" data-status="" data-category="complaint">Complaints</button>
-      <button class="inbox-tab" data-status="spam" data-category="">Spam</button>
+    <div class="inbox-tabs" id="inboxTabs" role="tablist" aria-label="Filter inbox">
+      <button class="inbox-tab inbox-tab--active" data-status="" data-category="" role="tab" aria-selected="true">All</button>
+      <button class="inbox-tab" data-status="new" data-category="" role="tab" aria-selected="false">Needs reply</button>
+      <button class="inbox-tab" data-status="" data-category="lead" role="tab" aria-selected="false">Leads</button>
+      <button class="inbox-tab" data-status="" data-category="complaint" role="tab" aria-selected="false">Complaints</button>
+      <button class="inbox-tab" data-status="spam" data-category="" role="tab" aria-selected="false">Spam</button>
     </div>
 
-    <div id="inboxList"></div>
-    <div class="inbox-empty" id="inboxEmpty" hidden>Nothing here yet — new comments and DMs will show up automatically.</div>
+    <div id="inboxList" aria-live="polite"></div>
+    <div class="inbox-state inbox-empty" id="inboxEmpty" hidden>
+      <i class="ph ph-tray"></i>
+      <span class="inbox-state-title">All caught up</span>
+      <span class="inbox-state-desc">Nothing here yet — new comments and DMs will show up automatically.</span>
+    </div>
   </div>
 
 </main>
@@ -112,25 +106,36 @@
 
   function renderItem(item) {
     const card = document.createElement('div');
+    const category = item.category || 'other';
     card.className = 'inbox-card';
+    card.dataset.category = category;
+
     const kindLabel = item.kind === 'dm' ? 'DM' : 'Comment';
     const platformLabel = item.platform === 'instagram' ? 'Instagram' : 'Facebook';
-    const category = item.category || 'other';
     const canReply = item.status !== 'replied' && item.status !== 'dismissed' && item.status !== 'spam';
+    if (!canReply) card.dataset.resolved = 'true';
 
     card.innerHTML = `
       <div class="inbox-card-head">
         <span class="inbox-card-author">${escapeHtml(item.authorName || item.authorId || 'Someone')}</span>
-        <span>· ${platformLabel} ${kindLabel}</span>
+        <span class="inbox-card-meta">${platformLabel} · ${kindLabel}</span>
         ${item.category ? `<span class="inbox-badge inbox-badge--${category}">${category}</span>` : ''}
-        ${item.status === 'replied' ? '<span class="inbox-badge inbox-badge--positive">replied</span>' : ''}
+        ${item.status === 'replied' ? '<span class="inbox-badge inbox-badge--positive"><i class="ph ph-check"></i>&nbsp;Replied</span>' : ''}
+        ${item.status === 'spam' ? '<span class="inbox-badge inbox-badge--spam">Marked spam</span>' : ''}
       </div>
       <div class="inbox-card-text">${escapeHtml(item.text)}</div>
       ${canReply ? `
-        <textarea class="inbox-card-draft" data-id="${item.id}">${escapeHtml(item.aiDraftReply || '')}</textarea>
+        <div class="inbox-reply">
+          <span class="inbox-reply-label"><i class="ph ph-sparkle"></i> AI draft reply — edit before sending</span>
+          <textarea class="inbox-card-draft" data-id="${item.id}" placeholder="Write a reply…">${escapeHtml(item.aiDraftReply || '')}</textarea>
+        </div>
         <div class="inbox-card-actions">
-          <button class="inbox-btn inbox-btn--primary" data-action="reply" data-id="${item.id}">Send</button>
-          <button class="inbox-btn" data-action="regenerate" data-id="${item.id}">Regenerate</button>
+          <button class="inbox-btn inbox-btn--primary" data-action="reply" data-id="${item.id}">
+            <i class="ph ph-paper-plane-tilt"></i> <span class="btn-label">Send</span>
+          </button>
+          <button class="inbox-btn" data-action="regenerate" data-id="${item.id}">
+            <i class="ph ph-arrow-clockwise"></i> <span class="btn-label">Regenerate</span>
+          </button>
           <button class="inbox-btn" data-action="dismiss" data-id="${item.id}">Dismiss</button>
           <button class="inbox-btn inbox-btn--danger" data-action="spam" data-id="${item.id}">Mark as spam</button>
         </div>
@@ -191,8 +196,12 @@
   tabsWrap.addEventListener('click', (e) => {
     const btn = e.target.closest('.inbox-tab');
     if (!btn) return;
-    tabsWrap.querySelectorAll('.inbox-tab').forEach((b) => b.classList.remove('inbox-tab--active'));
+    tabsWrap.querySelectorAll('.inbox-tab').forEach((b) => {
+      b.classList.remove('inbox-tab--active');
+      b.setAttribute('aria-selected', 'false');
+    });
     btn.classList.add('inbox-tab--active');
+    btn.setAttribute('aria-selected', 'true');
     currentStatus = btn.dataset.status || '';
     currentCategory = btn.dataset.category || '';
     loadItems();
@@ -205,7 +214,12 @@
     const card = btn.closest('.inbox-card');
     const action = btn.dataset.action;
 
+    const label = btn.querySelector('.btn-label');
+    const originalLabel = label ? label.textContent : null;
     btn.disabled = true;
+    btn.classList.add('is-loading');
+    if (label) label.textContent = action === 'reply' ? 'Sending…' : 'Regenerating…';
+
     try {
       if (action === 'reply') {
         const text = card.querySelector('.inbox-card-draft').value;
@@ -232,6 +246,8 @@
       await loadItems();
     } finally {
       btn.disabled = false;
+      btn.classList.remove('is-loading');
+      if (label && originalLabel) label.textContent = originalLabel;
     }
   });
 
