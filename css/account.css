@@ -33,8 +33,53 @@
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-1);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-2);
 }
+.account-intro {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  margin: 0 0 var(--space-6);
+  max-width: 46ch;
+}
+
+/* Secondary line under a settings-row-label — replaces the inline
+   "display:block; font-size: var(--text-sm); color: var(--text-3);"
+   triplet that used to be repeated at every call site. */
+.settings-row-desc {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.settings-row-desc + .settings-row-desc {
+  font-size: var(--text-xs);
+  margin-top: 2px;
+}
+.settings-row-desc--muted { color: var(--text-4); }
+.settings-row-desc--positive {
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.settings-row-desc--positive i { font-size: 0.95em; }
+
+/* Plan status — separated from the plan name so the two carry
+   different weight: name is what plan you're on, badge is whether
+   it's in good standing. */
+.plan-status-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 9px;
+  margin-top: 2px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.plan-status-badge--success { background: color-mix(in srgb, var(--success) 16%, var(--bg-elevated)); color: var(--success); }
+.plan-status-badge--warning { background: color-mix(in srgb, var(--warning) 18%, var(--bg-elevated)); color: var(--warning); }
+.plan-status-badge--danger  { background: var(--danger-subtle); color: var(--danger); }
+.plan-status-badge--muted   { background: var(--bg-subtle); color: var(--text-3); }
 
 /* ── Group label — small caption above each grouped list,
      like "GENERAL" / "PRIVACY" in iOS Settings ── */
@@ -225,12 +270,13 @@
 }
 .modal-overlay[hidden] { display: none; }
 .modal-box {
-  background: var(--bg-elevated, var(--bg-1));
-  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
   width: min(480px, 100%);
   max-height: 88vh;
   overflow-y: auto;
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
 }
 .modal-header {
   display: flex;
@@ -253,7 +299,7 @@
 .modal-body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
 
 .delete-warning-lead {
-  color: var(--danger, #d33);
+  color: var(--danger);
   font-weight: 600;
   font-size: var(--text-sm);
   margin: 0;
@@ -261,7 +307,7 @@
 .delete-explains-label { color: var(--text-2); font-size: var(--text-sm); margin: 0; }
 .delete-item-list {
   margin: 0;
-  padding-left: var(--space-5, 20px);
+  padding-left: var(--space-5);
   color: var(--text-2);
   font-size: var(--text-sm);
   display: flex;
@@ -278,21 +324,24 @@
   background: none;
   border: 1px solid var(--border);
   color: var(--text-2);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-sm);
+  font-weight: 500;
   cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
 }
-.delete-btn-secondary:hover { background: var(--bg-2); }
+.delete-btn-secondary:hover { background: var(--bg-subtle); }
 .delete-btn-danger {
-  background: var(--danger, #d33);
+  background: var(--danger);
   color: #fff;
   border: none;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease);
 }
 .delete-btn-danger:hover:not(:disabled) { opacity: 0.88; }
 .delete-btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -303,27 +352,27 @@
    blocks paste, so retyping is a small deliberate action rather than
    the modal effectively confirming itself. */
 .delete-email-display {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-1);
-  background: var(--bg-2);
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-sm);
   padding: var(--space-3);
   user-select: text;
   word-break: break-all;
 }
 .delete-input-label { font-size: var(--text-xs); color: var(--text-3); }
 .delete-email-input {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-1);
-  background: var(--bg-1);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-sm);
   padding: var(--space-3);
   width: 100%;
   box-sizing: border-box;
 }
-.delete-email-input:focus { outline: none; border-color: var(--danger, #d33); }
-.delete-mismatch-note { color: var(--danger, #d33); font-size: var(--text-xs); margin: 0; }
+.delete-email-input:focus { outline: none; border-color: var(--danger); }
+.delete-mismatch-note { color: var(--danger); font-size: var(--text-xs); margin: 0; }
