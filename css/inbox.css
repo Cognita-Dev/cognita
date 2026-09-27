@@ -83,6 +83,12 @@
 }
 
 /* ── List ── */
+#inboxSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 #inboxList {
   display: flex;
   flex-direction: column;
@@ -238,24 +244,38 @@
 }
 
 /* ── States: skeleton, blocked, empty ── */
-.inbox-skeleton-card {
-  height: 108px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
+/* ── Skeleton — mirrors the actual filter bar and card anatomy below,
+     rather than standing in generic gray blocks, so nothing shifts
+     position once real content arrives. ── */
+.inbox-tabs-skeleton {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) 0 var(--space-4);
+  margin-bottom: var(--space-1);
+}
+
+.sk {
+  display: inline-block;
   background:
-    linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-1) 5%, transparent), transparent),
-    var(--bg-elevated);
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-1) 6%, transparent), transparent),
+    var(--bg-subtle);
   background-size: 200% 100%;
   animation: inbox-shimmer 1.5s ease-in-out infinite;
-  margin-bottom: var(--space-3);
 }
+.sk-pill { height: 30px; border-radius: var(--radius-full); }
+.sk-text { border-radius: 4px; }
+.sk-rect { width: 100%; border-radius: var(--radius-sm); }
+
 @keyframes inbox-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .inbox-skeleton-card { animation: none; }
+  .sk { animation: none; }
 }
+
+.inbox-card--skeleton .inbox-card-head { align-items: center; }
+.inbox-card--skeleton .inbox-reply { border-top: none; padding-top: 0; }
 
 .inbox-state {
   display: flex;
