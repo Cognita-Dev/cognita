@@ -23,33 +23,26 @@
 
 <main class="account-shell">
   <h1 class="account-page-title">AI Insights Digest</h1>
+  <p class="insights-intro">A recurring performance summary for your connected Pages — generated on demand or delivered automatically.</p>
 
   <div id="insightsSkeleton" aria-hidden="true">
-    <div class="settings-group">
-      <div class="settings-row skeleton" style="height:52px;"></div>
-      <div class="settings-row skeleton" style="height:52px;"></div>
-      <div class="settings-row skeleton" style="height:52px;"></div>
-    </div>
+    <div class="insights-skeleton-row"></div>
+    <div class="insights-skeleton-row"></div>
+    <div class="insights-skeleton-row"></div>
   </div>
 
-  <div class="settings-group" id="insightsBlockedNotice" hidden>
-    <div class="settings-row">
-      <span class="settings-row-text">
-        <span class="settings-row-label" id="insightsBlockedTitle">Facebook isn't connected yet</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);" id="insightsBlockedDesc">
-          Connect Facebook in Account Settings to generate a performance digest.
-        </span>
-      </span>
-    </div>
-    <a href="/account.html" class="settings-row settings-row--button">
-      <span class="settings-row-label">Go to Account Settings</span>
-      <i class="ph ph-caret-right"></i>
+  <div class="inbox-state" id="insightsBlockedNotice" hidden role="status">
+    <i class="ph ph-warning-circle"></i>
+    <span class="inbox-state-title" id="insightsBlockedTitle">Facebook isn't connected yet</span>
+    <span class="inbox-state-desc" id="insightsBlockedDesc">Connect Facebook in Account Settings to generate a performance digest.</span>
+    <a href="/account.html" class="insights-generate-btn">
+      Go to Account Settings <i class="ph ph-arrow-right"></i>
     </a>
   </div>
 
   <div id="insightsContentWrap" hidden>
     <div class="settings-group-label">Delivery preferences</div>
-    <form class="settings-group" id="scheduleForm" style="padding: var(--space-4);">
+    <form class="settings-group" id="scheduleForm">
       <div class="insights-field">
         <span class="insights-label">Frequency</span>
         <select id="frequencySelect" class="insights-input">
@@ -66,7 +59,10 @@
       <div class="insights-field">
         <div class="insights-toggle-row">
           <span class="insights-label">Email me the digest automatically</span>
-          <input type="checkbox" id="deliverEmailCheck">
+          <label class="insights-switch">
+            <input type="checkbox" id="deliverEmailCheck">
+            <span class="insights-switch-track"></span>
+          </label>
         </div>
         <input type="email" id="emailAddressInput" class="insights-input" placeholder="you@example.com">
       </div>
@@ -74,23 +70,38 @@
       <div class="insights-field">
         <div class="insights-toggle-row">
           <span class="insights-label">Turn on scheduled delivery</span>
-          <input type="checkbox" id="enabledCheck">
+          <label class="insights-switch">
+            <input type="checkbox" id="enabledCheck">
+            <span class="insights-switch-track"></span>
+          </label>
         </div>
-        <span class="scheduler-hint">WhatsApp delivery is manual — a "Share to WhatsApp" button appears on each digest below; it opens WhatsApp with the report link pre-filled so you pick who to send it to.</span>
+        <span class="insights-field-hint">WhatsApp delivery is manual — a "Share to WhatsApp" button appears on each digest below; it opens WhatsApp with the report link pre-filled so you pick who to send it to.</span>
       </div>
 
-      <button type="submit" class="insights-submit" id="saveScheduleBtn">Save preferences</button>
+      <div class="insights-field-actions">
+        <button type="submit" class="insights-submit" id="saveScheduleBtn">Save preferences</button>
+      </div>
     </form>
 
     <div class="settings-group-label" style="margin-top: var(--space-5);">Generate now</div>
-    <div class="settings-group" style="padding: var(--space-4);">
-      <button class="insights-generate-btn" id="generateNowBtn">Generate a digest now</button>
-      <span class="scheduler-hint" id="generateStatus"></span>
+    <div class="insights-generate-panel">
+      <span class="insights-generate-copy">
+        <span class="insights-generate-title">Run it once, right now</span>
+        <span class="insights-generate-hint">Uses the Pages checked above. Can take up to a minute.</span>
+      </span>
+      <button class="insights-generate-btn" id="generateNowBtn">
+        <i class="ph ph-magic-wand"></i> <span class="btn-label">Generate a digest</span>
+      </button>
+      <span class="insights-generate-status" id="generateStatus"></span>
     </div>
 
     <div class="settings-group-label" style="margin-top: var(--space-5);">History</div>
     <div id="digestHistory"></div>
-    <div class="inbox-empty" id="historyEmpty" hidden>No digests yet — generate one above.</div>
+    <div class="inbox-state insights-empty" id="historyEmpty" hidden>
+      <i class="ph ph-file-text"></i>
+      <span class="inbox-state-title">No digests yet</span>
+      <span class="inbox-state-desc">Generate one above to see it here.</span>
+    </div>
   </div>
 
 </main>
@@ -160,7 +171,7 @@
         <span>${escapeHtml(p.name)}${p.instagram ? ' (+ Instagram)' : ''}</span>
         <input type="checkbox" class="page-check" value="${escapeHtml(p.id)}" ${schedule.pageIds.includes(p.id) ? 'checked' : ''}>
       </label>
-    `).join('') || '<span class="scheduler-hint">No connected Pages yet.</span>';
+    `).join('') || '<span class="insights-field-hint">No connected Pages yet.</span>';
 
     frequencySelect.value = schedule.frequency || 'weekly';
     deliverEmailCheck.checked = !!schedule.deliverEmail;
@@ -207,15 +218,22 @@
     div.className = 'insights-digest-card';
     const period = d.periodStart && d.periodEnd
       ? new Date(d.periodStart).toLocaleDateString() + ' – ' + new Date(d.periodEnd).toLocaleDateString()
-      : '';
+      : 'Digest';
     const highlight = d.summary && d.summary.highlights && d.summary.highlights[0] ? d.summary.highlights[0] : '';
+
+    const statusMap = {
+      ready:      { cls: 'ready',      icon: 'ph-check-circle',  label: 'Ready' },
+      generating: { cls: 'generating', icon: 'ph-circle-notch',  label: 'Generating' },
+    };
+    const status = statusMap[d.status] || { cls: 'failed', icon: 'ph-x-circle', label: 'Failed' };
+
     div.innerHTML = `
-      <div class="insights-digest-period">${escapeHtml(period)}</div>
-      <div class="insights-digest-highlight">${escapeHtml(highlight)}</div>
-      <div class="insights-status-dot">
-        ${d.status === 'ready' ? '✓ Ready' : d.status === 'generating' ? '… Generating' : '✗ Failed'}
-        ${d.deliveredTo && d.deliveredTo.email ? ' · ✓ Emailed' : ''}
+      <div class="insights-digest-head">
+        <span class="insights-digest-period">${escapeHtml(period)}</span>
+        <span class="insights-status insights-status--${status.cls}"><i class="ph ${status.icon}"></i> ${status.label}</span>
       </div>
+      ${highlight ? `<div class="insights-digest-highlight">${escapeHtml(highlight)}</div>` : ''}
+      ${d.deliveredTo && d.deliveredTo.email ? `<div class="insights-digest-delivered"><i class="ph ph-envelope-simple"></i> Emailed to ${escapeHtml(d.deliveredTo.email)}</div>` : ''}
       ${d.status === 'ready' ? `
         <div class="insights-digest-actions">
           <a class="insights-link-btn" href="${d.pdfUrl}" target="_blank" rel="noopener"><i class="ph ph-file-pdf"></i> Download PDF</a>
@@ -239,14 +257,23 @@
     }
   }
 
+  const generateLabel = generateNowBtn.querySelector('.btn-label');
+
+  function setGenerateStatus(text, tone) {
+    generateStatus.textContent = text;
+    if (tone) generateStatus.dataset.tone = tone;
+    else delete generateStatus.dataset.tone;
+  }
+
   generateNowBtn.addEventListener('click', async () => {
     const pageIds = Array.from(document.querySelectorAll('.page-check:checked')).map((c) => c.value);
     if (!pageIds.length) {
-      generateStatus.textContent = 'Select at least one Page above first.';
+      setGenerateStatus('Select at least one Page above first.', 'error');
       return;
     }
     generateNowBtn.disabled = true;
-    generateStatus.textContent = 'Generating — this can take up to a minute…';
+    if (generateLabel) generateLabel.textContent = 'Generating…';
+    setGenerateStatus('This can take up to a minute…');
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/insights/generate', {
         method: 'POST',
@@ -255,13 +282,14 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        generateStatus.textContent = body.error || 'Could not generate your digest.';
+        setGenerateStatus(body.error || 'Could not generate your digest.', 'error');
       } else {
-        generateStatus.textContent = 'Digest ready — see it below.';
+        setGenerateStatus('Digest ready — see it below.', 'success');
         await loadHistory();
       }
     } finally {
       generateNowBtn.disabled = false;
+      if (generateLabel) generateLabel.textContent = 'Generate a digest';
     }
   });
 
