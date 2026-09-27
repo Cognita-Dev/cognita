@@ -8,7 +8,7 @@
 // view is opened. Sidebar chrome (collapse/account menu/sign-out) is
 // owned by js/shell.js, not here.
 
-import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo } from './shell.js';
+import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 const HISTORY_KEY = 'cognita:conversations';
@@ -714,13 +714,15 @@ function wireQualityPicker() {
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    const isOpen = !menu.hidden;
-    menu.hidden = isOpen;
+    const isOpen = menu.classList.contains('is-open');
+    menu.classList.toggle('is-open', !isOpen);
+    trigger.classList.toggle('is-open', !isOpen);
     trigger.setAttribute('aria-expanded', String(!isOpen));
   });
 
   document.addEventListener('click', () => {
-    menu.hidden = true;
+    menu.classList.remove('is-open');
+    trigger.classList.remove('is-open');
     trigger.setAttribute('aria-expanded', 'false');
   });
 
@@ -730,12 +732,14 @@ function wireQualityPicker() {
       const tierKey = _tierKeyForQuality(opt.dataset.quality);
       if (!currentAccountChatTiers.includes(tierKey)) {
         showToast('This quality level requires a higher Cognita plan. Upgrade to unlock it.');
-        menu.hidden = true;
+        menu.classList.remove('is-open');
+        trigger.classList.remove('is-open');
         trigger.setAttribute('aria-expanded', 'false');
         return;
       }
       setQuality(opt.dataset.quality);
-      menu.hidden = true;
+      menu.classList.remove('is-open');
+      trigger.classList.remove('is-open');
       trigger.setAttribute('aria-expanded', 'false');
     });
   });
@@ -820,14 +824,14 @@ function wireAttachMenu() {
   const fileInput = document.getElementById('fileInput');
 
   function closeMenu() {
-    menu.hidden = true;
+    menu.classList.remove('is-open');
     trigger.setAttribute('aria-expanded', 'false');
   }
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    const isOpen = !menu.hidden;
-    menu.hidden = isOpen;
+    const isOpen = menu.classList.contains('is-open');
+    menu.classList.toggle('is-open', !isOpen);
     trigger.setAttribute('aria-expanded', String(!isOpen));
   });
 
@@ -2337,7 +2341,7 @@ function openVisualModal(presetKind) {
   visualKind = presetKind || 'diagram';
   typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.kind === visualKind));
 
-  modal.hidden = false;
+  openModal(modal);
   promptInput.value = '';
   promptInput.focus();
 }
@@ -2349,8 +2353,8 @@ function wireVisualModal() {
   const promptInput = document.getElementById('visualPromptInput');
   const typeOptions = document.querySelectorAll('#visualModal .visual-type-option');
 
-  closeBtn.addEventListener('click', () => { modal.hidden = true; });
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  closeBtn.addEventListener('click', () => { closeModal(modal); });
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(modal); });
 
   typeOptions.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2385,7 +2389,7 @@ function wireVisualModal() {
         return;
       }
 
-      modal.hidden = true;
+      closeModal(modal);
       insertVisualIntoConversation(data, prompt);
     } catch (e) {
       setModalLoading(submitBtn, false);
@@ -2444,7 +2448,7 @@ function openDocumentModal() {
   typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.doctype === documentDocType));
   formatOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.format === documentFormat));
 
-  modal.hidden = false;
+  openModal(modal);
   topicInput.value = '';
   topicInput.focus();
 }
@@ -2457,8 +2461,8 @@ function wireDocumentModal() {
   const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
   const formatOptions = document.querySelectorAll('#documentFormatToggle .visual-type-option');
 
-  closeBtn.addEventListener('click', () => { modal.hidden = true; });
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  closeBtn.addEventListener('click', () => { closeModal(modal); });
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(modal); });
 
   typeOptions.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2502,7 +2506,7 @@ function wireDocumentModal() {
         return;
       }
 
-      modal.hidden = true;
+      closeModal(modal);
       insertDocumentIntoConversation(data, topic, documentDocType, conversationId);
     } catch (e) {
       setModalLoading(submitBtn, false);
@@ -2680,7 +2684,7 @@ async function loadConnectorsList() {
 
 function openConnectorsModal() {
   const modal = document.getElementById('connectorsModal');
-  modal.hidden = false;
+  openModal(modal);
   loadConnectorsList();
 }
 
@@ -2689,8 +2693,8 @@ function wireConnectorsModal() {
   const closeBtn = document.getElementById('connectorsModalClose');
   const list = document.getElementById('connectorsList');
 
-  closeBtn.addEventListener('click', () => { modal.hidden = true; });
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  closeBtn.addEventListener('click', () => { closeModal(modal); });
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(modal); });
 
   // Event delegation — rows are replaced wholesale on every
   // loadConnectorsList() call, so listeners live on the stable container.
