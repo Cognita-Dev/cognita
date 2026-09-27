@@ -22,13 +22,15 @@
 
 <main class="account-shell">
   <h1 class="account-page-title">Account</h1>
+  <p class="account-intro">Your plan, usage, connected apps, and account data.</p>
 
   <!-- ── Plan ── -->
   <div class="settings-group-label">Plan</div>
   <div class="settings-group">
     <div class="settings-row">
       <div class="settings-row-text">
-        <span class="settings-row-label" id="planStatusLine">Loading…</span>
+        <span class="settings-row-label" id="planName">Loading…</span>
+        <span class="plan-status-badge" id="planStatusBadge" hidden></span>
       </div>
       <a href="/pricing.html" class="settings-row-cta" id="planActionBtn">
         View plans <i class="ph ph-caret-right"></i>
@@ -45,16 +47,61 @@
   <!-- ── Usage: Chat ── -->
   <div class="settings-group-label">Today's usage — Chat</div>
   <div class="settings-group" id="usageDetailGrid">
-    <div class="settings-row skeleton" style="height:52px;"></div>
-    <div class="settings-row skeleton" style="height:52px;"></div>
-    <div class="settings-row skeleton" style="height:52px;"></div>
-    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row settings-row--usage" aria-hidden="true">
+      <span class="skeleton" style="width:1rem; height:1rem; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <div class="settings-row-usage-top">
+          <span class="skeleton" style="width:90px; height:13px;"></span>
+          <span class="skeleton" style="width:40px; height:13px;"></span>
+        </div>
+        <div class="usage-bar"><span class="skeleton" style="display:block; width:100%; height:100%;"></span></div>
+      </div>
+    </div>
+    <div class="settings-row settings-row--usage" aria-hidden="true">
+      <span class="skeleton" style="width:1rem; height:1rem; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <div class="settings-row-usage-top">
+          <span class="skeleton" style="width:110px; height:13px;"></span>
+          <span class="skeleton" style="width:40px; height:13px;"></span>
+        </div>
+        <div class="usage-bar"><span class="skeleton" style="display:block; width:100%; height:100%;"></span></div>
+      </div>
+    </div>
+    <div class="settings-row settings-row--usage" aria-hidden="true">
+      <span class="skeleton" style="width:1rem; height:1rem; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <div class="settings-row-usage-top">
+          <span class="skeleton" style="width:70px; height:13px;"></span>
+          <span class="skeleton" style="width:40px; height:13px;"></span>
+        </div>
+        <div class="usage-bar"><span class="skeleton" style="display:block; width:100%; height:100%;"></span></div>
+      </div>
+    </div>
+    <div class="settings-row settings-row--usage" aria-hidden="true">
+      <span class="skeleton" style="width:1rem; height:1rem; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <div class="settings-row-usage-top">
+          <span class="skeleton" style="width:100px; height:13px;"></span>
+          <span class="skeleton" style="width:40px; height:13px;"></span>
+        </div>
+        <div class="usage-bar"><span class="skeleton" style="display:block; width:100%; height:100%;"></span></div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Usage: Resources ── -->
   <div class="settings-group-label">Today's usage — Resources</div>
   <div class="settings-group" id="usageResourcesGrid">
-    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row settings-row--usage" aria-hidden="true">
+      <span class="skeleton" style="width:1rem; height:1rem; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <div class="settings-row-usage-top">
+          <span class="skeleton" style="width:150px; height:13px;"></span>
+          <span class="skeleton" style="width:40px; height:13px;"></span>
+        </div>
+        <div class="usage-bar"><span class="skeleton" style="display:block; width:100%; height:100%;"></span></div>
+      </div>
+    </div>
   </div>
 
   <p class="settings-footnote">Usage resets daily at midnight UTC.</p>
@@ -77,9 +124,30 @@
     <a href="/pricing.html">Upgrade</a>
   </p>
   <div class="settings-group" id="connectionsGrid">
-    <div class="settings-row skeleton" style="height:52px;"></div>
-    <div class="settings-row skeleton" style="height:52px;"></div>
-    <div class="settings-row skeleton" style="height:52px;"></div>
+    <div class="settings-row" aria-hidden="true">
+      <span class="skeleton" style="width:20px; height:20px; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <span class="skeleton" style="width:60px; height:13px;"></span>
+        <span class="skeleton" style="width:170px; height:11px; margin-top:4px;"></span>
+      </div>
+      <span class="skeleton" style="width:56px; height:13px;"></span>
+    </div>
+    <div class="settings-row" aria-hidden="true">
+      <span class="skeleton" style="width:20px; height:20px; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <span class="skeleton" style="width:60px; height:13px;"></span>
+        <span class="skeleton" style="width:220px; height:11px; margin-top:4px;"></span>
+      </div>
+      <span class="skeleton" style="width:56px; height:13px;"></span>
+    </div>
+    <div class="settings-row" aria-hidden="true">
+      <span class="skeleton" style="width:20px; height:20px; border-radius:4px;"></span>
+      <div class="settings-row-usage-text">
+        <span class="skeleton" style="width:110px; height:13px;"></span>
+        <span class="skeleton" style="width:190px; height:11px; margin-top:4px;"></span>
+      </div>
+      <span class="skeleton" style="width:56px; height:13px;"></span>
+    </div>
   </div>
   <p class="settings-footnote" id="connectionsFootnote">
     Connect an account to let Cognita use it in chat — for example, reading a file from Drive or listing your GitHub repos. Cognita only acts when you ask it to, and always asks first before making any change on your behalf.
@@ -91,7 +159,7 @@
     <a href="/scheduler.html" class="settings-row settings-row--button">
       <span class="settings-row-text">
         <span class="settings-row-label"><i class="ph ph-calendar-check"></i> Schedule Facebook & Instagram posts</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">Requires Facebook connected above.</span>
+        <span class="settings-row-desc" id="schedulerHint">Requires Facebook connected above.</span>
       </span>
       <i class="ph ph-caret-right"></i>
     </a>
@@ -103,7 +171,7 @@
     <a href="/inbox.html" class="settings-row settings-row--button">
       <span class="settings-row-text">
         <span class="settings-row-label"><i class="ph ph-tray"></i> Triage comments & DMs with AI drafts</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">Requires Facebook connected above, with the Inbox permissions granted.</span>
+        <span class="settings-row-desc" id="inboxHint">Requires Facebook connected above, with the Inbox permissions granted.</span>
       </span>
       <i class="ph ph-caret-right"></i>
     </a>
@@ -115,7 +183,7 @@
     <a href="/insights.html" class="settings-row settings-row--button">
       <span class="settings-row-text">
         <span class="settings-row-label"><i class="ph ph-chart-line-up"></i> AI-written performance reports</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">Weekly or monthly PDF digest, by email and Share-to-WhatsApp.</span>
+        <span class="settings-row-desc">Weekly or monthly PDF digest, by email and Share-to-WhatsApp.</span>
       </span>
       <i class="ph ph-caret-right"></i>
     </a>
@@ -124,7 +192,7 @@
   <!-- ── Sign out ── -->
   <div class="settings-group-label">Session</div>
   <div class="settings-group">
-    <button class="settings-row settings-row--button settings-row--danger" id="signOutBtn">
+    <button class="settings-row settings-row--button" id="signOutBtn">
       <span class="settings-row-label"><i class="ph ph-sign-out"></i> Sign out</span>
     </button>
   </div>
@@ -136,7 +204,7 @@
     <button class="settings-row settings-row--button settings-row--danger" id="deleteAccountBtn">
       <span class="settings-row-text">
         <span class="settings-row-label"><i class="ph ph-trash"></i> Delete your account</span>
-        <span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">Permanently erases your data. This cannot be undone.</span>
+        <span class="settings-row-desc">Permanently erases your data. This cannot be undone.</span>
       </span>
       <i class="ph ph-caret-right"></i>
     </button>
@@ -145,7 +213,7 @@
 
 <!-- ── Delete account modal (3 steps) ── -->
 <div class="modal-overlay" id="deleteAccountModal" hidden>
-  <div class="modal-box delete-account-box">
+  <div class="modal-box delete-account-box" role="dialog" aria-modal="true" aria-labelledby="deleteStepTitle">
     <div class="modal-header">
       <h2 id="deleteStepTitle">Delete your account?</h2>
       <button class="modal-close-btn" id="deleteModalCloseBtn" aria-label="Close">
@@ -297,11 +365,11 @@
         icon +
         '<div class="settings-row-usage-text">' +
           '<span class="settings-row-label">' + meta.label + '</span>' +
-          '<span class="settings-row-value" style="display:block; font-size: var(--text-sm); color: var(--text-3);">' +
-            (connected ? 'Connected' : meta.desc) +
+          '<span class="' + (connected ? 'settings-row-desc settings-row-desc--positive' : 'settings-row-desc') + '">' +
+            (connected ? '<i class="ph ph-check-circle"></i> Connected' : meta.desc) +
           '</span>' +
           (!connected && meta.hint
-            ? '<span style="display:block; font-size: var(--text-xs); color: var(--text-3); margin-top: 2px;">' + meta.hint + '</span>'
+            ? '<span class="settings-row-desc settings-row-desc--muted">' + meta.hint + '</span>'
             : '') +
         '</div>' +
         (connected
@@ -329,9 +397,34 @@
       grid.innerHTML = CONNECTOR_ORDER
         .map((p) => connectionRow(p, !!status[p], !currentAccountHasConnectorTools))
         .join('');
+
+      updateFeatureHints(!!status.facebook);
     } catch (e) {
       grid.innerHTML = '<p style="color:var(--text-3); padding: var(--space-4);">Could not load connections.</p>';
       console.error('[account] ' + e.message);
+    }
+  }
+
+  // The Scheduler/Inbox rows below say "Requires Facebook connected
+  // above" purely as static copy in the HTML — without this, that
+  // caveat stays on screen even after Facebook is connected, which
+  // reads as if the connection didn't take. Swap it for a positive
+  // confirmation once we actually know the connector's status.
+  function updateFeatureHints(facebookConnected) {
+    const schedulerHint = document.getElementById('schedulerHint');
+    const inboxHint = document.getElementById('inboxHint');
+    if (facebookConnected) {
+      if (schedulerHint) {
+        schedulerHint.textContent = 'Facebook connected.';
+        schedulerHint.classList.add('settings-row-desc--positive');
+      }
+      if (inboxHint) {
+        inboxHint.textContent = 'Facebook connected — grant Inbox permissions from Meta if you haven\u2019t already.';
+        inboxHint.classList.add('settings-row-desc--positive');
+      }
+    } else {
+      if (schedulerHint) schedulerHint.textContent = 'Requires Facebook connected above.';
+      if (inboxHint) inboxHint.textContent = 'Requires Facebook connected above, with the Inbox permissions granted.';
     }
   }
 
@@ -495,21 +588,33 @@
     return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   }
 
+  const PLAN_STATUS = {
+    active:    { label: 'Active',                                            tone: 'success' },
+    past_due:  { label: 'Payment issue — grace period',                      tone: 'warning' },
+    cancelled: { label: '',                                                  tone: 'muted'   }, // built with formatDate below
+    expired:   { label: 'Expired',                                          tone: 'danger'  },
+    none:      { label: 'Free plan',                                        tone: 'muted'   },
+  };
+
   async function loadAccount() {
     try {
       const res = await window.Auth.authedFetch(WORKER_URL + '/api/account');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load account.');
 
-      const statusLabel = {
-        active: 'Active',
-        past_due: 'Payment issue — grace period',
-        cancelled: 'Cancelled — active until ' + formatDate(data.periodEnd),
-        expired: 'Expired',
-        none: 'Free plan',
-      }[data.status] || data.status;
+      const planNameEl = document.getElementById('planName');
+      const badge = document.getElementById('planStatusBadge');
+      planNameEl.textContent = data.planName;
 
-      document.getElementById('planStatusLine').textContent = data.planName + ' — ' + statusLabel;
+      const known = PLAN_STATUS[data.status];
+      const label = data.status === 'cancelled'
+        ? 'Cancelled — active until ' + formatDate(data.periodEnd)
+        : (known ? known.label : data.status);
+      const tone = known ? known.tone : 'muted';
+
+      badge.textContent = label;
+      badge.className = 'plan-status-badge plan-status-badge--' + tone;
+      badge.hidden = false;
 
       // features.connectorTools comes from account-endpoint.js (mirrors
       // entitlements.js) — see the accountReadyPromise note above for
@@ -531,7 +636,7 @@
         actionBtn.innerHTML = 'View plans <i class="ph ph-caret-right"></i>';
       }
     } catch (e) {
-      document.getElementById('planStatusLine').textContent = 'Could not load plan details.';
+      document.getElementById('planName').textContent = 'Could not load plan details.';
       console.error('[account] ' + e.message);
       // Resolve even on failure — currentAccountHasConnectorTools stays
       // false (the safer default), and loadConnections() must not hang
@@ -616,18 +721,27 @@
     }
   }
 
+  let deleteModalTriggerEl = null;
+
   function openDeleteModal() {
     document.getElementById('deleteEmailDisplay').textContent = user.email || '(no email on file)';
     deleteEmailInput.value = '';
     deleteStep2ContinueBtn.disabled = true;
     deleteMismatchNote.hidden = true;
     showDeleteStep('deleteStep1');
+    deleteModalTriggerEl = document.activeElement;
     deleteModal.hidden = false;
+    document.getElementById('deleteStep1CancelBtn').focus();
   }
 
   function closeDeleteModal() {
     deleteModal.hidden = true;
+    if (deleteModalTriggerEl) deleteModalTriggerEl.focus();
   }
+
+  deleteModal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !deleteModal.hidden) closeDeleteModal();
+  });
 
   document.getElementById('deleteAccountBtn').addEventListener('click', openDeleteModal);
   document.getElementById('deleteModalCloseBtn').addEventListener('click', closeDeleteModal);
