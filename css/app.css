@@ -7,6 +7,11 @@
      in shared.css since only app.css currently needs them. */
   --radius-2xs: 4px;
   --radius-xs:  6px;
+  /* A quicker-out curve reserved for things entering/leaving the
+     screen (popovers, modals) — distinct from --ease, which is used
+     for routine hover/focus state changes. Popovers should feel like
+     they're "arriving with intent", not just linearly fading in. */
+  --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ── Small layout utilities ──
@@ -515,6 +520,15 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .composer-suggestions { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .attach-menu-list,
+  .attach-menu-list .attach-menu-item,
+  .quality-picker-menu {
+    transition: opacity var(--duration-fast) linear !important;
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 .message-list {
@@ -1094,9 +1108,10 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   color: var(--text-3);
   flex-shrink: 0;
   position: relative;
-  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease-pop);
 }
 .composer-tool-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+.composer-tool-btn:active { transform: scale(0.9); }
 
 /* ── "+" attach menu ── */
 .attach-menu { position: relative; flex-shrink: 0; }
@@ -1112,6 +1127,38 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   box-shadow: var(--shadow-md);
   padding: var(--space-1);
   z-index: 60;
+  /* Always in the DOM (like .account-menu) so the close motion has
+     something to animate — display:none can't be transitioned. */
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.94) translateY(6px);
+  transform-origin: bottom left;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-pop),
+              transform var(--duration-fast) var(--ease-pop),
+              visibility var(--duration-fast) var(--ease-pop);
+}
+.attach-menu-list.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+/* Each item rises in a beat behind the last, so the menu reads as one
+   composed reveal rather than a static rectangle popping into place.
+   Capped at 6 items — beyond that the stagger would read as lag. */
+.attach-menu-list.is-open .attach-menu-item {
+  animation: attachItemRise var(--duration-base) var(--ease-pop) backwards;
+}
+.attach-menu-list.is-open .attach-menu-item:nth-child(1) { animation-delay: 0ms; }
+.attach-menu-list.is-open .attach-menu-item:nth-child(2) { animation-delay: 18ms; }
+.attach-menu-list.is-open .attach-menu-item:nth-child(3) { animation-delay: 36ms; }
+.attach-menu-list.is-open .attach-menu-item:nth-child(4) { animation-delay: 54ms; }
+.attach-menu-list.is-open .attach-menu-item:nth-child(5) { animation-delay: 72ms; }
+.attach-menu-list.is-open .attach-menu-item:nth-child(6) { animation-delay: 90ms; }
+@keyframes attachItemRise {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .attach-menu-item {
@@ -1176,11 +1223,13 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   font-size: var(--text-xs);
   font-weight: 600;
   white-space: nowrap;
-  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease-pop);
 }
 .quality-picker-trigger:hover { background: var(--border); color: var(--text-1); }
+.quality-picker-trigger:active { transform: scale(0.96); }
 .quality-picker-trigger i:first-child { font-size: 0.9rem; color: var(--accent); }
-.quality-picker-caret { font-size: 0.65rem; color: var(--text-4); }
+.quality-picker-caret { font-size: 0.65rem; color: var(--text-4); transition: transform var(--duration-fast) var(--ease-pop); }
+.quality-picker-trigger.is-open .quality-picker-caret { transform: rotate(180deg); }
 
 .quality-picker-menu {
   position: absolute;
@@ -1194,6 +1243,20 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   box-shadow: var(--shadow-md);
   padding: var(--space-1);
   z-index: 60;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.94) translateY(6px);
+  transform-origin: bottom right;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-pop),
+              transform var(--duration-fast) var(--ease-pop),
+              visibility var(--duration-fast) var(--ease-pop);
+}
+.quality-picker-menu.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
 }
 
 .quality-picker-option {
@@ -1295,7 +1358,12 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   text-align: center;
 }
 
-/* ── Modal ── */
+/* ── Modal ──
+   .is-open is added/removed by shell.js's openModal/closeModal (which
+   also handles the hidden-attribute timing) — this file only owns what
+   that class looks like. The overlay fades; the box itself also rises
+   and scales in very slightly, so it reads as an object arriving in
+   front of you rather than a rectangle blinking into existence. */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1304,9 +1372,11 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: fadeIn var(--duration-fast) var(--ease);
   padding: var(--space-4);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-pop);
 }
+.modal-overlay.is-open { opacity: 1; }
 .modal-box {
   width: min(440px, 92vw);
   max-height: 90vh;
@@ -1315,6 +1385,12 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   background: var(--bg-elevated);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
+  transform: scale(0.97) translateY(8px);
+  transition: transform var(--duration-base) var(--ease-pop);
+}
+.modal-overlay.is-open .modal-box { transform: scale(1) translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay, .modal-box { transition: opacity var(--duration-fast) linear !important; transform: none !important; }
 }
 .modal-header {
   display: flex;
