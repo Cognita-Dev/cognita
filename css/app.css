@@ -1,5 +1,27 @@
 /* css/app.css — chat shell */
 
+:root {
+  /* Two extra steps below --radius-sm (8px), for small glyph-scale
+     elements (inline code, thumbnails, tiny marks) where the full
+     --radius-sm/md/lg scale reads as too heavy. Kept here rather than
+     in shared.css since only app.css currently needs them. */
+  --radius-2xs: 4px;
+  --radius-xs:  6px;
+}
+
+/* ── Small layout utilities ──
+   A handful of reusable one-property patterns that recur across the
+   resource/reminder/document forms. Kept intentionally tiny (not a
+   full utility-class framework) — anything more component-specific
+   than this belongs in that component's own rule, not here. */
+.field-row      { display: flex; gap: var(--space-3); }
+.field-grow     { flex: 1; }
+.field-narrow   { max-width: 280px; }
+.btn-flush      { margin-bottom: 0; }
+.btn-inline     { width: auto !important; white-space: nowrap; } /* !important: must reliably beat component base rules like .resource-download-btn's width:100%, whatever order stylesheets load in */
+.text-danger    { color: var(--danger) !important; } /* !important: same reasoning as .btn-inline above */
+.mt-tight       { margin-top: var(--space-2); }
+
 .app-page { height: 100vh; height: 100dvh; overflow: hidden; }
 
 .app-shell {
@@ -66,7 +88,7 @@
   min-width: 0;
   color: var(--text-1);
 }
-.sidebar-logo img { height: 20px; width: auto; border-radius: 6px; flex-shrink: 0; }
+.sidebar-logo img { height: 20px; width: auto; border-radius: var(--radius-xs); flex-shrink: 0; }
 
 .sidebar-collapse-btn,
 .sidebar-close-btn {
@@ -395,7 +417,7 @@
 .empty-state-mark {
   width: 34px;
   margin: 0 0 var(--space-5);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
 }
 .empty-state-title {
   font-size: var(--text-3xl);
@@ -587,7 +609,7 @@
 .message-content code {
   background: var(--bg-subtle);
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   font-size: 0.9em;
   overflow-wrap: anywhere;
 }
@@ -1029,7 +1051,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .attachment-chip-image img {
   width: 20px; height: 20px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius-2xs);
   flex-shrink: 0;
 }
 .attachment-chip-static { cursor: default; }
