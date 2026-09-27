@@ -28,6 +28,40 @@ export function closeMobileSidebar() {
   document.getElementById('sidebarScrim').classList.remove('is-visible');
 }
 
+// ── Shared modal open/close ──
+// Every .modal-overlay (visual/document/connectors/reminder generation)
+// used to be shown and hidden by flipping its `hidden` attribute directly,
+// which is instant — display:none can't be transitioned, so the modal
+// just appeared and disappeared with no sense of arriving or leaving.
+// These two give every modal the same real motion from one place, rather
+// than each view reimplementing its own timing:
+//   openModal  — unhides it, then (after a forced reflow so the browser
+//                registers the "closed" starting state first) adds
+//                .is-open, which app.css transitions from.
+//   closeModal — removes .is-open to start the close transition, and
+//                only re-hides the element once that transition has had
+//                time to actually finish, so it's still visible while
+//                it's animating away instead of vanishing mid-motion.
+// MODAL_CLOSE_MS must stay >= the CSS transition duration those rules
+// use (currently --duration-base, 200ms) or the modal will be yanked
+// from the layout before its exit motion completes.
+const MODAL_CLOSE_MS = 200;
+
+export function openModal(modal) {
+  modal.hidden = false;
+  void modal.offsetWidth; // force layout so the transition has a "before" state to animate from
+  modal.classList.add('is-open');
+}
+
+export function closeModal(modal) {
+  modal.classList.remove('is-open');
+  window.setTimeout(() => {
+    // Guards against a rapid reopen during the close animation: only
+    // actually hide if it's still meant to be closed.
+    if (!modal.classList.contains('is-open')) modal.hidden = true;
+  }, MODAL_CLOSE_MS);
+}
+
 function wireSidebarChrome() {
   const sidebar = document.getElementById('appSidebar');
   const scrim = document.getElementById('sidebarScrim');
