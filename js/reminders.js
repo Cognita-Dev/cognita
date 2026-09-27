@@ -3,7 +3,7 @@
 // once by js/router.js the first time this view is opened — same shape as
 // library.js and resources.js.
 
-import { escapeHtml, showToast, renderAccountInfo } from './shell.js';
+import { escapeHtml, showToast, renderAccountInfo, openModal, closeModal } from './shell.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 
@@ -171,9 +171,9 @@ function renderRows(container, list, emptyText) {
 
 function wireModal() {
   document.getElementById('remindersAddBtn').addEventListener('click', () => openCreateModal());
-  document.getElementById('reminderModalClose').addEventListener('click', closeModal);
+  document.getElementById('reminderModalClose').addEventListener('click', closeReminderModal);
   document.getElementById('reminderModal').addEventListener('click', (e) => {
-    if (e.target.id === 'reminderModal') closeModal();
+    if (e.target.id === 'reminderModal') closeReminderModal();
   });
 
   document.querySelectorAll('[data-channel]').forEach((btn) => {
@@ -232,7 +232,7 @@ function openCreateModal() {
   selectedOffsets = new Set(['1_day', 'morning_of']);
   syncChannelButtons();
   syncOffsetButtons();
-  document.getElementById('reminderModal').hidden = false;
+  openModal(document.getElementById('reminderModal'));
   document.getElementById('reminderTitleInput').focus();
 }
 
@@ -256,11 +256,11 @@ function openEditModal(id) {
   syncChannelButtons();
   syncOffsetButtons();
 
-  document.getElementById('reminderModal').hidden = false;
+  openModal(document.getElementById('reminderModal'));
 }
 
-function closeModal() {
-  document.getElementById('reminderModal').hidden = true;
+function closeReminderModal() {
+  closeModal(document.getElementById('reminderModal'));
 }
 
 async function saveReminder() {
@@ -311,7 +311,7 @@ async function saveReminder() {
     if (hint) message += ' ' + hint;
     showToast(message);
 
-    closeModal();
+    closeReminderModal();
     await loadReminders();
   } catch (e) {
     console.error('[reminders] save failed:', e.message);
@@ -330,7 +330,7 @@ async function deleteReminder(id, fromModal = false) {
       showToast('Could not delete the reminder.');
       return;
     }
-    if (fromModal) closeModal();
+    if (fromModal) closeReminderModal();
     showToast('Reminder deleted.');
     await loadReminders();
   } catch (e) {
