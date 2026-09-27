@@ -270,23 +270,28 @@ select.insights-input {
 
 /* ── States: skeleton, blocked, empty (shared visual language with
      inbox.css's .inbox-state) ── */
-.insights-skeleton-row {
-  height: 52px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
+/* ── Skeleton — mirrors the actual preferences group, generate panel
+     and a history card below it, so nothing reflows once real content
+     arrives. Same primitives as inbox.css's .sk classes. ── */
+.sk {
+  display: inline-block;
   background:
-    linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-1) 5%, transparent), transparent),
-    var(--bg-elevated);
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-1) 6%, transparent), transparent),
+    var(--bg-subtle);
   background-size: 200% 100%;
   animation: insights-shimmer 1.5s ease-in-out infinite;
-  margin-bottom: var(--space-3);
 }
+.sk-pill { border-radius: var(--radius-full); }
+.sk-text { border-radius: 4px; }
+.sk-rect { border-radius: var(--radius-sm); }
+
 @keyframes insights-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
 @media (prefers-reduced-motion: reduce) {
-  .insights-skeleton-row { animation: none; }
+  .sk { animation: none; }
 }
 
 .inbox-state {
