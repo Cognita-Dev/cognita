@@ -535,7 +535,7 @@
           </p>
           <div id="resourceEditForm"></div>
           <div class="resource-edit-actions">
-            <button class="resource-download-btn" id="resourceEditSaveBtn" style="margin-bottom:0;" disabled>
+            <button class="resource-download-btn btn-flush" id="resourceEditSaveBtn" disabled>
               <span class="btn-label">Save changes</span>
               <span class="btn-spinner" hidden></span>
             </button>
@@ -544,11 +544,11 @@
         </div>
 
         <div class="resource-regenerate-row">
-          <label class="resource-field" style="flex:1;">
+          <label class="resource-field field-grow">
             <span>Refine with a follow-up instruction</span>
             <input type="text" id="resourceRegeneratePrompt" placeholder="e.g. Add more worked examples on the formula section.">
           </label>
-          <button class="resource-download-btn" id="resourceRegenerateBtn" style="margin-bottom:0;width:auto;white-space:nowrap;">
+          <button class="resource-download-btn btn-flush btn-inline" id="resourceRegenerateBtn">
             <span class="btn-label"><i class="ph ph-arrows-clockwise"></i> Regenerate</span>
             <span class="btn-spinner" hidden></span>
           </button>
@@ -610,7 +610,7 @@
       <!-- ── Browse all / filter by type ── -->
       <section class="resources-generate-panel">
         <h2 class="resources-heading">Browse all resources</h2>
-        <label class="resource-field" style="max-width:280px;">
+        <label class="resource-field field-narrow">
           <span>Filter by type</span>
           <select id="typeFilterSelect">
             <option value="">All types</option>
@@ -717,12 +717,12 @@
           <input type="text" id="reminderTitleInput" maxlength="120" placeholder="e.g. Term 2 exam submission">
         </label>
 
-        <div style="display:flex; gap:var(--space-3);">
-          <label class="resource-field" style="flex:1;">
+        <div class="field-row">
+          <label class="resource-field field-grow">
             <span>Date</span>
             <input type="date" id="reminderDateInput">
           </label>
-          <label class="resource-field" style="flex:1;">
+          <label class="resource-field field-grow">
             <span>Time (optional)</span>
             <input type="time" id="reminderTimeInput">
           </label>
@@ -752,11 +752,11 @@
           </div>
         </label>
 
-        <div style="display:flex; gap:var(--space-3);">
-          <button type="button" class="resource-form-back" id="reminderDeleteBtn" aria-label="Delete reminder" title="Delete reminder" style="display:none; color:var(--danger);">
+        <div class="field-row">
+          <button type="button" class="resource-form-back text-danger" id="reminderDeleteBtn" aria-label="Delete reminder" title="Delete reminder" style="display:none;">
             <i class="ph ph-trash"></i> Delete
           </button>
-          <button type="button" class="modal-submit-btn" id="reminderSaveBtn" style="flex:1;">Save reminder</button>
+          <button type="button" class="modal-submit-btn field-grow" id="reminderSaveBtn">Save reminder</button>
         </div>
       </div>
     </div>
@@ -814,7 +814,7 @@
         <button class="visual-type-option" data-doctype="essay">Essay</button>
         <button class="visual-type-option" data-doctype="memo">Memo</button>
       </div>
-      <div class="visual-type-toggle" id="documentFormatToggle" style="margin-top:8px;">
+      <div class="visual-type-toggle mt-tight" id="documentFormatToggle">
         <button class="visual-type-option is-active" data-format="docx">
           <i class="ph ph-file-doc"></i> Word
         </button>
