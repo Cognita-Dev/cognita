@@ -41,6 +41,8 @@ import {
 import { sendWebPush } from './push-vapid.js';
 import { sendEmail, claimOnce, releaseClaim } from '../emails/mailer.js';
 import { buildReminderEmail } from '../emails/auth-email-templates.js';
+import { isReminderEmailAllowed } from '../emails/email-prefs.js';
+import { buildUnsubscribeUrl } from '../emails/unsubscribe.js';
 
 function _formatWhen(reminder) {
   const d = new Date(reminder.eventAt);
@@ -87,6 +89,9 @@ async function _sendPush(env, uid, reminder, occurrence) {
 
 async function _sendEmailChannel(env, identityEmail, reminder, occurrence) {
   if (!identityEmail) return { attempted: false, sent: false };
+  // The person unsubscribed from reminder emails. Count this as handled so a
+  // reminder that was email-only is not retried again and again.
+  if (!(await isReminderEmailAllowed(env, occurrence.uid))) return { attempted: true, sent: true, skipped: true };
   // A reminder can be edited after an email was already queued for the old
   // occurrence; keying the claim off occurrence id + fireAt makes a stale
   // retry harmless even if the same occurrence id were ever reused.
@@ -103,6 +108,7 @@ async function _sendEmailChannel(env, identityEmail, reminder, occurrence) {
         whenText: occurrence.label + ': ' + _formatWhen(reminder),
         notes: reminder.notes,
         url: 'https://app.cognita.com.ng/app.html?view=reminders',
+        unsubscribeUrl: await buildUnsubscribeUrl(env, occurrence.uid, 'reminders'),
       })
     );
     return { attempted: true, sent: true };
