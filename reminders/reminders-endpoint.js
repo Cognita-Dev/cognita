@@ -9,6 +9,8 @@ import { getPlan } from '../entitlements.js';
 import { sendWebPush } from './push-vapid.js';
 import { sendEmail } from '../emails/mailer.js';
 import { buildReminderEmail } from '../emails/auth-email-templates.js';
+import { setReminderEmailAllowed } from '../emails/email-prefs.js';
+import { buildUnsubscribeUrl } from '../emails/unsubscribe.js';
 import {
   createReminder,
   updateReminder,
@@ -97,6 +99,8 @@ export async function handleReminderCreate(request, env) {
     }
 
     const { reminder, skipped } = await createReminder(env, identity.uid, body || {});
+    // Choosing the email channel on a new reminder is a fresh opt-in.
+    if (body && body.channels && body.channels.email) await setReminderEmailAllowed(env, identity.uid, true).catch(() => {});
     return _ok({ reminder: _reminderResponseShape(reminder), skipped }, env, 201);
   } catch (e) {
     if (e.isLimit) return _err(e.message, 403, env);
@@ -143,6 +147,7 @@ export async function handleReminderUpdate(request, env, reminderId) {
 
   try {
     const { reminder, skipped } = await updateReminder(env, identity.uid, reminderId, body || {});
+    if (body && body.channels && body.channels.email) await setReminderEmailAllowed(env, identity.uid, true).catch(() => {});
     return _ok({ reminder: _reminderResponseShape(reminder), skipped }, env);
   } catch (e) {
     if (e.isNotFound) return _err('Reminder not found.', 404, env);
@@ -277,6 +282,7 @@ export async function handleTestNotification(request, env) {
           whenText: 'Right now',
           notes: 'This is a test email from Cognita Reminders. If you got this, email reminders are working.',
           url: 'https://app.cognita.com.ng/app.html?view=reminders',
+          unsubscribeUrl: await buildUnsubscribeUrl(env, identity.uid, 'reminders'),
         }));
         results.email = true;
       } catch (e) {
