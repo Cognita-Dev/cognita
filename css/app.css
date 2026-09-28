@@ -35,6 +35,7 @@
   height: 100vh;
   height: 100dvh;
   background: var(--bg-base);
+  transition: grid-template-columns var(--duration-base) var(--ease);
 }
 
 /* ── Sidebar ── */
@@ -49,21 +50,42 @@
   overflow: hidden;
 }
 
-.app-sidebar.is-collapsed {
-  width: 64px;
-  padding-left: var(--space-2);
-  padding-right: var(--space-2);
-}
+/* ── Collapsed rail (desktop only) ──
+   shell.js toggles .is-sidebar-collapsed on .app-shell alongside
+   .is-collapsed on the sidebar: the grid track has to shrink too, or the
+   64px rail sits inside a 272px column with a dead gap beside it.
+   Primary navigation stays reachable as an icon rail (labels hidden,
+   tooltips via title); only the chat list and usage detail are dropped. */
+@media (min-width: 901px) {
+  .app-shell.is-sidebar-collapsed { grid-template-columns: 64px 1fr; }
 
-.app-sidebar.is-collapsed .sidebar-logo span,
-.app-sidebar.is-collapsed .new-chat-btn span:not(.ph),
-.app-sidebar.is-collapsed .sidebar-history,
-.app-sidebar.is-collapsed .sidebar-section-label,
-.app-sidebar.is-collapsed .usage-widget,
-.app-sidebar.is-collapsed .account-info,
-.app-sidebar.is-collapsed .account-menu-trigger,
-.app-sidebar.is-collapsed .upgrade-link span {
-  display: none;
+  .app-sidebar.is-collapsed {
+    padding-left: var(--space-2);
+    padding-right: var(--space-2);
+  }
+  .app-sidebar.is-collapsed .sidebar-top {
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-sidebar.is-collapsed .sidebar-logo span,
+  .app-sidebar.is-collapsed .new-chat-btn span,
+  .app-sidebar.is-collapsed .sidebar-nav .sidebar-history-item span,
+  .app-sidebar.is-collapsed .sidebar-history,
+  .app-sidebar.is-collapsed .sidebar-section-label,
+  .app-sidebar.is-collapsed .usage-widget,
+  .app-sidebar.is-collapsed .account-info,
+  .app-sidebar.is-collapsed .account-menu-trigger,
+  .app-sidebar.is-collapsed .upgrade-link span {
+    display: none;
+  }
+  .app-sidebar.is-collapsed .new-chat-btn,
+  .app-sidebar.is-collapsed .sidebar-nav .sidebar-history-item,
+  .app-sidebar.is-collapsed .upgrade-link,
+  .app-sidebar.is-collapsed .account-btn { justify-content: center; }
+  .app-sidebar.is-collapsed .sidebar-nav { flex: 1; }
+  .app-sidebar.is-collapsed .account-menu { left: 0; right: auto; min-width: 200px; }
 }
 
 .sidebar-scrim { display: none; }
@@ -129,6 +151,16 @@
 .new-chat-btn:hover { color: var(--text-1); border-color: var(--border-strong); box-shadow: var(--shadow-md); }
 .new-chat-btn i { color: var(--accent); }
 
+/* ── Primary navigation — fixed height. Previously this shared
+     .sidebar-history (flex: 1) with the chat list, so the two split the
+     free space 50/50 and the chat list was squeezed to half the sidebar. ── */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
 /* ── Chat history list ── */
 .sidebar-history {
   flex: 1;
@@ -177,17 +209,45 @@
 .sidebar-history-item:hover { background: var(--bg-subtle); color: var(--text-1); }
 .sidebar-history-item.is-active { background: var(--accent-subtle); color: var(--text-1); font-weight: 600; }
 
-.sidebar-history-item .history-delete-btn {
+/* Chat rows: the open button and the delete button are siblings inside
+   one row (a button nested in a button/span isn't valid or keyboard
+   reachable). Delete is revealed on hover, on keyboard focus, and always
+   on touch screens where there is no hover. */
+.sidebar-history-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  transition: background var(--duration-fast) var(--ease);
+}
+.sidebar-history-row:hover { background: var(--bg-subtle); }
+.sidebar-history-row.is-active { background: var(--accent-subtle); }
+.sidebar-history-row .sidebar-history-item {
+  flex: 1;
+  width: auto;
+  background: none;
+}
+.sidebar-history-row .sidebar-history-item:hover { background: none; }
+.sidebar-history-row.is-active .sidebar-history-item { background: none; color: var(--text-1); font-weight: 600; }
+
+.history-delete-btn {
   flex-shrink: 0;
-  width: 22px; height: 22px;
-  display: none;
+  width: 28px; height: 28px;
+  display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-4);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.sidebar-history-item:hover .history-delete-btn { display: flex; }
-.sidebar-history-item .history-delete-btn:hover { background: var(--border-strong); color: var(--danger); }
+.sidebar-history-row:hover .history-delete-btn,
+.sidebar-history-row:focus-within .history-delete-btn { opacity: 1; }
+.history-delete-btn:hover { background: var(--border-strong); color: var(--danger); }
+@media (hover: none) {
+  .history-delete-btn { opacity: 0.7; width: 32px; height: 32px; }
+}
 
 /* Small label that separates past conversations from the fixed routes
    above them — deliberately a size down from .sidebar-history-item's
@@ -951,7 +1011,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease);
 }
-.message:hover .message-actions { opacity: 1; }
+.message:hover .message-actions,
+.message-actions:focus-within { opacity: 1; }
+/* No hover on touch screens — without this the copy/regenerate buttons
+   could never be seen or tapped on a phone. */
+@media (hover: none) {
+  .message-actions { opacity: 1; }
+  .message-action-btn { width: 32px; height: 32px; }
+}
 .message-action-btn {
   width: 26px; height: 26px;
   display: flex; align-items: center; justify-content: center;
