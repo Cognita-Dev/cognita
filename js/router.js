@@ -35,7 +35,10 @@ function viewFromLocation() {
 
 function setActiveNav(view) {
   document.querySelectorAll('[data-view]').forEach((el) => {
-    el.classList.toggle('is-active', el.getAttribute('data-view') === view);
+    const active = el.getAttribute('data-view') === view;
+    el.classList.toggle('is-active', active);
+    if (active) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
   });
 }
 
