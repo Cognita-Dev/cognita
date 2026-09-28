@@ -222,3 +222,30 @@
   font-size: var(--text-sm);
   border-radius: var(--radius-md);
 }
+
+/* ── Unsubscribed-from-email prompt (shown only when Email is ticked) ── */
+#reminderModal .reminder-email-notice {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+#reminderModal .reminder-email-notice[hidden] { display: none; }
+#reminderModal .reminder-email-notice-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+#reminderModal .reminder-email-notice-btn {
+  margin-top: var(--space-2);
+  padding: 8px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+#reminderModal .reminder-email-notice-btn:hover { background: var(--accent-hover); }
+#reminderModal .reminder-email-notice-btn:disabled { opacity: 0.6; cursor: default; }
