@@ -1,5 +1,6 @@
 // js/router.js
-// Switches between the chat / resources / library views inside app.html
+// Switches between the chat / resources / library / reminders / account /
+// scheduler / inbox / insights views inside app.html
 // without a full page navigation. Uses a `?view=` query param on the
 // one real file (not a fake path) so refresh, back/forward and shared
 // links all keep working with no server rewrite rules needed.
@@ -22,6 +23,22 @@ const VIEWS = {
   reminders: {
     containerId: 'view-reminders',
     load: () => import('./reminders.js'),
+  },
+  account: {
+    containerId: 'view-account',
+    load: () => import('./account.js'),
+  },
+  scheduler: {
+    containerId: 'view-scheduler',
+    load: () => import('./scheduler.js'),
+  },
+  inbox: {
+    containerId: 'view-inbox',
+    load: () => import('./inbox.js'),
+  },
+  insights: {
+    containerId: 'view-insights',
+    load: () => import('./insights.js'),
   },
 };
 
@@ -54,6 +71,9 @@ let currentView = null;
 export async function navigate(view, { replace = false } = {}) {
   if (!VIEWS[view]) view = 'chat';
 
+  const previousView = currentView;
+  const alreadyMounted = !!mountedModules[view];
+
   Object.keys(VIEWS).forEach((key) => {
     document.getElementById(VIEWS[key].containerId).hidden = key !== view;
   });
@@ -68,6 +88,18 @@ export async function navigate(view, { replace = false } = {}) {
     window.history.pushState({ view }, '', url);
   }
   currentView = view;
+
+  // Optional hooks a view can export: deactivate() when it is hidden,
+  // activate() when it is shown again after its first mount (mount()
+  // itself covers the first show). Used e.g. to pause the Inbox poll.
+  if (previousView && previousView !== view) {
+    const prev = mountedModules[previousView];
+    if (prev && typeof prev.deactivate === 'function') prev.deactivate();
+  }
+  if (alreadyMounted && previousView !== view) {
+    const mod = mountedModules[view];
+    if (mod && typeof mod.activate === 'function') mod.activate();
+  }
 
   if (!mountedModules[view]) {
     try {
