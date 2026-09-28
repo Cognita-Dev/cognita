@@ -102,6 +102,8 @@ let currentResources = [];       // resources for the active status filter, unfi
 let currentDetailResource = null;
 let isSuperAdmin = false;
 let activeDetailEditorHandle = null;
+let currentUid = null;
+let detailOpener = null;
 
 (async function init() {
   const user = await window.Auth.requireAuthOrRedirect();
@@ -110,6 +112,7 @@ let activeDetailEditorHandle = null;
   document.getElementById('accountEmail').textContent = user.email || 'Signed in';
   document.getElementById('accountAvatar').textContent = (user.email || 'A').charAt(0).toUpperCase();
 
+  currentUid = user.uid;
   wireAccountMenu();
   loadAccountBadge();
 
@@ -124,9 +127,13 @@ let activeDetailEditorHandle = null;
   wireRolesPanel();
   wireResourceToolbar();
 
+  const initial = (window.location.hash || '').slice(1);
+  if (initial && initial !== 'roles' && document.getElementById('section-' + initial)) switchSection(initial);
+
   await loadResourceList();
   await loadCollections();
   await tryLoadRolesPanel();
+  if (initial === 'roles' && isSuperAdmin) switchSection('roles');
   await loadOverview();
 })();
 
@@ -136,12 +143,18 @@ function wireAccountMenu() {
   const btn = document.getElementById('accountBtn');
   const menu = document.getElementById('accountMenu');
 
+  const setOpen = (open) => {
+    menu.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', String(open));
+  };
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    menu.classList.toggle('is-open');
+    setOpen(!menu.classList.contains('is-open'));
   });
-
-  document.addEventListener('click', () => { menu.classList.remove('is-open'); });
+  document.addEventListener('click', () => setOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu.classList.contains('is-open')) { setOpen(false); btn.focus(); }
+  });
 
   document.getElementById('logOutBtn').addEventListener('click', async () => {
     await window.Auth.logOut();
@@ -165,8 +178,6 @@ async function loadAccountBadge() {
     const isAdmin = data.role === 'admin' || (data.models && Array.isArray(data.models.chat) && data.models.chat.includes('v0'));
     const pill = document.getElementById('aiChatPill');
     if (pill) pill.hidden = !isAdmin;
-    const unlimitedBadge = document.getElementById('unlimitedBadge');
-    if (unlimitedBadge) unlimitedBadge.hidden = !isAdmin;
   } catch (e) {
     console.error('[admin] Could not load account badge:', e.message);
   }
@@ -200,12 +211,22 @@ const SECTION_META = {
 };
 
 function switchSection(section) {
+  if (!document.getElementById('section-' + section)) section = 'overview';
   document.querySelectorAll('.admin-section').forEach((el) => el.classList.remove('is-active'));
   document.getElementById('section-' + section).classList.add('is-active');
 
   document.querySelectorAll('.admin-nav-item[data-section]').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.section === section);
   });
+
+  document.querySelectorAll('.admin-nav-item[data-section]').forEach((btn) => {
+    if (btn.dataset.section === section) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+  });
+  // Remember the section across reloads / allow deep links (#resources).
+  if (window.location.hash !== '#' + section) history.replaceState(null, '', '#' + section);
+  const scroller = document.querySelector('.admin-scroll');
+  if (scroller) scroller.scrollTop = 0;
 
   const meta = SECTION_META[section] || SECTION_META.overview;
   document.getElementById('sectionTitle').textContent = meta.title;
@@ -250,11 +271,12 @@ async function loadOverview() {
 
     const grid = document.getElementById('overviewStatGrid');
     grid.innerHTML = STATUSES.map((s) =>
-      '<div class="admin-stat-card" data-status="' + s + '">' +
-      '<div class="admin-stat-card-label">' + escapeHtml(STATUS_LABELS[s]) + '</div>' +
-      '<div class="admin-stat-card-value">' + counts[s] + '</div>' +
-      '</div>'
+      '<button type="button" class="admin-stat-card" data-status="' + s + '" aria-label="' + escapeHtml(STATUS_LABELS[s]) + ': ' + counts[s] + ' resources. View list">' +
+      '<span class="admin-stat-card-label">' + escapeHtml(STATUS_LABELS[s]) + '</span>' +
+      '<span class="admin-stat-card-value">' + counts[s] + '</span>' +
+      '</button>'
     ).join('');
+    STATUSES.forEach((s) => setStatusTabCount(s, counts[s]));
     grid.querySelectorAll('.admin-stat-card[data-status]').forEach((card) => {
       card.addEventListener('click', () => {
         switchSection('resources');
@@ -299,7 +321,7 @@ function renderOverviewRow(r) {
     '<span class="admin-row-icon"><i class="ph ph-file-text"></i></span>' +
     '<div class="admin-row-info">' +
     '<div class="admin-row-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
-    '<div class="admin-row-meta">' + escapeHtml(r.resourceType) + '<span class="dot"></span>' + relativeTime(r.updatedAt) + '</div>' +
+    '<div class="admin-row-meta">' + escapeHtml(typeLabel(r.resourceType)) + '<span class="dot"></span>' + relativeTime(r.updatedAt) + '</div>' +
     '</div>' +
     '<span class="admin-badge admin-badge--' + r.status + '">' + escapeHtml(STATUS_LABELS[r.status] || r.status) + '</span>' +
     '</button>';
@@ -309,12 +331,12 @@ function renderOverviewRow(r) {
 
 function populateResourceTypeSelect() {
   const select = document.getElementById('fieldResourceType');
-  select.innerHTML = RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + t + '</option>').join('');
+  select.innerHTML = RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + escapeHtml(typeLabel(t)) + '</option>').join('');
 }
 
 function populateResourceTypeFilter() {
   const select = document.getElementById('resourceTypeFilter');
-  select.insertAdjacentHTML('beforeend', RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + t + '</option>').join(''));
+  select.insertAdjacentHTML('beforeend', RESOURCE_TYPES.map((t) => '<option value="' + t + '">' + escapeHtml(typeLabel(t)) + '</option>').join(''));
 }
 
 /* ── Status tabs ── */
@@ -324,6 +346,7 @@ function renderStatusTabs() {
   wrap.innerHTML = STATUSES.map((s) =>
     '<button type="button" class="admin-status-tab' + (s === currentStatusFilter ? ' is-active' : '') + '" data-status="' + s + '">' +
     '<span>' + escapeHtml(STATUS_LABELS[s]) + '</span>' +
+    '<span class="admin-count-pill" data-count-for="' + s + '" hidden></span>' +
     '</button>'
   ).join('');
 
@@ -336,9 +359,18 @@ function renderStatusTabs() {
   });
 }
 
+function setStatusTabCount(status, n) {
+  const pill = document.querySelector('.admin-status-tab .admin-count-pill[data-count-for="' + status + '"]');
+  if (!pill) return;
+  pill.textContent = n;
+  pill.hidden = false;
+}
+
 function syncStatusTabsUI() {
   document.querySelectorAll('.admin-status-tab').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.status === currentStatusFilter);
+    const active = btn.dataset.status === currentStatusFilter;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', String(active));
   });
   document.getElementById('resourceListHeading').textContent = STATUS_LABELS[currentStatusFilter] || currentStatusFilter;
 }
@@ -494,6 +526,7 @@ function renderBatchResults(results) {
 
 async function loadResourceList() {
   const list = document.getElementById('adminResourceList');
+  list.setAttribute('aria-busy', 'true');
 
   try {
     const res = await window.Auth.authedFetch(
@@ -511,6 +544,8 @@ async function loadResourceList() {
   } catch (e) {
     console.error('[admin] list load failed:', e.message);
     list.innerHTML = '<div class="admin-empty">Could not load resources. Please try again.</div>';
+  } finally {
+    list.removeAttribute('aria-busy');
   }
 }
 
@@ -530,7 +565,9 @@ function renderResourceRows() {
 
   if (filtered.length === 0) {
     list.innerHTML = '<div class="admin-empty">' +
-      (currentResources.length === 0 ? 'No resources in this status.' : 'No resources match your search.') +
+      (currentResources.length === 0
+        ? 'No ' + (STATUS_LABELS[currentStatusFilter] || currentStatusFilter).toLowerCase() + ' resources yet.'
+        : 'No resources match your search or type filter.') +
       '</div>';
     return;
   }
@@ -541,7 +578,7 @@ function renderResourceRows() {
     '<div class="admin-row-info">' +
     '<div class="admin-row-title">' + escapeHtml(r.structuredContent?.title || r.id) + '</div>' +
     '<div class="admin-row-meta">' +
-    escapeHtml(r.resourceType) + '<span class="dot"></span>' +
+    escapeHtml(typeLabel(r.resourceType)) + '<span class="dot"></span>' +
     (r.createdMode === 'ai' ? 'Generated with AI' : 'Written by hand') + '<span class="dot"></span>' +
     'Updated ' + relativeTime(r.updatedAt) +
     '</div>' +
@@ -573,8 +610,10 @@ async function openDetail(resourceId) {
   }
 
   currentDetailResource = data.resource;
+  detailOpener = document.activeElement;
   document.getElementById('detailScrim').hidden = false;
   document.getElementById('detailPanel').hidden = false;
+  document.getElementById('detailClose').focus();
 
   // Rendering/mounting the editor is a separate step from the network
   // call above. If it throws (e.g. content shaped in a way the editor
@@ -598,7 +637,7 @@ async function openDetail(resourceId) {
 function renderDetailChrome() {
   const r = currentDetailResource;
   document.getElementById('detailTitle').textContent = r.structuredContent?.title || r.id;
-  document.getElementById('detailTypeBadge').textContent = r.resourceType;
+  document.getElementById('detailTypeBadge').textContent = typeLabel(r.resourceType);
   const statusBadge = document.getElementById('detailStatusBadge');
   statusBadge.textContent = STATUS_LABELS[r.status] || r.status;
   statusBadge.className = 'admin-badge admin-badge--' + r.status;
@@ -779,21 +818,39 @@ function formatSnapshotReason(reason) {
   return String(reason).replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
 }
 
+function hideDetailPanel() {
+  document.getElementById('detailPanel').hidden = true;
+  document.getElementById('detailScrim').hidden = true;
+  currentDetailResource = null;
+  if (activeDetailEditorHandle) {
+    activeDetailEditorHandle.destroy();
+    activeDetailEditorHandle = null;
+  }
+  if (detailOpener && detailOpener.isConnected && detailOpener.focus) detailOpener.focus();
+  detailOpener = null;
+}
+
+async function requestCloseDetail() {
+  if (activeDetailEditorHandle && activeDetailEditorHandle.isDirty()) {
+    const discard = await confirmDialog({
+      title: 'Discard unsaved changes?',
+      body: 'Your edits to this resource haven\u2019t been saved and will be lost.',
+      confirmLabel: 'Discard changes',
+    });
+    if (!discard) return;
+  }
+  hideDetailPanel();
+}
+
 function wireDetailPanel() {
-  const close = () => {
-    if (activeDetailEditorHandle && activeDetailEditorHandle.isDirty()) {
-      if (!window.confirm('You have unsaved changes. Discard them?')) return;
-    }
-    document.getElementById('detailPanel').hidden = true;
-    document.getElementById('detailScrim').hidden = true;
-    currentDetailResource = null;
-    if (activeDetailEditorHandle) {
-      activeDetailEditorHandle.destroy();
-      activeDetailEditorHandle = null;
-    }
-  };
+  const close = requestCloseDetail;
   document.getElementById('detailClose').addEventListener('click', close);
   document.getElementById('detailScrim').addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('confirmScrim').hidden) return; // the dialog handles its own Escape
+    if (!document.getElementById('detailPanel').hidden) close();
+  });
 
   document.getElementById('detailViewEditBtn').addEventListener('click', () => setDetailView('edit'));
   document.getElementById('detailViewPreviewBtn').addEventListener('click', () => setDetailView('preview'));
@@ -822,7 +879,12 @@ function wireDetailPanel() {
 
   document.getElementById('deleteBtn').addEventListener('click', async () => {
     if (!currentDetailResource) return;
-    if (!confirm('Delete this resource? This cannot be undone.')) return;
+    const ok = await confirmDialog({
+      title: 'Delete this resource?',
+      body: '\u201c' + (currentDetailResource.structuredContent?.title || currentDetailResource.id) + '\u201d and its version history will be permanently removed. This can\u2019t be undone.',
+      confirmLabel: 'Delete resource',
+    });
+    if (!ok) return;
 
     try {
       const res = await window.Auth.authedFetch(
@@ -837,9 +899,7 @@ function wireDetailPanel() {
       }
 
       showToast('Deleted.');
-      document.getElementById('detailPanel').hidden = true;
-      document.getElementById('detailScrim').hidden = true;
-      currentDetailResource = null;
+      hideDetailPanel();
       await loadResourceList();
       await loadOverview();
     } catch (e) {
@@ -1177,6 +1237,7 @@ async function tryLoadRolesPanel() {
 
     if (res.status === 403) {
       document.getElementById('rolesNavItem').hidden = true;
+      document.getElementById('peopleNavLabel').hidden = true;
       return;
     }
 
@@ -1184,6 +1245,7 @@ async function tryLoadRolesPanel() {
 
     isSuperAdmin = true;
     document.getElementById('rolesNavItem').hidden = false;
+    document.getElementById('peopleNavLabel').hidden = false;
     const data = await res.json();
     renderRolesList(data.people || []);
   } catch (e) {
@@ -1203,7 +1265,7 @@ function renderRolesList(people) {
     '<div class="admin-person-row">' +
     '<span class="admin-person-avatar">' + escapeHtml((p.uid || '?').charAt(0).toUpperCase()) + '</span>' +
     '<div class="admin-person-info">' +
-    '<div class="admin-person-uid">' + escapeHtml(p.uid) + '</div>' +
+    '<div class="admin-person-uid" title="' + escapeHtml(p.uid) + '">' + escapeHtml(p.uid) + (p.uid === currentUid ? '<span class="admin-person-you">(you)</span>' : '') + '</div>' +
     '</div>' +
     '<span class="admin-role-badge admin-role-badge--' + p.role + '">' + escapeHtml(p.role) + '</span>' +
     '<button data-uid="' + escapeHtml(p.uid) + '" class="admin-btn admin-btn--danger revoke-role-btn">Revoke</button>' +
@@ -1216,7 +1278,15 @@ function renderRolesList(people) {
 }
 
 async function revokeRole(uid) {
-  if (!confirm('Revoke this person\'s role?')) return;
+  const isSelf = uid === currentUid;
+  const ok = await confirmDialog({
+    title: isSelf ? 'Revoke your own role?' : 'Revoke this role?',
+    body: isSelf
+      ? 'You\u2019ll lose access to this admin panel as soon as it\u2019s revoked.'
+      : 'This person will immediately lose access to manage content.',
+    confirmLabel: 'Revoke role',
+  });
+  if (!ok) return;
 
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/admin/roles/revoke', {
@@ -1251,7 +1321,20 @@ function wireRolesPanel() {
     });
   });
 
+  ['grantEmailInput', 'grantUidInput'].forEach((id) => {
+    document.getElementById(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('grantRoleBtn').click(); }
+    });
+  });
+
   document.getElementById('grantRoleBtn').addEventListener('click', async () => {
+    const grantBtn = document.getElementById('grantRoleBtn');
+    if (grantBtn.disabled) return;
+    grantBtn.disabled = true;
+    try { await grantRole(); } finally { grantBtn.disabled = false; }
+  });
+
+  async function grantRole() {
     const lookupMode = document.querySelector('input[name="grantLookupMode"]:checked').value;
     const role = document.getElementById('grantRoleSelect').value;
     const resultLine = document.getElementById('grantResultLine');
@@ -1323,10 +1406,62 @@ function wireRolesPanel() {
       resultLine.style.color = 'var(--danger)';
       console.error('[admin] grant failed:', e.message);
     }
-  });
+  }
 }
 
 /* ── Helpers ── */
+
+// 'lesson_plan' -> 'Lesson plan'. Raw snake_case identifiers were being
+// shown straight to admins in the filter, the create form, every row and
+// the detail badge. Values sent to the server are unchanged.
+function typeLabel(t) {
+  const words = String(t || '').replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : '';
+}
+
+// In-app replacement for window.confirm(): resolves true/false. Focus goes
+// to Cancel by default (the safe choice), Escape cancels, and focus returns
+// to whatever opened it.
+function confirmDialog({ title, body, confirmLabel = 'Confirm', danger = true }) {
+  return new Promise((resolve) => {
+    const scrim = document.getElementById('confirmScrim');
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    const opener = document.activeElement;
+
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmBody').textContent = body;
+    okBtn.textContent = confirmLabel;
+    okBtn.className = 'admin-btn ' + (danger ? 'admin-btn--danger-solid' : 'admin-btn--primary');
+    scrim.hidden = false;
+    cancelBtn.focus();
+
+    function finish(result) {
+      scrim.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      scrim.removeEventListener('click', onScrim);
+      document.removeEventListener('keydown', onKey, true);
+      if (opener && opener.focus) opener.focus();
+      resolve(result);
+    }
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onScrim = (e) => { if (e.target === scrim) finish(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+      // keep Tab inside the two buttons
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        (document.activeElement === okBtn ? cancelBtn : okBtn).focus();
+      }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    scrim.addEventListener('click', onScrim);
+    document.addEventListener('keydown', onKey, true);
+  });
+}
 
 function setBtnLoading(btn, isLoading) {
   btn.disabled = isLoading;
