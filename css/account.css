@@ -254,49 +254,14 @@
 }
 
 /* ── Delete account modal ──────────────────────────────────────────
-   Self-contained: account.html only links shared.css + account.css
-   (not app.css, where the reminders.css comment shows the shared
-   .modal-* classes actually live), so the base .modal-overlay/.modal-box
-   classes used above are defined fresh here rather than assumed. */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  z-index: 1000;
-}
-.modal-overlay[hidden] { display: none; }
-.modal-box {
-  background: var(--bg-elevated);
-  border-radius: var(--radius-lg);
-  width: min(480px, 100%);
-  max-height: 88vh;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-}
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--border);
-}
-.modal-header h2 { font-size: var(--text-lg); font-weight: 600; color: var(--text-1); margin: 0; }
-.modal-close-btn {
-  background: none;
-  border: none;
-  color: var(--text-3);
-  font-size: 1.25rem;
-  cursor: pointer;
-  line-height: 1;
-  padding: var(--space-1);
-}
-.modal-close-btn:hover { color: var(--text-1); }
-.modal-body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+   The base .modal-overlay/.modal-box/.modal-header/.modal-body/
+   .modal-close-btn classes come from app.css. They used to be redefined
+   here for the standalone account page; now that Account lives inside
+   app.html those copies would override every other modal in the app, so
+   only this modal's own sizing/spacing is kept. */
+.delete-account-box { width: min(480px, 92vw); }
+.delete-account-box .modal-header { padding: var(--space-4); }
+.delete-account-box .modal-body { padding: var(--space-4); gap: var(--space-3); }
 
 .delete-warning-lead {
   color: var(--danger);
@@ -376,3 +341,13 @@
 }
 .delete-email-input:focus { outline: none; border-color: var(--danger); }
 .delete-mismatch-note { color: var(--danger); font-size: var(--text-xs); margin: 0; }
+
+/* ── Scroll container for the Account / Scheduler / Inbox / Insights views
+   inside app.html. Keeps the page-coloured backdrop the standalone pages
+   had (.account-page), so the elevated .settings-group cards still stand
+   out from it. ── */
+.settings-view-scroll {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg-base);
+}
