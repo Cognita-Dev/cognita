@@ -66,8 +66,14 @@ function wireSidebarChrome() {
   const sidebar = document.getElementById('appSidebar');
   const scrim = document.getElementById('sidebarScrim');
 
-  document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
-    sidebar.classList.toggle('is-collapsed');
+  const collapseBtn = document.getElementById('sidebarCollapseBtn');
+  const shell = document.querySelector('.app-shell');
+  collapseBtn.addEventListener('click', () => {
+    const collapsed = sidebar.classList.toggle('is-collapsed');
+    // The grid track must shrink with the rail (see .is-sidebar-collapsed in app.css).
+    shell.classList.toggle('is-sidebar-collapsed', collapsed);
+    collapseBtn.setAttribute('aria-expanded', String(!collapsed));
+    collapseBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
   });
 
   document.getElementById('sidebarCloseBtn').addEventListener('click', () => {
@@ -82,18 +88,34 @@ function wireSidebarChrome() {
   });
 
   scrim.addEventListener('click', closeMobileSidebar);
+
+  // Escape closes the mobile drawer, like every other overlay in the app.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sidebar.classList.contains('is-open')) closeMobileSidebar();
+  });
 }
 
 function wireAccountMenu() {
   const btn = document.getElementById('accountBtn');
   const menu = document.getElementById('accountMenu');
 
+  function setMenuOpen(open) {
+    menu.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', String(open));
+  }
+
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    menu.classList.toggle('is-open');
+    setMenuOpen(!menu.classList.contains('is-open'));
   });
 
-  document.addEventListener('click', () => { menu.classList.remove('is-open'); });
+  document.addEventListener('click', () => setMenuOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu.classList.contains('is-open')) {
+      setMenuOpen(false);
+      btn.focus();
+    }
+  });
 
   document.getElementById('logOutBtn').addEventListener('click', async () => {
     await window.Auth.logOut();
