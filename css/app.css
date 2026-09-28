@@ -1685,8 +1685,22 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
     right: var(--space-4);
     bottom: auto;
     top: auto;
-    transform: translateY(calc(-100% - 68px));
+    /* This translateY is what anchors the menu above the composer on
+       mobile — see the .is-open override just below for why it must
+       be repeated there rather than left to the desktop rule. */
+    transform: translateY(calc(-100% - 68px)) scale(0.96);
+    transform-origin: bottom center;
     width: auto;
+  }
+  /* The desktop `.attach-menu-list.is-open` / `.quality-picker-menu.is-open`
+     rules (same two-class specificity) would otherwise win this fight and
+     wipe out the translateY(-100% - 68px) anchor above the instant the
+     menu opens — the exact bug that made these menus fly off to the
+     wrong spot on mobile. Redeclaring the anchor here, inside the same
+     media query, keeps it in every state without depending on which
+     rule happens to lose the specificity contest. */
+  .quality-picker-menu.is-open {
+    transform: translateY(calc(-100% - 68px)) scale(1);
   }
 
   .attach-menu-list {
@@ -1695,8 +1709,12 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
     right: auto;
     bottom: auto;
     top: auto;
-    transform: translateY(calc(-100% - 68px));
+    transform: translateY(calc(-100% - 68px)) scale(0.96);
+    transform-origin: bottom left;
     width: 240px;
+  }
+  .attach-menu-list.is-open {
+    transform: translateY(calc(-100% - 68px)) scale(1);
   }
 }
 
