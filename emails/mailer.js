@@ -9,7 +9,7 @@
 
 const DEFAULT_FROM = 'Cognita <noreply@cognita.com.ng>';
 
-export async function sendEmail(env, to, { subject, html, text }) {
+export async function sendEmail(env, to, { subject, html, text, headers }) {
   if (!env.RESEND_API_KEY) throw new Error('Server misconfiguration: RESEND_API_KEY not set.');
   if (!to) throw new Error('No recipient address.');
 
@@ -21,6 +21,8 @@ export async function sendEmail(env, to, { subject, html, text }) {
     text,
   };
   if (env.MAIL_REPLY_TO) payload.reply_to = env.MAIL_REPLY_TO;
+  // Optional extra headers, e.g. List-Unsubscribe for reminder and digest emails.
+  if (headers && Object.keys(headers).length) payload.headers = headers;
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
