@@ -111,6 +111,7 @@ import {
   handleInsightsFileProxy,
 } from './insights-endpoint.js';
 import { runInsightsDigestScheduler } from './insights-digest.js';
+import { handleEmailUnsubscribe } from './emails/unsubscribe.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -392,6 +393,14 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/api/insights/history') {
       return handleInsightsHistory(request, env);
+    }
+
+    // ── Email unsubscribe ──────────────────────────────
+    // Opened from a link in an email, or POSTed to by Gmail / Yahoo / Apple
+    // Mail's own Unsubscribe button. No login: the signed token in the link
+    // is the access check. See emails/unsubscribe.js.
+    if (url.pathname === '/api/email/unsubscribe' && (request.method === 'GET' || request.method === 'POST')) {
+      return handleEmailUnsubscribe(request, env);
     }
 
     // Hit directly by the browser (email link click) or a WhatsApp link
