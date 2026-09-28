@@ -23,13 +23,19 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-width: 0; /* lets flex children shrink instead of overflowing the card */
 }
+/* Label + helper sit tight together; the control follows after a gap. */
+.scheduler-field > .scheduler-label + .scheduler-help { margin-top: calc(var(--space-2) * -1 + 2px); }
 
 .scheduler-field-row {
   display: flex;
   gap: var(--space-4);
 }
 .scheduler-field-row .scheduler-field { flex: 1; }
+.scheduler-when { gap: var(--space-3); }
+.scheduler-field--date { flex: 1.5 !important; }
+.scheduler-field--time { flex: 1 !important; }
 
 .scheduler-label {
   font-size: var(--text-sm);
@@ -248,7 +254,6 @@
 }
 
 @media (max-width: 480px) {
-  .scheduler-field-row { flex-direction: column; }
   .scheduler-composer { padding: var(--space-4); }
 }
 
@@ -261,3 +266,81 @@
   list-style: none;
 }
 #imageUrlFallback summary::-webkit-details-marker { display: none; }
+
+/* ── Helper text under labels ─────────────────────────────────────────── */
+.scheduler-help {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-body);
+  color: var(--text-3);
+  max-width: 60ch;
+}
+.scheduler-help--spaced { margin-top: var(--space-2); }
+.scheduler-when-summary { margin-top: calc(var(--space-2) * -1); }
+.scheduler-when-summary:empty { display: none; }
+
+/* ── Date & time pickers ──────────────────────────────────────────────────
+   Native date/time inputs ignore width rules on iOS and render centred with
+   their own chrome. Reset that, keep the native picker (best on phones), and
+   make the whole field a tap target with a small icon as the affordance. */
+.scheduler-picker { position: relative; min-width: 0; }
+.scheduler-input--picker {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 46px;
+  padding-right: 40px;
+  text-align: left;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.scheduler-input--picker::-webkit-date-and-time-value { text-align: left; min-height: 1.3em; }
+.scheduler-input--picker::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.scheduler-picker-icon {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.scheduler-picker:focus-within .scheduler-picker-icon { color: var(--accent); }
+
+/* ── "Use an image link instead" disclosure ───────────────────────────── */
+#imageUrlFallback { margin-top: var(--space-1); }
+.scheduler-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--accent);
+  border-radius: var(--radius-sm);
+}
+.scheduler-disclosure:hover span { text-decoration: underline; text-underline-offset: 3px; }
+.scheduler-disclosure:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.scheduler-disclosure i { font-size: 15px; }
+.scheduler-disclosure-caret { transition: transform var(--duration-fast) var(--ease); }
+#imageUrlFallback[open] .scheduler-disclosure-caret { transform: rotate(180deg); }
+#imageUrlFallback[hidden] { display: none; }
+
+/* ── Spacing between the composer and the list below it ───────────────── */
+.scheduler-list-wrap { margin-top: var(--space-7); }
+.scheduler-list-wrap .settings-group-label { margin-top: 0; }
+[hidden].scheduler-list-wrap { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-disclosure-caret { transition: none; }
+}
