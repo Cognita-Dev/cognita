@@ -82,6 +82,8 @@ import {
   handleSubscribe,
   handleUnsubscribe,
   handleTestNotification,
+  handleReminderEmailStatus,
+  handleReminderEmailResubscribe,
 } from './reminders/reminders-endpoint.js';
 import { runReminderScheduler } from './reminders/reminders-scheduler.js';
 import {
@@ -285,6 +287,14 @@ export default {
 
     if (request.method === 'POST' && url.pathname === '/api/reminders/unsubscribe') {
       return handleUnsubscribe(request, env);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/reminders/email-status') {
+      return handleReminderEmailStatus(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/reminders/email-resubscribe') {
+      return handleReminderEmailResubscribe(request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/reminders/test-notification') {
