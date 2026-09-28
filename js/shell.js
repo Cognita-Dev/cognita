@@ -130,6 +130,45 @@ export function renderAccountInfo(user) {
   document.getElementById('accountAvatar').textContent = label.charAt(0).toUpperCase();
 }
 
+// Fills the sidebar's plan label (and the admin / upgrade shortcuts) from an
+// /api/account response. Views that already fetch /api/account pass their
+// data straight in; views that don't call ensureSidebarAccount().
+const ADMIN_ROLES = ['admin', 'moderator'];
+
+export function applySidebarAccount(data) {
+  if (!data) return;
+  const plan = document.getElementById('accountPlan');
+  if (plan && data.planName) {
+    plan.textContent = data.planName;
+    plan.classList.remove('skeleton');
+  }
+  const email = document.getElementById('accountEmail');
+  if (email) email.classList.remove('skeleton');
+
+  const adminLink = document.getElementById('adminPanelLink');
+  if (adminLink) adminLink.hidden = !ADMIN_ROLES.includes(data.role);
+
+  const upgradeLink = document.getElementById('upgradeLink');
+  if (upgradeLink && data.planId !== 'studio' && data.planId !== 'admin') {
+    upgradeLink.hidden = false;
+  }
+}
+
+// One /api/account fetch per page load, shared by every view that needs the
+// sidebar filled in. Failures are swallowed: the sidebar just stays as-is.
+const SHELL_WORKER_URL = 'https://api.cognita.com.ng';
+let sidebarAccountPromise = null;
+
+export function ensureSidebarAccount() {
+  if (!sidebarAccountPromise) {
+    sidebarAccountPromise = window.Auth.authedFetch(SHELL_WORKER_URL + '/api/account')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { applySidebarAccount(data); return data; })
+      .catch(() => { sidebarAccountPromise = null; return null; });
+  }
+  return sidebarAccountPromise;
+}
+
 // Called once, on first load, before any view mounts.
 export function initShell() {
   wireSidebarChrome();
