@@ -70,17 +70,19 @@
   <!-- ── Composer ── -->
   <div id="schedulerComposerWrap" hidden>
     <div class="settings-group-label">Schedule a post</div>
-    <form class="settings-group scheduler-composer" id="composerForm">
+    <form class="settings-group scheduler-composer" id="composerForm" novalidate>
 
       <div class="scheduler-field">
         <label class="scheduler-label" for="targetPage">Post to</label>
         <select id="targetPage" class="scheduler-input" required></select>
+        <p class="scheduler-field-error" id="err-target" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
       </div>
 
       <div class="scheduler-field" id="messageField">
         <label class="scheduler-label" for="postMessage" id="messageLabel">Post text</label>
         <p class="scheduler-help" id="messageHelp">The words of your post. Shown above any photo, video or link.</p>
         <textarea id="postMessage" class="scheduler-input scheduler-textarea" maxlength="2200" placeholder="What do you want to say?" aria-describedby="messageHelp messageCount"></textarea>
+        <p class="scheduler-field-error" id="err-message" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
         <span class="scheduler-hint scheduler-count" id="messageCount">0 / 2,200</span>
       </div>
 
@@ -112,11 +114,13 @@
           <div class="scheduler-progress-bar" id="mediaUploadProgressBar"></div>
         </div>
         <span class="scheduler-hint" id="mediaUploadStatus" role="status" aria-live="polite"></span>
+        <p class="scheduler-field-error" id="err-media" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
 
         <details id="imageUrlFallback">
           <summary class="scheduler-disclosure"><i class="ph ph-link-simple" aria-hidden="true"></i><span>Use an image link instead of uploading</span><i class="ph ph-caret-down scheduler-disclosure-caret" aria-hidden="true"></i></summary>
           <input id="postImageUrl" class="scheduler-input scheduler-input--spaced" type="url" inputmode="url" placeholder="https://example.com/photo.jpg" aria-label="Image link">
           <p class="scheduler-help scheduler-help--spaced">Must be a public https:// link straight to an image file.</p>
+        <p class="scheduler-field-error" id="err-imageUrl" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
         </details>
       </div>
 
@@ -124,6 +128,7 @@
         <label class="scheduler-label" for="postLink">Link to attach <span class="scheduler-hint scheduler-hint--inline">(optional, Facebook only)</span></label>
         <p class="scheduler-help" id="postLinkHelp">Facebook turns this into a clickable preview card with the page's title and image, shown under your text.</p>
         <input id="postLink" class="scheduler-input" type="url" inputmode="url" placeholder="https://yoursite.com/article" aria-describedby="postLinkHelp">
+        <p class="scheduler-field-error" id="err-link" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
       </div>
 
       <div class="scheduler-field-row scheduler-when">
@@ -142,6 +147,8 @@
           </div>
         </div>
       </div>
+        <p class="scheduler-field-error" id="err-date" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
+        <p class="scheduler-field-error" id="err-time" role="alert" hidden><i class="ph ph-warning-circle" aria-hidden="true"></i><span></span></p>
       <p class="scheduler-help scheduler-when-summary" id="whenSummary" aria-live="polite"></p>
 
       <p class="scheduler-error" id="composerError" role="alert" hidden></p>
@@ -276,6 +283,97 @@
     try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone.replace(/_/g, ' '); } catch (_) {}
     whenSummary.textContent = 'Will publish ' + day + ' at ' + time + (zone ? ' (' + zone + ' time)' : '') + '.';
   }
+  // ── Inline validation ────────────────────────────────────────────────
+  // Each problem is shown under the field it belongs to, the page scrolls to
+  // the first one and focuses it, and each message clears itself the moment
+  // the problem is fixed.
+  const fieldErrorEls = {};
+  ['target', 'message', 'media', 'imageUrl', 'link', 'date', 'time'].forEach((k) => {
+    fieldErrorEls[k] = document.getElementById('err-' + k);
+  });
+  const fieldControls = {
+    target: targetPageSelect, message: postMessage, media: mediaDropzone,
+    imageUrl: postImageUrl, link: postLink, date: postDate, time: postTime,
+  };
+  const visibleErrors = new Set();
+
+  function validate() {
+    const errs = [];
+    const { target, pageId } = currentTarget();
+    const text = postMessage.value.trim();
+    const url = postImageUrl.value.trim();
+    const link = postLink.value.trim();
+
+    if (!target || !pageId) errs.push({ key: 'target', msg: 'Choose which Page or Instagram account to post to.' });
+
+    if (target === 'instagram') {
+      if (uploadInFlight) errs.push({ key: 'media', msg: 'Your file is still uploading. Wait for it to finish, then schedule.' });
+      else if (!uploadedMedia && !url) errs.push({ key: 'media', msg: 'Instagram posts need a photo or video. Upload one, or paste an image link.' });
+      else if (!uploadedMedia && !/^https:\/\//i.test(url)) errs.push({ key: 'imageUrl', msg: 'The image link must start with https:// and point straight to an image.' });
+    } else {
+      if (uploadInFlight) errs.push({ key: 'media', msg: 'Your file is still uploading. Wait for it to finish, then schedule.' });
+      let linkOk = true;
+      if (link) {
+        try { const u = new URL(link); linkOk = u.protocol === 'https:' || u.protocol === 'http:'; } catch (_) { linkOk = false; }
+        if (!linkOk) errs.push({ key: 'link', msg: 'That isn\u2019t a valid web address. Start it with https://, for example https://yoursite.com.' });
+      }
+      if (!text && !uploadedMedia && !link) errs.push({ key: 'message', msg: 'Your post is empty. Write some text, or add a photo, video or link.' });
+    }
+
+    if (!postDate.value) errs.push({ key: 'date', msg: 'Choose the date to publish on.' });
+    if (!postTime.value) errs.push({ key: 'time', msg: 'Choose the time to publish at.' });
+    if (postDate.value && postTime.value) {
+      const when = new Date(postDate.value + 'T' + postTime.value);
+      if (isNaN(when.getTime())) {
+        errs.push({ key: 'date', msg: 'That date and time isn\u2019t valid. Pick them again.' });
+      } else if (when.getTime() < Date.now() + 60 * 1000) {
+        if (postDate.value < postDate.min) errs.push({ key: 'date', msg: 'That date has already passed. Pick today or a later date.' });
+        else errs.push({ key: 'time', msg: 'That time has already passed today. Pick a time at least a minute from now.' });
+      }
+    }
+    const order = Object.keys(fieldControls);
+    return errs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  }
+
+  function clearFieldError(key) {
+    const el = fieldErrorEls[key];
+    if (el) el.hidden = true;
+    const ctl = fieldControls[key];
+    if (ctl) ctl.removeAttribute('aria-invalid');
+    visibleErrors.delete(key);
+  }
+
+  function showFieldErrors(errs) {
+    Object.keys(fieldErrorEls).forEach(clearFieldError);
+    errs.forEach(({ key, msg }) => {
+      fieldErrorEls[key].querySelector('span').textContent = msg;
+      fieldErrorEls[key].hidden = false;
+      fieldControls[key].setAttribute('aria-invalid', 'true');
+      visibleErrors.add(key);
+    });
+    if (!errs.length) return;
+    const first = errs[0].key;
+    if (first === 'imageUrl') imageUrlFallback.open = true;
+    const ctl = fieldControls[first];
+    const wrapper = (ctl.closest('.scheduler-field') || ctl);
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    wrapper.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+    // Focus without a second, competing scroll. A hidden control (the
+    // dropzone while a file is uploading) simply skips focus.
+    if (!ctl.hidden) ctl.focus({ preventScroll: true });
+  }
+
+  // After any edit, drop the messages whose problem is now fixed. New
+  // problems are never shown mid-typing, only on the next submit.
+  function refreshErrors() {
+    if (!composerError.hidden) composerError.hidden = true;
+    if (!visibleErrors.size) return;
+    const stillBroken = new Set(validate().map((e) => e.key));
+    [...visibleErrors].forEach((k) => { if (!stillBroken.has(k)) clearFieldError(k); });
+  }
+  composerForm.addEventListener('input', refreshErrors);
+  composerForm.addEventListener('change', refreshErrors);
+
   postDate.addEventListener('input', updateWhenSummary);
   postTime.addEventListener('input', updateWhenSummary);
   updateWhenSummary();
@@ -346,6 +444,7 @@
     mediaUploadProgressBar.style.width = '0%';
     mediaUploadProgress.setAttribute('aria-valuenow', '0');
     mediaUploadStatus.textContent = '';
+    if (typeof refreshErrors === 'function') refreshErrors();
   }
 
   function showLocalPreview(file, kind) {
@@ -432,6 +531,7 @@
     } finally {
       uploadInFlight = false;
       composerSubmit.disabled = false;
+      refreshErrors();
     }
   }
 
@@ -584,11 +684,9 @@
     ev.preventDefault();
     composerError.hidden = true;
 
-    if (uploadInFlight) {
-      composerError.textContent = 'Please wait for the upload to finish.';
-      composerError.hidden = false;
-      return;
-    }
+    const problems = validate();
+    if (problems.length) { showFieldErrors(problems); return; }
+    showFieldErrors([]);
 
     composerSubmit.disabled = true;
     const submitLabel = composerSubmit.querySelector('.btn-label');
