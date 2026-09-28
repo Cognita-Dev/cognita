@@ -78,18 +78,20 @@
       </div>
 
       <div class="scheduler-field" id="messageField">
-        <label class="scheduler-label" for="postMessage">Text</label>
-        <textarea id="postMessage" class="scheduler-input scheduler-textarea" maxlength="2200" placeholder="What do you want to say?" aria-describedby="messageCount"></textarea>
+        <label class="scheduler-label" for="postMessage" id="messageLabel">Post text</label>
+        <p class="scheduler-help" id="messageHelp">The words of your post. Shown above any photo, video or link.</p>
+        <textarea id="postMessage" class="scheduler-input scheduler-textarea" maxlength="2200" placeholder="What do you want to say?" aria-describedby="messageHelp messageCount"></textarea>
         <span class="scheduler-hint scheduler-count" id="messageCount">0 / 2,200</span>
       </div>
 
       <div class="scheduler-field" id="mediaField">
         <span class="scheduler-label" id="mediaLabel">Photo or video <span id="mediaOptionalTag" class="scheduler-hint scheduler-hint--inline"></span></span>
+        <p class="scheduler-help">Attach one photo or video to your post.</p>
 
         <div class="scheduler-dropzone" id="mediaDropzone" tabindex="0" role="button" aria-labelledby="mediaLabel" aria-describedby="mediaDropzoneHint">
           <div id="mediaDropzoneEmpty">
             <i class="ph ph-upload-simple" aria-hidden="true"></i>
-            <span>Click to choose a file, or drag one here</span>
+            <span id="mediaDropzoneText">Click to choose a file, or drag one here</span>
             <span class="scheduler-hint" id="mediaDropzoneHint">JPEG/PNG/WEBP up to 15MB, or MP4/MOV up to 200MB</span>
           </div>
         </div>
@@ -112,26 +114,35 @@
         <span class="scheduler-hint" id="mediaUploadStatus" role="status" aria-live="polite"></span>
 
         <details id="imageUrlFallback">
-          <summary class="scheduler-hint">Or use an existing image URL instead</summary>
-          <input id="postImageUrl" class="scheduler-input scheduler-input--spaced" type="url" placeholder="https://…/photo.jpg" aria-label="Image URL">
+          <summary class="scheduler-disclosure"><i class="ph ph-link-simple" aria-hidden="true"></i><span>Use an image link instead of uploading</span><i class="ph ph-caret-down scheduler-disclosure-caret" aria-hidden="true"></i></summary>
+          <input id="postImageUrl" class="scheduler-input scheduler-input--spaced" type="url" inputmode="url" placeholder="https://example.com/photo.jpg" aria-label="Image link">
+          <p class="scheduler-help scheduler-help--spaced">Must be a public https:// link straight to an image file.</p>
         </details>
       </div>
 
       <div class="scheduler-field" id="linkField">
-        <label class="scheduler-label" for="postLink">Link (optional)</label>
-        <input id="postLink" class="scheduler-input" type="url" placeholder="https://…">
+        <label class="scheduler-label" for="postLink">Link to attach <span class="scheduler-hint scheduler-hint--inline">(optional, Facebook only)</span></label>
+        <p class="scheduler-help" id="postLinkHelp">Facebook turns this into a clickable preview card with the page's title and image, shown under your text.</p>
+        <input id="postLink" class="scheduler-input" type="url" inputmode="url" placeholder="https://yoursite.com/article" aria-describedby="postLinkHelp">
       </div>
 
-      <div class="scheduler-field-row">
-        <div class="scheduler-field">
+      <div class="scheduler-field-row scheduler-when">
+        <div class="scheduler-field scheduler-field--date">
           <label class="scheduler-label" for="postDate">Date</label>
-          <input id="postDate" class="scheduler-input" type="date" required>
+          <div class="scheduler-picker">
+            <input id="postDate" class="scheduler-input scheduler-input--picker" type="date" required>
+            <i class="ph ph-calendar-blank scheduler-picker-icon" aria-hidden="true"></i>
+          </div>
         </div>
-        <div class="scheduler-field">
+        <div class="scheduler-field scheduler-field--time">
           <label class="scheduler-label" for="postTime">Time</label>
-          <input id="postTime" class="scheduler-input" type="time" required>
+          <div class="scheduler-picker">
+            <input id="postTime" class="scheduler-input scheduler-input--picker" type="time" required>
+            <i class="ph ph-clock scheduler-picker-icon" aria-hidden="true"></i>
+          </div>
         </div>
       </div>
+      <p class="scheduler-help scheduler-when-summary" id="whenSummary" aria-live="polite"></p>
 
       <p class="scheduler-error" id="composerError" role="alert" hidden></p>
 
@@ -142,7 +153,7 @@
   </div>
 
   <!-- ── Scheduled posts list ── -->
-  <div id="schedulerListWrap" hidden>
+  <div id="schedulerListWrap" class="scheduler-list-wrap" hidden>
     <div class="settings-group-label">Scheduled &amp; recent posts</div>
     <div class="settings-group" id="scheduledPostsGrid" aria-live="polite">
       <div class="settings-row" aria-hidden="true"><div class="settings-row-text"><span class="skeleton" style="display:block;width:55%;height:13px;border-radius:4px;"></span><span class="skeleton" style="display:block;width:80%;height:12px;border-radius:4px;margin-top:6px;"></span></div></div><div class="settings-row" aria-hidden="true"><div class="settings-row-text"><span class="skeleton" style="display:block;width:55%;height:13px;border-radius:4px;"></span><span class="skeleton" style="display:block;width:80%;height:12px;border-radius:4px;margin-top:6px;"></span></div></div>
@@ -182,6 +193,11 @@
   const blockedIcon = document.getElementById('schedulerBlockedIcon');
   const blockedCta = document.getElementById('schedulerBlockedCta');
   const messageCount = document.getElementById('messageCount');
+  const messageLabel = document.getElementById('messageLabel');
+  const messageHelp = document.getElementById('messageHelp');
+  const imageUrlFallback = document.getElementById('imageUrlFallback');
+  const mediaDropzoneText = document.getElementById('mediaDropzoneText');
+  const whenSummary = document.getElementById('whenSummary');
 
   const POST_ROW_SKELETON = "<div class=\"settings-row\" aria-hidden=\"true\"><div class=\"settings-row-text\"><span class=\"skeleton\" style=\"display:block;width:55%;height:13px;border-radius:4px;\"></span><span class=\"skeleton\" style=\"display:block;width:80%;height:12px;border-radius:4px;margin-top:6px;\"></span></div></div>";
 
@@ -249,6 +265,26 @@
     postDate.min = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
   })();
 
+  // Spells out the chosen moment in plain words, including the time zone,
+  // so nobody has to decode a native picker to know when the post goes out.
+  function updateWhenSummary() {
+    const d = new Date(postDate.value + 'T' + postTime.value);
+    if (isNaN(d.getTime())) { whenSummary.textContent = ''; return; }
+    const day = d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    let zone = '';
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone.replace(/_/g, ' '); } catch (_) {}
+    whenSummary.textContent = 'Will publish ' + day + ' at ' + time + (zone ? ' (' + zone + ' time)' : '') + '.';
+  }
+  postDate.addEventListener('input', updateWhenSummary);
+  postTime.addEventListener('input', updateWhenSummary);
+  updateWhenSummary();
+
+  // Touch devices tap rather than click.
+  if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+    mediaDropzoneText.textContent = 'Tap to choose a photo or video';
+  }
+
   postMessage.addEventListener('input', () => {
     messageCount.textContent = postMessage.value.length.toLocaleString() + ' / 2,200';
   });
@@ -281,6 +317,12 @@
     const { target } = currentTarget();
     const isInstagram = target === 'instagram';
     linkField.hidden = isInstagram; // Facebook-only field
+    // The image-URL option is only honoured for Instagram posts.
+    imageUrlFallback.hidden = !isInstagram;
+    messageLabel.textContent = isInstagram ? 'Caption' : 'Post text';
+    messageHelp.textContent = isInstagram
+      ? 'The text shown under your photo or video on Instagram. Hashtags work here.'
+      : 'The words of your post. Shown above any photo, video or link.';
     postMessage.placeholder = isInstagram ? 'Write a caption…' : 'What do you want to say?';
     mediaOptionalTag.textContent = isInstagram ? '(required)' : '(optional)';
   }
