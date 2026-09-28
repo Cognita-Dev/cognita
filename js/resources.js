@@ -303,7 +303,9 @@ async function refreshUsage() {
           ? Math.min(100, (usage.used / usage.limit) * 100)
           : 0;
 
-      document.getElementById('usageResourcesBar').style.width = pct + '%';
+      const resBar = document.getElementById('usageResourcesBar');
+      resBar.style.width = pct + '%';
+      resBar.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
     }
   } catch (e) {
     console.error('[resources] could not load usage:', e.message);
