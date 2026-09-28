@@ -23,6 +23,8 @@ import { extractJson } from './json-extract.js';
 import { getPageInsights, getInstagramInsights, listPages } from './meta-tools.js';
 import { buildStructuredPdfBytes } from './pdf-builder.js';
 import { sendEmail } from './emails/mailer.js';
+import { buildInsightsDigestEmail } from './emails/auth-email-templates.js';
+import { buildUnsubscribeUrl } from './emails/unsubscribe.js';
 
 // Cloudflare Cron Trigger execution limits — same reasoning as
 // social-scheduler.js's BATCH_SIZE: if there could be many due
@@ -192,13 +194,13 @@ export async function deliverDigest(env, uid, digestId, overrides = {}) {
 
   if (wantsEmail && toAddress) {
     try {
-      const highlightsHtml = (digest.summary.highlights || []).map((h) => '<li>' + h + '</li>').join('');
-      await sendEmail(env, toAddress, {
-        subject: 'Your latest Cognita performance digest',
-        html: '<h2>Your performance digest is ready</h2><ul>' + highlightsHtml + '</ul>' +
-          '<p><a href="' + pdfUrl + '">Download the full PDF report</a></p>',
-        text: 'Your performance digest is ready. Download it here: ' + pdfUrl,
+      const message = buildInsightsDigestEmail({
+        periodLabel: _periodLabel(digest.periodStart, digest.periodEnd),
+        highlights: digest.summary && digest.summary.highlights,
+        pdfUrl,
+        unsubscribeUrl: await buildUnsubscribeUrl(env, uid, 'digest'),
       });
+      await sendEmail(env, toAddress, message);
       deliveredTo.email = true;
     } catch (e) {
       console.error('[insights-digest] email delivery failed:', e.message);
