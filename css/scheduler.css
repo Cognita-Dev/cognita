@@ -77,9 +77,8 @@
 .scheduler-error {
   font-size: var(--text-sm);
   color: var(--danger);
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-  padding: var(--space-3);
+  font-weight: 500;
+  line-height: 1.4;
   margin: 0;
 }
 
@@ -344,3 +343,21 @@
 @media (prefers-reduced-motion: reduce) {
   .scheduler-disclosure-caret { transition: none; }
 }
+
+/* ── Inline field errors: plain text under the field, no card ─────────── */
+.scheduler-field-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--danger);
+}
+.scheduler-field-error i { font-size: 16px; margin-top: 1px; flex-shrink: 0; }
+.scheduler-field-error[hidden] { display: none; }
+.scheduler-input[aria-invalid="true"],
+.scheduler-input[aria-invalid="true"]:focus { border-color: var(--danger); }
+.scheduler-dropzone[aria-invalid="true"] { border-color: var(--danger); }
+.scheduler-field { scroll-margin-top: var(--space-6); }
