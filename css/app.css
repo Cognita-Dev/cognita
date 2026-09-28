@@ -85,7 +85,13 @@
   .app-sidebar.is-collapsed .upgrade-link,
   .app-sidebar.is-collapsed .account-btn { justify-content: center; }
   .app-sidebar.is-collapsed .sidebar-nav { flex: 1; }
-  .app-sidebar.is-collapsed .account-menu { left: 0; right: auto; min-width: 200px; }
+  .app-sidebar.is-collapsed .account-menu {
+    position: fixed;
+    left: calc(64px + var(--space-2));
+    right: auto;
+    bottom: var(--space-4);
+    width: 232px;
+  }
 }
 
 .sidebar-scrim { display: none; }
