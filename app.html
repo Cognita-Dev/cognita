@@ -46,16 +46,16 @@
     cursor: default;
   }
   .connectors-modal-banner {
-    margin: 0 0 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    font-size: var(--text-sm, 0.875rem);
+    margin: 0 0 var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
     font-weight: 600;
-    background: var(--surface-2, #f4f4f5);
-    color: var(--text-1, #111);
+    background: var(--bg-subtle);
+    color: var(--text-1);
   }
   .connectors-modal-banner.is-error {
-    color: var(--danger, #d33);
+    color: var(--danger);
   }
 </style>
 </head>
@@ -75,7 +75,7 @@
         <span>Cognita</span>
       </a>
       <div class="sidebar-top-actions">
-        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Collapse sidebar">
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="appSidebar">
           <i class="ph ph-sidebar-simple"></i>
         </button>
         <button class="sidebar-close-btn" id="sidebarCloseBtn" aria-label="Close sidebar">
@@ -84,32 +84,32 @@
       </div>
     </div>
 
-    <button class="new-chat-btn" id="newChatBtn">
+    <button class="new-chat-btn" id="newChatBtn" title="New chat">
       <i class="ph ph-plus"></i>
       <span>New chat</span>
     </button>
 
-    <nav class="sidebar-history" aria-label="Navigation">
-      <a href="/app.html?view=chat" class="sidebar-history-item" data-view="chat">
+    <nav class="sidebar-nav" aria-label="Navigation">
+      <a href="/app.html?view=chat" class="sidebar-history-item" data-view="chat" title="Current chat">
         <i class="ph ph-chat-circle"></i>
         <span>Current chat</span>
       </a>
-      <a href="/app.html?view=resources" class="sidebar-history-item" data-view="resources">
+      <a href="/app.html?view=resources" class="sidebar-history-item" data-view="resources" title="Resources">
         <i class="ph ph-graduation-cap"></i>
         <span>Resources</span>
       </a>
-      <a href="/app.html?view=library" class="sidebar-history-item" data-view="library">
+      <a href="/app.html?view=library" class="sidebar-history-item" data-view="library" title="Library">
         <i class="ph ph-books"></i>
         <span>Library</span>
       </a>
-      <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders">
+      <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders" title="Reminders">
         <i class="ph ph-bell"></i>
         <span>Reminders</span>
       </a>
       <!-- Only shown for admins/moderators — app.js unhides this once
            /api/account reports a role, so regular users never see a
            dead link to a page the server would 401/403 them from. -->
-      <a href="/admin.html" class="sidebar-history-item" id="adminPanelLink" hidden>
+      <a href="/admin.html" class="sidebar-history-item" id="adminPanelLink" title="Admin panel" hidden>
         <i class="ph ph-shield-star"></i>
         <span>Admin panel</span>
       </a>
@@ -126,7 +126,7 @@
           <span class="usage-label">Messages today</span>
           <span class="usage-value skeleton" id="usageMessages">00 / 00</span>
         </div>
-        <div class="usage-bar"><div class="usage-bar-fill" id="usageMessagesBar"></div></div>
+        <div class="usage-bar" role="progressbar" aria-label="Messages used today" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="usage-bar-fill" id="usageMessagesBar"></div></div>
       </div>
 
       <div class="usage-widget" id="usageWidgetResources" hidden>
@@ -134,7 +134,7 @@
           <span class="usage-label">Resources today</span>
           <span class="usage-value skeleton" id="usageResources">00 / 00</span>
         </div>
-        <div class="usage-bar"><div class="usage-bar-fill" id="usageResourcesBar"></div></div>
+        <div class="usage-bar" role="progressbar" aria-label="Resources used today" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="usage-bar-fill" id="usageResourcesBar"></div></div>
       </div>
 
       <a href="/pricing.html" class="upgrade-link" id="upgradeLink" hidden>
@@ -142,13 +142,13 @@
         <span>Upgrade plan</span>
       </a>
 
-      <button class="account-btn" id="accountBtn">
+      <button class="account-btn" id="accountBtn" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu">
         <span class="account-avatar" id="accountAvatar">C</span>
         <span class="account-info">
           <span class="account-name skeleton" id="accountEmail">Loading</span>
           <span class="account-plan skeleton" id="accountPlan">Loading</span>
         </span>
-        <i class="ph ph-dots-three-vertical account-menu-trigger"></i>
+        <i class="ph ph-dots-three-vertical account-menu-trigger" aria-hidden="true"></i>
       </button>
 
       <div class="account-menu" id="accountMenu">
@@ -218,7 +218,7 @@
       <div class="conversation" id="conversation">
         <div class="empty-state" id="emptyState">
           <img src="/assets/cognita.png" alt="" class="empty-state-mark">
-          <h1 class="empty-state-title">What are you working on?</h1>
+          <h2 class="empty-state-title">What are you working on?</h2>
           <p class="empty-state-subtitle">Write, research, plan, or prepare a document — Cognita finishes the job, not just the reply.</p>
         </div>
 
