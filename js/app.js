@@ -260,10 +260,20 @@ function updateConnectorsAvailability() {
   }
 }
 
+// If /api/usage fails, the "00 / 00" skeleton would otherwise shimmer
+// forever and read as "still loading". Show a plain dash instead.
+function showUsageUnavailable() {
+  const el = document.getElementById('usageMessages');
+  if (el && el.classList.contains('skeleton')) {
+    el.textContent = '\u2014';
+    el.classList.remove('skeleton');
+  }
+}
+
 async function refreshUsage() {
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/usage');
-    if (!res.ok) return;
+    if (!res.ok) { showUsageUnavailable(); return; }
     const data = await res.json();
 
     const { used, limit } = data.usage.messages;
@@ -281,8 +291,10 @@ async function refreshUsage() {
     fill.style.width = pct + '%';
     fill.classList.toggle('is-near-limit', pct >= 70 && pct < 100);
     fill.classList.toggle('is-at-limit', pct >= 100);
+    fill.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
   } catch (e) {
     console.error('[app] Could not load usage:', e.message);
+    showUsageUnavailable();
   }
 }
 
@@ -597,16 +609,23 @@ function renderSidebarHistory() {
     return;
   }
 
-  nav.innerHTML = all.map((c) => (
-    '<button class="sidebar-history-item' + (c.id === currentConversationId ? ' is-active' : '') + '" data-id="' + c.id + '">' +
-      '<span>' + escapeHtml(c.title) + '</span>' +
-      '<span class="history-delete-btn" data-delete-id="' + c.id + '" title="Delete chat"><i class="ph ph-x"></i></span>' +
-    '</button>'
-  )).join('');
+  nav.innerHTML = all.map((c) => {
+    const isActive = c.id === currentConversationId;
+    const title = escapeHtml(c.title);
+    return (
+      '<div class="sidebar-history-row' + (isActive ? ' is-active' : '') + '">' +
+        '<button class="sidebar-history-item" data-id="' + c.id + '" title="' + title + '"' + (isActive ? ' aria-current="true"' : '') + '>' +
+          '<span>' + title + '</span>' +
+        '</button>' +
+        '<button class="history-delete-btn" data-delete-id="' + c.id + '" aria-label="Delete chat: ' + title + '" title="Delete chat">' +
+          '<i class="ph ph-x" aria-hidden="true"></i>' +
+        '</button>' +
+      '</div>'
+    );
+  }).join('');
 
   nav.querySelectorAll('.sidebar-history-item').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      if (e.target.closest('[data-delete-id]')) return;
+    btn.addEventListener('click', () => {
       loadConversation(btn.dataset.id);
     });
   });
@@ -1875,8 +1894,8 @@ function renderMessage(msg, index) {
         sourcesHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
-            '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy"><i class="ph ph-copy"></i></button>' +
-            '<button class="message-action-btn" data-action="regenerate" data-index="' + index + '" title="Regenerate"><i class="ph ph-arrow-clockwise"></i></button>' +
+            '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy" aria-label="Copy reply"><i class="ph ph-copy" aria-hidden="true"></i></button>' +
+            '<button class="message-action-btn" data-action="regenerate" data-index="' + index + '" title="Regenerate" aria-label="Regenerate reply"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i></button>' +
           '</div>'
         ) +
       '</div>' +
