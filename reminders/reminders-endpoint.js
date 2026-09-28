@@ -9,7 +9,7 @@ import { getPlan } from '../entitlements.js';
 import { sendWebPush } from './push-vapid.js';
 import { sendEmail } from '../emails/mailer.js';
 import { buildReminderEmail } from '../emails/auth-email-templates.js';
-import { setReminderEmailAllowed } from '../emails/email-prefs.js';
+import { isReminderEmailAllowed, setReminderEmailAllowed } from '../emails/email-prefs.js';
 import { buildUnsubscribeUrl } from '../emails/unsubscribe.js';
 import {
   createReminder,
@@ -30,6 +30,25 @@ function _ok(body, env, status = 200) {
 }
 function _err(message, status, env) {
   return new Response(JSON.stringify({ error: message }), { status, headers: _headers(env) });
+}
+
+// Reminder emails that the person switched off (via the unsubscribe link)
+// stay off until they switch them back on themselves, on purpose, using
+// handleReminderEmailResubscribe below. Ticking "Email" on a reminder is NOT
+// enough, so a reminder that asks for email while they are unsubscribed is
+// refused with this code and the app shows a "turn back on" prompt.
+async function _emailBlocked(env, uid, body) {
+  const wantsEmail = !!(body && body.channels && body.channels.email);
+  return wantsEmail && !(await isReminderEmailAllowed(env, uid));
+}
+function _emailUnsubscribedResponse(env) {
+  return new Response(
+    JSON.stringify({
+      error: 'You unsubscribed from reminder emails. Turn them back on to use Email, or untick Email.',
+      code: 'EMAIL_UNSUBSCRIBED',
+    }),
+    { status: 409, headers: _headers(env) }
+  );
 }
 
 async function _authed(request, env) {
@@ -83,6 +102,8 @@ export async function handleReminderCreate(request, env) {
   }
 
   try {
+    if (await _emailBlocked(env, identity.uid, body)) return _emailUnsubscribedResponse(env);
+
     if (!(await _createAllowed(env, identity.uid))) {
       return _err('Too many reminders created recently. Try again shortly.', 429, env);
     }
@@ -99,8 +120,6 @@ export async function handleReminderCreate(request, env) {
     }
 
     const { reminder, skipped } = await createReminder(env, identity.uid, body || {});
-    // Choosing the email channel on a new reminder is a fresh opt-in.
-    if (body && body.channels && body.channels.email) await setReminderEmailAllowed(env, identity.uid, true).catch(() => {});
     return _ok({ reminder: _reminderResponseShape(reminder), skipped }, env, 201);
   } catch (e) {
     if (e.isLimit) return _err(e.message, 403, env);
@@ -146,8 +165,9 @@ export async function handleReminderUpdate(request, env, reminderId) {
   }
 
   try {
+    if (await _emailBlocked(env, identity.uid, body)) return _emailUnsubscribedResponse(env);
+
     const { reminder, skipped } = await updateReminder(env, identity.uid, reminderId, body || {});
-    if (body && body.channels && body.channels.email) await setReminderEmailAllowed(env, identity.uid, true).catch(() => {});
     return _ok({ reminder: _reminderResponseShape(reminder), skipped }, env);
   } catch (e) {
     if (e.isNotFound) return _err('Reminder not found.', 404, env);
@@ -241,6 +261,50 @@ export async function handleUnsubscribe(request, env) {
   } catch (e) {
     console.error('[reminders] unsubscribe failed:', e.message);
     return _err('Could not turn off notifications.', 502, env);
+  }
+}
+
+/** GET /api/reminders/email-status  ->  { emailAllowed: true | false } */
+export async function handleReminderEmailStatus(request, env) {
+  let identity;
+  try {
+    identity = await _authed(request, env);
+  } catch (e) {
+    const { status, message } = describeAuthError(e);
+    return _err(message, status, env);
+  }
+  return _ok({ emailAllowed: await isReminderEmailAllowed(env, identity.uid) }, env);
+}
+
+/**
+ * POST /api/reminders/email-resubscribe   body: { confirm: true }
+ * The only way back in after unsubscribing. It needs a signed-in person AND
+ * an explicit confirm flag, so it can never happen as a side effect of
+ * saving a reminder.
+ */
+export async function handleReminderEmailResubscribe(request, env) {
+  let identity;
+  try {
+    identity = await _authed(request, env);
+  } catch (e) {
+    const { status, message } = describeAuthError(e);
+    return _err(message, status, env);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return _err('Invalid request.', 400, env);
+  }
+  if (!body || body.confirm !== true) return _err('Please confirm that you want reminder emails back on.', 400, env);
+
+  try {
+    await setReminderEmailAllowed(env, identity.uid, true);
+    return _ok({ emailAllowed: true }, env);
+  } catch (e) {
+    console.error('[reminders] email resubscribe failed:', e.message);
+    return _err('Could not turn reminder emails back on. Please try again.', 502, env);
   }
 }
 
