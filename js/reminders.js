@@ -27,6 +27,7 @@ let editingTimezone = null; // the timezone an edited reminder was saved in
 let pushReady = false; // this device is fully set up to receive push
 let subscriptionSynced = false;
 let selectedChannels = { push: true, email: false };
+let emailAllowed = true; // false once the person has unsubscribed from reminder emails
 let selectedOffsets = new Set(['1_day', 'morning_of']);
 
 export async function mount() {
@@ -206,6 +207,85 @@ function syncChannelButtons() {
   document.querySelectorAll('[data-channel]').forEach((btn) => {
     btn.classList.toggle('is-active', !!selectedChannels[btn.dataset.channel]);
   });
+  syncEmailNotice();
+}
+
+/* ── Unsubscribed from reminder emails: ask before turning them back on ──
+   The notice only shows when Email is ticked AND the person has unsubscribed.
+   Turning emails back on is always a deliberate tap plus a confirmation,
+   never a side effect of saving a reminder. The server enforces the same rule. */
+
+async function refreshEmailStatus() {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/reminders/email-status');
+    if (res.ok) {
+      const data = await res.json();
+      emailAllowed = data.emailAllowed !== false;
+    }
+  } catch (_) {
+    // Could not check: stay quiet. The server still refuses if it needs to.
+  }
+  syncEmailNotice();
+}
+
+function getEmailNotice() {
+  let box = document.getElementById('reminderEmailNotice');
+  if (box) return box;
+
+  const emailBtn = document.querySelector('[data-channel="email"]');
+  const field = emailBtn && emailBtn.closest('.resource-field');
+  if (!field) return null;
+
+  box = document.createElement('div');
+  box.id = 'reminderEmailNotice';
+  box.className = 'reminder-email-notice';
+  box.hidden = true;
+  box.innerHTML =
+    '<p class="reminder-email-notice-text">You unsubscribed from reminder emails, so none will be sent to you until you turn them back on.</p>' +
+    '<button type="button" class="reminder-email-notice-btn" id="reminderEmailResubBtn">Turn reminder emails back on</button>';
+  // Sits below the "How to be reminded" field, not inside its label, so
+  // tapping the button never counts as tapping the label.
+  field.insertAdjacentElement('afterend', box);
+  box.querySelector('#reminderEmailResubBtn').addEventListener('click', resubscribeEmail);
+  return box;
+}
+
+function syncEmailNotice() {
+  const box = getEmailNotice();
+  if (!box) return;
+  box.hidden = !(selectedChannels.email && !emailAllowed);
+}
+
+async function resubscribeEmail() {
+  const ok = window.confirm(
+    'Turn reminder emails back on?\n\nYou will get an email for any reminder that has Email selected. You can unsubscribe again from the link at the bottom of any reminder email.'
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('reminderEmailResubBtn');
+  btn.disabled = true;
+  btn.textContent = 'Turning on\u2026';
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/reminders/email-resubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.error || 'Could not turn reminder emails back on.');
+      return;
+    }
+    emailAllowed = true;
+    syncEmailNotice();
+    showToast('Reminder emails are back on.');
+  } catch (e) {
+    console.error('[reminders] email resubscribe failed:', e.message);
+    showToast('Could not reach Cognita.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Turn reminder emails back on';
+  }
 }
 
 function syncOffsetButtons() {
@@ -233,6 +313,7 @@ function openCreateModal() {
   syncChannelButtons();
   syncOffsetButtons();
   openModal(document.getElementById('reminderModal'));
+  refreshEmailStatus();
   document.getElementById('reminderTitleInput').focus();
 }
 
@@ -257,6 +338,7 @@ function openEditModal(id) {
   syncOffsetButtons();
 
   openModal(document.getElementById('reminderModal'));
+  refreshEmailStatus();
 }
 
 function closeReminderModal() {
@@ -271,6 +353,14 @@ async function saveReminder() {
 
   if (!title) { showToast('Enter a title.'); return; }
   if (!date) { showToast('Pick a date.'); return; }
+
+  if (selectedChannels.email && !emailAllowed) {
+    syncEmailNotice();
+    const notice = document.getElementById('reminderEmailNotice');
+    if (notice) notice.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    showToast('Turn reminder emails back on first, or untick Email.');
+    return;
+  }
 
   const payload = {
     title,
@@ -300,6 +390,12 @@ async function saveReminder() {
     const data = await res.json();
 
     if (!res.ok) {
+      // The server says they are unsubscribed (e.g. they unsubscribed from an
+      // email while this form was open). Show the prompt instead of an error.
+      if (res.status === 409 && data.code === 'EMAIL_UNSUBSCRIBED') {
+        emailAllowed = false;
+        syncEmailNotice();
+      }
       showToast(data.error || 'Could not save the reminder.');
       return;
     }
