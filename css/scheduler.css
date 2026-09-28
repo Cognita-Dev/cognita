@@ -5,6 +5,13 @@
    status badges, and the cancel button.
 */
 
+.scheduler-intro {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  margin: 0 0 var(--space-5);
+  max-width: 46ch;
+}
+
 .scheduler-composer {
   display: flex;
   flex-direction: column;
@@ -36,14 +43,16 @@
   color: var(--text-1);
   background: var(--bg-subtle);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-md);
   padding: var(--space-3);
   width: 100%;
 }
 .scheduler-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-2);
+  background: var(--bg-elevated);
 }
+.scheduler-input--spaced { margin-top: var(--space-2); }
 
 .scheduler-textarea {
   min-height: 96px;
@@ -54,25 +63,75 @@
   font-size: var(--text-xs);
   color: var(--text-3);
 }
+.scheduler-hint--inline { font-weight: 400; margin-left: 4px; }
+.scheduler-count { align-self: flex-end; font-variant-numeric: tabular-nums; }
 
+/* Errors are red, not the brand accent — orange reads as "primary
+   action", so validation messages were easy to mistake for a link. */
 .scheduler-error {
   font-size: var(--text-sm);
-  color: var(--accent);
+  color: var(--danger);
+  background: var(--danger-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
   margin: 0;
 }
 
-.scheduler-submit {
+/* Real buttons — the submit used to be styled as a list row. */
+.scheduler-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-.scheduler-submit:disabled {
-  opacity: 0.6;
-  cursor: default;
+.scheduler-btn:hover:not(:disabled) { background: var(--bg-subtle); border-color: var(--border-strong); }
+.scheduler-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.scheduler-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.scheduler-btn--primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.scheduler-submit { width: 100%; }
+.scheduler-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Blocked / empty states share one pattern with the Inbox + Insights pages. */
+.scheduler-state,
+.scheduler-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-2);
+  padding: var(--space-7) var(--space-4);
 }
+.scheduler-state {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+.scheduler-list-empty { padding: var(--space-6) var(--space-4); }
+.scheduler-state i,
+.scheduler-list-empty i { font-size: 1.75rem; color: var(--text-4); margin-bottom: var(--space-1); }
+.scheduler-state-title { font-size: var(--text-base); font-weight: 600; color: var(--text-1); }
+.scheduler-state-desc { font-size: var(--text-sm); color: var(--text-3); max-width: 40ch; }
+.scheduler-state .scheduler-btn,
+.scheduler-list-empty .scheduler-btn { margin-top: var(--space-2); }
 
 .scheduler-post-row {
   align-items: flex-start;
 }
+.scheduler-post-when { display: block; font-size: var(--text-sm); color: var(--text-3); }
+.scheduler-post-preview { display: block; font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.scheduler-post-error { display: flex; align-items: flex-start; gap: 4px; font-size: var(--text-xs); color: var(--danger); margin-top: 2px; }
+.scheduler-media-icon { color: var(--text-3); }
 
 .scheduler-cancel-btn {
   background: none;
@@ -80,10 +139,16 @@
   color: var(--text-3);
   cursor: pointer;
   padding: var(--space-2);
-  border-radius: var(--radius-md, 10px);
+  min-width: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
-.scheduler-cancel-btn:hover { color: var(--accent); background: var(--bg-subtle); }
+.scheduler-cancel-btn:hover { color: var(--danger); background: var(--danger-subtle); }
+.scheduler-cancel-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
 .scheduler-cancel-btn:disabled { opacity: 0.5; cursor: default; }
 
 .scheduler-badge {
@@ -91,21 +156,16 @@
   font-size: var(--text-xs);
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   margin-left: var(--space-2);
   vertical-align: middle;
 }
 .scheduler-badge--pending    { background: var(--accent-subtle); color: var(--accent); }
 .scheduler-badge--publishing { background: var(--accent-subtle); color: var(--accent); }
-.scheduler-badge--published  { background: #dff3e3; color: #1e7a37; }
-.scheduler-badge--failed     { background: #fbe2df; color: #b3261e; }
+.scheduler-badge--published  { background: color-mix(in srgb, var(--success) 16%, var(--bg-elevated)); color: var(--success); }
+.scheduler-badge--failed     { background: var(--danger-subtle); color: var(--danger); }
 .scheduler-badge--canceled   { background: var(--bg-subtle); color: var(--text-3); }
-.scheduler-badge--missed     { background: var(--bg-subtle); color: var(--text-3); }
-
-@media (prefers-color-scheme: dark) {
-  .scheduler-badge--published { background: #163c22; color: #6fd88c; }
-  .scheduler-badge--failed    { background: #3c1a17; color: #ff9c93; }
-}
+.scheduler-badge--missed     { background: color-mix(in srgb, var(--warning) 16%, var(--bg-elevated)); color: var(--warning); }
 
 /* ── Media upload (drag/drop, preview, progress) ─────────────────────── */
 
@@ -115,17 +175,18 @@
   justify-content: center;
   min-height: 96px;
   border: 1.5px dashed var(--border);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
   cursor: pointer;
   padding: var(--space-3);
   text-align: center;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
-.scheduler-dropzone:hover,
+.scheduler-dropzone:hover { border-color: var(--border-strong); }
 .scheduler-dropzone:focus-visible {
-  border-color: var(--accent);
-  outline: none;
+  border-color: var(--accent-2);
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
 }
 .scheduler-dropzone--over {
   border-color: var(--accent);
@@ -142,12 +203,17 @@
 }
 #mediaDropzoneEmpty i { font-size: 22px; color: var(--text-2); }
 
-#mediaPreviewWrap {
+.scheduler-media-preview {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
 }
+.scheduler-media-preview[hidden] { display: none; }
 #mediaPreviewImg, #mediaPreviewVideo {
   max-height: 72px;
   max-width: 96px;
@@ -164,6 +230,8 @@
   font-size: var(--text-sm);
   color: var(--text-2);
   text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .scheduler-progress {
@@ -176,7 +244,16 @@
   height: 100%;
   width: 0%;
   background: var(--accent);
-  transition: width 0.2s ease;
+  transition: width var(--duration-base) var(--ease);
+}
+
+@media (max-width: 480px) {
+  .scheduler-field-row { flex-direction: column; }
+  .scheduler-composer { padding: var(--space-4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-progress-bar, .scheduler-dropzone { transition: none; }
 }
 
 #imageUrlFallback summary {
