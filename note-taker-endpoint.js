@@ -6,17 +6,20 @@ import { checkAndIncrement } from './usage.js';
 
 const MAX_TITLE = 160;
 const MAX_SEGMENT = 12000;
+const MAX_TRANSCRIPT = 200000; // full-meeting transcript; 12k silently truncated notes after ~15 minutes
+const MAX_CONTEXT = 400;
 const SESSION_COLLECTION = 'note_sessions';
 
-// Nigerian English isn't a distinct Whisper locale — Whisper only knows
-// broad language families, not regional English variants — so all English
-// selections collapse to the same 'en' hint. `auto` omits the hint entirely
-// so Whisper detects the language itself.
-const LANGUAGE_MAP = {
-  'en-NG': 'en',
-  'en-GB': 'en',
-  'en-US': 'en',
-  auto: null,
+// Whisper wants bare ISO-639-1 codes ('yo', 'fr'), not BCP-47 tags. The old
+// code passed 'yo-NG' / 'fr-FR' straight through, which Whisper rejects.
+// Nigerian English and Pidgin have no Whisper locale, so both use 'en' and
+// lean on the context prompt below to pull in Nigerian names and vocabulary.
+// `auto` omits the hint so Whisper detects the language itself.
+const LANGUAGE_MAP = { 'en-NG': 'en', 'en-GB': 'en', 'en-US': 'en', 'pcm-NG': 'en', 'yo-NG': 'yo', 'ha-NG': 'ha', 'fr-FR': 'fr', auto: null };
+const BASE_PROMPTS = {
+  'en-NG': 'A meeting in Nigerian English. Names and places may include Lagos, Abuja, Ibadan, Port Harcourt, Kano, Enugu, Naira, NNPC, JAMB, WAEC, Adebayo, Chukwuemeka, Ibrahim, Ngozi.',
+  'pcm-NG': 'Nigerian Pidgin conversation: how far, abeg, wahala, na so, wetin, dey, sabi, oga.',
+  'yo-NG': 'Ọ̀rọ̀ ní èdè Yorùbá. Ẹ kú àárọ̀, ẹ ṣé, Ọ̀gbẹ́ni, Ìbàdàn, Èkó, Ọ̀yọ́.',
 };
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 
@@ -44,7 +47,7 @@ export async function handleNoteSession(request, env, sessionId) {
   const patch = {
     ...(body.title !== undefined ? { title: clean(body.title, MAX_TITLE) || 'Untitled meeting' } : {}),
     ...(body.status !== undefined ? { status: ['recording', 'paused', 'completed', 'failed'].includes(body.status) ? body.status : existing.status } : {}),
-    ...(body.transcript !== undefined ? { transcript: clean(body.transcript, MAX_SEGMENT) } : {}),
+    ...(body.transcript !== undefined ? { transcript: clean(body.transcript, MAX_TRANSCRIPT) } : {}),
     ...(body.updatedAt !== undefined ? { updatedAt: clean(body.updatedAt, 40) } : {}),
     version: expectedVersion + 1,
   };
@@ -112,13 +115,22 @@ export async function handleNoteChunkTranscribe(request, env, sessionId) {
   if (audioBuffer.byteLength > MAX_CHUNK_BYTES) return json({ error: 'Audio chunk too large.' }, 413, env);
 
   const requestedLang = request.headers.get('X-Note-Language') || 'en-NG';
-  const langHint = Object.prototype.hasOwnProperty.call(LANGUAGE_MAP, requestedLang) ? LANGUAGE_MAP[requestedLang] : requestedLang;
+  const langHint = Object.prototype.hasOwnProperty.call(LANGUAGE_MAP, requestedLang) ? LANGUAGE_MAP[requestedLang] : requestedLang.split('-')[0];
+  let context = '';
+  try { context = decodeURIComponent(request.headers.get('X-Note-Context') || '').slice(-MAX_CONTEXT); } catch { /* malformed header: ignore */ }
+  const prompt = [BASE_PROMPTS[requestedLang], context].filter(Boolean).join(' ').slice(-800);
 
   let result;
   try {
-    const input = { audio: [...new Uint8Array(audioBuffer)] };
+    // large-v3-turbo takes base64 audio and handles accented speech far better
+    // than base whisper, for ~13% more neurons per minute.
+    const bytes = new Uint8Array(audioBuffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const input = { audio: btoa(bin), task: 'transcribe', vad_filter: true };
     if (langHint) input.language = langHint;
-    result = await env.AI.run('@cf/openai/whisper', input);
+    if (prompt) input.initial_prompt = prompt;
+    result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', input);
   } catch (e) {
     console.error('[note-taker] Whisper transcription failed:', e.message);
     return json({ error: 'Transcription is temporarily unavailable.' }, 502, env);
@@ -128,5 +140,5 @@ export async function handleNoteChunkTranscribe(request, env, sessionId) {
 }
 
 export function noteTakerCors(request, env) {
-  return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': env.APP_ORIGIN || '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Allow-Credentials': 'true' } });
+  return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': env.APP_ORIGIN || '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Note-Language,X-Note-Context', 'Access-Control-Allow-Credentials': 'true' } });
 }
