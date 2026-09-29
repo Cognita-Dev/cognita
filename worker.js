@@ -646,10 +646,7 @@ const MB = 1024 * 1024;
 // They are not size-capped here (they enforce their own limits / signatures).
 function _isExemptFromBodyCap(path) {
   return path === '/api/social/media' ||
-    path.startsWith('/api/note-sessions') ||
-    path === '/api/payment/webhook' ||
-    path.startsWith('/webhooks/') ||
-    path === '/auth/facebook/data-deletion';
+    path.startsWith('/api/note-sessions');
 }
 
 // Routes whose real bodies are tiny (a few fields). 100 KB is generous.
@@ -660,6 +657,12 @@ const SMALL_BODY_PREFIXES = [
 ];
 
 function _maxBodyBytes(path) {
+  // Payment and social-network callbacks are small JSON messages. They are
+  // signature-checked, but the server still has to read the whole body
+  // before it can check the signature, so refuse anything oversized first.
+  if (path === '/api/payment/webhook') return 256 * KB;
+  if (path.startsWith('/webhooks/')) return 1 * MB;
+  if (path === '/auth/facebook/data-deletion') return 100 * KB;
   if (path === '/api/chat') return 36 * MB;       // up to 4 images as base64
   if (SMALL_BODY_PREFIXES.some((p) => path === p || path.startsWith(p))) return 100 * KB;
   return 15 * MB;
@@ -677,6 +680,15 @@ function _isHeavyRoute(method, path) {
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||
     /^\/api\/resources\/[^/]+\/cards\/\d+\/image$/.test(path);
+}
+
+// Money-related actions that start or stop a subscription. Each one talks to
+// Paystack, so a single user has no reason to trigger them more than a few
+// times a minute. (The payment "status" check is left out on purpose: the
+// payment-success page checks it every 2 seconds while it waits.)
+function _isPaymentAction(method, path) {
+  return method === 'POST' &&
+    (path === '/api/payment/initialize' || path === '/api/subscription/cancel');
 }
 
 // Calls that come from Meta / Paystack servers, or are cheap OAuth
@@ -737,6 +749,14 @@ async function _guard(request, env) {
     const general = await checkRateBinding(env, 'RL_GENERAL', 'ip:' + ip);
     if (!general.allowed) {
       return _blockedJson('Too many requests. Please slow down and try again shortly.', 429, { 'Retry-After': '30' });
+    }
+
+    if (_isPaymentAction(method, path)) {
+      const uid = await _verifiedUid(request, env);
+      const pay = await checkRateBinding(env, 'RL_PAYMENT', uid ? 'uid:' + uid : 'ip:' + ip);
+      if (!pay.allowed) {
+        return _blockedJson('Too many payment attempts. Please wait a minute and try again.', 429, { 'Retry-After': '60' });
+      }
     }
 
     if (_isHeavyRoute(method, path)) {
