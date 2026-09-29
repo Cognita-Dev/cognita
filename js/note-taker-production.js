@@ -71,4 +71,42 @@ export async function transcribeChunk(sessionId, blob, language, context = '') {
   return response.json();
 }
 
-window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk };
+// ---------- Saved notes (B2-backed, see saved-notes-endpoint.js) ----------
+
+async function notesRequest(path, options, fallbackMessage) {
+  let response;
+  try {
+    response = await auth().authedFetch(`${WORKER_URL}${path}`, options);
+  } catch (e) {
+    const err = new Error('You appear to be offline. Check your connection and try again.');
+    err.offline = true;
+    throw err;
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(body.error || `${fallbackMessage} (${response.status})`);
+    err.status = response.status;
+    throw err;
+  }
+  return body;
+}
+
+const jsonPost = (payload) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+export async function listSavedNotes() {
+  return notesRequest('/api/notes', undefined, 'Could not load your notes');
+}
+export async function getSavedNote(id) {
+  return (await notesRequest(`/api/notes/${encodeURIComponent(id)}`, undefined, 'Could not open that note')).note;
+}
+export async function saveNote(note) {
+  return (await notesRequest('/api/notes', jsonPost(note), 'Could not save the note')).note;
+}
+export async function deleteSavedNote(id) {
+  return notesRequest(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Could not delete the note');
+}
+export async function summarizeNote(payload) {
+  return (await notesRequest('/api/note-summary', jsonPost(payload), 'Could not summarize the note')).summary;
+}
+
+window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote };
