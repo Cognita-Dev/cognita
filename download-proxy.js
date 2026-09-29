@@ -16,10 +16,26 @@
 // No new Worker secret needs to be configured: the signing key is derived
 // from B2_APPLICATION_KEY, which every deployment already has set.
 
-const TOKEN_SECRET_FALLBACK = 'cognita-download-proxy';
-
+// The key that signs download links. Set DOWNLOAD_SIGNING_SECRET as a Worker
+// secret to give links their own key. Until then the existing B2 key is
+// used, so nothing changes for a deployment that has not set it. There is
+// deliberately NO built-in fallback: a key that is written in this file would
+// be public, and anyone could forge download links with it.
 function _signingSecret(env) {
-  return env.B2_APPLICATION_KEY || env.FIREBASE_PROJECT_ID || TOKEN_SECRET_FALLBACK;
+  const secret = env.DOWNLOAD_SIGNING_SECRET || env.B2_APPLICATION_KEY;
+  if (!secret) {
+    throw new Error('Server misconfiguration: no signing secret is set for download links.');
+  }
+  return secret;
+}
+
+// Compares two strings in constant time, so response timing cannot be used
+// to guess a signature one character at a time.
+function _safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 async function _hmacKey(secret) {
@@ -87,7 +103,7 @@ export async function verifyDownloadToken(env, token) {
   const expectedSig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(bodyB64));
   const expectedSigB64 = _bytesToB64Url(new Uint8Array(expectedSig));
 
-  if (expectedSigB64 !== sigB64) {
+  if (!_safeEqual(expectedSigB64, sigB64)) {
     throw new Error('Invalid download token.');
   }
 
