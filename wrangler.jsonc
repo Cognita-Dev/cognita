@@ -59,9 +59,12 @@
   //               school or mobile-network IP address.
   //   RL_HEAVY:   any single signed-in user may start at most 30 AI/image/
   //               upload jobs a minute.
+  //   RL_PAYMENT: any single signed-in user may start checkout or cancel a
+  //               subscription at most 10 times a minute.
   "ratelimits": [
     { "name": "RL_GENERAL", "namespace_id": "2001", "simple": { "limit": 600, "period": 60 } },
-    { "name": "RL_HEAVY",   "namespace_id": "2002", "simple": { "limit": 30,  "period": 60 } }
+    { "name": "RL_HEAVY",   "namespace_id": "2002", "simple": { "limit": 30,  "period": 60 } },
+    { "name": "RL_PAYMENT", "namespace_id": "2003", "simple": { "limit": 10,  "period": 60 } }
   ],
 
   // Runs the reminders scheduler every 5 minutes, so reminders arrive within
