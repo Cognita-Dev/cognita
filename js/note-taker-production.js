@@ -58,10 +58,10 @@ export async function recoverNoteSession(sessionId) {
 // which transcribes it with Whisper on the Workers AI free daily
 // allocation. No token in the URL needed here — this is a normal fetch,
 // so authedFetch's Authorization header works as-is.
-export async function transcribeChunk(sessionId, blob, language) {
+export async function transcribeChunk(sessionId, blob, language, context = '') {
   const response = await auth().authedFetch(`${WORKER_URL}/api/note-sessions/${encodeURIComponent(sessionId)}/transcribe`, {
     method: 'POST',
-    headers: { 'Content-Type': blob.type || 'application/octet-stream', ...(language ? { 'X-Note-Language': language } : {}) },
+    headers: { 'Content-Type': blob.type || 'application/octet-stream', ...(language ? { 'X-Note-Language': language } : {}), ...(context ? { 'X-Note-Context': encodeURIComponent(context.slice(-400)) } : {}) },
     body: blob,
   });
   if (!response.ok) {
