@@ -59,7 +59,20 @@ const EXPORT_MIME_TYPES = {
 
 const PENDING_DELETES_KEY = 'cognita:pendingDeletes';
 const RECONCILE_THROTTLE_MS = 60000; // don't hit B2's list endpoint more than once a minute
+const RECONCILE_INTERVAL_MS = 120000; // background refresh while the tab is visible
+const TITLES_KEY = 'cognita:titles'; // tiny id -> title cache, survives even if full history can't be stored
+const HYDRATE_CONCURRENCY = 3;
+const HYDRATE_MAX_PER_PASS = 40;
+const PLACEHOLDER_TITLE = 'Untitled chat'; // legacy value written by older builds
 let _lastReconcileAt = 0;
+let _reconcileInFlight = false;
+let _hydrating = false;
+let loadingConversationId = null; // a synced chat whose body is still being downloaded
+const _hydrateFailedAt = new Map(); // id -> timestamp of last failed body fetch
+// One-time download links (blob URLs) for documents the server could not
+// persist. Keyed by message object so they survive re-renders in this
+// session but are never written to storage.
+const _transientDownloads = new WeakMap();
 
 let currentQuality = 'standard';
 let conversation = []; // { role: 'user'|'assistant', content: string, attachments?: [...], documentFile?: {...} }
@@ -137,6 +150,13 @@ export async function mount() {
 
   reconcileIfDue();
   window.addEventListener('focus', reconcileIfDue);
+  window.addEventListener('online', () => reconcileIfDue(true));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reconcileIfDue();
+  });
+  setInterval(() => {
+    if (document.visibilityState === 'visible') reconcileIfDue();
+  }, RECONCILE_INTERVAL_MS);
 
   const overlay = document.getElementById('appLoadingOverlay');
   const contentWrap = document.getElementById('appContentWrap');
@@ -312,6 +332,7 @@ function deriveTitle(messages) {
 
 function updateConversationTitle() {
   const titleEl = document.getElementById('conversationTitle');
+  if (loadingConversationId && loadingConversationId === currentConversationId) return;
   titleEl.textContent = deriveTitle(conversation);
 }
 
@@ -331,12 +352,89 @@ function loadAllConversations() {
   }
 }
 
+// Writes the history list. If the browser's storage quota is hit (large
+// image attachments/visuals fill it quickly), the oldest already-synced
+// chats are shrunk back to lightweight placeholders — same shape as a
+// chat found on a new device, with its real title kept — until the write
+// fits. Chats with unsynced edits are never shrunk. Returns whether the
+// list was stored.
 function saveAllConversations(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    return true;
   } catch (e) {
+    const evictable = list
+      .filter((c) => c && c.id !== currentConversationId && !c.notLoaded &&
+        c.remoteSyncedAt && c.updatedAt <= c.remoteSyncedAt)
+      .sort((a, b) => a.updatedAt - b.updatedAt);
+
+    for (const victim of evictable) {
+      const idx = list.findIndex((c) => c.id === victim.id);
+      if (idx < 0) continue;
+      list[idx] = _toPlaceholder(victim);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+        return true;
+      } catch (e2) { /* keep shrinking */ }
+    }
     console.error('[app] Could not persist chat history:', e.message);
+    return false;
   }
+}
+
+function _toPlaceholder(c) {
+  return {
+    id: c.id,
+    title: c.title && c.title !== PLACEHOLDER_TITLE ? c.title : deriveTitle(c.messages || []),
+    messages: [],
+    meta: [],
+    quality: c.quality || 'standard',
+    updatedAt: c.updatedAt,
+    remoteSyncedAt: c.remoteSyncedAt,
+    notLoaded: true,
+  };
+}
+
+function _loadTitleCache() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TITLES_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) { return {}; }
+}
+
+function rememberTitle(id, title) {
+  if (!id || !title || title === PLACEHOLDER_TITLE || title === 'New chat') return;
+  try {
+    const cache = _loadTitleCache();
+    if (cache[id] === title) return;
+    cache[id] = title;
+    localStorage.setItem(TITLES_KEY, JSON.stringify(cache));
+  } catch (e) { /* cache is best-effort */ }
+}
+
+function forgetTitle(id) {
+  try {
+    const cache = _loadTitleCache();
+    if (!(id in cache)) return;
+    delete cache[id];
+    localStorage.setItem(TITLES_KEY, JSON.stringify(cache));
+  } catch (e) { /* best-effort */ }
+}
+
+// A title is "real" once it came from actual conversation content.
+function _hasRealTitle(c) {
+  return !!(c && c.title && c.title !== PLACEHOLDER_TITLE && c.title !== 'New chat');
+}
+
+// What the sidebar should show for a chat. Never the legacy "Untitled
+// chat" placeholder: falls back to the remembered title, then to a title
+// derived from loaded messages, then to a neutral loading label.
+function displayTitleFor(c) {
+  if (_hasRealTitle(c)) return c.title;
+  const remembered = _loadTitleCache()[c.id];
+  if (remembered) return remembered;
+  if (Array.isArray(c.messages) && c.messages.length) return deriveTitle(c.messages);
+  return c.notLoaded ? 'Loading…' : 'New chat';
 }
 
 function makeConversationId() {
@@ -414,6 +512,9 @@ async function flushPendingDeletes() {
 // tell "I already have this version" from "the server has something
 // newer" without trusting client clocks.
 async function syncConversationToB2(entry) {
+  // A placeholder has no messages — pushing it would overwrite the real
+  // conversation on the server with an empty one.
+  if (!entry || entry.notLoaded) return;
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/save', {
       method: 'POST',
@@ -437,31 +538,92 @@ async function syncConversationToB2(entry) {
 
 // Fetches one conversation's full body from B2 and merges it into local
 // storage, replacing whatever placeholder or stale copy was there. If
-// it's the conversation currently open on screen, re-renders it too.
+// it's the conversation currently open on screen, re-renders it too
+// (keeping the scroll position). Returns true if the body was fetched.
 async function fetchAndMergeConversation(id, serverUpdatedAt) {
   try {
-    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/' + id);
-    if (!res.ok) return;
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/' + encodeURIComponent(id));
+    if (!res.ok) { _hydrateFailedAt.set(id, Date.now()); return false; }
     const data = await res.json();
-    if (!data.conversation) return;
+    if (!data.conversation) { _hydrateFailedAt.set(id, Date.now()); return false; }
 
     const all = loadAllConversations();
     const idx = all.findIndex((c) => c.id === id);
-    const merged = { ...data.conversation, id, remoteSyncedAt: serverUpdatedAt, notLoaded: false };
+    const local = idx >= 0 ? all[idx] : null;
+
+    // Never overwrite edits that haven't reached the server yet, and never
+    // swap the conversation out from under an in-flight reply.
+    const hasUnpushedEdit = local && !local.notLoaded && local.remoteSyncedAt && local.updatedAt > local.remoteSyncedAt;
+    const midReply = id === currentConversationId && isSending;
+    if (hasUnpushedEdit || midReply) return true;
+
+    const merged = {
+      ...data.conversation,
+      id,
+      remoteSyncedAt: serverUpdatedAt || (local && local.remoteSyncedAt) || data.conversation.updatedAt,
+      notLoaded: false,
+    };
+    if (!_hasRealTitle(merged)) merged.title = deriveTitle(merged.messages || []);
     if (idx >= 0) all[idx] = merged; else all.push(merged);
     saveAllConversations(all);
+    rememberTitle(id, merged.title);
+    _hydrateFailedAt.delete(id);
 
     if (id === currentConversationId) {
-      conversation = merged.messages || [];
-      conversationMeta = merged.meta || [];
-      conversationApprovals = merged.approvals || [];
-      if (merged.quality) setQuality(merged.quality);
-      renderConversation();
+      const convEl = document.getElementById('conversation');
+      const prevScroll = convEl ? convEl.scrollTop : 0;
+      const wasLoading = loadingConversationId === id;
+      const nextMessages = merged.messages || [];
+      const changed = wasLoading ||
+        nextMessages.length !== conversation.length ||
+        JSON.stringify(nextMessages[nextMessages.length - 1] || null) !== JSON.stringify(conversation[conversation.length - 1] || null) ||
+        JSON.stringify(merged.meta || []).length !== JSON.stringify(conversationMeta || []).length;
+
+      if (changed) {
+        conversation = nextMessages;
+        conversationMeta = merged.meta || [];
+        conversationApprovals = merged.approvals || [];
+        if (merged.quality) setQuality(merged.quality);
+        renderConversation();
+        if (!wasLoading && convEl) convEl.scrollTop = prevScroll;
+      }
       updateConversationTitle();
     }
+    if (loadingConversationId === id) loadingConversationId = null;
     renderSidebarHistory();
+    return true;
   } catch (e) {
     console.error('[app] Could not fetch conversation from storage:', e.message);
+    _hydrateFailedAt.set(id, Date.now());
+    return false;
+  }
+}
+
+// Downloads the bodies of synced chats whose title isn't known yet, a few
+// at a time, newest first, so the sidebar shows real titles without the
+// user having to open each chat. Chats that already have a title (even
+// as a shrunken placeholder) are left alone until opened.
+async function hydrateUnloadedConversations() {
+  if (_hydrating) return;
+  _hydrating = true;
+  try {
+    const now = Date.now();
+    const queue = loadAllConversations()
+      .filter((c) => c.notLoaded && !_hasRealTitle(c) && !_loadTitleCache()[c.id])
+      .filter((c) => !(_hydrateFailedAt.get(c.id) > now - RECONCILE_THROTTLE_MS * 5))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, HYDRATE_MAX_PER_PASS);
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const c = queue[cursor++];
+        await fetchAndMergeConversation(c.id, c.remoteSyncedAt);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(HYDRATE_CONCURRENCY, queue.length) }, worker));
+  } finally {
+    _hydrating = false;
   }
 }
 
@@ -470,6 +632,16 @@ async function fetchAndMergeConversation(id, serverUpdatedAt) {
 // wins. Never mutates local storage on a failed or malformed server
 // response — a network hiccup must never be read as "everything's gone."
 async function reconcileWithB2() {
+  if (_reconcileInFlight) return;
+  _reconcileInFlight = true;
+  try {
+    await _reconcileWithB2Inner();
+  } finally {
+    _reconcileInFlight = false;
+  }
+}
+
+async function _reconcileWithB2Inner() {
   await flushPendingDeletes();
 
   let serverList;
@@ -510,8 +682,10 @@ async function reconcileWithB2() {
       } else {
         const idx = all.findIndex((c) => c.id === local.id);
         if (idx >= 0) { all.splice(idx, 1); changed = true; }
+        forgetTitle(local.id);
         if (local.id === currentConversationId) {
           currentConversationId = null;
+          loadingConversationId = null;
           conversation = [];
           conversationMeta = [];
           conversationApprovals = [];
@@ -524,10 +698,30 @@ async function reconcileWithB2() {
     }
 
     // remote.status === 'live'
+    if (local.notLoaded) {
+      // Placeholder: the body is fetched by hydrateUnloadedConversations
+      // (or on open). Just keep its server timestamp current.
+      if (local.remoteSyncedAt !== remote.serverUpdatedAt) {
+        local.remoteSyncedAt = remote.serverUpdatedAt;
+        if (remote.serverUpdatedAt > local.updatedAt) local.updatedAt = remote.serverUpdatedAt;
+        changed = true;
+      }
+      continue;
+    }
+
     const serverIsNewer = !local.remoteSyncedAt || remote.serverUpdatedAt > local.remoteSyncedAt;
-    const localHasNoUnpushedEdit = local.remoteSyncedAt && local.updatedAt <= local.remoteSyncedAt;
-    if (serverIsNewer && (localHasNoUnpushedEdit || !local.remoteSyncedAt)) {
+    const hasUnpushedEdit = !local.remoteSyncedAt || local.updatedAt > local.remoteSyncedAt;
+
+    if (serverIsNewer && !hasUnpushedEdit) {
       fetchAndMergeConversation(local.id, remote.serverUpdatedAt);
+    } else if (hasUnpushedEdit) {
+      // Either the last push never landed (offline / failed request) or
+      // both sides changed. The later edit wins, same rule as deletes.
+      if (local.updatedAt >= remote.serverUpdatedAt) {
+        syncConversationToB2(local);
+      } else {
+        fetchAndMergeConversation(local.id, remote.serverUpdatedAt);
+      }
     }
   }
 
@@ -540,7 +734,7 @@ async function reconcileWithB2() {
     if (all.some((c) => c.id === remote.conversationId)) continue;
     all.push({
       id: remote.conversationId,
-      title: 'Untitled chat',
+      title: _loadTitleCache()[remote.conversationId] || '',
       messages: [],
       meta: [],
       quality: 'standard',
@@ -555,11 +749,14 @@ async function reconcileWithB2() {
     saveAllConversations(all);
     renderSidebarHistory();
   }
+
+  // Fill in real titles for any chats that only exist as placeholders.
+  hydrateUnloadedConversations();
 }
 
-function reconcileIfDue() {
+function reconcileIfDue(force) {
   const now = Date.now();
-  if (now - _lastReconcileAt < RECONCILE_THROTTLE_MS) return;
+  if (force !== true && now - _lastReconcileAt < RECONCILE_THROTTLE_MS) return;
   _lastReconcileAt = now;
   reconcileWithB2();
 }
@@ -569,6 +766,8 @@ function reconcileIfDue() {
 // updates the existing one afterward.
 function persistCurrentConversation() {
   if (conversation.length === 0) return;
+  // Never save while a synced chat's real messages are still downloading.
+  if (loadingConversationId && loadingConversationId === currentConversationId) return;
 
   if (!currentConversationId) {
     currentConversationId = makeConversationId();
@@ -596,6 +795,7 @@ function persistCurrentConversation() {
   }
 
   saveAllConversations(all);
+  rememberTitle(entry.id, entry.title);
   renderSidebarHistory();
   syncConversationToB2(entry);
 }
@@ -611,13 +811,14 @@ function renderSidebarHistory() {
 
   nav.innerHTML = all.map((c) => {
     const isActive = c.id === currentConversationId;
-    const title = escapeHtml(c.title);
+    const title = escapeHtml(displayTitleFor(c));
+    const isPending = c.notLoaded && !_hasRealTitle(c) && !_loadTitleCache()[c.id];
     return (
       '<div class="sidebar-history-row' + (isActive ? ' is-active' : '') + '">' +
-        '<button class="sidebar-history-item" data-id="' + c.id + '" title="' + title + '"' + (isActive ? ' aria-current="true"' : '') + '>' +
+        '<button class="sidebar-history-item' + (isPending ? ' is-pending' : '') + '" data-id="' + escapeHtml(c.id) + '" title="' + title + '"' + (isActive ? ' aria-current="true"' : '') + '>' +
           '<span>' + title + '</span>' +
         '</button>' +
-        '<button class="history-delete-btn" data-delete-id="' + c.id + '" aria-label="Delete chat: ' + title + '" title="Delete chat">' +
+        '<button class="history-delete-btn" data-delete-id="' + escapeHtml(c.id) + '" aria-label="Delete chat: ' + title + '" title="Delete chat">' +
           '<i class="ph ph-x" aria-hidden="true"></i>' +
         '</button>' +
       '</div>'
@@ -639,21 +840,39 @@ function renderSidebarHistory() {
 }
 
 function loadConversation(id) {
+  if (isSending && id !== currentConversationId) {
+    // A reply commits into whichever chat is open — switching now would
+    // put it in the wrong one.
+    showToast('Please wait for the reply to finish before switching chats.');
+    return;
+  }
   const all = loadAllConversations();
   const entry = all.find((c) => c.id === id);
   if (!entry) return;
 
   currentConversationId = entry.id;
+  loadingConversationId = null;
 
   if (entry.notLoaded) {
     conversation = [];
     conversationMeta = [];
     conversationApprovals = [];
-    renderConversation();
-    updateConversationTitle();
+    loadingConversationId = entry.id;
+    renderConversationLoading();
+    document.getElementById('conversationTitle').textContent = displayTitleFor(entry);
     renderSidebarHistory();
     closeMobileSidebar();
-    fetchAndMergeConversation(id, entry.remoteSyncedAt);
+    fetchAndMergeConversation(id, entry.remoteSyncedAt).then((ok) => {
+      if (ok || loadingConversationId !== id) return;
+      // Couldn't download it: leave the chat in the sidebar (never blank
+      // it or overwrite it) and tell the user so they can retry.
+      loadingConversationId = null;
+      if (currentConversationId === id) {
+        renderConversation();
+        updateConversationTitle();
+      }
+      showToast('Could not load this chat. Check your connection and try again.');
+    });
     return;
   }
 
@@ -670,6 +889,7 @@ function loadConversation(id) {
 function deleteConversation(id) {
   const all = loadAllConversations().filter((c) => c.id !== id);
   saveAllConversations(all);
+  forgetTitle(id);
 
   const pending = loadPendingDeletes();
   if (!pending.includes(id)) {
@@ -683,6 +903,7 @@ function deleteConversation(id) {
 
   if (id === currentConversationId) {
     currentConversationId = null;
+    loadingConversationId = null;
     conversation = [];
     conversationMeta = [];
     conversationApprovals = [];
@@ -701,7 +922,12 @@ function deleteConversation(id) {
 // while already on the chat view, or via the 'cognita:new-chat' event
 // dispatched by js/router.js when New Chat is clicked from another view.
 function startNewConversation() {
+  if (isSending) {
+    showToast('Please wait for the reply to finish before starting a new chat.');
+    return;
+  }
   currentConversationId = null;
+  loadingConversationId = null;
   conversation = [];
   conversationMeta = [];
   conversationApprovals = [];
@@ -1239,6 +1465,12 @@ function buildEffectiveContent(msg) {
 
 async function sendMessage(text) {
   if (isSending || (!text && pendingAttachments.length === 0)) return;
+  if (loadingConversationId && loadingConversationId === currentConversationId) {
+    // The saved messages haven't downloaded yet. Sending now would save a
+    // new conversation over the real one.
+    showToast('This chat is still loading. Please wait a moment.');
+    return;
+  }
   isSending = true;
 
   const input = document.getElementById('composerInput');
@@ -1469,7 +1701,6 @@ function createLiveTurnIndicator() {
   el.className = 'message is-assistant';
   el.id = id;
   el.innerHTML =
-    '<div class="message-avatar"><img src="/assets/cognita.png" alt="" style="width:16px;height:16px;"></div>' +
     '<div class="message-body">' +
       '<div class="thinking-indicator" data-role="idle-indicator">' +
         '<span class="thinking-dot"></span>' +
@@ -1574,6 +1805,21 @@ function createLiveTurnIndicator() {
    CONVERSATION RENDERING
 ════════════════════════════════════════════════════════ */
 
+// Shown while a synced chat's messages are downloading, instead of the
+// empty "What are you working on?" screen (which looked like the chat
+// had been wiped).
+function renderConversationLoading() {
+  const emptyState = document.getElementById('emptyState');
+  const list = document.getElementById('messageList');
+  emptyState.hidden = true;
+  list.hidden = false;
+  list.innerHTML =
+    '<div class="conversation-loading" role="status" aria-live="polite">' +
+      '<i class="ph ph-spinner ph-spin" aria-hidden="true"></i>' +
+      '<span>Loading chat…</span>' +
+    '</div>';
+}
+
 function renderConversation() {
   const emptyState = document.getElementById('emptyState');
   const list = document.getElementById('messageList');
@@ -1673,10 +1919,10 @@ function typewriterReveal(contentEl, fullText, sources, onDone) {
       revealed + charsPerTick
     );
 
-    contentEl.innerHTML = renderMarkdownLite(
-      fullText.slice(0, revealed),
-      sources
-    );
+    const slice = revealed >= totalChars
+      ? fullText
+      : fullText.slice(0, revealed).replace(/\[[^\[\]\n]*(?:\]\([^)\s]*)?$/, '');
+    contentEl.innerHTML = renderMarkdownLite(slice, sources);
 
     scrollToBottom();
 
@@ -1690,7 +1936,6 @@ function typewriterReveal(contentEl, fullText, sources, onDone) {
 
 function renderMessage(msg, index) {
   const isUser = msg.role === 'user';
-  const avatarContent = isUser ? 'Y' : '<img src="/assets/cognita.png" alt="" style="width:16px;height:16px;">';
   const meta = conversationMeta[index] || {};
 
   // Attachments render as thumbnails/chips only — never as raw base64
@@ -1770,12 +2015,27 @@ function renderMessage(msg, index) {
       '</div>';
   }
 
+  // Generated visual (diagram SVG or illustration image) stored on the message.
+  let visualHtml = '';
+  if (!isUser && msg.visual && msg.visual.content) {
+    visualHtml = msg.visual.type === 'svg'
+      ? '<div class="message-content message-visual">' + _sanitizeSvg(msg.visual.content) + '</div>'
+      : '<div class="message-content message-visual"><img src="data:image/jpeg;base64,' + escapeHtml(msg.visual.content) + '" alt="' + escapeHtml(msg.visualAlt || 'Generated illustration') + '"></div>';
+  }
+
   // Generated document (docx/pdf/pptx) attached to this assistant message.
   // Rendered as a chip that re-fetches the actual bytes on click, via
   // wireDocumentDownloadButtons — this is what makes the file
   // re-downloadable after a reload, unlike a one-time blob URL.
   let documentFileHtml = '';
-  if (!isUser && msg.documentFile) {
+  const transient = !isUser ? _transientDownloads.get(msg) : null;
+  if (transient) {
+    documentFileHtml =
+      '<a class="document-download-chip" href="' + escapeHtml(transient.url) + '" download="' + escapeHtml(transient.filename) + '">' +
+        '<i class="ph ph-file-arrow-down"></i>' +
+        '<span class="document-download-chip-name">' + escapeHtml(transient.filename) + '</span>' +
+      '</a>';
+  } else if (!isUser && msg.documentFile) {
     const df = msg.documentFile;
     documentFileHtml =
       '<button type="button" class="document-download-chip" ' +
@@ -1879,7 +2139,6 @@ function renderMessage(msg, index) {
 
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
-      '<div class="message-avatar">' + avatarContent + '</div>' +
       '<div class="message-body">' +
         thoughtHtml +
         actionTraceHtml +
@@ -1889,7 +2148,8 @@ function renderMessage(msg, index) {
         // this HTML is inserted, and after any step-reveal animation
         // above has finished) fills it in. This avoids a flash of the
         // full text before the typing animation takes over.
-        (msg.content ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
+        visualHtml +
+        (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         documentFileHtml +
         sourcesHtml +
         (isUser ? '' :
@@ -1917,10 +2177,16 @@ function wireMessageActionButtons() {
   document.querySelectorAll('[data-action="regenerate"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.index, 10);
-      const priorUserMsg = [...conversation.slice(0, idx)].reverse().find((m) => m.role === 'user');
-      if (!priorUserMsg) return;
-      conversation = conversation.slice(0, idx);
-      conversationMeta = conversationMeta.slice(0, idx);
+      let priorUserIdx = -1;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (conversation[i].role === 'user') { priorUserIdx = i; break; }
+      }
+      if (priorUserIdx < 0) return;
+      const priorUserMsg = conversation[priorUserIdx];
+      // Cut back to BEFORE the user message being retried — sendMessage
+      // adds it again, so cutting at the reply left a duplicate.
+      conversation = conversation.slice(0, priorUserIdx);
+      conversationMeta = conversationMeta.slice(0, priorUserIdx);
       renderConversation();
       await sendMessage(priorUserMsg.content);
     });
@@ -2024,10 +2290,13 @@ async function downloadGeneratedFile(btn) {
     const url = WORKER_URL + '/api/files/' + encodeURIComponent(conversationId) +
       '/' + encodeURIComponent(fileId) + '?filename=' + encodeURIComponent(filename);
     const res = await window.Auth.authedFetch(url);
-    const data = await res.json();
+    let data = null;
+    try { data = await res.json(); } catch (parseErr) { data = null; }
 
-    if (!res.ok) {
-      showToast(data.error || 'Could not download that file.');
+    if (!res.ok || !data || !data.content) {
+      showToast((data && data.error) || (res.status === 404
+        ? 'This file is no longer available.'
+        : 'Could not download that file. Please try again.'));
       return;
     }
 
@@ -2090,7 +2359,6 @@ function appendThinkingIndicator() {
   el.className = 'message is-assistant';
   el.id = id;
   el.innerHTML =
-    '<div class="message-avatar"><img src="/assets/cognita.png" alt="" style="width:16px;height:16px;"></div>' +
     '<div class="message-body">' +
       '<div class="thinking-indicator">' +
         '<span class="thinking-dot"></span>' +
@@ -2138,7 +2406,6 @@ function appendSystemNotice(text, kind) {
   const el = document.createElement('div');
   el.className = 'message is-assistant';
   el.innerHTML =
-    '<div class="message-avatar"><i class="ph ph-warning" style="font-size:14px;"></i></div>' +
     '<div class="message-body"><div class="message-content" style="color:var(--text-3);">' +
       escapeHtml(text) +
     '</div></div>';
@@ -2214,7 +2481,7 @@ function renderMarkdownLite(text, sources) {
   // attribute (e.g. a literal "&" is already "&amp;") — no further
   // escaping or unescaping needed.
   const linkPlaceholders = [];
-  raw = raw.replace(/\[([^\[\]\n]+)\]\((https?:\/\/[^\s()]+)\)/g, (_, label, url) => {
+  raw = raw.replace(/\[([^\[\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)/g, (_, label, url) => {
     const html = '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
     linkPlaceholders.push(html);
     return '\x00LINK' + (linkPlaceholders.length - 1) + '\x00';
@@ -2424,31 +2691,37 @@ function setModalLoading(btn, isLoading) {
   btn.querySelector('.btn-spinner').hidden = !isLoading;
 }
 
+// Strips anything executable from generated SVG before it is shown or stored.
+function _sanitizeSvg(svg) {
+  return String(svg || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|xlink:href)\s*=\s*("\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
+}
+
+// The visual itself is stored on the message (msg.visual) so it survives
+// re-renders, reloads and syncing to other devices. `content` stays a short
+// text placeholder — that is all the model ever sees.
 function insertVisualIntoConversation(data, promptText) {
-  let contentHtml;
-  if (data.type === 'svg') {
-    contentHtml = data.content;
-  } else {
-    contentHtml = '<img src="data:image/jpeg;base64,' + data.content + '" alt="' + escapeHtml(promptText) + '" style="border-radius:12px;max-width:100%;">';
+  if (loadingConversationId && loadingConversationId === currentConversationId) {
+    showToast('This chat is still loading. Please try again in a moment.');
+    return;
   }
+  const visual = data.type === 'svg'
+    ? { type: 'svg', content: _sanitizeSvg(data.content) }
+    : { type: 'image', content: data.content };
 
   conversation.push({ role: 'user', content: 'Generate a visual: ' + promptText });
-  conversation.push({ role: 'assistant', content: '__VISUAL__' });
+  conversation.push({
+    role: 'assistant',
+    content: '[Generated a visual for: ' + promptText + ']',
+    visual,
+    visualAlt: promptText,
+  });
 
   renderConversation();
   updateConversationTitle();
-
-  const list = document.getElementById('messageList');
-  const lastMsg = list.lastElementChild;
-  if (lastMsg) {
-    const contentEl = lastMsg.querySelector('.message-content');
-    if (contentEl) contentEl.innerHTML = contentHtml;
-  }
-
-  conversation = conversation.map((m) =>
-    m.content === '__VISUAL__' ? { ...m, content: '[Generated a visual for: ' + promptText + ']' } : m
-  );
-
   persistCurrentConversation();
 }
 
@@ -2536,6 +2809,10 @@ function wireDocumentModal() {
 }
 
 function insertDocumentIntoConversation(data, topicText, docType, conversationId) {
+  if (loadingConversationId && loadingConversationId === currentConversationId) {
+    showToast('This chat is still loading. Please try again in a moment.');
+    return;
+  }
   conversation.push({ role: 'user', content: 'Create a ' + docType + ' about: ' + topicText });
 
   const mimeType = EXPORT_MIME_TYPES[data.format];
@@ -2559,31 +2836,22 @@ function insertDocumentIntoConversation(data, topicText, docType, conversationId
       };
     }
 
+    if (!data.fileId) {
+      // Fallback: no persisted copy exists, so give an immediate one-time
+      // download via a blob URL built from this response's own bytes. The
+      // link is remembered for this session so it survives re-renders.
+      const byteChars = atob(data.content);
+      const bytes = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mimeType });
+      _transientDownloads.set(assistantMessage, { url: URL.createObjectURL(blob), filename: data.filename });
+    }
+
     conversation.push(assistantMessage);
     renderConversation();
     updateConversationTitle();
 
     if (!data.fileId) {
-      // Fallback: no persisted copy exists, so give an immediate one-time
-      // download via a blob URL built from this response's own bytes.
-      const byteChars = atob(data.content);
-      const byteNumbers = new Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
-      const url = URL.createObjectURL(blob);
-
-      const list = document.getElementById('messageList');
-      const lastMsg = list.lastElementChild;
-      if (lastMsg) {
-        const contentEl = lastMsg.querySelector('.message-content');
-        if (contentEl) {
-          contentEl.innerHTML =
-            '<a class="document-download-chip" href="' + url + '" download="' + escapeHtml(data.filename) + '">' +
-              '<i class="ph ph-file-arrow-down"></i>' +
-              '<span>' + escapeHtml(data.filename) + '</span>' +
-            '</a>';
-        }
-      }
       showToast('This file could not be saved for later — download it now before leaving this chat.');
     }
   } else {
