@@ -1,8 +1,10 @@
-import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk } from './note-taker-production.js'
+import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote } from './note-taker-production.js'
 
 const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
 const RECOVERY_KEY = 'cognitaNoteTakerSession'
+const AUTOSAVE_PREF_KEY = 'cognitaNoteTakerSaveOnFinish'
+const MIN_SUMMARY_CHARS = 200 // matches saved-notes-endpoint.js
 const AUTOSAVE_MS = 20000
 const RETRY_PRIMARY_MS = 30000
 const MAX_SPEECH_FAILURES = 3
@@ -33,6 +35,11 @@ let startedAt, pausedMs = 0, pauseAt = 0, finishArmed = null, opener = null
 let segments = [], interim = ''
 let state = 'idle' // idle | requesting-permission | connecting | recording | paused | degraded | stopping | completed | error
 let sessionId = null, sessionVersion = 1
+// The note on screen after recording, or opened from Saved notes. Null until then.
+// { id, createdAt, durationMs, language, agenda, summary, saved, dirty }
+let draft = null, editVersion = 0, saving = false, summarizing = false
+let savedNotes = null, savedLimit = null, savedLoading = false, savedFailed = false, searchTerm = ''
+let deleteArmed = null, newArmed = null, discardArmedId = null
 
 const ACTIVE = ['recording', 'paused', 'degraded', 'connecting']
 const isActive = () => ACTIVE.includes(state)
@@ -47,7 +54,14 @@ function setState(next) { state = next; $('noteTakerLive').dataset.state = next;
 function setStatus(text, detail = '') { $('noteTakerStatus').textContent = text; $('noteTakerConnection').textContent = detail }
 // Errors before the live view exists must show in the setup view, otherwise they render into a hidden panel.
 function showSetupError(text) { const el = $('noteTakerSetupError'); el.textContent = text; el.hidden = !text }
-function show(view) { for (const v of ['Setup', 'Live', 'Complete']) $(`noteTaker${v}`).hidden = v.toLowerCase() !== view }
+function show(view) {
+  for (const v of ['Setup', 'Live', 'Complete', 'Saved']) $(`noteTaker${v}`).hidden = v.toLowerCase() !== view
+  $('noteTakerTabs').hidden = view === 'live' // the recording screen has no room for tabs
+  const onSaved = view === 'saved'
+  $('noteTakerTabSaved').setAttribute('aria-selected', String(onSaved))
+  $('noteTakerTabRecord').setAttribute('aria-selected', String(!onSaved))
+  if (view !== 'setup') $('noteTakerRecoveryBanner').hidden = true
+}
 
 function render() {
   const root = $('noteTakerTranscript')
@@ -81,7 +95,7 @@ function open() {
   $('noteTakerChip').hidden = true
   document.body.classList.add('note-taker-open')
   if (isActive()) { show('live'); render(); return $('noteTakerPause').focus() }
-  if (state === 'completed' && $('noteTakerEditor').value) { show('complete'); return $('noteTakerEditor').focus() }
+  if (draft && $('noteTakerEditor').value) { show('complete'); return $('noteTakerEditor').focus() }
   resetSetup()
   checkForRecovery()
   $('noteTakerMeetingTitle').focus()
@@ -92,6 +106,7 @@ function resetSetup() {
   $('noteTakerStop').innerHTML = '<i class="ph ph-stop"></i> Finish'
   $('noteTakerCopy').innerHTML = '<i class="ph ph-copy"></i> Copy'
   updateLanguageHint()
+  try { $('noteTakerAutoSave').checked = localStorage.getItem(AUTOSAVE_PREF_KEY) === '1' } catch {}
 }
 // Closing during a recording minimizes it. The old confirm() promised the note "stays open in the
 // background", but reopening showed the setup form with no way back to the live session.
@@ -356,16 +371,35 @@ async function stopNow() {
   const text = segments.map((s) => `[${s.time}] ${s.text}`).join('\n\n')
   if (sessionId) { try { await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: 'completed', updatedAt: new Date().toISOString() }) } catch {} }
   clearRecoveryPointer()
-  setState('completed'); sessionId = null
+  setState('completed')
+  draft = {
+    id: sessionId || crypto.randomUUID().replaceAll('-', ''),
+    createdAt: new Date(startedAt).toISOString(), durationMs: elapsedMs(), language: langCode(),
+    agenda: $('noteTakerAgenda').value.trim(), summary: null, saved: false, dirty: false,
+  }
+  sessionId = null
   $('noteTakerEditor').value = text
-  $('noteTakerCompleteTitle').textContent = $('noteTakerMeetingTitle').value.trim() || 'Meeting notes'
-  $('noteTakerMeta').textContent = `${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, ${elapsed()}, ${$('noteTakerLanguage').selectedOptions[0].text}`
+  $('noteTakerCompleteTitle').value = $('noteTakerMeetingTitle').value.trim()
   $('noteTakerChip').hidden = true
-  show('complete')
+  showComplete()
   if (modal.hidden) open()
   $('noteTakerEditor').focus()
+  if (text.trim() && $('noteTakerAutoSave').checked) saveCurrent()
 }
-function newNote() { setState('idle'); segments = []; $('noteTakerEditor').value = ''; $('noteTakerMeetingTitle').value = ''; resetSetup(); checkForRecovery(); $('noteTakerMeetingTitle').focus() }
+function hasUnsavedWork() { return !!(draft && $('noteTakerEditor').value.trim() && (!draft.saved || draft.dirty)) }
+function newNote() {
+  // Starting over discards whatever is on screen, so an unsaved note needs a second tap.
+  const btn = $('noteTakerNew')
+  if (hasUnsavedWork() && !newArmed) {
+    btn.textContent = 'Discard unsaved note?'
+    newArmed = setTimeout(() => { newArmed = null; btn.innerHTML = '<i class="ph ph-plus"></i> New note' }, 4000)
+    return
+  }
+  clearTimeout(newArmed); newArmed = null; btn.innerHTML = '<i class="ph ph-plus"></i> New note'
+  setState('idle'); segments = []; draft = null
+  $('noteTakerEditor').value = ''; $('noteTakerMeetingTitle').value = ''; $('noteTakerCompleteTitle').value = ''; $('noteTakerAgenda').value = ''
+  resetSetup(); checkForRecovery(); $('noteTakerMeetingTitle').focus()
+}
 async function copyNote() {
   const btn = $('noteTakerCopy')
   try { await navigator.clipboard.writeText($('noteTakerEditor').value); btn.innerHTML = '<i class="ph ph-check"></i> Copied' }
@@ -373,12 +407,198 @@ async function copyNote() {
   setTimeout(() => (btn.innerHTML = '<i class="ph ph-copy"></i> Copy'), 2000)
 }
 function downloadNote() {
-  const name = ($('noteTakerCompleteTitle').textContent || 'meeting-notes').replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 80)
+  const name = ($('noteTakerCompleteTitle').value.trim() || 'meeting-notes').replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 80)
   const a = document.createElement('a')
   a.href = URL.createObjectURL(new Blob([$('noteTakerEditor').value], { type: 'text/plain;charset=utf-8' }))
   a.download = `${name}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
+// ---------- Saved notes: save, summarize, browse ----------
+const langLabel = (code) => $('noteTakerLanguage').querySelector(`option[value="${code}"]`)?.text || ''
+const fmtDate = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) }
+const fmtMinutes = (ms) => (ms > 0 ? `${Math.max(1, Math.round(ms / 60000))} min` : '')
+function relativeDay(iso) {
+  const d = new Date(iso); if (isNaN(d)) return ''
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000)
+  return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })
+}
+const setSaveState = (text, isError = false) => { const el = $('noteTakerSaveState'); el.textContent = text; el.dataset.error = String(isError); el.setAttribute('role', isError ? 'alert' : 'status') }
+const setBtn = (id, icon, label, disabled = false) => { const b = $(id); b.disabled = disabled; b.querySelector('i').className = `ph ph-${icon}`; b.querySelector('span').textContent = label }
+
+function showComplete() {
+  show('complete')
+  $('noteTakerMeta').textContent = [fmtDate(draft.createdAt), fmtMinutes(draft.durationMs) || null, langLabel(draft.language)].filter(Boolean).join(', ')
+  $('noteTakerDelete').hidden = !draft.saved
+  renderSummary()
+  refreshSaveUi()
+}
+function refreshSaveUi() {
+  if (!draft) return
+  const hasText = !!$('noteTakerEditor').value.trim()
+  const canSummarize = $('noteTakerEditor').value.trim().length >= MIN_SUMMARY_CHARS
+  if (saving) setBtn('noteTakerSave', 'circle-notch', 'Saving', true)
+  else if (!hasText) setBtn('noteTakerSave', 'floppy-disk', 'Save note', true)
+  else if (draft.saved && !draft.dirty) setBtn('noteTakerSave', 'check', 'Saved', true)
+  else setBtn('noteTakerSave', 'floppy-disk', draft.saved ? 'Save changes' : 'Save note')
+  if (summarizing) setBtn('noteTakerSummarize', 'circle-notch', 'Summarizing', true)
+  else setBtn('noteTakerSummarize', 'list-checks', draft.summary ? 'Summarize again' : 'Summarize', !canSummarize)
+  $('noteTakerSummarize').title = canSummarize ? '' : 'Record a little more to get a summary'
+  $('noteTakerSave').classList.toggle('is-busy', saving); $('noteTakerSummarize').classList.toggle('is-busy', summarizing)
+  $('noteTakerDelete').hidden = !draft.saved
+  if (saving || $('noteTakerSaveState').dataset.error === 'true') return
+  setSaveState(!hasText ? 'Nothing was transcribed, so there is nothing to save.'
+    : draft.saved && draft.dirty ? 'You have unsaved changes.'
+    : draft.saved ? 'Saved to your notes. You can open it from Saved notes.'
+    : 'Not saved yet. Save it to open this note later.')
+}
+function markEdited() { if (!draft) return; editVersion++; if (draft.saved) draft.dirty = true; $('noteTakerSaveState').dataset.error = 'false'; refreshSaveUi() }
+
+async function saveCurrent() {
+  if (!draft || saving || !$('noteTakerEditor').value.trim()) return
+  saving = true; $('noteTakerSaveState').dataset.error = 'false'; setSaveState('Saving...'); refreshSaveUi()
+  const version = editVersion
+  try {
+    await saveNote({ id: draft.id, title: $('noteTakerCompleteTitle').value.trim(), language: draft.language, durationMs: draft.durationMs, createdAt: draft.createdAt, transcript: $('noteTakerEditor').value, summary: draft.summary })
+    draft.saved = true; draft.dirty = editVersion !== version
+    savedNotes = null // the list is stale now; reload it next time it is opened
+    saving = false; $('noteTakerSaveState').dataset.error = 'false'
+  } catch (e) {
+    saving = false; setSaveState(`${e.message} Your note is still on screen.`, true)
+  }
+  refreshSaveUi()
+}
+
+// ----- Summary -----
+function renderSummary() {
+  const box = $('noteTakerSummary'); const s = draft?.summary
+  if (summarizing) { box.hidden = false; box.innerHTML = '<div class="note-skeleton"><span></span><span></span><span></span></div>'; return }
+  if (!s) { box.hidden = true; box.innerHTML = ''; return }
+  const list = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`
+  const section = (title, body) => body ? `<section><h4>${title}</h4>${body}</section>` : ''
+  const actions = s.actionItems.length ? `<ul class="note-actions">${s.actionItems.map((a) => `<li><span>${escapeHtml(a.task)}</span>${a.owner || a.due || a.priority === 'high' ? `<small>${[a.owner, a.due, a.priority === 'high' ? 'High priority' : ''].filter(Boolean).map(escapeHtml).join(', ')}</small>` : ''}</li>`).join('')}</ul>` : ''
+  box.hidden = false
+  box.innerHTML = `<div class="note-summary-head"><h3>Summary</h3><button class="note-taker-ghost" id="noteTakerCopySummary" type="button"><i class="ph ph-copy"></i> Copy summary</button></div>`
+    + (s.overview ? `<p class="note-overview">${escapeHtml(s.overview)}</p>` : '')
+    + section('Decisions', s.decisions.length ? list(s.decisions) : '')
+    + section('Action items', actions)
+    + section('Key points', s.keyPoints.length ? list(s.keyPoints) : '')
+    + section('Open questions', s.openQuestions.length ? list(s.openQuestions) : '')
+  $('noteTakerCopySummary').addEventListener('click', copySummary)
+}
+function summaryText() {
+  const s = draft?.summary; if (!s) return ''
+  const block = (title, lines) => lines.length ? `${title}\n${lines.map((l) => `- ${l}`).join('\n')}` : ''
+  return [$('noteTakerCompleteTitle').value.trim(), s.overview,
+    block('Decisions', s.decisions),
+    block('Action items', s.actionItems.map((a) => [a.task, [a.owner, a.due].filter(Boolean).join(', ')].filter(Boolean).join(' (') + (a.owner || a.due ? ')' : ''))),
+    block('Key points', s.keyPoints), block('Open questions', s.openQuestions)].filter(Boolean).join('\n\n')
+}
+async function copySummary() {
+  const btn = $('noteTakerCopySummary')
+  try { await navigator.clipboard.writeText(summaryText()); btn.innerHTML = '<i class="ph ph-check"></i> Copied' } catch { btn.innerHTML = 'Copy failed' }
+  setTimeout(() => { if (btn.isConnected) btn.innerHTML = '<i class="ph ph-copy"></i> Copy summary' }, 2000)
+}
+async function summarizeCurrent() {
+  if (!draft || summarizing) return
+  summarizing = true; $('noteTakerSaveState').dataset.error = 'false'; renderSummary(); refreshSaveUi()
+  const target = draft
+  let summary = null, failure = null
+  try {
+    summary = await summarizeNote({ transcript: $('noteTakerEditor').value, title: $('noteTakerCompleteTitle').value.trim(), agenda: target.agenda || '' })
+  } catch (e) { failure = e }
+  summarizing = false
+  if (draft !== target) return // the person moved on to another note while this ran
+  if (summary) {
+    target.summary = summary
+    if (!$('noteTakerCompleteTitle').value.trim() && summary.title) $('noteTakerCompleteTitle').value = summary.title // name untitled notes
+    if (target.saved) target.dirty = true
+  } else setSaveState(failure?.message || 'Could not summarize. Please try again.', true)
+  renderSummary(); refreshSaveUi()
+  if (summary && target.saved) saveCurrent() // keep the stored note in step with what is on screen
+}
+
+// ----- Saved notes list -----
+function noteMatches(n, words) { const hay = `${n.title} ${n.searchText}`.toLowerCase(); return words.every((w) => hay.includes(w)) }
+function renderSaved() {
+  const list = $('noteTakerSavedList'); const err = $('noteTakerSavedError'); const limit = $('noteTakerSavedLimit')
+  const count = $('noteTakerSavedCount')
+  count.hidden = !savedNotes; count.textContent = savedNotes ? String(savedNotes.length) : ''
+  limit.hidden = !(savedNotes && savedLimit); if (savedNotes && savedLimit) limit.textContent = `${savedNotes.length} of ${savedLimit} notes saved on your plan.`
+  $('noteTakerSearch').disabled = !savedNotes?.length
+  if (savedLoading) { err.hidden = true; list.innerHTML = '<div class="note-row-skeleton"></div><div class="note-row-skeleton"></div><div class="note-row-skeleton"></div>'; return }
+  if (savedFailed) { list.innerHTML = '<div class="note-taker-empty"><p>Your saved notes could not be loaded. They have not been changed.</p><button class="note-taker-secondary" id="noteTakerSavedRetry" type="button">Try again</button></div>'; $('noteTakerSavedRetry').addEventListener('click', () => loadSaved(true)); return }
+  if (!savedNotes?.length) { list.innerHTML = '<div class="note-taker-empty"><p>No saved notes yet.</p><p class="note-empty-sub">Record a meeting, then choose Save note. Turn on Save to my notes when I finish to skip that step.</p><button class="note-taker-secondary" id="noteTakerSavedRecord" type="button"><i class="ph ph-microphone"></i> Start a recording</button></div>'; $('noteTakerSavedRecord').addEventListener('click', () => showRecordTab()); return }
+  const words = searchTerm.toLowerCase().split(/\s+/).filter(Boolean)
+  const rows = savedNotes.filter((n) => noteMatches(n, words))
+  if (!rows.length) { list.innerHTML = `<div class="note-taker-empty"><p>No notes match "${escapeHtml(searchTerm)}".</p><p class="note-empty-sub">Search covers titles and summaries. Summarize a note to make it easier to find.</p></div>`; return }
+  list.innerHTML = rows.map((n) => `<button class="note-row" type="button" data-id="${escapeHtml(n.id)}"><span class="note-row-top"><strong>${escapeHtml(n.title)}</strong><time datetime="${escapeHtml(n.updatedAt)}">${escapeHtml(relativeDay(n.updatedAt))}</time></span><span class="note-row-meta">${[fmtMinutes(n.durationMs), n.hasSummary ? 'Summarized' : ''].filter(Boolean).join(', ')}</span><span class="note-row-preview">${escapeHtml(n.preview)}</span></button>`).join('')
+}
+async function loadSaved(force = false) {
+  if (savedLoading || (savedNotes && !force)) return renderSaved()
+  savedLoading = true; savedFailed = false; renderSaved()
+  try { const res = await listSavedNotes(); savedNotes = res.notes || []; savedLimit = res.limit || null }
+  catch (e) { savedFailed = true; savedNotes = null }
+  savedLoading = false; renderSaved()
+}
+function showSavedTab() {
+  show('saved'); $('noteTakerSavedError').hidden = true; discardArmedId = null
+  loadSaved(savedNotes === null)
+}
+function showRecordTab() {
+  if (draft && $('noteTakerEditor').value) return showComplete()
+  resetSetup(); checkForRecovery()
+}
+async function openSaved(id, row) {
+  const err = $('noteTakerSavedError'); err.hidden = true
+  if (hasUnsavedWork() && draft.id !== id && discardArmedId !== id) {
+    discardArmedId = id
+    err.textContent = 'You have an unsaved note open. Select this note again to discard it and open this one.'; err.hidden = false
+    return
+  }
+  discardArmedId = null; row.disabled = true; row.classList.add('is-loading')
+  try {
+    const note = await getSavedNote(id)
+    segments = []
+    draft = { id: note.id, createdAt: note.createdAt, durationMs: note.durationMs || 0, language: note.language, agenda: '', summary: note.summary || null, saved: true, dirty: false }
+    $('noteTakerEditor').value = note.transcript; $('noteTakerCompleteTitle').value = note.title === 'Untitled meeting' ? '' : note.title
+    editVersion++; setSaveState(''); $('noteTakerSaveState').dataset.error = 'false'
+    showComplete(); $('noteTakerCompleteTitle').blur()
+  } catch (e) {
+    row.disabled = false; row.classList.remove('is-loading')
+    err.textContent = e.message; err.hidden = false
+    if (e.status === 404) loadSaved(true) // it was deleted elsewhere; refresh the list
+  }
+}
+async function deleteCurrent() {
+  if (!draft?.saved) return
+  const btn = $('noteTakerDelete')
+  if (!deleteArmed) {
+    btn.innerHTML = '<i class="ph ph-trash"></i> Tap again to delete for good'
+    deleteArmed = setTimeout(() => { deleteArmed = null; btn.innerHTML = '<i class="ph ph-trash"></i> Delete' }, 4000)
+    return
+  }
+  clearTimeout(deleteArmed); deleteArmed = null; btn.disabled = true; btn.textContent = 'Deleting...'
+  try {
+    await deleteSavedNote(draft.id)
+    savedNotes = null; draft = null; $('noteTakerEditor').value = ''; $('noteTakerCompleteTitle').value = ''
+    btn.disabled = false; btn.innerHTML = '<i class="ph ph-trash"></i> Delete'
+    showSavedTab()
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = '<i class="ph ph-trash"></i> Delete'
+    setSaveState(e.message, true)
+  }
+}
+
+$('noteTakerSave').addEventListener('click', saveCurrent)
+$('noteTakerSummarize').addEventListener('click', summarizeCurrent)
+$('noteTakerDelete').addEventListener('click', deleteCurrent)
+$('noteTakerEditor').addEventListener('input', markEdited)
+$('noteTakerCompleteTitle').addEventListener('input', markEdited)
+$('noteTakerTabRecord').addEventListener('click', showRecordTab)
+$('noteTakerTabSaved').addEventListener('click', showSavedTab)
+$('noteTakerSearch').addEventListener('input', (e) => { searchTerm = e.target.value.trim(); renderSaved() })
+$('noteTakerSavedList').addEventListener('click', (e) => { const row = e.target.closest('.note-row'); if (row) openSaved(row.dataset.id, row) })
+$('noteTakerAutoSave').addEventListener('change', (e) => { try { localStorage.setItem(AUTOSAVE_PREF_KEY, e.target.checked ? '1' : '0') } catch {} })
 $('noteTakerStart').addEventListener('click', start)
 $('noteTakerPause').addEventListener('click', pause)
 $('noteTakerStop').addEventListener('click', finish)
@@ -394,4 +614,4 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.h
 window.addEventListener('cognita:open-note-taker', open)
 window.addEventListener('online', () => { if (state === 'degraded' && browserLang()) { clearTimeout(retryTimer); stopChunkLoop(); startPrimarySpeech() } })
 window.addEventListener('offline', () => { if (isActive()) setStatus('Offline', browserLang() ? 'Live transcription will resume when you reconnect' : 'Cloud transcription will resume when you reconnect') })
-window.addEventListener('beforeunload', (e) => { if (isActive()) { e.preventDefault(); e.returnValue = '' } })
+window.addEventListener('beforeunload', (e) => { if (isActive() || hasUnsavedWork()) { e.preventDefault(); e.returnValue = '' } })
