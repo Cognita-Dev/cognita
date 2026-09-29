@@ -470,6 +470,11 @@
 .topbar-spacer { flex: 1; }
 
 /* ── Conversation ── */
+/* Shared reading width for the message list AND the composer, so both
+   always line up. Fluid: fills the space on phones/tablets, and caps at a
+   comfortable line length on large desktop screens. */
+.app-content-wrap { --chat-max-width: 860px; }
+
 .conversation {
   flex: 1;
   overflow-y: auto;
@@ -598,7 +603,8 @@
 }
 
 .message-list {
-  max-width: 680px;
+  width: 100%;
+  max-width: var(--chat-max-width, 860px);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -610,36 +616,24 @@
      Assistant reads as editorial content, not a chat bubble. ── */
 .message {
   display: flex;
-  gap: var(--space-3);
-  max-width: 92%;
   min-width: 0;
   animation: fadeInUp var(--duration-base) var(--ease);
 }
 
+/* No avatars: assistant replies use the full width of the chat column;
+   user messages are right-aligned bubbles that can grow up to 85%. */
 .message.is-assistant {
-  align-self: flex-start;
-  flex-direction: row;
+  align-self: stretch;
+  width: 100%;
   max-width: 100%;
+  flex-direction: row;
 }
 
 .message.is-user {
   align-self: flex-end;
+  max-width: 85%;
   flex-direction: row-reverse;
 }
-
-.message-avatar {
-  width: 24px; height: 24px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  background: var(--bg-subtle);
-  color: var(--text-2);
-  overflow: hidden;
-  margin-top: 2px;
-}
-.message.is-user .message-avatar { background: var(--text-1); color: var(--bg-base); }
 
 .message-body {
   flex: 1;
@@ -1093,7 +1087,8 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 .composer-wrap { padding: 0 var(--space-5) var(--space-5); flex-shrink: 0; }
 
 .composer {
-  max-width: 680px;
+  width: 100%;
+  max-width: var(--chat-max-width, 860px);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -1749,7 +1744,7 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   .mobile-sidebar-btn { display: flex; }
   .conversation-title { max-width: 46vw; }
 
-  .message { max-width: 96%; }
+  .message.is-user { max-width: 90%; }
   .conversation { padding-top: var(--space-5); }
 
   .quality-picker-menu {
@@ -2028,4 +2023,44 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
 
 @media (prefers-color-scheme: dark) {
   .reminder-delete-btn:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
+}
+
+
+/* ── Chat width, mobile: use the whole screen. Less side padding, no
+   fixed max-width on user bubbles beyond a small gutter. ── */
+@media (max-width: 900px) {
+  .conversation { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .composer-wrap { padding-left: var(--space-3); padding-right: var(--space-3); }
+}
+@media (max-width: 600px) {
+  .conversation { padding-left: 14px; padding-right: 14px; }
+  .message-list { gap: var(--space-5); }
+  .message.is-user { max-width: 92%; }
+}
+
+/* ── Chat body loading state (synced chat whose messages are downloading) ── */
+.conversation-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-7) 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.conversation-loading i { animation: spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .conversation-loading i { animation: none; }
+}
+
+/* Sidebar row whose title hasn't been fetched yet */
+.sidebar-history-item.is-pending span { color: var(--text-4); font-style: italic; }
+
+/* Generated visuals (diagram SVG / illustration) shown in a reply */
+.message-content.message-visual { overflow-x: auto; }
+.message-content.message-visual svg,
+.message-content.message-visual img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
 }
