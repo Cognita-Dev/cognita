@@ -10,7 +10,6 @@
 <!-- iOS ignores the manifest for home-screen install chrome, so these are
      also needed for the icon/status-bar to look right once installed. -->
 <link rel="apple-touch-icon" href="/pwa/icons/cognita.png">
-<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Cognita">
@@ -1501,6 +1500,10 @@
         <div><h2 id="noteTakerTitle">Note Taker</h2><p>Record a conversation and get an editable transcript.</p></div>
         <button class="note-taker-icon-btn" id="noteTakerClose" type="button" aria-label="Close Note Taker"><i class="ph ph-x"></i></button>
       </header>
+      <div class="note-taker-tabs" id="noteTakerTabs" role="tablist" aria-label="Note Taker">
+        <button class="note-taker-tab" id="noteTakerTabRecord" type="button" role="tab" aria-selected="true">Record</button>
+        <button class="note-taker-tab" id="noteTakerTabSaved" type="button" role="tab" aria-selected="false">Saved notes<span class="note-taker-tab-count" id="noteTakerSavedCount" hidden></span></button>
+      </div>
       <div class="note-taker-recovery" id="noteTakerRecoveryBanner" hidden>
         <p id="noteTakerRecoveryText"></p>
         <div class="note-taker-recovery-actions"><button class="note-taker-ghost" id="noteTakerRecoveryDiscard" type="button">Discard</button><button class="note-taker-secondary" id="noteTakerRecoveryRestore" type="button">Restore</button></div>
@@ -1515,6 +1518,12 @@
           </select>
         </label>
         <p class="note-taker-hint" id="noteTakerLanguageHint"></p>
+        <details class="note-taker-agenda">
+          <summary>Add an agenda</summary>
+          <textarea id="noteTakerAgenda" rows="3" maxlength="1500" placeholder="Review progress&#10;Decide launch date&#10;Assign tasks" aria-label="Agenda, optional"></textarea>
+          <p class="note-taker-hint">Used only to write a better summary. It is not saved with the note.</p>
+        </details>
+        <label class="note-taker-check" for="noteTakerAutoSave"><input type="checkbox" id="noteTakerAutoSave"><span>Save to my notes when I finish</span></label>
         <p class="note-taker-error" id="noteTakerSetupError" role="alert" hidden></p>
         <button class="note-taker-primary" id="noteTakerStart" type="button"><i class="ph ph-microphone"></i> Start recording</button>
       </div>
@@ -1529,9 +1538,35 @@
         <div class="note-taker-controls"><button id="noteTakerPause" class="note-taker-secondary" type="button"><i class="ph ph-pause"></i> Pause</button><button id="noteTakerStop" class="note-taker-stop" type="button"><i class="ph ph-stop"></i> Finish</button></div>
       </div>
       <div class="note-taker-complete" id="noteTakerComplete" hidden>
-        <div class="note-taker-complete-head"><div><h3 id="noteTakerCompleteTitle">Meeting notes</h3><p id="noteTakerMeta"></p></div><button class="note-taker-ghost" id="noteTakerNew" type="button"><i class="ph ph-plus"></i> New note</button></div>
+        <div class="note-taker-complete-head">
+          <div>
+            <input class="note-taker-title-input" id="noteTakerCompleteTitle" maxlength="120" autocomplete="off" placeholder="Meeting notes" aria-label="Note title">
+            <p id="noteTakerMeta"></p>
+          </div>
+          <button class="note-taker-ghost" id="noteTakerNew" type="button"><i class="ph ph-plus"></i> New note</button>
+        </div>
         <textarea id="noteTakerEditor" class="note-taker-editor" aria-label="Transcript, editable" spellcheck="true"></textarea>
-        <div class="note-taker-actions"><button class="note-taker-secondary" id="noteTakerCopy" type="button"><i class="ph ph-copy"></i> Copy</button><button class="note-taker-secondary" id="noteTakerDownload" type="button"><i class="ph ph-download-simple"></i> Download</button><button class="note-taker-primary" id="noteTakerAsk" type="button">Ask Cognita about this</button></div>
+        <p class="note-taker-save-state" id="noteTakerSaveState" role="status" aria-live="polite"></p>
+        <div class="note-taker-actions note-taker-actions-main">
+          <button class="note-taker-primary" id="noteTakerSave" type="button"><i class="ph ph-floppy-disk"></i> <span>Save note</span></button>
+          <button class="note-taker-secondary" id="noteTakerSummarize" type="button"><i class="ph ph-list-checks"></i> <span>Summarize</span></button>
+        </div>
+        <div class="note-taker-summary" id="noteTakerSummary" hidden aria-live="polite"></div>
+        <div class="note-taker-actions note-taker-actions-more">
+          <button class="note-taker-ghost" id="noteTakerCopy" type="button"><i class="ph ph-copy"></i> Copy</button>
+          <button class="note-taker-ghost" id="noteTakerDownload" type="button"><i class="ph ph-download-simple"></i> Download</button>
+          <button class="note-taker-ghost" id="noteTakerAsk" type="button"><i class="ph ph-chat-circle-text"></i> Ask Cognita</button>
+          <button class="note-taker-ghost note-taker-delete" id="noteTakerDelete" type="button" hidden><i class="ph ph-trash"></i> Delete</button>
+        </div>
+      </div>
+      <div class="note-taker-saved" id="noteTakerSaved" hidden>
+        <label class="note-taker-search" for="noteTakerSearch">
+          <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+          <input id="noteTakerSearch" type="search" placeholder="Search titles and summaries" autocomplete="off" aria-label="Search saved notes">
+        </label>
+        <p class="note-taker-error" id="noteTakerSavedError" role="alert" hidden></p>
+        <div id="noteTakerSavedList" class="note-taker-saved-list" aria-live="polite"></div>
+        <p class="note-taker-hint" id="noteTakerSavedLimit" hidden></p>
       </div>
     </div>
   </section>
