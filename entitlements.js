@@ -40,6 +40,8 @@ export const PLANS = {
       toolCallsPerDay: 0,          // no connector tool-use on Starter
       noteTakerSessionsPerDay: 3,
       noteTakerChunksPerDay: 200,   // ~8s/chunk -> roughly 27 minutes/day
+      noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
+      savedNotesMax: 15,           // notes a user can keep saved in B2 at once
       // Real, AI-generated illustrations rendered onto flashcard faces
       // (Cloudflare Workers AI, same model as illustration image gen).
       // Free users never get these — text-only flashcards only.
@@ -92,6 +94,8 @@ export const PLANS = {
       toolCallsPerDay: 30,
       noteTakerSessionsPerDay: 30,
       noteTakerChunksPerDay: 2000,  // roughly 4.4 hours/day
+      noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
+      savedNotesMax: 200,           // notes a user can keep saved in B2 at once
       // One deck's worth of illustrated cards per day, roughly — kept
       // well below imageGenPerDay since a single flashcard deck can
       // burn through many images in one generation call.
@@ -135,6 +139,8 @@ export const PLANS = {
       toolCallsPerDay: 150,
       noteTakerSessionsPerDay: 150,
       noteTakerChunksPerDay: 8000,  // roughly 17.8 hours/day
+      noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
+      savedNotesMax: 1000,           // notes a user can keep saved in B2 at once
       flashcardImagePerDay: 80,
       activeReminders: 150,
       inboxAiDraftPerDay: 150,
@@ -185,6 +191,8 @@ export const PLANS = {
       toolCallsPerDay: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerChunksPerDay: UNLIMITED,
+      noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
+      savedNotesMax: UNLIMITED,           // notes a user can keep saved in B2 at once
       flashcardImagePerDay: UNLIMITED,
       activeReminders: UNLIMITED,
       inboxAiDraftPerDay: UNLIMITED,
