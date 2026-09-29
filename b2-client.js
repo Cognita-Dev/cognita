@@ -363,3 +363,54 @@ export async function b2DownloadFileBytes(env, key) {
 
   return res;
 }
+
+/**
+ * Permanently deletes EVERY version of one exact file name — the current
+ * version and all older ones. b2HideFile only hides the newest version and
+ * leaves the data on disk, which is not good enough for user-facing "delete
+ * my note" (privacy) requests. Saved notes are re-uploaded on every edit, so
+ * a note can have many versions; this removes all of them.
+ *
+ * @param {object} env
+ * @param {string} fileName - exact key, e.g. "notes/uid123/abc.json"
+ * @returns {Promise<number>} how many versions were deleted
+ */
+export async function b2DeleteAllVersions(env, fileName) {
+  const auth = await _authorize(env);
+  let deleted = 0;
+  let startFileName = fileName;
+  let startFileId = null;
+  const MAX_PAGES = 20;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await fetch(auth.apiUrl + '/b2api/v3/b2_list_file_versions', {
+      method: 'POST',
+      headers: { Authorization: auth.authorizationToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bucketId: env.B2_BUCKET_ID,
+        prefix: fileName,
+        startFileName,
+        startFileId,
+        maxFileCount: 100,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error('B2 list_file_versions failed (' + res.status + '): ' + text);
+    }
+    const data = await res.json();
+
+    // `prefix` also matches longer names ("a.json" vs "a.json.bak"), so only
+    // touch versions whose name is exactly the one we were asked to delete.
+    for (const file of data.files) {
+      if (file.fileName !== fileName) continue;
+      await b2DeleteFileVersion(env, file.fileName, file.fileId);
+      deleted++;
+    }
+
+    if (!data.nextFileName || data.nextFileName !== fileName) break;
+    startFileName = data.nextFileName;
+    startFileId = data.nextFileId;
+  }
+  return deleted;
+}
