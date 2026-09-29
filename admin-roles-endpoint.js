@@ -58,6 +58,10 @@ export async function handleAdminBootstrap(request, env) {
   const email = (identity.email || '').trim().toLowerCase();
   const allowList = FIRST_ADMIN_EMAILS.map((e) => e.trim().toLowerCase());
 
+  if (!identity.emailVerified) {
+    return _jsonError('Verify your email address before running bootstrap.', 403, env);
+  }
+
   if (!email || !allowList.includes(email)) {
     return _jsonError('This account is not eligible to bootstrap the first admin.', 403, env);
   }
