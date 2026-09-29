@@ -63,3 +63,27 @@ export async function checkIpRateLimit(request, env, bucketName, { limit, window
     return { allowed: true, remaining: limit, resetInSeconds: windowSeconds };
   }
 }
+
+/**
+ * Checks Cloudflare's built-in Rate Limiting binding (declared under
+ * "ratelimits" in wrangler.jsonc). Unlike the KV-based limiter above, this
+ * uses no KV reads or writes at all, so it can never eat into the KV daily
+ * quota, and it is fast enough to run on every request.
+ *
+ * `bindingName` is the binding's name (e.g. 'RL_GENERAL'); `key` is what to
+ * count by (an IP address, or a verified user id).
+ *
+ * Fails OPEN: if the binding is missing or errors, the request is allowed,
+ * so a limiter problem can never take the whole app down.
+ */
+export async function checkRateBinding(env, bindingName, key) {
+  const binding = env && env[bindingName];
+  if (!binding || typeof binding.limit !== 'function') return { allowed: true };
+  try {
+    const { success } = await binding.limit({ key: String(key) });
+    return { allowed: !!success };
+  } catch (e) {
+    console.warn('[rate-limit] binding ' + bindingName + ' error, failing open: ' + e.message);
+    return { allowed: true };
+  }
+}
