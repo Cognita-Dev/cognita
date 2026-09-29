@@ -261,7 +261,7 @@ export async function handleLibraryFileProxy(request, env, resourceId) {
     }
 
     const requestedFilename = url.searchParams.get('filename');
-    const filename = requestedFilename || _downloadFilename(doc, format);
+    const filename = _safeDownloadName(requestedFilename || _downloadFilename(doc, format));
 
     return new Response(upstream.body, {
       status: 200,
@@ -276,6 +276,17 @@ export async function handleLibraryFileProxy(request, env, resourceId) {
     console.error('[library] file proxy fetch failed:', e.message);
     return _jsonError('Could not prepare the download. Please try again.', 503, env);
   }
+}
+
+// The filename in a download link comes from the URL, so treat it as
+// untrusted: keep only safe characters and a sensible length.
+function _safeDownloadName(name) {
+  const cleaned = String(name || '')
+    .replace(/[^A-Za-z0-9._ ()-]/g, '_')
+    .replace(/\.{2,}/g, '.')
+    .trim()
+    .slice(0, 120);
+  return cleaned || 'download';
 }
 
 function _downloadFilename(doc, format) {
