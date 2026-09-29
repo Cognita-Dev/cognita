@@ -687,7 +687,32 @@ window.addEventListener('pageshow', (event) => {
 function classifyAuthError(error) {
   const code = error?.code || '';
 
+  // Which button did the person tap? Google and Facebook both throw
+  // through here, so every provider-related message below is written for
+  // "whichever provider threw it" and lands under that provider's button.
+  const provider = error?.authField === 'facebook' ? 'Facebook' : error?.authField === 'google' ? 'Google' : 'This';
+  const isProvider = error?.authField === 'facebook' || error?.authField === 'google';
+
+  // Fallback field used ONLY when the error carries no authField.
+  // Anything thrown by the Facebook/Google sign-in functions always has
+  // authField set, so it overrides these fallbacks (see the end of this
+  // function).
+  const cancelled = { field: 'google', message: 'Sign-in was cancelled.' };
+  const tryAgain = {
+    field: 'general',
+    message: isProvider
+      ? 'Couldn\u2019t sign in with ' + provider + '. Please try again.'
+      : 'Something went wrong. Please try again.',
+  };
+  const notSetUp = {
+    field: 'general',
+    message: isProvider
+      ? provider + ' sign-in isn\u2019t available right now. Please try again later or use email instead.'
+      : 'Sign-in isn\u2019t available right now. Please try again later.',
+  };
+
   const codeMap = {
+    // ---- Email + password ----
     'auth/invalid-email': { field: 'email', message: 'Enter a valid email address.' },
     'auth/missing-email': { field: 'email', message: 'Enter your email.' },
     'auth/user-not-found': { field: 'email', message: 'No account found with that email.' },
@@ -698,34 +723,73 @@ function classifyAuthError(error) {
     'auth/invalid-login-credentials': { field: 'password', message: 'Incorrect email or password.' },
     'auth/email-already-in-use': { field: 'email', message: 'An account already exists with that email.' },
     'auth/weak-password': { field: 'password', message: 'Please choose a stronger password.' },
-    // These three can be thrown by EITHER popup-based provider (Google's
-    // signInWithCredential flow, or Facebook's signInWithPopup flow).
-    // `field` here is a fallback only — the block below overrides it with
-    // error.authField ('google' or 'facebook') whenever that's set, so
-    // the message lands under whichever button the person actually
-    // tapped instead of always under Google's.
-    'auth/popup-closed-by-user': { field: 'google', message: 'Sign-in was cancelled.' },
-    'auth/popup-blocked': { field: 'google', message: 'Popup blocked. Please allow popups for this site.' },
-    'auth/cancelled-popup-request': { field: 'google', message: 'Sign-in was cancelled.' },
+
+    // ---- Person backed out of Google / Facebook ----
+    // `field` is a fallback only — the block at the end overrides it with
+    // error.authField ('google' or 'facebook') so the message shows under
+    // the button the person actually tapped.
+    'auth/popup-closed-by-user': cancelled,
+    'auth/cancelled-popup-request': cancelled,
+    'auth/user-cancelled': cancelled, // Facebook: "IdP denied access"
+    'auth/popup-blocked': { field: 'google', message: 'Popup blocked. Please allow popups for this site and try again.' },
+
+    // ---- Network / rate limits ----
     'auth/network-request-failed': { field: 'general', message: 'Network error. Check your connection and try again.' },
+    'auth/timeout': { field: 'general', message: 'That took too long. Check your connection and try again.' },
     'auth/too-many-requests': { field: 'general', message: 'Too many attempts. Please wait a moment and try again.' },
+
+    // ---- Account conflicts ----
     'auth/account-exists-with-different-credential': {
       field: 'google',
-      message: 'An account already exists with this email using a different sign-in method.',
+      message: 'An account already exists with this email using a different sign-in method. Try the method you used before.',
     },
-    'auth/auth-domain-config-required': { field: 'facebook', message: 'Facebook sign-in isn\u2019t set up correctly. Please try again later.' },
-    'auth/operation-not-supported-in-this-environment': { field: 'facebook', message: 'Facebook sign-in isn\u2019t supported in this browser.' },
+    'auth/credential-already-in-use': {
+      field: 'google',
+      message: 'That ' + (isProvider ? provider : 'sign-in') + ' account is already linked to another Cognita account.',
+    },
+
+    // ---- Browser problems ----
+    'auth/operation-not-supported-in-this-environment': {
+      field: 'facebook',
+      message: 'This sign-in method isn\u2019t supported in this browser. Try a different browser or use email.',
+    },
+    'auth/web-storage-unsupported': {
+      field: 'general',
+      message: 'Your browser is blocking cookies or storage that sign-in needs. Turn off private/strict mode or allow cookies, then try again.',
+    },
+
+    // ---- Setup problems (nothing the person can fix) ----
+    'auth/unauthorized-domain': notSetUp,
+    'auth/operation-not-allowed': notSetUp,
+    'auth/auth-domain-config-required': notSetUp,
+    'auth/invalid-api-key': notSetUp,
+    'auth/app-not-authorized': notSetUp,
+    'auth/invalid-oauth-client-id': notSetUp,
+    'auth/invalid-oauth-provider': notSetUp,
+    'auth/internal-error': tryAgain,
+    'auth/user-token-expired': { field: 'general', message: 'Your session expired. Please sign in again.' },
   };
+
+  // Always log the real technical error so it can be found in the browser
+  // console (F12) — the person only ever sees the friendly message.
+  try { console.error('[auth]', code || '(no code)', error && error.message ? error.message : error); } catch (_) { /* ignore */ }
 
   if (codeMap[code]) {
     const mapped = codeMap[code];
-    // See the comment above codeMap: prefer the provider that actually
-    // threw this error over the hardcoded fallback field.
+    // Prefer the provider that actually threw this error over the
+    // hardcoded fallback field.
     return error?.authField ? { field: error.authField, message: mapped.message } : mapped;
   }
 
   if (error?.authField) {
-    return { field: error.authField, message: error.message || 'Something went wrong. Please try again.' };
+    // Unknown error from Google/Facebook. Firebase's own error text
+    // ("Firebase: Error (auth/...)") is technical and unfriendly, so only
+    // show a message that WE wrote (our own errors have no "auth/" code).
+    const isFirebaseText = /^auth\//.test(code) || /firebase/i.test(error.message || '');
+    return {
+      field: error.authField,
+      message: !isFirebaseText && error.message ? error.message : tryAgain.message,
+    };
   }
 
   return { field: 'general', message: 'Something went wrong. Please try again.' };
