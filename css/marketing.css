@@ -221,6 +221,18 @@ body.nav-open { overflow: hidden; }
   z-index: 1;
 }
 .site-footer-links { display: flex; gap: var(--space-5); }
+.site-footer-legal {
+  max-width: 70ch;
+  margin: 0 auto var(--space-6);
+  text-align: center;
+  font-size: var(--text-xs, 0.75rem);
+  line-height: 1.5;
+  color: var(--text-3);
+  position: relative;
+  z-index: 1;
+}
+.site-footer-legal a { text-decoration: underline; }
+
 .site-footer-links a:hover { color: var(--text-1); }
 
 .site-footer-mark {
