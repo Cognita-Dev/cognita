@@ -61,6 +61,7 @@ import {
   handleNoteSessionSegment,
   handleNoteChunkTranscribe,
 } from './note-taker-endpoint.js';
+import { handleNotesList, handleNoteGet, handleNoteSave, handleNoteDelete, handleNoteSummary } from './saved-notes-endpoint.js';
 import { handleSendVerificationEmail, handleSendPasswordReset } from './emails/auth-email-endpoint.js';
 import { handleSendWelcomeEmail, handlePasswordChangedNotice } from './emails/account-email-endpoint.js';
 import {
@@ -138,6 +139,12 @@ const _app = {
   if (/^\/api\/note-sessions\/[^/]+\/segments$/.test(url.pathname) && request.method === 'POST') return handleNoteSessionSegment(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/note-sessions\/[^/]+\/transcribe$/.test(url.pathname) && request.method === 'POST') return handleNoteChunkTranscribe(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/note-sessions\/[^/]+$/.test(url.pathname) && ['GET', 'PATCH'].includes(request.method)) return handleNoteSession(request, env, url.pathname.split('/')[3]);
+
+  if (url.pathname === '/api/notes' && request.method === 'GET') return handleNotesList(request, env);
+  if (url.pathname === '/api/notes' && request.method === 'POST') return handleNoteSave(request, env);
+  if (url.pathname === '/api/note-summary' && request.method === 'POST') return handleNoteSummary(request, env);
+  if (/^\/api\/notes\/[^/]+$/.test(url.pathname) && request.method === 'GET') return handleNoteGet(request, env, url.pathname.split('/')[3]);
+  if (/^\/api\/notes\/[^/]+$/.test(url.pathname) && request.method === 'DELETE') return handleNoteDelete(request, env, url.pathname.split('/')[3]);
 
   if (request.method === 'GET' && url.pathname === '/') {
       return new Response('Cognita Worker is running.', { status: 200 });
@@ -677,6 +684,7 @@ function _isHeavyRoute(method, path) {
     path === '/api/document' ||
     path === '/api/resources/generate' ||
     path === '/api/insights/generate' ||
+    path === '/api/note-summary' ||
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||
     /^\/api\/resources\/[^/]+\/cards\/\d+\/image$/.test(path);
