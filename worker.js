@@ -95,7 +95,8 @@ import {
   handleSocialMediaProxy,
 } from './social-scheduler-endpoint.js';
 import { runSocialScheduler } from './social-scheduler.js';
-import { checkIpRateLimit } from './rate-limit.js';
+import { checkIpRateLimit, checkRateBinding, clientIp } from './rate-limit.js';
+import { verifyFirebaseIdToken } from './auth-middleware.js';
 import {
   handleInboxList,
   handleInboxSubscribe,
@@ -127,7 +128,7 @@ function _corsPreflight(env) {
   });
 }
 
-export default {
+const _app = {
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return _corsPreflight(env);
 
@@ -620,5 +621,184 @@ export default {
     ctx.waitUntil(runReminderScheduler(env));
     ctx.waitUntil(runSocialScheduler(env));
     ctx.waitUntil(runInsightsDigestScheduler(env));
+  },
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Security layer
+// Wraps every request. Everything above (routing) is unchanged; this only
+// adds checks BEFORE a request reaches it and safe headers AFTER it leaves.
+//
+//   1. Body-size caps      - refuse absurdly large request bodies early.
+//   2. Rate limiting       - per-IP for everything, per-user for the
+//                            expensive AI routes. Uses Cloudflare's rate
+//                            limit bindings (see wrangler.jsonc), fails open.
+//   3. CORS enforcement    - only our own site(s) may read API responses,
+//                            whatever an individual endpoint says.
+//   4. Safe response headers.
+// ═══════════════════════════════════════════════════════════════════════
+
+const KB = 1024;
+const MB = 1024 * 1024;
+
+// Routes that legitimately receive raw files or signed third-party calls.
+// They are not size-capped here (they enforce their own limits / signatures).
+function _isExemptFromBodyCap(path) {
+  return path === '/api/social/media' ||
+    path.startsWith('/api/note-sessions') ||
+    path === '/api/payment/webhook' ||
+    path.startsWith('/webhooks/') ||
+    path === '/auth/facebook/data-deletion';
+}
+
+// Routes whose real bodies are tiny (a few fields). 100 KB is generous.
+const SMALL_BODY_PREFIXES = [
+  '/api/auth/', '/api/payment/initialize', '/api/subscription/', '/api/account/',
+  '/api/reminders', '/api/inbox', '/api/admin/roles', '/api/connectors/',
+  '/api/insights/schedule',
+];
+
+function _maxBodyBytes(path) {
+  if (path === '/api/chat') return 36 * MB;       // up to 4 images as base64
+  if (SMALL_BODY_PREFIXES.some((p) => path === p || path.startsWith(p))) return 100 * KB;
+  return 15 * MB;
+}
+
+// The expensive, money-costing routes (AI generation, image generation,
+// uploads). These get a stricter per-user limit.
+function _isHeavyRoute(method, path) {
+  if (method !== 'POST') return false;
+  return path === '/api/chat' ||
+    path === '/api/image' ||
+    path === '/api/document' ||
+    path === '/api/resources/generate' ||
+    path === '/api/insights/generate' ||
+    path === '/api/social/media' ||
+    /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||
+    /^\/api\/resources\/[^/]+\/cards\/\d+\/image$/.test(path);
+}
+
+// Calls that come from Meta / Paystack servers, or are cheap OAuth
+// redirects. Not IP rate-limited here (their own signatures protect them, and
+// a burst from the provider must never be dropped).
+function _isProviderCall(path) {
+  return path === '/api/payment/webhook' || path.startsWith('/webhooks/');
+}
+
+function _allowedOrigins(env) {
+  const list = [];
+  if (env.APP_ORIGIN) list.push(String(env.APP_ORIGIN).trim().replace(/\/+$/, ''));
+  if (env.EXTRA_ALLOWED_ORIGINS) {
+    for (const o of String(env.EXTRA_ALLOWED_ORIGINS).split(',')) {
+      const v = o.trim().replace(/\/+$/, '');
+      if (v) list.push(v);
+    }
+  }
+  return list;
+}
+
+function _blockedJson(message, status, extraHeaders) {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...(extraHeaders || {}) },
+  });
+}
+
+async function _verifiedUid(request, env) {
+  const m = (request.headers.get('Authorization') || '').match(/^Bearer\s+(.+)$/i);
+  if (!m || !env.FIREBASE_PROJECT_ID) return null;
+  try {
+    const identity = await verifyFirebaseIdToken(m[1], env.FIREBASE_PROJECT_ID);
+    return identity.uid;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Returns a Response to send INSTEAD of handling the request, or null to
+// let the request through.
+async function _guard(request, env) {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method;
+
+  // 1. Body-size cap (declared size; Cloudflare itself caps the absolute max).
+  if (['POST', 'PUT', 'PATCH'].includes(method) && !_isExemptFromBodyCap(path)) {
+    const declared = Number(request.headers.get('Content-Length') || 0);
+    if (declared > _maxBodyBytes(path)) {
+      return _blockedJson('That request is too large.', 413);
+    }
+  }
+
+  // 2. Rate limiting.
+  if (!_isProviderCall(path)) {
+    const ip = clientIp(request);
+    const general = await checkRateBinding(env, 'RL_GENERAL', 'ip:' + ip);
+    if (!general.allowed) {
+      return _blockedJson('Too many requests. Please slow down and try again shortly.', 429, { 'Retry-After': '30' });
+    }
+
+    if (_isHeavyRoute(method, path)) {
+      // Count by verified user when we can tell who it is, else by IP.
+      const uid = await _verifiedUid(request, env);
+      const heavy = await checkRateBinding(env, 'RL_HEAVY', uid ? 'uid:' + uid : 'ip:' + ip);
+      if (!heavy.allowed) {
+        return _blockedJson('You are going a little too fast. Please wait a few seconds and try again.', 429, { 'Retry-After': '20' });
+      }
+    }
+  }
+
+  return null;
+}
+
+// Applies CORS enforcement and safe headers to a finished response.
+function _harden(response, request, env) {
+  const headers = new Headers(response.headers);
+
+  // CORS: only our own origin(s) may read responses, no matter what the
+  // individual endpoint set (some fell back to '*'). Same-site navigations
+  // and server-to-server calls send no Origin and need no CORS.
+  const origin = request.headers.get('Origin');
+  const allowed = _allowedOrigins(env);
+  if (origin && allowed.includes(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin);
+  } else {
+    for (const name of [...headers.keys()]) {
+      if (name.toLowerCase().startsWith('access-control-')) headers.delete(name);
+    }
+  }
+  headers.append('Vary', 'Origin');
+
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  headers.set('X-Frame-Options', 'DENY');
+  headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  headers.set('Permissions-Policy', 'camera=(), geolocation=(), payment=()');
+
+  const type = (headers.get('Content-Type') || '').toLowerCase();
+  if (type.includes('application/json') || type.startsWith('text/plain')) {
+    // A data response should never be treated as a web page.
+    headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+    if (!headers.has('Cache-Control')) headers.set('Cache-Control', 'no-store');
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const blocked = await _guard(request, env);
+    if (blocked) return _harden(blocked, request, env);
+    const response = await _app.fetch(request, env, ctx);
+    return _harden(response, request, env);
+  },
+
+  async scheduled(event, env, ctx) {
+    return _app.scheduled(event, env, ctx);
   },
 };
