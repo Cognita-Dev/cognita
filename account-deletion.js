@@ -25,6 +25,7 @@
 import { fsSet, fsDelete, fsQuery, getGoogleAccessToken } from './firestore-rest.js';
 import { deleteConnectorToken, listConnectedProviders } from './connectors.js';
 import { deleteConversationFromB2, listConversationsForUser } from './chat-storage.js';
+import { purgeSavedNotesForUser } from './saved-notes-endpoint.js';
 import { deleteReminder, deleteSubscriptionById, listSubscriptions } from './reminders/reminders-storage.js';
 import { cancelScheduledPost } from './social-scheduler.js';
 
@@ -263,6 +264,7 @@ export async function deleteAccountData(uid, email, env) {
   await _wrap(() => _purgeConnectors(uid, env), 'connected apps');
   await _wrap(() => _purgeFacebookLoginIndex(uid, env), 'Facebook login link');
   await _wrap(() => _purgeConversations(uid, env), 'chat history');
+  await _wrap(() => purgeSavedNotesForUser(env, uid), 'saved meeting notes');
   await _wrap(() => _tryDelete('admins/' + uid, env, 'admin/moderator role'), 'admin role');
   await _wrap(() => _tryDelete('accounts/' + uid, env, 'account/billing record'), 'account record');
 
