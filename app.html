@@ -1535,6 +1535,12 @@
         </details>
         <label class="note-taker-check" for="noteTakerAutoSave"><input type="checkbox" id="noteTakerAutoSave"><span>Save to my notes when I finish</span></label>
         <label class="note-taker-check" for="noteTakerLabelSpeakers"><input type="checkbox" id="noteTakerLabelSpeakers" checked><span>Label who is speaking</span></label>
+        <div class="note-voices" id="noteTakerVoices">
+          <div class="note-voices-head"><strong>Remembered voices</strong><button class="note-taker-ghost" id="noteTakerVoicesForget" type="button" hidden>Forget all</button></div>
+          <p class="note-taker-hint">This is off unless you choose it. After you name a speaker on a finished note, you can tap "Remember this voice". Cognita then keeps a small set of numbers describing how that voice sounds (pitch and tone, not a recording). It stays on this device, tied to your sign-in. It is never uploaded and never saved in your notes. Next time, a speaker is named only when the match is very clear; otherwise you still see "Speaker 1". You can remove one voice or all of them here at any time. Clearing your browser data removes them too.</p>
+          <p class="note-taker-hint" id="noteTakerVoiceEmpty">No voices are remembered. Nothing is stored unless you choose it after a meeting.</p>
+          <ul class="note-voices-list" id="noteTakerVoiceList"></ul>
+        </div>
         <p class="note-taker-hint">Works best when people take turns. Voices are compared on this device only, and you can correct any label afterwards.</p>
         <label class="note-taker-check" for="noteTakerKeepAudio"><input type="checkbox" id="noteTakerKeepAudio"><span>Keep the audio with this note</span></label>
         <p class="note-taker-hint" id="noteTakerAudioSetupHint"></p>
@@ -1549,8 +1555,23 @@
           <span class="note-taker-timer" id="noteTakerTimer">00:00:00</span>
           <span class="note-taker-connection" id="noteTakerConnection" aria-live="polite"></span>
         </div>
-        <div class="note-taker-transcript" id="noteTakerTranscript" aria-live="polite" tabindex="0" aria-label="Live transcript"><p class="note-taker-empty">Start speaking and the transcript will appear here.</p></div>
-        <div class="note-taker-controls"><button id="noteTakerPause" class="note-taker-secondary" type="button"><i class="ph ph-pause"></i> Pause</button><button id="noteTakerStop" class="note-taker-stop" type="button"><i class="ph ph-stop"></i> Finish</button></div>
+        <div class="note-live-wrap" id="noteTakerLiveAskWrap" data-open="false">
+          <div class="note-taker-transcript" id="noteTakerTranscript" aria-live="polite" tabindex="0" aria-label="Live transcript"><p class="note-taker-empty">Start speaking and the transcript will appear here.</p></div>
+          <div class="note-live-ask" id="noteTakerLiveAskPanel" role="region" aria-label="Ask about this meeting" hidden>
+            <div class="note-live-ask-head">
+              <strong>Ask about this meeting</strong>
+              <button class="note-taker-icon-btn" id="noteTakerLiveAskClose" type="button" aria-label="Close questions"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="note-live-ask-log note-ask-log" id="noteTakerLiveAskLog" aria-live="polite"></div>
+            <div class="note-live-ask-prompts" id="noteTakerLiveAskPrompts"></div>
+            <div class="note-ask-form">
+              <input id="noteTakerLiveAskInput" type="text" maxlength="500" autocomplete="off" placeholder="Ask about what has been said" aria-label="Ask about what has been said so far">
+              <button class="note-taker-primary" id="noteTakerLiveAskSend" type="button">Ask</button>
+            </div>
+            <p class="note-live-ask-hint" id="noteTakerLiveAskHint" aria-live="polite"></p>
+          </div>
+        </div>
+        <div class="note-taker-controls"><button id="noteTakerPause" class="note-taker-secondary" type="button"><i class="ph ph-pause"></i> Pause</button><button id="noteTakerLiveAsk" class="note-taker-secondary" type="button" aria-expanded="false" aria-controls="noteTakerLiveAskPanel" data-unseen="false"><i class="ph ph-chat-circle-text"></i> Ask</button><button id="noteTakerStop" class="note-taker-stop" type="button"><i class="ph ph-stop"></i> Finish</button></div>
       </div>
       <div class="note-taker-complete" id="noteTakerComplete" data-view="transcript" hidden>
         <div class="note-taker-complete-head">
@@ -1575,6 +1596,7 @@
         <div class="note-pane" id="noteTakerPaneTranscript">
           <div class="note-transcript-tools">
             <p class="note-taker-hint" id="noteTakerSpeakerHint"></p>
+            <div class="note-voice-bar" id="noteTakerVoiceBar" hidden></div>
             <button class="note-taker-ghost" id="noteTakerEditToggle" type="button"><i class="ph ph-pencil-simple"></i> <span>Edit text</span></button>
           </div>
           <div class="note-reader" id="noteTakerReader" aria-label="Transcript"></div>
@@ -1582,6 +1604,7 @@
         </div>
         <div class="note-taker-summary" id="noteTakerSummary" aria-live="polite"></div>
         <div class="note-pane note-ask" id="noteTakerPaneAsk">
+          <p class="note-taker-hint note-ask-livenote" id="noteTakerAskLiveNote" hidden>Some of these were asked during the recording. Answers may mention speaker labels as they were then, which can change when the meeting ends.</p>
           <div class="note-ask-log" id="noteTakerAskLog" aria-live="polite"></div>
           <div class="note-ask-suggest" id="noteTakerAskSuggest"></div>
           <div class="note-ask-form">
@@ -1589,6 +1612,7 @@
             <button class="note-taker-primary" id="noteTakerAskSend" type="button">Ask</button>
           </div>
           <p class="note-taker-hint" id="noteTakerAskHint"></p>
+          <button class="note-taker-ghost note-ask-clear" id="noteTakerAskClear" type="button" hidden><i class="ph ph-trash"></i> Clear conversation</button>
         </div>
         <p class="note-taker-save-state" id="noteTakerSaveState" role="status" aria-live="polite"></p>
         <div class="note-taker-actions note-taker-actions-main">
