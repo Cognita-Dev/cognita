@@ -197,6 +197,10 @@ export async function deliverDigest(env, uid, digestId, overrides = {}) {
       const message = buildInsightsDigestEmail({
         periodLabel: _periodLabel(digest.periodStart, digest.periodEnd),
         highlights: digest.summary && digest.summary.highlights,
+        whatWorked: digest.summary && digest.summary.whatWorked,
+        whatDidnt: digest.summary && digest.summary.whatDidnt,
+        suggestions: digest.summary && digest.summary.contentSuggestions,
+        postingTimes: digest.summary && digest.summary.recommendedPostingTimes,
         pdfUrl,
         unsubscribeUrl: await buildUnsubscribeUrl(env, uid, 'digest'),
       });
