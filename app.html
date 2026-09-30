@@ -1508,6 +1508,10 @@
         <p id="noteTakerRecoveryText"></p>
         <div class="note-taker-recovery-actions"><button class="note-taker-ghost" id="noteTakerRecoveryDiscard" type="button">Discard</button><button class="note-taker-secondary" id="noteTakerRecoveryRestore" type="button">Restore</button></div>
       </div>
+      <div class="note-taker-notice" id="noteTakerNotice" data-tone="warning" aria-live="polite" hidden>
+        <p id="noteTakerNoticeText"></p>
+        <div class="note-taker-notice-actions" id="noteTakerNoticeActions"></div>
+      </div>
       <div class="note-taker-setup" id="noteTakerSetup">
         <label for="noteTakerMeetingTitle">Title<input id="noteTakerMeetingTitle" placeholder="Product review" maxlength="120" autocomplete="off"></label>
         <label for="noteTakerLanguage">Language
@@ -1518,6 +1522,11 @@
           </select>
         </label>
         <p class="note-taker-hint" id="noteTakerLanguageHint"></p>
+        <div class="note-taker-quota" id="noteTakerQuota" hidden>
+          <div class="note-taker-quota-row"><span id="noteTakerQuotaLabel">Cloud transcription today</span><span id="noteTakerQuotaValue"></span></div>
+          <div class="note-taker-quota-bar" id="noteTakerQuotaBar" role="progressbar" aria-labelledby="noteTakerQuotaLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+          <p class="note-taker-quota-hint" id="noteTakerQuotaHint"></p>
+        </div>
         <details class="note-taker-agenda">
           <summary>Add an agenda</summary>
           <textarea id="noteTakerAgenda" rows="3" maxlength="1500" placeholder="Review progress&#10;Decide launch date&#10;Assign tasks" aria-label="Agenda, optional"></textarea>
