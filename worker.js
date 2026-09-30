@@ -62,7 +62,8 @@ import {
   handleNoteChunkTranscribe,
   handleNoteQuota,
 } from './note-taker-endpoint.js';
-import { handleNotesList, handleNoteGet, handleNoteSave, handleNoteDelete, handleNoteSummary } from './saved-notes-endpoint.js';
+import { handleNotesList, handleNoteGet, handleNoteSave, handleNoteDelete, handleNoteSummary, handleNoteAudioPut, handleNoteAudioGet, handleNoteAudioDelete } from './saved-notes-endpoint.js';
+import { handleNoteAsk, handleNoteCompare, handleNoteTasks } from './note-ask-endpoint.js';
 import { handleSendVerificationEmail, handleSendPasswordReset } from './emails/auth-email-endpoint.js';
 import { handleSendWelcomeEmail, handlePasswordChangedNotice } from './emails/account-email-endpoint.js';
 import {
@@ -123,7 +124,7 @@ function _corsPreflight(env) {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language, X-Note-Context, X-Audio-Duration-Ms',
       'Access-Control-Max-Age': '86400',
     },
@@ -145,6 +146,15 @@ const _app = {
   if (url.pathname === '/api/notes' && request.method === 'GET') return handleNotesList(request, env);
   if (url.pathname === '/api/notes' && request.method === 'POST') return handleNoteSave(request, env);
   if (url.pathname === '/api/note-summary' && request.method === 'POST') return handleNoteSummary(request, env);
+  if (url.pathname === '/api/note-ask' && request.method === 'POST') return handleNoteAsk(request, env);
+  if (url.pathname === '/api/note-compare' && request.method === 'POST') return handleNoteCompare(request, env);
+  if (/^\/api\/notes\/[^/]+\/audio$/.test(url.pathname)) {
+    const id = url.pathname.split('/')[3];
+    if (request.method === 'PUT') return handleNoteAudioPut(request, env, id);
+    if (request.method === 'GET') return handleNoteAudioGet(request, env, id);
+    if (request.method === 'DELETE') return handleNoteAudioDelete(request, env, id);
+  }
+  if (/^\/api\/notes\/[^/]+\/tasks$/.test(url.pathname) && request.method === 'PATCH') return handleNoteTasks(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/notes\/[^/]+$/.test(url.pathname) && request.method === 'GET') return handleNoteGet(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/notes\/[^/]+$/.test(url.pathname) && request.method === 'DELETE') return handleNoteDelete(request, env, url.pathname.split('/')[3]);
 
@@ -655,7 +665,8 @@ const MB = 1024 * 1024;
 // They are not size-capped here (they enforce their own limits / signatures).
 function _isExemptFromBodyCap(path) {
   return path === '/api/social/media' ||
-    path.startsWith('/api/note-sessions');
+    path.startsWith('/api/note-sessions') ||
+    /^\/api\/notes\/[^/]+\/audio$/.test(path); // the audio route enforces its own plan-based size cap
 }
 
 // Routes whose real bodies are tiny (a few fields). 100 KB is generous.
@@ -687,6 +698,8 @@ function _isHeavyRoute(method, path) {
     path === '/api/resources/generate' ||
     path === '/api/insights/generate' ||
     path === '/api/note-summary' ||
+    path === '/api/note-ask' ||
+    path === '/api/note-compare' ||
     /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||
