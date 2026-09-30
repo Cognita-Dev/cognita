@@ -81,6 +81,8 @@ export function normalizeSummary(raw) {
     decisions: list(raw.decisions, 12, 300),
     actionItems,
     openQuestions: list(raw.openQuestions, 8, 300),
+    sections: (Array.isArray(raw.sections) ? raw.sections : []).map((x) => (x && typeof x === 'object' ? { title: str(x.title, 80), summary: str(x.summary, 300) } : null)).filter((x) => x && x.title).slice(0, 8),
+    agendaCoverage: (Array.isArray(raw.agendaCoverage) ? raw.agendaCoverage : []).map((x) => (x && typeof x === 'object' ? { item: str(x.item, 160), status: ['covered', 'partial', 'not_covered'].includes(x.status) ? x.status : 'not_covered' } : null)).filter((x) => x && x.item).slice(0, 15),
     generatedAt: new Date().toISOString(),
   };
   const hasContent = summary.overview || summary.keyPoints.length || summary.decisions.length || summary.actionItems.length;
@@ -262,11 +264,13 @@ Keep each string under 200 characters. Leave arrays empty when there is nothing 
 ${RULES}`;
 
 const FINAL_SYSTEM = `You turn meeting material into concise notes.
-Return JSON: {"title":string,"overview":string,"keyPoints":[string],"decisions":[string],"actionItems":[{"task":string,"owner":string|null,"due":string|null,"priority":"high"|"normal"|"low"}],"openQuestions":[string]}
+Return JSON: {"title":string,"overview":string,"keyPoints":[string],"decisions":[string],"actionItems":[{"task":string,"owner":string|null,"due":string|null,"priority":"high"|"normal"|"low"}],"openQuestions":[string],"sections":[{"title":string,"summary":string}],"agendaCoverage":[{"item":string,"status":"covered"|"partial"|"not_covered"}]}
 - title: at most 8 words, specific to what was discussed, no quotation marks.
 - overview: 2 to 4 sentences on what the meeting was about and how it ended.
 - keyPoints: at most 8. decisions: at most 10. openQuestions: questions raised but not answered, at most 6.
 - Merge duplicates. Order action items by importance and mark urgent ones "high".
+- sections: 3 to 7 topics in the order they were discussed. title at most 6 words, summary one sentence.
+- agendaCoverage: only when an Agenda is given above the transcript. One entry per agenda line, in order. "covered" means discussed to a conclusion, "partial" means raised but not settled, "not_covered" means it never came up. Otherwise return [].
 ${RULES}`;
 
 function stripTimestamps(text) {
