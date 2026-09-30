@@ -173,7 +173,15 @@ export class VoiceTracker {
   // Best labels for every segment once the recording is over. Merges voices that are really one person, then lets
   // every segment pick its nearest voice again with the final, better-informed voiceprints. Returns one label (0-based,
   // numbered by first appearance) per segment passed to assign(), in order.
-  finalize() {
+  finalize() { return this.finalizeDetailed().labels }
+  // The same clean-up as finalize(), and it also hands back what the labels were built from, so a caller can compare
+  // voices between meetings: { labels, voices, sigma }.
+  //   labels: exactly what finalize() returns.
+  //   voices: one entry per label in use, { label, c, lf0, n }: the voice's average timbre (12 numbers), log pitch and
+  //           frame count. label matches the numbers in `labels`.
+  //   sigma:  this recording's spread of each timbre number, which dist() divides by. Distances are only comparable
+  //           between recordings when this travels with the voiceprint.
+  finalizeDetailed() {
     const segs = this.segments
     const clusters = this.clusters.map((c) => ({ c: Float64Array.from(c.c), lf0: c.lf0, n: c.n }))
     const merge = (i, j) => {
@@ -209,7 +217,9 @@ export class VoiceTracker {
     }
     // Number voices by first appearance; unjudged segments inherit the previous label.
     const order = new Map(); let last = 0
-    return labels.map((l) => { if (l < 0) return last; if (!order.has(l)) order.set(l, order.size); return (last = order.get(l)) })
+    const out = labels.map((l) => { if (l < 0) return last; if (!order.has(l)) order.set(l, order.size); return (last = order.get(l)) })
+    const voices = [...order].map(([ci, label]) => ({ label, c: Array.from(clusters[ci].c), lf0: clusters[ci].lf0, n: clusters[ci].n })).sort((a, b) => a.label - b.label)
+    return { labels: out, voices, sigma: Array.from({ length: NCEP }, (_, k) => this.sigma(k)) }
   }
 }
 function nearest(tracker, clusters, p) { let best = 0, bd = Infinity; clusters.forEach((cl, i) => { const d = tracker.dist(p, cl); if (d < bd) { bd = d; best = i } }); return best }
