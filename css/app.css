@@ -2210,3 +2210,46 @@ button.task-note:hover { color: var(--accent); }
 .task-row:has(label) { display: block; }
 .task-box { width: 20px; height: 20px; margin-top: 2px; border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) { .note-line.is-flash { animation: none; background: var(--accent-subtle); } .is-busy i.ph-circle-notch, i.ph-circle-notch { animation-duration: 2.4s; } }
+
+/* ── Note Taker: ask during a live recording, saved conversations ── */
+.note-live-wrap { position: relative; margin-top: var(--space-4); }
+.note-live-wrap[data-open="true"] { min-height: 300px; }
+.note-live-wrap > .note-taker-transcript { margin-top: 0; }
+.note-live-ask { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-1) 0 0; background: var(--bg-elevated); border-block: 1px solid var(--border); }
+.note-live-ask[hidden] { display: none; }
+.note-live-ask-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 44px; font-size: var(--text-sm); color: var(--text-1); }
+.note-live-ask-head .note-taker-icon-btn { margin: 0; }
+.note-live-ask-log { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; }
+.note-live-ask-log:not(:empty) { margin-bottom: 0; }
+.note-live-ask-empty { margin: 0; font-size: var(--text-sm); line-height: 1.6; color: var(--text-3); }
+.note-live-ask-prompts { display: flex; gap: var(--space-2); flex: none; overflow-x: auto; padding-bottom: 2px; }
+.note-live-ask-prompts .note-taker-chip-btn { flex: none; min-height: 44px; white-space: nowrap; }
+.note-live-ask-prompts .note-taker-chip-btn:disabled, .note-live-ask .note-ask-form input:disabled { opacity: 0.5; cursor: default; }
+.note-live-ask .note-ask-form { flex: none; max-width: none; }
+.note-live-ask-hint { flex: none; margin: 0 0 var(--space-1); font-size: var(--text-xs); line-height: 1.5; color: var(--text-3); }
+.note-live-ask-hint[data-limit="true"] { color: var(--danger); font-size: var(--text-sm); }
+#noteTakerLiveAsk[data-unseen="true"]::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+#noteTakerLiveAsk:disabled { opacity: 0.5; cursor: default; }
+.note-segment.is-flash { animation: note-flash 1.8s var(--ease); }
+.note-ask-livenote { margin: 0 0 var(--space-3); max-width: 62ch; }
+.note-ask-clear { margin-top: var(--space-3); }
+.note-ask-clear[hidden] { display: none; }
+@media (max-width: 600px) { .note-live-ask-prompts { margin-inline: calc(var(--space-1) * -1); padding-inline: var(--space-1); } }
+@media (prefers-reduced-motion: reduce) { .note-segment.is-flash { animation: none; background: var(--accent-subtle); } }
+
+/* ── Note Taker: remembered voices ── */
+.note-voices { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.note-voices-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 44px; font-size: var(--text-sm); color: var(--text-1); }
+.note-voices .note-taker-hint { margin: 0; max-width: 62ch; }
+.note-voices-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.note-voices-list:empty { display: none; }
+.note-voices-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 44px; border-top: 1px solid var(--border); font-size: var(--text-sm); color: var(--text-1); }
+.note-voice-name { min-width: 0; overflow-wrap: anywhere; }
+.note-voices-list .note-taker-ghost:hover { color: var(--danger); background: var(--danger-subtle); }
+.note-voice-bar { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
+.note-voice-bar[hidden] { display: none; }
+.note-voice-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); }
+.note-voice-row > span:first-child { flex: 1 1 220px; min-width: 0; }
+.note-voice-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.note-voice-row button, .note-voices-head button { min-height: 44px; }
+.note-voice-note { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
