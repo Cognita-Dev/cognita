@@ -2037,3 +2037,25 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   height: auto;
   border-radius: 12px;
 }
+
+/* ── Note Taker: cloud transcription allowance ── */
+.note-taker-quota { display: grid; gap: 6px; }
+.note-taker-quota-row { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
+.note-taker-quota-row span:last-child { font-variant-numeric: tabular-nums; color: var(--text-1); }
+.note-taker-quota-bar { height: 4px; overflow: hidden; border-radius: 2px; background: var(--bg-subtle); }
+.note-taker-quota-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--duration-base) var(--ease), background-color var(--duration-base) var(--ease); }
+.note-taker-quota[data-level="warning"] .note-taker-quota-bar > span { background: var(--warning); }
+.note-taker-quota[data-level="full"] .note-taker-quota-bar > span { background: var(--danger); }
+.note-taker-quota-hint { margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--text-3); }
+.note-taker-notice {
+  display: grid; gap: var(--space-3); margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--warning); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warning) 10%, var(--bg-base));
+}
+.note-taker-notice[data-tone="limit"] { border-left-color: var(--danger); background: var(--danger-subtle); }
+.note-taker-notice[hidden] { display: none; }
+.note-taker-notice p { margin: 0; font-size: var(--text-sm); line-height: 1.55; color: var(--text-1); overflow-wrap: anywhere; }
+.note-taker-notice-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.note-taker-notice-actions:empty { display: none; }
+.note-taker-notice-actions a { text-decoration: none; }
+.note-taker-chip[data-alert="true"]::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+@media (prefers-reduced-motion: reduce) { .note-taker-quota-bar > span { transition: none; } }
