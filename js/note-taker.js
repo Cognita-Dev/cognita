@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
 import { VoiceTracker, FRAME as VOICE_FRAME } from './note-voices.js'
 import { SessionRecorder, audioSupported } from './note-audio.js'
+import { loadVoices, saveVoices, matchVoices, rememberVoice, forgetVoice, isRememberable, cleanName, MAX_VOICES } from './note-voice-memory.js'
 const RECOVERY_KEY = 'cognitaNoteTakerSession'
 const AUTOSAVE_PREF_KEY = 'cognitaNoteTakerSaveOnFinish'
 const MIN_SUMMARY_CHARS = 200 // matches saved-notes-endpoint.js
@@ -57,6 +58,12 @@ let deleteArmed = null, newArmed = null, discardArmedId = null, view = 'transcri
 // Speakers, audio, ask, tasks
 let tracker = null, voiceAn = null, voiceTimer = null, recorder = null, restoredRun = false
 let planAudioMB = null, asksPerDay = null, askQuotaText = '', asking = false, askSeq = 0
+let clearArmed = null, saveAgain = false, forgetArmed = null
+let voiceSession = null // what the last finished recording learned about each voice; kept in memory only, never saved with the note
+// Questions asked while a meeting is still being recorded. run changes whenever a meeting starts or ends, so an answer
+// that arrives late can tell which one it belongs to.
+const liveAsk = { open: false, log: [], asking: false, limitText: '', unseen: false, run: 0 }
+const MAX_SAVED_ASKS = 30 // the server keeps the newest 30 (saved-notes-endpoint.js)
 let editing = false, lines = [], activeLine = -1, audioUrl = null, audioLoading = false, audioArmed = null, speedIdx = 0, dragging = false
 let taskFilter = 'open', taskOwner = ''
 const audio = document.getElementById('noteTakerAudio')
@@ -72,7 +79,7 @@ function formatTime(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return [
 function elapsedMs() { return startedAt ? Date.now() - startedAt - pausedMs - (pauseAt ? Date.now() - pauseAt : 0) : 0 }
 function elapsed() { return formatTime(elapsedMs()) }
 function escapeHtml(v) { return v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
-function setState(next) { state = next; $('noteTakerLive').dataset.state = next; $('noteTakerChip').dataset.state = next }
+function setState(next) { state = next; $('noteTakerLive').dataset.state = next; $('noteTakerChip').dataset.state = next; updateLiveAskUi() }
 function setStatus(text, detail = '') { $('noteTakerStatus').textContent = text; $('noteTakerConnection').textContent = detail }
 // Errors before the live view exists must show in the setup view, otherwise they render into a hidden panel.
 function showSetupError(text) { const el = $('noteTakerSetupError'); el.textContent = text; el.hidden = !text }
@@ -87,9 +94,10 @@ function show(view) {
   if (view === 'complete' || view === 'saved' || view === 'tasks') hideNotice() // allowance notices belong to recording, not to reading notes
 }
 
+const multiSpeaker = () => new Set(segments.filter((s) => s.speaker != null).map((s) => s.speaker)).size > 1
 function render() {
   const root = $('noteTakerTranscript')
-  const multi = new Set(segments.filter((s) => s.speaker != null).map((s) => s.speaker)).size > 1 // a single voice needs no labels
+  const multi = multiSpeaker() // a single voice needs no labels
   const rows = segments.map((s) => `<p class="note-segment"><time>${s.time}</time><span>${multi && s.speaker != null ? `<b class="spk spk-${s.speaker % SPEAKER_HUES}">${speakerLabel(s.speaker)}</b> ` : ''}${escapeHtml(s.text)}</span></p>`)
   if (interim) rows.push(`<p class="note-segment interim"><time></time><span>${escapeHtml(interim)}</span></p>`)
   if (!rows.length) {
@@ -100,6 +108,7 @@ function render() {
   const nearBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80
   root.innerHTML = rows.join('')
   if (nearBottom) root.scrollTop = root.scrollHeight // don't yank the view while someone is reading back
+  if (liveAsk.open) updateLiveAskUi() // new words may be enough to ask about
 }
 function saveRecoveryPointer() { if (sessionId) try { localStorage.setItem(RECOVERY_KEY, JSON.stringify({ sessionId, version: sessionVersion, title: $('noteTakerMeetingTitle').value.trim(), language: langCode(), startedAt })) } catch {} }
 function clearRecoveryPointer() { try { localStorage.removeItem(RECOVERY_KEY) } catch {} }
@@ -268,7 +277,7 @@ function resetSetup() {
   updateLanguageHint()
   try { $('noteTakerAutoSave').checked = localStorage.getItem(AUTOSAVE_PREF_KEY) === '1' } catch {}
   try { $('noteTakerLabelSpeakers').checked = localStorage.getItem(LABEL_PREF_KEY) !== '0'; $('noteTakerKeepAudio').checked = localStorage.getItem(AUDIO_PREF_KEY) === '1' } catch {}
-  updateAudioOption()
+  updateAudioOption(); renderVoiceSetup()
 }
 function updateAudioOption() {
   const box = $('noteTakerKeepAudio'), hint = $('noteTakerAudioSetupHint')
@@ -524,7 +533,7 @@ async function beginCapture(restored = false) {
   clearInterval(timer)
   timer = setInterval(() => { const t = elapsed(); $('noteTakerTimer').textContent = t; $('noteTakerChipTime').textContent = t }, 250)
   startLevelMeter()
-  restoredRun = restored; startVoices(); startRecorder()
+  resetLiveAsk(); restoredRun = restored; startVoices(); startRecorder()
   if (browserLang()) startPrimarySpeech()
   else startCloudMode(['yo-NG', 'ha-NG', 'pcm-NG', 'auto'].includes(langCode()) ? 'Cloud transcription. Text arrives after each pause.' : 'Your browser has no live recognition. Text arrives after each pause.')
   clearInterval(autosaveTimer); autosaveTimer = setInterval(autosave, AUTOSAVE_MS)
@@ -596,7 +605,9 @@ async function stopNow() {
   stream?.getTracks().forEach((t) => t.stop()); stream = null
   if (interim.trim()) { appendFinal(interim); interim = '' }
   const speakers = labelSegments()
-  const text = segments.map((s) => `[${s.time}] ${s.speaker != null ? `${speakerLabel(s.speaker)}: ` : ''}${s.text}`).join('\n\n')
+  const liveItems = endLiveAsk() // the conversation started during the meeting moves into the note
+  const keepQuotaText = askQuotaText
+  const text = segments.map((s) => `[${s.time}] ${s.speaker != null ? `${speakers[s.speaker] || speakerLabel(s.speaker)}: ` : ''}${s.text}`).join('\n\n')
   if (sessionId) { try { await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: 'completed', updatedAt: new Date().toISOString() }) } catch {} }
   clearRecoveryPointer()
   setState('completed')
@@ -604,10 +615,12 @@ async function stopNow() {
     id: sessionId || crypto.randomUUID().replaceAll('-', ''),
     createdAt: new Date(startedAt).toISOString(), durationMs: elapsedMs(), language: langCode(),
     agenda: $('noteTakerAgenda').value.trim(), summary: null, saved: false, dirty: false,
-    speakers, hasAudio: false, askLog: [], compare: null,
+    speakers, hasAudio: false, askLog: liveItems, liveNote: liveItems.length > 0, compare: null, voice: voiceSession,
     audio: rec ? { blob: rec.blob, type: rec.type, uploaded: false, skip: false } : null,
   }
   afterDraftChange()
+  if (liveItems.length) askQuotaText = keepQuotaText
+  for (const x of liveItems) if (x.loading) { x.owner = draft; asking = true } // still waiting: it will land in the note when it arrives
   sessionId = null
   $('noteTakerEditor').value = text
   $('noteTakerCompleteTitle').value = $('noteTakerMeetingTitle').value.trim()
@@ -641,10 +654,10 @@ async function copyNote() {
 function downloadNote() {
   const name = ($('noteTakerCompleteTitle').value.trim() || 'meeting-notes').replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 80)
   const a = document.createElement('a')
-  const withSummary = !!draft?.summary
-  const body = withSummary ? `${summaryText()}\n\n---\n\nTranscript\n\n${$('noteTakerEditor').value}` : $('noteTakerEditor').value
+  const parts = [summaryText(), conversationText()].filter(Boolean) // summary, then questions and answers, then the transcript
+  const body = parts.length ? `${parts.join('\n\n---\n\n')}\n\n---\n\nTranscript\n\n${$('noteTakerEditor').value}` : $('noteTakerEditor').value
   a.href = URL.createObjectURL(new Blob([body], { type: 'text/plain;charset=utf-8' }))
-  a.download = `${name}.${withSummary ? 'md' : 'txt'}`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  a.download = `${name}.${parts.length ? 'md' : 'txt'}`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
 // ---------- Saved notes: save, summarize, browse ----------
@@ -692,6 +705,8 @@ function refreshSaveUi() {
 }
 function markEdited() { if (!draft) return; editVersion++; if (draft.saved) draft.dirty = true; $('noteTakerSaveState').dataset.error = 'false'; refreshSaveUi() }
 
+// Saves now, or as soon as the save in progress ends, so a change made while saving is never left behind.
+function requestSave() { if (saving) saveAgain = true; else saveCurrent() }
 async function saveCurrent() {
   if (!draft || saving || !$('noteTakerEditor').value.trim()) return
   const target = draft
@@ -700,9 +715,10 @@ async function saveCurrent() {
   if (!needNote && !pendingAudio()) return
   saving = true; $('noteTakerSaveState').dataset.error = 'false'; setSaveState(needNote ? 'Saving...' : 'Saving audio...'); refreshSaveUi()
   const version = editVersion
+  let failed = false
   try {
     if (needNote) {
-      await saveNote({ id: target.id, title: $('noteTakerCompleteTitle').value.trim(), language: target.language, durationMs: target.durationMs, createdAt: target.createdAt, transcript: $('noteTakerEditor').value, speakers: target.speakers || [], summary: target.summary })
+      await saveNote({ id: target.id, title: $('noteTakerCompleteTitle').value.trim(), language: target.language, durationMs: target.durationMs, createdAt: target.createdAt, transcript: $('noteTakerEditor').value, speakers: target.speakers || [], summary: target.summary, askLog: serializeAskLog(target.askLog) })
       target.saved = true; target.dirty = editVersion !== version
       savedNotes = null // the list is stale now; reload it next time it is opened
     }
@@ -716,10 +732,11 @@ async function saveCurrent() {
     }
     saving = false; $('noteTakerSaveState').dataset.error = 'false'
   } catch (e) {
-    saving = false
+    saving = false; failed = true
     setSaveState(e.audioFailed ? `${e.message}${/saved/i.test(e.message) ? '' : ' The note itself is saved.'}` : `${e.message} Your note is still on screen.`, true)
   }
   syncAudioBar(); refreshSaveUi()
+  if (saveAgain) { saveAgain = false; if (!failed && draft === target && target.saved && target.dirty) saveCurrent() }
 }
 
 // ----- Summary -----
@@ -884,7 +901,7 @@ async function openSaved(id, row = null) {
   try {
     const note = await getSavedNote(id)
     segments = []
-    draft = { id: note.id, createdAt: note.createdAt, durationMs: note.durationMs || 0, language: note.language, agenda: '', summary: note.summary || null, saved: true, dirty: false, speakers: note.speakers || [], hasAudio: !!note.hasAudio, audio: null, askLog: [], compare: null }
+    draft = { id: note.id, createdAt: note.createdAt, durationMs: note.durationMs || 0, language: note.language, agenda: '', summary: note.summary || null, saved: true, dirty: false, speakers: note.speakers || [], hasAudio: !!note.hasAudio, audio: null, askLog: loadAskLog(note.askLog), compare: null }
     afterDraftChange()
     $('noteTakerEditor').value = note.transcript; $('noteTakerCompleteTitle').value = note.title === 'Untitled meeting' ? '' : note.title
     editVersion++; setSaveState(''); $('noteTakerSaveState').dataset.error = 'false'
@@ -965,15 +982,24 @@ function startVoices() {
 }
 function stopVoices() { clearInterval(voiceTimer); voiceTimer = null; try { voiceAn?.disconnect() } catch {} voiceAn = null }
 // After the meeting: re-cluster with everything heard, then number voices by first appearance. One voice = no labels.
+// Voices the person saved on this device are compared last, and only a clear, unambiguous match gets a real name.
 function labelSegments() {
+  voiceSession = null
   if (!tracker) return []
-  let final = []
-  try { final = tracker.finalize() } catch { final = [] }
+  let detail = null
+  try { detail = tracker.finalizeDetailed() } catch { detail = null }
   tracker = null
+  const final = detail?.labels || []
   const used = new Set()
   for (const sg of segments) { if (sg.vi !== undefined && final[sg.vi] !== undefined) { sg.speaker = final[sg.vi]; used.add(sg.speaker) } else sg.speaker = null }
   if (used.size < 2) { segments.forEach((sg) => (sg.speaker = null)); return [] }
-  return Array.from({ length: Math.max(...used) + 1 }, (_, i) => speakerLabel(i))
+  const clusters = detail.voices.filter((v) => used.has(v.label))
+  let matched = new Map()
+  try { const saved = loadVoices(voiceUid()); if (saved.length) matched = matchVoices(clusters, detail.sigma, saved) } catch { matched = new Map() } // a failed match must never break finishing
+  const names = Array.from({ length: Math.max(...used) + 1 }, (_, i) => matched.get(i)?.name || speakerLabel(i))
+  voiceSession = { sigma: detail.sigma, clusters: {}, matched: new Set(matched.size ? [...matched.values()].map((v) => v.name) : []), offer: null, note: '' }
+  for (const cl of clusters) voiceSession.clusters[names[cl.label]] = { c: cl.c, lf0: cl.lf0, n: cl.n }
+  return names
 }
 function startRecorder() {
   recorder?.discard(); recorder = null
@@ -981,6 +1007,76 @@ function startRecorder() {
   if (restoredRun || !keep.checked || keep.disabled || !stream) return // a restored note has lost its earlier audio
   recorder = new SessionRecorder(stream, (planAudioMB || 30) * 1048576)
   if (!recorder.start()) recorder = null
+}
+
+// ---------- Remembered voices ----------
+// The rules live in note-voice-memory.js. This part is only the screens: the list on the setup page, and the two short
+// messages on a finished note ("matched to saved voices" and "Remember this voice?"). Everything stays on this device.
+const voiceUid = () => { try { return window.Auth?.getCurrentUser?.()?.uid || null } catch { return null } }
+function renderVoiceSetup() {
+  const uid = voiceUid(), list = uid ? loadVoices(uid) : [], ul = $('noteTakerVoiceList')
+  $('noteTakerVoiceEmpty').hidden = list.length > 0
+  $('noteTakerVoiceEmpty').textContent = uid ? 'No voices are remembered. Nothing is stored unless you choose it after a meeting.' : 'Sign in to use remembered voices.'
+  ul.innerHTML = list.map((v) => `<li><span class="note-voice-name">${escapeHtml(v.name)}</span><button class="note-taker-ghost" type="button" data-forget="${escapeHtml(v.name)}" aria-label="Forget ${escapeHtml(v.name)}'s voice"><i class="ph ph-trash"></i> Forget</button></li>`).join('')
+  const all = $('noteTakerVoicesForget'); all.hidden = list.length < 2; disarmForget()
+}
+function disarmForget() { clearTimeout(forgetArmed); forgetArmed = null; $('noteTakerVoicesForget').innerHTML = 'Forget all' }
+function forgetVoiceClick(name) {
+  const uid = voiceUid(); if (!uid) return
+  saveVoices(uid, forgetVoice(loadVoices(uid), name)); renderVoiceSetup()
+  if (draft?.voice) { draft.voice.matched.delete(name); renderVoiceBar() }
+}
+function forgetAllClick() {
+  const uid = voiceUid(); if (!uid) return
+  if (!forgetArmed) { $('noteTakerVoicesForget').innerHTML = 'Tap again to forget all'; forgetArmed = setTimeout(disarmForget, 4000); return }
+  disarmForget(); saveVoices(uid, []); renderVoiceSetup()
+  if (draft?.voice) { draft.voice.matched.clear(); renderVoiceBar() }
+}
+// A name was changed on the finished note. The old match (if there was one) is now known to be wrong or renamed, so it
+// no longer counts, and the new name can be offered for remembering.
+function voiceAfterRename(oldName, name) {
+  const v = draft?.voice; if (!v) return
+  const cl = v.clusters[oldName]
+  if (cl && !v.clusters[name]) v.clusters[name] = cl
+  delete v.clusters[oldName]
+  v.matched.delete(oldName); v.note = ''
+  v.offer = voiceUid() && v.clusters[name] && isRememberable(name) ? cleanName(name) : null
+  renderVoiceBar()
+}
+function renderVoiceBar() {
+  const bar = $('noteTakerVoiceBar'), v = draft?.voice
+  const rows = []
+  if (v?.matched.size) {
+    const n = v.matched.size
+    rows.push(`<div class="note-voice-row"><span>${n === 1 ? '1 speaker was' : `${n} speakers were`} matched to saved voices. Wrong? Tap a name to fix.</span><button class="note-taker-secondary" type="button" data-vact="confirm">Looks right</button></div>`)
+  }
+  if (v?.offer) {
+    rows.push(`<div class="note-voice-row"><span>Remember ${escapeHtml(v.offer)}'s voice for next time? Only a summary of how it sounds is kept, on this device only.</span><span class="note-voice-actions"><button class="note-taker-primary" type="button" data-vact="remember">Remember this voice</button><button class="note-taker-ghost" type="button" data-vact="skip">Not now</button></span></div>`)
+  }
+  if (v?.note) rows.push(`<p class="note-voice-note" role="status">${escapeHtml(v.note)}</p>`)
+  bar.innerHTML = rows.join(''); bar.hidden = !rows.length
+}
+function voiceBarClick(e) {
+  const act = e.target.closest('[data-vact]')?.dataset.vact, v = draft?.voice, uid = voiceUid()
+  if (!act || !v) return
+  if (act === 'skip') { v.offer = null; v.note = '' }
+  else if (act === 'confirm') {
+    let list = loadVoices(uid), changed = 0
+    for (const name of v.matched) { const cl = v.clusters[name]; if (!cl) continue; const r = rememberVoice(list, name, cl, v.sigma); if (r.status === 'updated') { list = r.voices; changed++ } }
+    const ok = !changed || saveVoices(uid, list)
+    v.matched.clear(); v.note = ok ? 'Thanks. Saved voices are updated slowly, so they improve over time.' : 'Could not update saved voices on this device.'
+  } else if (act === 'remember') {
+    const name = v.offer, cl = name && v.clusters[name]
+    if (!uid || !cl) { v.offer = null; v.note = 'Sign in to remember voices.' }
+    else {
+      const r = rememberVoice(loadVoices(uid), name, cl, v.sigma)
+      if (r.status === 'full') v.note = `You already remember ${MAX_VOICES} voices. Forget one on the setup screen first, then try again.`
+      else if (r.status === 'invalid') { v.offer = null; v.note = 'That name cannot be saved. Use a real name, not "Speaker 1".' }
+      else if (!saveVoices(uid, r.voices)) v.note = 'Could not save on this device. Your browser may be blocking storage.'
+      else { v.offer = null; v.matched.delete(name); v.note = r.status === 'updated' ? `${name}'s saved voice was updated.` : `${name}'s voice is remembered on this device. You can remove it from the setup screen.` }
+    }
+  }
+  renderVoiceBar(); renderVoiceSetup()
 }
 
 // ---------- Transcript reader ----------
@@ -1015,6 +1111,7 @@ function redetectSpeakers() {
 const hueOf = (name) => Math.max(0, (draft?.speakers || []).indexOf(name)) % SPEAKER_HUES
 function renderReader() {
   const box = $('noteTakerReader'); const hint = $('noteTakerSpeakerHint')
+  renderVoiceBar()
   if (!draft) { box.innerHTML = ''; hint.textContent = ''; return }
   lines = parseTranscript($('noteTakerEditor').value, draft.speakers || [])
   const labelled = !!draft.speakers?.length, playable = audioAvailable()
@@ -1063,6 +1160,7 @@ function renameSpeaker(oldName, raw) {
   ls.forEach((l) => { if (l.speaker === oldName) l.speaker = name })
   draft.speakers = draft.speakers.map((n) => (n === oldName ? name : n))
   commitLines(ls)
+  voiceAfterRename(oldName, name)
 }
 
 // ---------- Audio playback ----------
@@ -1075,7 +1173,7 @@ function resetAudioPlayer() {
   if (audioUrl) URL.revokeObjectURL(audioUrl)
   audioUrl = null; audioLoading = false; activeLine = -1; dragging = false; audioStatus(''); syncAudioBar()
 }
-function afterDraftChange() { resetAudioPlayer(); if (editing) setEditing(false); closeSpeakerMenu(); askQuotaText = ''; $('noteTakerAskInput').value = '' }
+function afterDraftChange() { resetAudioPlayer(); if (editing) setEditing(false); closeSpeakerMenu(); disarmClear(); askQuotaText = ''; $('noteTakerAskInput').value = '' }
 function syncAudioBar() {
   const bar = $('noteTakerAudioBar'), has = audioAvailable()
   bar.hidden = !has
@@ -1168,18 +1266,47 @@ function askItemHtml(x) {
   const src = x.sources?.length ? `<div class="note-ask-src"><span>Heard at</span>${x.sources.map((t) => `<button class="note-src" type="button" data-at="${t}">${t}</button>`).join('')}</div>` : ''
   return `${q}<div class="note-ask-a${x.found ? '' : ' is-empty'}"><p>${escapeHtml(x.a)}</p>${x.partial ? '<small>This is a long meeting, so only the passages closest to your question were searched.</small>' : ''}${src}</div>`
 }
+// What is kept with a note: finished answers only, newest 30. The server applies the same rules again.
+const isFinished = (x) => !!x && !x.loading && !x.error && typeof x.a === 'string' && !!x.a
+function serializeAskLog(log) {
+  return (log || []).filter(isFinished).slice(-MAX_SAVED_ASKS).map((x) => ({ q: x.q, a: x.a, sources: x.sources || [], found: x.found !== false, partial: !!x.partial, at: x.at || new Date().toISOString() }))
+}
+function loadAskLog(saved) {
+  return (Array.isArray(saved) ? saved : []).filter((x) => x && typeof x.q === 'string' && typeof x.a === 'string')
+    .map((x) => ({ n: ++askSeq, q: x.q, a: x.a, sources: Array.isArray(x.sources) ? x.sources : [], found: x.found !== false, partial: !!x.partial, at: x.at, loading: false }))
+}
+function conversationText() {
+  const log = (draft?.askLog || []).filter(isFinished)
+  if (!log.length) return ''
+  return ['Questions and answers', log.map((x) => `- Q: ${x.q}\n  A: ${x.a}${x.sources?.length ? `\n  Heard at: ${x.sources.join(', ')}` : ''}`).join('\n')].join('\n\n')
+}
 function renderAskPane() {
   const log = draft?.askLog || []
   $('noteTakerAskLog').innerHTML = log.map(askItemHtml).join('')
   $('noteTakerAskSuggest').innerHTML = log.length ? '' : ASK_SUGGESTIONS.map((q) => `<button class="note-taker-chip-btn" type="button" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')
   updateAskUi()
 }
+function disarmClear() { clearTimeout(clearArmed); clearArmed = null; const b = $('noteTakerAskClear'); if (b) b.innerHTML = '<i class="ph ph-trash"></i> Clear conversation' }
+// Two taps, like Delete. The cleared conversation is saved too, so it does not come back when the note is reopened.
+function clearConversation() {
+  if (!draft || asking || !draft.askLog?.length) return
+  if (!clearArmed) { $('noteTakerAskClear').innerHTML = '<i class="ph ph-trash"></i> Tap again to clear the conversation'; clearArmed = setTimeout(disarmClear, 4000); return }
+  disarmClear()
+  draft.askLog = []; draft.liveNote = false
+  renderAskPane(); markEdited()
+  if (draft.saved) requestSave()
+}
+// A new answer on a saved note changes it, like a new summary does: mark it changed and save, so nothing is left unsaved.
+function answerArrived() { markEdited(); if (draft?.saved) requestSave() }
 function updateAskUi() {
   const ready = !!draft && $('noteTakerEditor').value.trim().length >= 40
   const input = $('noteTakerAskInput'), send = $('noteTakerAskSend')
   input.disabled = !ready || asking
   send.disabled = !ready || asking || !input.value.trim()
   send.innerHTML = asking ? '<i class="ph ph-circle-notch"></i>' : 'Ask'; send.classList.toggle('is-busy', asking)
+  const hasLog = !!draft?.askLog?.length
+  $('noteTakerAskClear').hidden = !hasLog; $('noteTakerAskClear').disabled = asking
+  $('noteTakerAskLiveNote').hidden = !(hasLog && draft?.liveNote)
   $('noteTakerAskHint').textContent = !ready ? 'There is not enough transcript to ask about yet.'
     : askQuotaText || (asksPerDay ? `You can ask up to ${asksPerDay} questions a day. Answers come only from this transcript.` : 'Answers come only from this transcript.')
 }
@@ -1191,15 +1318,135 @@ async function ask(question) {
   const history = log.filter((x) => x.a && !x.error).slice(-3).map((x) => ({ q: x.q, a: x.a })) // lets "and who owns that?" work
   const item = { n: ++askSeq, q: question, loading: true }
   log.push(item); asking = true; $('noteTakerAskInput').value = ''
+  let answered = false
   renderAskPane(); scrollAskEnd()
   try {
     const res = await askNote({ question, transcript: $('noteTakerEditor').value, title: $('noteTakerCompleteTitle').value.trim(), history })
-    Object.assign(item, { loading: false, a: res.answer, sources: res.sources || [], found: res.found, partial: res.partial })
+    Object.assign(item, { loading: false, a: res.answer, sources: res.sources || [], found: res.found, partial: res.partial, at: new Date().toISOString() })
     if (res.quota?.limit) askQuotaText = `${Math.max(0, res.quota.limit - res.quota.used)} of ${res.quota.limit} questions left today.`
+    answered = true
   } catch (e) { Object.assign(item, { loading: false, error: e.message || 'Could not answer that right now.' }) }
   asking = false
   if (draft === target) { renderAskPane(); scrollAskEnd() } else updateAskUi()
+  if (answered && draft === target && target.askLog?.includes(item)) answerArrived()
 }
+// ---------- Ask during a live recording ----------
+// A side panel over the live transcript. It only reads what has been transcribed so far and calls the same endpoint as
+// the Ask tab, so it never touches the microphone, the recognizer or the timer, and it works while paused. The
+// conversation is carried into the saved note's Ask tab when the recording finishes (see stopNow).
+const LIVE_PROMPTS = [
+  { label: 'Catch me up', ask: 'Catch me up: briefly summarize what has been discussed so far, in the order it came up.' },
+  { label: 'What has been decided so far?', ask: 'What has been decided so far?' },
+  { label: 'Which questions are still unanswered?', ask: 'Which questions are still unanswered?' },
+]
+const LIVE_ASK_MIN = 40 // matches note-ask-endpoint.js
+const liveAskAllowed = () => ['recording', 'paused', 'degraded', 'error'].includes(state) // not while starting or finishing
+// The same text the finished note will have: "[time] Speaker N: words", labels only when render() shows them. Words
+// still being recognized (the grey interim text) are left out.
+function liveTranscript() {
+  const multi = multiSpeaker()
+  return segments.map((x) => `[${x.time}] ${multi && x.speaker != null ? `${speakerLabel(x.speaker)}: ` : ''}${x.text}`).join('\n\n')
+}
+function resetLiveAsk() { liveAsk.run++; liveAsk.log = []; liveAsk.asking = false; liveAsk.limitText = ''; liveAsk.unseen = false; closeLiveAsk(false); renderLiveAsk() }
+// Called when the recording ends. Returns the conversation for the note: finished answers and any answer still on its
+// way. Failed questions stay behind; they were reported where they happened.
+function endLiveAsk() {
+  const items = liveAsk.log.filter((x) => x.loading || isFinished(x))
+  liveAsk.run++; liveAsk.log = []; liveAsk.asking = false; liveAsk.limitText = ''; liveAsk.unseen = false
+  closeLiveAsk(false); renderLiveAsk()
+  return items
+}
+function renderLiveAsk() {
+  const log = liveAsk.log
+  $('noteTakerLiveAskLog').innerHTML = log.length ? log.map(askItemHtml).join('') : '<p class="note-live-ask-empty">Ask about what has been said so far. Recording carries on while you ask.</p>'
+  $('noteTakerLiveAskPrompts').innerHTML = LIVE_PROMPTS.map((x, i) => `<button class="note-taker-chip-btn" type="button" data-prompt="${i}">${escapeHtml(x.label)}</button>`).join('')
+  updateLiveAskUi()
+}
+function updateLiveAskUi() {
+  const ready = liveAskAllowed() && liveTranscript().trim().length >= LIVE_ASK_MIN
+  const off = !ready || !!liveAsk.limitText || liveAsk.asking
+  const input = $('noteTakerLiveAskInput'), send = $('noteTakerLiveAskSend')
+  input.disabled = off; send.disabled = off || !input.value.trim()
+  send.innerHTML = liveAsk.asking ? '<i class="ph ph-circle-notch"></i>' : 'Ask'; send.classList.toggle('is-busy', liveAsk.asking)
+  for (const b of $('noteTakerLiveAskPrompts').children) b.disabled = off
+  const hint = liveAsk.limitText ? liveAsk.limitText
+    : !ready ? 'Not enough has been said yet. Try again in a moment.'
+    : askQuotaText || (asksPerDay ? `You can ask up to ${asksPerDay} questions a day. Answers come only from what has been transcribed so far.` : 'Answers come only from what has been transcribed so far.')
+  const box = $('noteTakerLiveAskHint'); box.textContent = hint; box.dataset.limit = String(!!liveAsk.limitText)
+  $('noteTakerLiveAsk').dataset.unseen = String(liveAsk.unseen && !liveAsk.open)
+  $('noteTakerLiveAsk').disabled = !(liveAskAllowed() || state === 'connecting')
+}
+const scrollLiveAskEnd = () => $('noteTakerLiveAskLog').lastElementChild?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+function openLiveAsk() {
+  if (!liveAskAllowed() && state !== 'connecting') return
+  liveAsk.open = true; liveAsk.unseen = false
+  $('noteTakerLiveAskPanel').hidden = false; $('noteTakerLiveAskWrap').dataset.open = 'true'
+  $('noteTakerLiveAsk').setAttribute('aria-expanded', 'true')
+  renderLiveAsk(); scrollLiveAskEnd()
+  ;($('noteTakerLiveAskInput').disabled ? $('noteTakerLiveAskClose') : $('noteTakerLiveAskInput')).focus()
+}
+function closeLiveAsk(returnFocus = true) {
+  const wasOpen = liveAsk.open
+  liveAsk.open = false
+  $('noteTakerLiveAskPanel').hidden = true; $('noteTakerLiveAskWrap').dataset.open = 'false'
+  $('noteTakerLiveAsk').setAttribute('aria-expanded', 'false')
+  if (wasOpen && returnFocus) $('noteTakerLiveAsk').focus()
+}
+async function liveAskSend(label, text = label) {
+  label = (label || '').trim(); text = (text || '').trim()
+  // One request at a time: the flag is set before anything is awaited, so a double tap cannot send two.
+  if (!label || liveAsk.asking || liveAsk.limitText || !liveAskAllowed()) return
+  const transcript = liveTranscript()
+  if (transcript.trim().length < LIVE_ASK_MIN) return updateLiveAskUi()
+  const run = liveAsk.run, log = liveAsk.log
+  const history = log.filter(isFinished).slice(-3).map((x) => ({ q: x.q, a: x.a }))
+  const item = { n: ++askSeq, q: label, text, loading: true }
+  log.push(item); liveAsk.asking = true; $('noteTakerLiveAskInput').value = ''
+  renderLiveAsk(); scrollLiveAskEnd()
+  let answered = false
+  try {
+    const res = await askNote({ question: text, transcript, title: $('noteTakerMeetingTitle').value.trim(), history })
+    Object.assign(item, { loading: false, a: res.answer, sources: res.sources || [], found: res.found, partial: res.partial, at: new Date().toISOString() })
+    answered = true
+    if (res.quota?.limit) {
+      askQuotaText = `${Math.max(0, res.quota.limit - res.quota.used)} of ${res.quota.limit} questions left today.`
+      if (res.quota.used >= res.quota.limit && liveAsk.run === run) liveAsk.limitText = `That was your last question for today. It resets at midnight UTC. Questions you asked are kept with the note.`
+    }
+  } catch (e) {
+    Object.assign(item, { loading: false, error: e.message || 'Could not answer that right now.' })
+    if (e.status === 429 && liveAsk.run === run) liveAsk.limitText = e.message || 'You have used all your meeting questions for today. It resets at midnight UTC.'
+  }
+  liveAnswerArrived(item, run, answered)
+}
+function liveAnswerArrived(item, run, answered) {
+  if (liveAsk.run === run) { // the meeting is still going
+    liveAsk.asking = false
+    const refocus = liveAsk.open && (document.activeElement === document.body || $('noteTakerLiveAskPanel').contains(document.activeElement))
+    if (!liveAsk.open) liveAsk.unseen = true
+    renderLiveAsk(); if (liveAsk.open) scrollLiveAskEnd()
+    if (refocus && !$('noteTakerLiveAskInput').disabled) $('noteTakerLiveAskInput').focus()
+    return
+  }
+  // The recording ended while this was loading. The question was moved into the note, so the answer lands there.
+  const owner = item.owner; delete item.owner
+  if (!owner) return // it was never carried over (a new recording started): nothing on screen belongs to it
+  asking = false
+  if (draft !== owner || !owner.askLog.includes(item)) return // the person has opened another note: nothing to update
+  renderAskPane()
+  if (answered) answerArrived()
+}
+// Tapping "Heard at 00:12:03" scrolls the live transcript to that line. The panel covers the transcript, so it closes.
+function jumpLive(stamp) {
+  closeLiveAsk(false)
+  const k = segments.findIndex((x) => x.time === stamp)
+  const row = k >= 0 ? $('noteTakerTranscript').children[k] : null
+  if (row) {
+    row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    row.classList.add('is-flash'); setTimeout(() => row.classList.remove('is-flash'), 1800)
+  }
+  $('noteTakerLiveAsk').focus()
+}
+
 // Jump from an answer (or a comparison) to the exact line, and play it when there is audio.
 function jumpTo(stamp) {
   setView('transcript'); if (editing) setEditing(false)
@@ -1344,6 +1591,22 @@ $('noteTakerPaneAsk').addEventListener('click', (e) => {
   const at = e.target.closest('[data-at]'); if (at) jumpTo(at.dataset.at)
 })
 $('noteTakerSummary').addEventListener('click', (e) => { const at = e.target.closest('.note-src[data-at]'); if (at) jumpTo(at.dataset.at) })
+$('noteTakerVoiceBar').addEventListener('click', voiceBarClick)
+$('noteTakerVoiceList').addEventListener('click', (e) => { const n = e.target.closest('[data-forget]')?.dataset.forget; if (n) forgetVoiceClick(n) })
+$('noteTakerVoicesForget').addEventListener('click', forgetAllClick)
+$('noteTakerAskClear').addEventListener('click', clearConversation)
+$('noteTakerLiveAsk').addEventListener('click', () => (liveAsk.open ? closeLiveAsk() : openLiveAsk()))
+$('noteTakerLiveAskClose').addEventListener('click', () => closeLiveAsk())
+$('noteTakerLiveAskSend').addEventListener('click', () => liveAskSend($('noteTakerLiveAskInput').value))
+$('noteTakerLiveAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); liveAskSend(e.target.value) } })
+$('noteTakerLiveAskInput').addEventListener('input', updateLiveAskUi)
+$('noteTakerLiveAskPanel').addEventListener('click', (e) => {
+  const p = e.target.closest('[data-prompt]'); if (p) { const x = LIVE_PROMPTS[Number(p.dataset.prompt)]; if (x) liveAskSend(x.label, x.ask); return }
+  const r = e.target.closest('[data-retry]'); if (r) { const k = liveAsk.log.findIndex((x) => String(x.n) === r.dataset.retry); if (k >= 0) { const [gone] = liveAsk.log.splice(k, 1); liveAskSend(gone.q, gone.text || gone.q) } return }
+  const at = e.target.closest('[data-at]'); if (at) jumpLive(at.dataset.at)
+})
+// Escape closes the question panel first; a second press minimizes the note as before.
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && liveAsk.open) { e.stopPropagation(); closeLiveAsk() } }, true)
 
 $('noteTakerTaskOpen').addEventListener('click', () => { taskFilter = 'open'; renderTasks() })
 $('noteTakerTaskDone').addEventListener('click', () => { taskFilter = 'done'; renderTasks() })
