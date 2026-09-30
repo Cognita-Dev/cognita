@@ -7,6 +7,8 @@ const AUTOSAVE_PREF_KEY = 'cognitaNoteTakerSaveOnFinish'
 const MIN_SUMMARY_CHARS = 200 // matches saved-notes-endpoint.js
 const AUTOSAVE_MS = 20000
 const QUOTA_NOTICE_KEY = 'cognitaNoteQuotaNotice'
+const LIST_COUNT_KEY = 'cognitaNoteListCount' // last known number of saved notes, so the loading skeleton has the right number of rows
+const AGENDA_LABEL = { covered: 'Covered', partial: 'Partly covered', not_covered: 'Not covered' }
 const QUOTA_WARN_AT = 0.9        // show the "nearly used up" notice from 90% of today's cloud allowance
 const QUOTA_STALE_MS = 15000     // how old the mirrored allowance may be before it is fetched again
 const RETRY_PRIMARY_MS = 30000
@@ -46,7 +48,7 @@ let sessionId = null, sessionVersion = 1
 // { id, createdAt, durationMs, language, agenda, summary, saved, dirty }
 let draft = null, editVersion = 0, saving = false, summarizing = false
 let savedNotes = null, savedLimit = null, savedLoading = false, savedFailed = false, searchTerm = ''
-let deleteArmed = null, newArmed = null, discardArmedId = null
+let deleteArmed = null, newArmed = null, discardArmedId = null, view = 'transcript', lastGroup = ''
 
 const ACTIVE = ['recording', 'paused', 'degraded', 'connecting']
 const isActive = () => ACTIVE.includes(state)
@@ -591,8 +593,10 @@ async function copyNote() {
 function downloadNote() {
   const name = ($('noteTakerCompleteTitle').value.trim() || 'meeting-notes').replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 80)
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(new Blob([$('noteTakerEditor').value], { type: 'text/plain;charset=utf-8' }))
-  a.download = `${name}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  const withSummary = !!draft?.summary
+  const body = withSummary ? `${summaryText()}\n\n---\n\nTranscript\n\n${$('noteTakerEditor').value}` : $('noteTakerEditor').value
+  a.href = URL.createObjectURL(new Blob([body], { type: 'text/plain;charset=utf-8' }))
+  a.download = `${name}.${withSummary ? 'md' : 'txt'}`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
 // ---------- Saved notes: save, summarize, browse ----------
@@ -612,6 +616,7 @@ function showComplete() {
   $('noteTakerMeta').textContent = [fmtDate(draft.createdAt), fmtMinutes(draft.durationMs) || null, langLabel(draft.language)].filter(Boolean).join(', ')
   $('noteTakerDelete').hidden = !draft.saved
   renderSummary()
+  setView(draft.summary ? 'summary' : 'transcript')
   refreshSaveUi()
 }
 function refreshSaveUi() {
@@ -653,24 +658,67 @@ async function saveCurrent() {
 // ----- Summary -----
 function renderSummary() {
   const box = $('noteTakerSummary'); const s = draft?.summary
-  if (summarizing) { box.hidden = false; box.innerHTML = '<div class="note-skeleton"><span></span><span></span><span></span></div>'; return }
+  if (summarizing) { box.hidden = false; box.innerHTML = summarySkeleton(); return }
   if (!s) { box.hidden = true; box.innerHTML = ''; return }
   const list = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`
   const section = (title, body) => body ? `<section><h4>${title}</h4>${body}</section>` : ''
+  const outline = s.sections?.length ? `<ol class="note-outline">${s.sections.map((x) => `<li><div><strong>${escapeHtml(x.title)}</strong>${x.summary ? `<small>${escapeHtml(x.summary)}</small>` : ''}</div></li>`).join('')}</ol>` : ''
+  const agendaList = s.agendaCoverage?.length ? `<ul class="note-actions">${s.agendaCoverage.map((a) => `<li><span>${escapeHtml(a.item)}</span><small>${AGENDA_LABEL[a.status] || ''}</small></li>`).join('')}</ul>` : ''
   const actions = s.actionItems.length ? `<ul class="note-actions">${s.actionItems.map((a) => `<li><span>${escapeHtml(a.task)}</span>${a.owner || a.due || a.priority === 'high' ? `<small>${[a.owner, a.due, a.priority === 'high' ? 'High priority' : ''].filter(Boolean).map(escapeHtml).join(', ')}</small>` : ''}</li>`).join('')}</ul>` : ''
   box.hidden = false
-  box.innerHTML = `<div class="note-summary-head"><h3>Summary</h3><button class="note-taker-ghost" id="noteTakerCopySummary" type="button"><i class="ph ph-copy"></i> Copy summary</button></div>`
+  box.innerHTML = `<div class="note-summary-head"><h3>Summary</h3><div class="note-summary-tools"><button class="note-taker-ghost" id="noteTakerFollowUp" type="button"><i class="ph ph-envelope-simple"></i> Follow-up email</button><button class="note-taker-ghost" id="noteTakerCopySummary" type="button"><i class="ph ph-copy"></i> Copy summary</button></div></div>`
     + (s.overview ? `<p class="note-overview">${escapeHtml(s.overview)}</p>` : '')
+    + section('Meeting outline', outline)
+    + section('Agenda', agendaList)
     + section('Decisions', s.decisions.length ? list(s.decisions) : '')
     + section('Action items', actions)
     + section('Key points', s.keyPoints.length ? list(s.keyPoints) : '')
     + section('Open questions', s.openQuestions.length ? list(s.openQuestions) : '')
   $('noteTakerCopySummary').addEventListener('click', copySummary)
+  $('noteTakerFollowUp').addEventListener('click', copyFollowUp)
+}
+// The loading state uses the real headings (they are known) and grey bars only where text will arrive,
+// so nothing jumps when the summary lands. The Agenda block appears only if an agenda was entered.
+function summarySkeleton() {
+  const bar = (w, cls = '') => `<span class="sk ${cls}" style="width:${w}"></span>`
+  const lines = ['100%', '95%', '64%'].map((w) => bar(w, 'sk-block')).join('')
+  const bullets = (ws) => `<ul>${ws.map((w) => `<li>${bar(w)}</li>`).join('')}</ul>`
+  const tasks = `<ul class="note-actions">${['72%', '58%'].map((w) => `<li>${bar(w)}<small>${bar('32%')}</small></li>`).join('')}</ul>`
+  const outline = `<ol class="note-outline">${['40%', '52%', '34%'].map((w) => `<li><div><strong>${bar(w)}</strong><small>${bar('88%')}</small></div></li>`).join('')}</ol>`
+  const agenda = draft?.agenda ? `<section><h4>Agenda</h4><ul class="note-actions">${['64%', '48%'].map((w) => `<li>${bar(w)}<small>${bar('22%')}</small></li>`).join('')}</ul></section>` : ''
+  return `<div class="note-summary-head"><h3>Summary</h3></div><p class="note-overview" role="status" aria-label="Writing the summary">${lines}</p>`
+    + `<section><h4>Meeting outline</h4>${outline}</section>${agenda}<section><h4>Decisions</h4>${bullets(['80%', '55%'])}</section>`
+    + `<section><h4>Action items</h4>${tasks}</section><section><h4>Key points</h4>${bullets(['86%', '70%', '46%'])}</section>`
+}
+function followUpText() {
+  const s = draft?.summary; if (!s) return ''
+  const title = $('noteTakerCompleteTitle').value.trim() || 'our meeting'
+  const list = (items) => items.map((l) => `- ${l}`).join('\n')
+  const tasks = s.actionItems.map((a) => `- ${a.task}${a.owner || a.due ? ` (${[a.owner, a.due].filter(Boolean).join(', ')})` : ''}`).join('\n')
+  return [`Subject: Follow-up: ${title}`, 'Hi all,', `Thank you for your time. Here is a short recap of ${title}.`, s.overview,
+    s.decisions.length ? `Decisions\n${list(s.decisions)}` : '', tasks ? `Action items\n${tasks}` : '',
+    s.openQuestions.length ? `Still open\n${list(s.openQuestions)}` : '', 'Please reply if anything here looks wrong or is missing.', 'Thanks'].filter(Boolean).join('\n\n')
+}
+async function copyFollowUp() {
+  const btn = $('noteTakerFollowUp')
+  try { await navigator.clipboard.writeText(followUpText()); btn.innerHTML = '<i class="ph ph-check"></i> Email copied' } catch { btn.innerHTML = 'Copy failed' }
+  setTimeout(() => { if (btn.isConnected) btn.innerHTML = '<i class="ph ph-envelope-simple"></i> Follow-up email' }, 2000)
+}
+// Summary / Transcript switch. The tabs only exist once a summary exists or is being written.
+function setView(v) {
+  const has = !!(summarizing || draft?.summary)
+  view = has ? v : 'transcript'
+  $('noteTakerComplete').dataset.view = view
+  $('noteTakerViewTabs').hidden = !has
+  $('noteTakerViewSummary').setAttribute('aria-selected', String(view === 'summary'))
+  $('noteTakerViewTranscript').setAttribute('aria-selected', String(view === 'transcript'))
 }
 function summaryText() {
   const s = draft?.summary; if (!s) return ''
   const block = (title, lines) => lines.length ? `${title}\n${lines.map((l) => `- ${l}`).join('\n')}` : ''
   return [$('noteTakerCompleteTitle').value.trim(), s.overview,
+    block('Meeting outline', (s.sections || []).map((x) => (x.summary ? `${x.title}: ${x.summary}` : x.title))),
+    block('Agenda', (s.agendaCoverage || []).map((a) => `${a.item} (${AGENDA_LABEL[a.status] || ''})`)),
     block('Decisions', s.decisions),
     block('Action items', s.actionItems.map((a) => [a.task, [a.owner, a.due].filter(Boolean).join(', ')].filter(Boolean).join(' (') + (a.owner || a.due ? ')' : ''))),
     block('Key points', s.keyPoints), block('Open questions', s.openQuestions)].filter(Boolean).join('\n\n')
@@ -682,7 +730,7 @@ async function copySummary() {
 }
 async function summarizeCurrent() {
   if (!draft || summarizing) return
-  summarizing = true; $('noteTakerSaveState').dataset.error = 'false'; renderSummary(); refreshSaveUi()
+  summarizing = true; $('noteTakerSaveState').dataset.error = 'false'; renderSummary(); setView('summary'); refreshSaveUi()
   const target = draft
   let summary = null, failure = null
   try {
@@ -695,30 +743,51 @@ async function summarizeCurrent() {
     if (!$('noteTakerCompleteTitle').value.trim() && summary.title) $('noteTakerCompleteTitle').value = summary.title // name untitled notes
     if (target.saved) target.dirty = true
   } else setSaveState(failure?.message || 'Could not summarize. Please try again.', true)
-  renderSummary(); refreshSaveUi()
+  renderSummary(); setView(target.summary ? 'summary' : 'transcript'); refreshSaveUi()
   if (summary && target.saved) saveCurrent() // keep the stored note in step with what is on screen
 }
 
 // ----- Saved notes list -----
 function noteMatches(n, words) { const hay = `${n.title} ${n.searchText}`.toLowerCase(); return words.every((w) => hay.includes(w)) }
+function groupLabel(iso) {
+  const d = new Date(iso); if (isNaN(d)) return 'Earlier'
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000)
+  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : days < 7 ? 'This week' : days < 30 ? 'This month' : 'Earlier'
+}
+function groupHead(n, words) {
+  if (words.length) return '' // search results stay in one flat list
+  const label = groupLabel(n.updatedAt)
+  if (label === lastGroup) return ''
+  lastGroup = label
+  return `<h4 class="note-group-label">${label}</h4>`
+}
+// Same markup and typography as a real row (title + date, meta, two-line preview), so the list does not shift when it loads.
+function listSkeleton() {
+  let n = 3
+  try { const v = localStorage.getItem(LIST_COUNT_KEY); if (v !== null) n = Math.min(6, Math.max(0, Number(v) || 0)) } catch {}
+  if (n === 0) return '<div class="note-taker-empty" role="status" aria-label="Loading saved notes"><span class="sk sk-block" style="width:150px;margin-inline:auto"></span><span class="sk sk-block" style="width:min(300px,90%);margin-inline:auto"></span><span class="sk" style="width:170px;height:44px;margin-top:var(--space-3)"></span></div>'
+  const row = '<div class="note-row note-row--skeleton" aria-hidden="true"><span class="note-row-top"><strong><span class="sk sk-title"></span></strong><time><span class="sk sk-date"></span></time></span><span class="note-row-meta"><span class="sk sk-meta"></span></span><span class="note-row-preview"><span class="sk sk-block"></span><span class="sk sk-block"></span></span></div>'
+  return `<div role="status" aria-label="Loading saved notes"><h4 class="note-group-label"><span class="sk" style="width:52px"></span></h4>${row.repeat(n)}</div>`
+}
 function renderSaved() {
   const list = $('noteTakerSavedList'); const err = $('noteTakerSavedError'); const limit = $('noteTakerSavedLimit')
   const count = $('noteTakerSavedCount')
   count.hidden = !savedNotes; count.textContent = savedNotes ? String(savedNotes.length) : ''
   limit.hidden = !(savedNotes && savedLimit); if (savedNotes && savedLimit) limit.textContent = `${savedNotes.length} of ${savedLimit} notes saved on your plan.`
   $('noteTakerSearch').disabled = !savedNotes?.length
-  if (savedLoading) { err.hidden = true; list.innerHTML = '<div class="note-row-skeleton"></div><div class="note-row-skeleton"></div><div class="note-row-skeleton"></div>'; return }
+  if (savedLoading) { err.hidden = true; list.innerHTML = listSkeleton(); return }
   if (savedFailed) { list.innerHTML = '<div class="note-taker-empty"><p>Your saved notes could not be loaded. They have not been changed.</p><button class="note-taker-secondary" id="noteTakerSavedRetry" type="button">Try again</button></div>'; $('noteTakerSavedRetry').addEventListener('click', () => loadSaved(true)); return }
   if (!savedNotes?.length) { list.innerHTML = '<div class="note-taker-empty"><p>No saved notes yet.</p><p class="note-empty-sub">Record a meeting, then choose Save note. Turn on Save to my notes when I finish to skip that step.</p><button class="note-taker-secondary" id="noteTakerSavedRecord" type="button"><i class="ph ph-microphone"></i> Start a recording</button></div>'; $('noteTakerSavedRecord').addEventListener('click', () => showRecordTab()); return }
   const words = searchTerm.toLowerCase().split(/\s+/).filter(Boolean)
   const rows = savedNotes.filter((n) => noteMatches(n, words))
   if (!rows.length) { list.innerHTML = `<div class="note-taker-empty"><p>No notes match "${escapeHtml(searchTerm)}".</p><p class="note-empty-sub">Search covers titles and summaries. Summarize a note to make it easier to find.</p></div>`; return }
-  list.innerHTML = rows.map((n) => `<button class="note-row" type="button" data-id="${escapeHtml(n.id)}"><span class="note-row-top"><strong>${escapeHtml(n.title)}</strong><time datetime="${escapeHtml(n.updatedAt)}">${escapeHtml(relativeDay(n.updatedAt))}</time></span><span class="note-row-meta">${[fmtMinutes(n.durationMs), n.hasSummary ? 'Summarized' : ''].filter(Boolean).join(', ')}</span><span class="note-row-preview">${escapeHtml(n.preview)}</span></button>`).join('')
+  lastGroup = ''
+  list.innerHTML = rows.map((n) => groupHead(n, words) + `<button class="note-row" type="button" data-id="${escapeHtml(n.id)}"><span class="note-row-top"><strong>${escapeHtml(n.title)}</strong><time datetime="${escapeHtml(n.updatedAt)}">${escapeHtml(relativeDay(n.updatedAt))}</time></span><span class="note-row-meta">${[fmtMinutes(n.durationMs), n.hasSummary ? 'Summarized' : ''].filter(Boolean).join(', ')}</span><span class="note-row-preview">${escapeHtml(n.preview)}</span></button>`).join('')
 }
 async function loadSaved(force = false) {
   if (savedLoading || (savedNotes && !force)) return renderSaved()
   savedLoading = true; savedFailed = false; renderSaved()
-  try { const res = await listSavedNotes(); savedNotes = res.notes || []; savedLimit = res.limit || null }
+  try { const res = await listSavedNotes(); savedNotes = res.notes || []; savedLimit = res.limit || null; try { localStorage.setItem(LIST_COUNT_KEY, String(savedNotes.length)) } catch {} }
   catch (e) { savedFailed = true; savedNotes = null }
   savedLoading = false; renderSaved()
 }
@@ -776,6 +845,8 @@ $('noteTakerSummarize').addEventListener('click', summarizeCurrent)
 $('noteTakerDelete').addEventListener('click', deleteCurrent)
 $('noteTakerEditor').addEventListener('input', markEdited)
 $('noteTakerCompleteTitle').addEventListener('input', markEdited)
+$('noteTakerViewSummary').addEventListener('click', () => setView('summary'))
+$('noteTakerViewTranscript').addEventListener('click', () => setView('transcript'))
 $('noteTakerTabRecord').addEventListener('click', showRecordTab)
 $('noteTakerTabSaved').addEventListener('click', showSavedTab)
 $('noteTakerSearch').addEventListener('input', (e) => { searchTerm = e.target.value.trim(); renderSaved() })
