@@ -4,7 +4,7 @@
 // downloading every note.
 //
 // Layout:
-//   B2         notes/{uid}/{noteId}.json     full note (transcript, summary)
+//   B2         notes/{uid}/{noteId}.json     full note (transcript, summary, askLog)
 //   Firestore  saved_notes/{uid}_{noteId}    title, dates, preview, search text
 //
 // Routes (see worker.js):
@@ -39,6 +39,11 @@ const MAX_TASKS_IN_INDEX = 15;
 export const HARD_AUDIO_MAX_BYTES = 30 * 1024 * 1024; // the Worker holds the whole upload in memory
 const AUDIO_TYPES = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/mpeg', 'audio/wav'];
 const MAX_SPEAKERS = 12;
+const MAX_ASKLOG = 30;          // saved questions and answers per note; the oldest are dropped first
+const MAX_ASK_Q = 500;
+const MAX_ASK_A = 1200;
+const MAX_ASK_SOURCES = 4;
+const STAMP_ONLY = /^\d\d:\d\d:\d\d$/;
 
 // Summaries of long meetings are built in two passes (extract from each
 // chunk, then merge). These keep one summary to a bounded number of model calls.
@@ -137,6 +142,27 @@ function summaryToText(s) {
   ].filter(Boolean).join('\n');
 }
 
+// The questions and answers kept with a note. The browser sends them back with every save, so they are untrusted in
+// the same way a summary is: rebuilt entry by entry into a fixed shape with every length capped. An entry without a
+// real answer (still loading, or failed) is dropped. Only the newest MAX_ASKLOG are kept.
+export function sanitizeAskLog(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const x of raw) {
+    if (!x || typeof x !== 'object' || x.loading || x.error) continue;
+    const q = typeof x.q === 'string' ? x.q.trim().slice(0, MAX_ASK_Q) : '';
+    const a = typeof x.a === 'string' ? x.a.trim().slice(0, MAX_ASK_A) : '';
+    if (!q || !a) continue;
+    const found = x.found !== false;
+    const sources = found
+      ? [...new Set((Array.isArray(x.sources) ? x.sources : []).filter((t) => typeof t === 'string' && STAMP_ONLY.test(t)))].slice(0, MAX_ASK_SOURCES)
+      : [];
+    const when = typeof x.at === 'string' ? new Date(x.at) : null;
+    out.push({ q, a, sources, found, partial: x.partial === true, at: when && !isNaN(when) ? when.toISOString() : new Date().toISOString() });
+  }
+  return out.slice(-MAX_ASKLOG);
+}
+
 // What the library list needs from a note. `searchText` is deliberately short:
 // it is sent to the browser for every note, so it holds the summary when there
 // is one and only the start of the transcript otherwise.
@@ -211,7 +237,8 @@ export async function handleNoteGet(request, env, noteId) {
     if (!meta) return fail('That note no longer exists.', 404, env);
     const text = await b2DownloadFileByName(env, noteKey(identity.uid, noteId));
     if (text === null) return fail('That note no longer exists.', 404, env);
-    return ok({ note: { ...JSON.parse(text), hasAudio: !!meta.hasAudio, audioType: meta.audioType || null } }, env);
+    const stored = JSON.parse(text);
+    return ok({ note: { ...stored, askLog: sanitizeAskLog(stored.askLog), hasAudio: !!meta.hasAudio, audioType: meta.audioType || null } }, env);
   } catch (e) {
     console.error('[saved-notes] get failed:', e.message);
     return fail('Could not open that note. Please try again.', 502, env);
@@ -252,6 +279,15 @@ export async function handleNoteSave(request, env) {
     }
   }
 
+  // A save that does not mention askLog at all (an older copy of the app still open in a browser tab) must not wipe the
+  // conversation already stored. An explicit empty list does clear it.
+  let askLog;
+  if (Array.isArray(body.askLog)) askLog = sanitizeAskLog(body.askLog);
+  else if (existing) {
+    try { const prior = await b2DownloadFileByName(env, noteKey(identity.uid, id)); askLog = sanitizeAskLog(prior ? JSON.parse(prior).askLog : []); }
+    catch (e) { return fail('Could not save the note. Please try again.', 502, env); }
+  } else askLog = [];
+
   const now = new Date().toISOString();
   const note = {
     version: 1,
@@ -265,6 +301,7 @@ export async function handleNoteSave(request, env) {
     transcript,
     speakers: (Array.isArray(body.speakers) ? body.speakers : []).map((n) => clean(n, 40)).filter(Boolean).slice(0, MAX_SPEAKERS),
     summary: sanitizeStoredSummary(body.summary),
+    askLog,
   };
 
   try {
