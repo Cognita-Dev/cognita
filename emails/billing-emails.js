@@ -6,6 +6,7 @@
 // never break a payment, a webhook or a cancellation.
 
 import { getPlan } from '../entitlements.js';
+import { GRACE_PERIOD_DAYS } from '../subscription.js';
 import { lookupUser, firstName } from './firebase-users.js';
 import { sendEmail, claimOnce, releaseClaim, formatLagosDate, formatNaira } from './mailer.js';
 import {
@@ -67,6 +68,7 @@ export async function sendPaymentReceiptEmail(env, info) {
       periodEndText: info.periodEnd ? formatLagosDate(info.periodEnd) : '',
       reference: info.renewal ? '' : info.reference || '',
       renewal: !!info.renewal,
+      accountEmail: email || '',
     });
 
     const key = 'receipt:' + (info.reference || info.dedupeKey || info.uid + ':' + paidAt.toISOString().slice(0, 10));
@@ -76,12 +78,25 @@ export async function sendPaymentReceiptEmail(env, info) {
   }
 }
 
-/** A recurring payment failed. { uid, email?, planId } (one email per day at most) */
+/**
+ * A recurring payment failed. { uid, email?, planId, periodEnd? } (one email per day at most)
+ * periodEnd is the account's billing date. The grace period runs for
+ * GRACE_PERIOD_DAYS after it (see subscription.js), which is the date the
+ * email shows, but only while that date is still ahead.
+ */
 export async function sendPaymentFailedEmail(env, info) {
   try {
     const plan = getPlan(info.planId);
     const { email, name } = await _recipient(env, info.uid, info.email);
-    const message = buildPaymentFailedEmail({ name, planName: plan.name });
+    let graceEndText = '';
+    let graceOver = false;
+    const periodEnd = info.periodEnd ? new Date(info.periodEnd) : null;
+    if (periodEnd && !isNaN(periodEnd.getTime())) {
+      const graceEnd = new Date(periodEnd.getTime() + GRACE_PERIOD_DAYS * 86400000);
+      if (graceEnd.getTime() > Date.now()) graceEndText = formatLagosDate(graceEnd);
+      else graceOver = true; // a late notice: the grace period has already run out
+    }
+    const message = buildPaymentFailedEmail({ name, planName: plan.name, graceEndText, graceDays: GRACE_PERIOD_DAYS, graceOver });
     const key = 'payfail:' + info.uid + ':' + new Date().toISOString().slice(0, 10);
     await _sendOnce(env, key, SIXTY_DAYS, email, message, 'payment failed');
   } catch (e) {
