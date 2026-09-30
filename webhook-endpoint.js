@@ -495,5 +495,6 @@ async function _handlePaymentFailed(data, env) {
     uid,
     email,
     planId: account.planId,
+    periodEnd: account.periodEnd,
   });
 }
