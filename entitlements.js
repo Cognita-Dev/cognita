@@ -42,6 +42,8 @@ export const PLANS = {
       noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
       savedNotesMax: 15,           // notes a user can keep saved in B2 at once
+      noteTakerAsksPerDay: 10,   // questions asked about a meeting (Ask, and the recurring-meeting comparison)
+      noteAudioMaxMB: 8,         // largest audio recording kept with one saved note (hard ceiling 30: the Worker buffers the upload)
       // Real, AI-generated illustrations rendered onto flashcard faces
       // (Cloudflare Workers AI, same model as illustration image gen).
       // Free users never get these — text-only flashcards only.
@@ -96,6 +98,8 @@ export const PLANS = {
       noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
       savedNotesMax: 200,           // notes a user can keep saved in B2 at once
+      noteTakerAsksPerDay: 60,   // questions asked about a meeting (Ask, and the recurring-meeting comparison)
+      noteAudioMaxMB: 20,         // largest audio recording kept with one saved note (hard ceiling 30: the Worker buffers the upload)
       // One deck's worth of illustrated cards per day, roughly — kept
       // well below imageGenPerDay since a single flashcard deck can
       // burn through many images in one generation call.
@@ -141,6 +145,8 @@ export const PLANS = {
       noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
       savedNotesMax: 1000,           // notes a user can keep saved in B2 at once
+      noteTakerAsksPerDay: 300,   // questions asked about a meeting (Ask, and the recurring-meeting comparison)
+      noteAudioMaxMB: 30,         // largest audio recording kept with one saved note (hard ceiling 30: the Worker buffers the upload)
       flashcardImagePerDay: 80,
       activeReminders: 150,
       inboxAiDraftPerDay: 150,
@@ -193,6 +199,8 @@ export const PLANS = {
       noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
       savedNotesMax: UNLIMITED,           // notes a user can keep saved in B2 at once
+      noteTakerAsksPerDay: UNLIMITED,   // questions asked about a meeting (Ask, and the recurring-meeting comparison)
+      noteAudioMaxMB: 30,         // largest audio recording kept with one saved note (hard ceiling 30: the Worker buffers the upload)
       flashcardImagePerDay: UNLIMITED,
       activeReminders: UNLIMITED,
       inboxAiDraftPerDay: UNLIMITED,
