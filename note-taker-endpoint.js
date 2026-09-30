@@ -171,7 +171,11 @@ export async function handleNoteQuota(request, env) {
     try { used = await getUsage(identity.uid, WHISPER_RESOURCE, env); }
     catch (e) { console.error('[note-taker] quota: usage read failed:', e.message); return json({ error: 'Could not load your transcription allowance. Please try again.' }, 500, env); }
   }
-  return json({ quota: quotaSnapshot(plan, used) }, 200, env);
+  return json({
+    quota: quotaSnapshot(plan, used),
+    audioMaxMB: Math.min(plan.limits.noteAudioMaxMB || 0, 30), // largest recording kept with a saved note; 0 = not included
+    asksPerDay: plan.limits.noteTakerAsksPerDay < UNLIMITED ? plan.limits.noteTakerAsksPerDay : null,
+  }, 200, env);
 }
 
 export async function handleNoteChunkTranscribe(request, env, sessionId) {
