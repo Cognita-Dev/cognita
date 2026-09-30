@@ -66,6 +66,33 @@ function _formatWhen(reminder) {
   }
 }
 
+// The same moment broken into parts, for the calendar tile in the reminder
+// email. Returns null if the time zone or date is unusable, and the email then
+// shows the plain `whenText` line instead.
+function _whenParts(reminder, occurrence) {
+  try {
+    const d = new Date(reminder.eventAt);
+    if (isNaN(d.getTime())) return null;
+    const tz = reminder.timezone;
+    const part = (opts) => d.toLocaleString('en-GB', { timeZone: tz, ...opts });
+    const tzName = new Intl.DateTimeFormat('en-GB', { timeZone: tz, timeZoneName: 'short' })
+      .formatToParts(d)
+      .find((p) => p.type === 'timeZoneName');
+    return {
+      month: part({ month: 'short' }),
+      day: part({ day: 'numeric' }),
+      weekday: part({ weekday: 'long' }),
+      dateText: part({ day: 'numeric', month: 'long', year: 'numeric' }),
+      timeText: reminder.allDay ? '' : part({ hour: '2-digit', minute: '2-digit', hour12: false }),
+      timezoneText: tzName ? tzName.value : '',
+      timezone: tz || '',
+      offsetLabel: occurrence.label || '',
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function _sendPush(env, uid, reminder, occurrence) {
   const subs = await listSubscriptions(env, uid);
   if (!subs.length) return { attempted: false, anySent: false };
@@ -109,6 +136,7 @@ async function _sendEmailChannel(env, identityEmail, reminder, occurrence) {
         notes: reminder.notes,
         url: 'https://app.cognita.com.ng/app.html?view=reminders',
         unsubscribeUrl: await buildUnsubscribeUrl(env, occurrence.uid, 'reminders'),
+        when: _whenParts(reminder, occurrence),
       })
     );
     return { attempted: true, sent: true };
