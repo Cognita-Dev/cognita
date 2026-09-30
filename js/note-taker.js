@@ -1,13 +1,18 @@
-import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote } from './note-taker-production.js'
+import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote, askNote, compareNote, setTasksDone, uploadNoteAudio, getNoteAudio, deleteNoteAudio } from './note-taker-production.js'
 
 const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
+import { VoiceTracker, FRAME as VOICE_FRAME } from './note-voices.js'
+import { SessionRecorder, audioSupported } from './note-audio.js'
 const RECOVERY_KEY = 'cognitaNoteTakerSession'
 const AUTOSAVE_PREF_KEY = 'cognitaNoteTakerSaveOnFinish'
 const MIN_SUMMARY_CHARS = 200 // matches saved-notes-endpoint.js
 const AUTOSAVE_MS = 20000
 const QUOTA_NOTICE_KEY = 'cognitaNoteQuotaNotice'
 const LIST_COUNT_KEY = 'cognitaNoteListCount' // last known number of saved notes, so the loading skeleton has the right number of rows
+const LABEL_PREF_KEY = 'cognitaNoteLabelSpeakers'
+const AUDIO_PREF_KEY = 'cognitaNoteKeepAudio'
+const SPEAKER_HUES = 6
 const AGENDA_LABEL = { covered: 'Covered', partial: 'Partly covered', not_covered: 'Not covered' }
 const QUOTA_WARN_AT = 0.9        // show the "nearly used up" notice from 90% of today's cloud allowance
 const QUOTA_STALE_MS = 15000     // how old the mirrored allowance may be before it is fetched again
@@ -49,6 +54,14 @@ let sessionId = null, sessionVersion = 1
 let draft = null, editVersion = 0, saving = false, summarizing = false
 let savedNotes = null, savedLimit = null, savedLoading = false, savedFailed = false, searchTerm = ''
 let deleteArmed = null, newArmed = null, discardArmedId = null, view = 'transcript', lastGroup = ''
+// Speakers, audio, ask, tasks
+let tracker = null, voiceAn = null, voiceTimer = null, recorder = null, restoredRun = false
+let planAudioMB = null, asksPerDay = null, askQuotaText = '', asking = false, askSeq = 0
+let editing = false, lines = [], activeLine = -1, audioUrl = null, audioLoading = false, audioArmed = null, speedIdx = 0, dragging = false
+let taskFilter = 'open', taskOwner = ''
+const audio = document.getElementById('noteTakerAudio')
+const SPEEDS = [1, 1.25, 1.5, 2]
+const ASK_SUGGESTIONS = ['What did we decide?', 'Who is doing what, and by when?', 'What is still unresolved?', 'What concerns were raised?']
 
 const ACTIVE = ['recording', 'paused', 'degraded', 'connecting']
 const isActive = () => ACTIVE.includes(state)
@@ -64,18 +77,20 @@ function setStatus(text, detail = '') { $('noteTakerStatus').textContent = text;
 // Errors before the live view exists must show in the setup view, otherwise they render into a hidden panel.
 function showSetupError(text) { const el = $('noteTakerSetupError'); el.textContent = text; el.hidden = !text }
 function show(view) {
-  for (const v of ['Setup', 'Live', 'Complete', 'Saved']) $(`noteTaker${v}`).hidden = v.toLowerCase() !== view
+  for (const v of ['Setup', 'Live', 'Complete', 'Saved', 'Tasks']) $(`noteTaker${v}`).hidden = v.toLowerCase() !== view
   $('noteTakerTabs').hidden = view === 'live' // the recording screen has no room for tabs
-  const onSaved = view === 'saved'
+  const onSaved = view === 'saved', onTasks = view === 'tasks'
   $('noteTakerTabSaved').setAttribute('aria-selected', String(onSaved))
-  $('noteTakerTabRecord').setAttribute('aria-selected', String(!onSaved))
+  $('noteTakerTabTasks').setAttribute('aria-selected', String(onTasks))
+  $('noteTakerTabRecord').setAttribute('aria-selected', String(!onSaved && !onTasks))
   if (view !== 'setup') $('noteTakerRecoveryBanner').hidden = true
-  if (view === 'complete' || view === 'saved') hideNotice() // allowance notices belong to recording, not to reading notes
+  if (view === 'complete' || view === 'saved' || view === 'tasks') hideNotice() // allowance notices belong to recording, not to reading notes
 }
 
 function render() {
   const root = $('noteTakerTranscript')
-  const rows = segments.map((s) => `<p class="note-segment"><time>${s.time}</time><span>${escapeHtml(s.text)}</span></p>`)
+  const multi = new Set(segments.filter((s) => s.speaker != null).map((s) => s.speaker)).size > 1 // a single voice needs no labels
+  const rows = segments.map((s) => `<p class="note-segment"><time>${s.time}</time><span>${multi && s.speaker != null ? `<b class="spk spk-${s.speaker % SPEAKER_HUES}">${speakerLabel(s.speaker)}</b> ` : ''}${escapeHtml(s.text)}</span></p>`)
   if (interim) rows.push(`<p class="note-segment interim"><time></time><span>${escapeHtml(interim)}</span></p>`)
   if (!rows.length) {
     const cloud = !browserLang()
@@ -88,12 +103,24 @@ function render() {
 }
 function saveRecoveryPointer() { if (sessionId) try { localStorage.setItem(RECOVERY_KEY, JSON.stringify({ sessionId, version: sessionVersion, title: $('noteTakerMeetingTitle').value.trim(), language: langCode(), startedAt })) } catch {} }
 function clearRecoveryPointer() { try { localStorage.removeItem(RECOVERY_KEY) } catch {} }
-function appendFinal(text) {
+const speakerLabel = (i) => `Speaker ${i + 1}`
+const elapsedAt = (t) => Math.max(0, t - startedAt - pausedMs)
+// range is the stretch of time the text was spoken in when it is known (cloud chunks). Otherwise it is everything
+// heard since the previous segment was finalized. The timestamp is when the speaker started, so audio jumps land
+// on the first word instead of after the last one.
+function appendFinal(text, range = null) {
   text = (text || '').trim()
   if (!text) return
   const last = segments[segments.length - 1]
   if (last && last.text === text) return
-  const seg = { id: crypto.randomUUID(), time: elapsed(), text }
+  let speaker = null, vi, startMs = null
+  if (tracker) {
+    const t1 = range?.t1 ?? Date.now(), t0 = range?.t0 ?? tracker.cut
+    if (!range) tracker.cut = t1
+    speaker = tracker.assign(t0, t1); vi = tracker.segments.length - 1
+    const p = tracker.segments[vi]?.p; if (p) startMs = Math.min(elapsedAt(p.start), elapsedMs())
+  }
+  const seg = { id: crypto.randomUUID(), time: startMs != null ? formatTime(startMs) : elapsed(), text, speaker, vi }
   segments.push(seg)
   if (sessionId) persistNoteSegment(sessionId, { segmentId: seg.id, text, startMs: elapsedMs(), endMs: elapsedMs() }).catch(() => {})
 }
@@ -131,6 +158,8 @@ function markNoticeSeen(q, level) { try { localStorage.setItem(QUOTA_NOTICE_KEY,
 
 function applyQuota(q) {
   if (!q) return
+  if (q.audioMaxMB !== undefined) { planAudioMB = q.audioMaxMB; updateAudioOption() }
+  if (q.asksPerDay !== undefined) asksPerDay = q.asksPerDay
   quota = q; quotaFetchedAt = Date.now()
   renderQuota()
   if (state === 'degraded' && cloudBase) setStatus('Recording', cloudDetail())
@@ -226,7 +255,7 @@ function open() {
   $('noteTakerChip').dataset.alert = 'false'
   refreshQuota()
   if (isActive()) { show('live'); render(); return $('noteTakerPause').focus() }
-  if (draft && $('noteTakerEditor').value) { show('complete'); return $('noteTakerEditor').focus() }
+  if (draft && $('noteTakerEditor').value) return show('complete')
   resetSetup()
   checkForRecovery()
   $('noteTakerMeetingTitle').focus()
@@ -238,6 +267,16 @@ function resetSetup() {
   $('noteTakerCopy').innerHTML = '<i class="ph ph-copy"></i> Copy'
   updateLanguageHint()
   try { $('noteTakerAutoSave').checked = localStorage.getItem(AUTOSAVE_PREF_KEY) === '1' } catch {}
+  try { $('noteTakerLabelSpeakers').checked = localStorage.getItem(LABEL_PREF_KEY) !== '0'; $('noteTakerKeepAudio').checked = localStorage.getItem(AUDIO_PREF_KEY) === '1' } catch {}
+  updateAudioOption()
+}
+function updateAudioOption() {
+  const box = $('noteTakerKeepAudio'), hint = $('noteTakerAudioSetupHint')
+  if (!audioSupported()) { box.disabled = true; box.checked = false; hint.textContent = 'This browser cannot record audio for playback.'; return }
+  if (planAudioMB === 0) { box.disabled = true; box.checked = false; hint.textContent = 'Keeping audio is not included in your plan.'; return }
+  box.disabled = false
+  const mins = planAudioMB ? Math.round((planAudioMB / 11) * 60) : 0
+  hint.textContent = `Stored privately with the note so you can replay it and jump to any line.${mins ? ` Room for about ${mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minutes`} per note on your plan.` : ''}`
 }
 // Closing during a recording minimizes it. The old confirm() promised the note "stays open in the
 // background", but reopening showed the setup form with no way back to the live session.
@@ -274,7 +313,7 @@ function checkForRecovery() {
       $('noteTakerMeetingTitle').value = session.title || ''
       $('noteTakerLanguage').value = LANGS[session.language] ? session.language : 'en-NG'
       // Recovery used to skip the mic, timer and level meter entirely, so the restored note recorded nothing.
-      if (await beginCapture()) saveRecoveryPointer(); else if (!isActive()) banner.hidden = false // blocked (e.g. allowance used up): the unfinished note stays restorable
+      if (await beginCapture(true)) saveRecoveryPointer(); else if (!isActive()) banner.hidden = false // blocked (e.g. allowance used up): the unfinished note stays restorable
     } catch { clearRecoveryPointer(); showSetupError("That note couldn't be restored. You can start a new one below.") }
   }
   $('noteTakerRecoveryDiscard').onclick = () => { clearRecoveryPointer(); banner.hidden = true }
@@ -394,14 +433,14 @@ function recordOneChunk() {
       if (rec.state !== 'inactive' && ((age >= CHUNK_MIN_MS && paused) || age >= CHUNK_MAX_MS || (!voiced && age >= CHUNK_MIN_MS) || !chunkLoopRunning)) try { rec.stop() } catch {}
     }, 100)
     rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data) }
-    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length ? { blob: new Blob(parts, { type: mimeType || 'audio/webm' }), ms: Date.now() - t0 } : null) }
+    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length ? { blob: new Blob(parts, { type: mimeType || 'audio/webm' }), ms: Date.now() - t0, t0, t1: Date.now() } : null) }
     rec.onerror = () => { clearInterval(poll); resolve(null) }
     chunkRecorder = rec
     rec.start()
   })
 }
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-async function transcribeAndAppend({ blob, ms }) {
+async function transcribeAndAppend({ blob, ms, t0, t1 }) {
   const sec = Math.ceil(ms / 1000)
   const settle = () => { inflightSec = Math.max(0, inflightSec - sec) } // once answered, the audio is in the server's count (or was never charged)
   if (!sessionId) return settle()
@@ -412,7 +451,7 @@ async function transcribeAndAppend({ blob, ms }) {
       settle()
       if (res.quota) applyQuota(res.quota)
       const text = (res.text || '').trim()
-      if (text && !HALLUCINATIONS.test(text)) { appendFinal(text); render() }
+      if (text && !HALLUCINATIONS.test(text)) { appendFinal(text, { t0, t1 }); render() }
       return
     } catch (e) {
       if (e.quota) applyQuota(e.quota)
@@ -477,7 +516,7 @@ async function acquireMic() {
     return false
   }
 }
-async function beginCapture() {
+async function beginCapture(restored = false) {
   if (!(await gateCloud())) return false
   if (!stream && !(await acquireMic())) return false
   show('live'); setState('connecting'); setStatus('Starting', ''); segments = segments || []; interim = ''
@@ -485,6 +524,7 @@ async function beginCapture() {
   clearInterval(timer)
   timer = setInterval(() => { const t = elapsed(); $('noteTakerTimer').textContent = t; $('noteTakerChipTime').textContent = t }, 250)
   startLevelMeter()
+  restoredRun = restored; startVoices(); startRecorder()
   if (browserLang()) startPrimarySpeech()
   else startCloudMode(['yo-NG', 'ha-NG', 'pcm-NG', 'auto'].includes(langCode()) ? 'Cloud transcription. Text arrives after each pause.' : 'Your browser has no live recognition. Text arrives after each pause.')
   clearInterval(autosaveTimer); autosaveTimer = setInterval(autosave, AUTOSAVE_MS)
@@ -516,7 +556,7 @@ async function autosave() {
 function pause() {
   if (state === 'recording' || state === 'degraded') {
     const cloud = state === 'degraded'
-    setState('paused'); pauseAt = Date.now()
+    setState('paused'); pauseAt = Date.now(); recorder?.pause() // keeps the audio timeline in step with the transcript, which also skips pauses
     stream?.getTracks().forEach((t) => (t.enabled = false))
     if (cloud) stopChunkLoop(); else stopPrimarySpeech()
     clearTimeout(retryTimer); drawLevel()
@@ -531,6 +571,7 @@ async function resumeCapture() {
   if (!(await gateCloud())) return
   if (pauseAt) { pausedMs += Date.now() - pauseAt; pauseAt = 0 }
   stream?.getTracks().forEach((t) => (t.enabled = true))
+  recorder?.resume(); if (tracker) tracker.cut = Date.now()
   $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
   hideNotice()
   if (browserLang()) startPrimarySpeech(); else startCloudMode('Cloud transcription. Text arrives after each pause.')
@@ -549,10 +590,13 @@ async function stopNow() {
   stopPrimarySpeech(); stopChunkLoop()
   await chunkQueue.catch(() => {})
   inflightSec = 0; exhaustHandled = false; hideNotice()
+  const rec = recorder ? await recorder.stop() : null; recorder = null // before the mic tracks end
+  stopVoices()
   stopLevelMeter()
   stream?.getTracks().forEach((t) => t.stop()); stream = null
   if (interim.trim()) { appendFinal(interim); interim = '' }
-  const text = segments.map((s) => `[${s.time}] ${s.text}`).join('\n\n')
+  const speakers = labelSegments()
+  const text = segments.map((s) => `[${s.time}] ${s.speaker != null ? `${speakerLabel(s.speaker)}: ` : ''}${s.text}`).join('\n\n')
   if (sessionId) { try { await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: 'completed', updatedAt: new Date().toISOString() }) } catch {} }
   clearRecoveryPointer()
   setState('completed')
@@ -560,17 +604,21 @@ async function stopNow() {
     id: sessionId || crypto.randomUUID().replaceAll('-', ''),
     createdAt: new Date(startedAt).toISOString(), durationMs: elapsedMs(), language: langCode(),
     agenda: $('noteTakerAgenda').value.trim(), summary: null, saved: false, dirty: false,
+    speakers, hasAudio: false, askLog: [], compare: null,
+    audio: rec ? { blob: rec.blob, type: rec.type, uploaded: false, skip: false } : null,
   }
+  afterDraftChange()
   sessionId = null
   $('noteTakerEditor').value = text
   $('noteTakerCompleteTitle').value = $('noteTakerMeetingTitle').value.trim()
   $('noteTakerChip').hidden = true
   showComplete()
+  if (rec?.truncated) audioStatus(`The recording stopped at the ${planAudioMB || 30} MB your plan allows. The transcript covers the whole meeting.`, true)
   if (modal.hidden) open()
-  $('noteTakerEditor').focus()
   if (text.trim() && $('noteTakerAutoSave').checked) saveCurrent()
 }
-function hasUnsavedWork() { return !!(draft && $('noteTakerEditor').value.trim() && (!draft.saved || draft.dirty)) }
+const pendingAudio = () => !!(draft?.audio?.blob && !draft.audio.uploaded && !draft.audio.skip)
+function hasUnsavedWork() { return !!(draft && $('noteTakerEditor').value.trim() && (!draft.saved || draft.dirty || pendingAudio())) }
 function newNote() {
   // Starting over discards whatever is on screen, so an unsaved note needs a second tap.
   const btn = $('noteTakerNew')
@@ -580,7 +628,7 @@ function newNote() {
     return
   }
   clearTimeout(newArmed); newArmed = null; btn.innerHTML = '<i class="ph ph-plus"></i> New note'
-  setState('idle'); segments = []; draft = null
+  setState('idle'); segments = []; draft = null; afterDraftChange()
   $('noteTakerEditor').value = ''; $('noteTakerMeetingTitle').value = ''; $('noteTakerCompleteTitle').value = ''; $('noteTakerAgenda').value = ''
   resetSetup(); checkForRecovery(); $('noteTakerMeetingTitle').focus()
 }
@@ -615,7 +663,7 @@ function showComplete() {
   show('complete')
   $('noteTakerMeta').textContent = [fmtDate(draft.createdAt), fmtMinutes(draft.durationMs) || null, langLabel(draft.language)].filter(Boolean).join(', ')
   $('noteTakerDelete').hidden = !draft.saved
-  renderSummary()
+  renderReader(); renderSummary(); renderAskPane(); syncAudioBar()
   setView(draft.summary ? 'summary' : 'transcript')
   refreshSaveUi()
 }
@@ -625,6 +673,7 @@ function refreshSaveUi() {
   const canSummarize = $('noteTakerEditor').value.trim().length >= MIN_SUMMARY_CHARS
   if (saving) setBtn('noteTakerSave', 'circle-notch', 'Saving', true)
   else if (!hasText) setBtn('noteTakerSave', 'floppy-disk', 'Save note', true)
+  else if (draft.saved && !draft.dirty && pendingAudio()) setBtn('noteTakerSave', 'speaker-high', 'Save audio')
   else if (draft.saved && !draft.dirty) setBtn('noteTakerSave', 'check', 'Saved', true)
   else setBtn('noteTakerSave', 'floppy-disk', draft.saved ? 'Save changes' : 'Save note')
   if (summarizing) setBtn('noteTakerSummarize', 'circle-notch', 'Summarizing', true)
@@ -632,9 +681,12 @@ function refreshSaveUi() {
   $('noteTakerSummarize').title = canSummarize ? '' : 'Record a little more to get a summary'
   $('noteTakerSave').classList.toggle('is-busy', saving); $('noteTakerSummarize').classList.toggle('is-busy', summarizing)
   $('noteTakerDelete').hidden = !draft.saved
+  $('noteTakerDeleteAudio').hidden = !audioAvailable()
+  updateAskUi()
   if (saving || $('noteTakerSaveState').dataset.error === 'true') return
   setSaveState(!hasText ? 'Nothing was transcribed, so there is nothing to save.'
     : draft.saved && draft.dirty ? 'You have unsaved changes.'
+    : draft.saved && pendingAudio() ? 'The note is saved. Save again to add its audio recording.'
     : draft.saved ? 'Saved to your notes. You can open it from Saved notes.'
     : 'Not saved yet. Save it to open this note later.')
 }
@@ -642,24 +694,45 @@ function markEdited() { if (!draft) return; editVersion++; if (draft.saved) draf
 
 async function saveCurrent() {
   if (!draft || saving || !$('noteTakerEditor').value.trim()) return
-  saving = true; $('noteTakerSaveState').dataset.error = 'false'; setSaveState('Saving...'); refreshSaveUi()
+  const target = draft
+  redetectSpeakers()
+  const needNote = !target.saved || target.dirty
+  if (!needNote && !pendingAudio()) return
+  saving = true; $('noteTakerSaveState').dataset.error = 'false'; setSaveState(needNote ? 'Saving...' : 'Saving audio...'); refreshSaveUi()
   const version = editVersion
   try {
-    await saveNote({ id: draft.id, title: $('noteTakerCompleteTitle').value.trim(), language: draft.language, durationMs: draft.durationMs, createdAt: draft.createdAt, transcript: $('noteTakerEditor').value, summary: draft.summary })
-    draft.saved = true; draft.dirty = editVersion !== version
-    savedNotes = null // the list is stale now; reload it next time it is opened
+    if (needNote) {
+      await saveNote({ id: target.id, title: $('noteTakerCompleteTitle').value.trim(), language: target.language, durationMs: target.durationMs, createdAt: target.createdAt, transcript: $('noteTakerEditor').value, speakers: target.speakers || [], summary: target.summary })
+      target.saved = true; target.dirty = editVersion !== version
+      savedNotes = null // the list is stale now; reload it next time it is opened
+    }
+    if (target === draft && pendingAudio()) {
+      setSaveState('Saving audio...')
+      try { await uploadNoteAudio(target.id, target.audio.blob); target.audio.uploaded = true; target.hasAudio = true; savedNotes = null }
+      catch (e) {
+        if ([403, 413, 415].includes(e.status)) { target.audio.skip = true; audioStatus('This recording could not be kept and will be lost when you close the note.', true) } // will not succeed on retry
+        throw Object.assign(e, { audioFailed: true })
+      }
+    }
     saving = false; $('noteTakerSaveState').dataset.error = 'false'
   } catch (e) {
-    saving = false; setSaveState(`${e.message} Your note is still on screen.`, true)
+    saving = false
+    setSaveState(e.audioFailed ? `${e.message}${/saved/i.test(e.message) ? '' : ' The note itself is saved.'}` : `${e.message} Your note is still on screen.`, true)
   }
-  refreshSaveUi()
+  syncAudioBar(); refreshSaveUi()
 }
 
 // ----- Summary -----
 function renderSummary() {
   const box = $('noteTakerSummary'); const s = draft?.summary
   if (summarizing) { box.hidden = false; box.innerHTML = summarySkeleton(); return }
-  if (!s) { box.hidden = true; box.innerHTML = ''; return }
+  if (!s) {
+    const enough = $('noteTakerEditor').value.trim().length >= MIN_SUMMARY_CHARS
+    box.hidden = false
+    box.innerHTML = `<div class="note-empty"><h3>No summary yet</h3><p>${enough ? 'Get the decisions, action items, an outline and the open questions from this meeting.' : 'The transcript is too short to summarize. Record a little more, then come back.'}</p>${enough ? '<button class="note-taker-primary" id="noteTakerSummarizeEmpty" type="button"><i class="ph ph-list-checks"></i> Summarize this meeting</button>' : ''}</div>`
+    $('noteTakerSummarizeEmpty')?.addEventListener('click', summarizeCurrent)
+    return
+  }
   const list = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`
   const section = (title, body) => body ? `<section><h4>${title}</h4>${body}</section>` : ''
   const outline = s.sections?.length ? `<ol class="note-outline">${s.sections.map((x) => `<li><div><strong>${escapeHtml(x.title)}</strong>${x.summary ? `<small>${escapeHtml(x.summary)}</small>` : ''}</div></li>`).join('')}</ol>` : ''
@@ -674,6 +747,8 @@ function renderSummary() {
     + section('Action items', actions)
     + section('Key points', s.keyPoints.length ? list(s.keyPoints) : '')
     + section('Open questions', s.openQuestions.length ? list(s.openQuestions) : '')
+    + '<section class="note-compare" id="noteTakerCompare"></section>'
+  renderCompare()
   $('noteTakerCopySummary').addEventListener('click', copySummary)
   $('noteTakerFollowUp').addEventListener('click', copyFollowUp)
 }
@@ -704,14 +779,12 @@ async function copyFollowUp() {
   try { await navigator.clipboard.writeText(followUpText()); btn.innerHTML = '<i class="ph ph-check"></i> Email copied' } catch { btn.innerHTML = 'Copy failed' }
   setTimeout(() => { if (btn.isConnected) btn.innerHTML = '<i class="ph ph-envelope-simple"></i> Follow-up email' }, 2000)
 }
-// Summary / Transcript switch. The tabs only exist once a summary exists or is being written.
+// Transcript / Summary / Ask. The tabs are always there; an empty Summary or Ask explains what it needs.
 function setView(v) {
-  const has = !!(summarizing || draft?.summary)
-  view = has ? v : 'transcript'
+  view = ['transcript', 'summary', 'ask'].includes(v) ? v : 'transcript'
   $('noteTakerComplete').dataset.view = view
-  $('noteTakerViewTabs').hidden = !has
-  $('noteTakerViewSummary').setAttribute('aria-selected', String(view === 'summary'))
-  $('noteTakerViewTranscript').setAttribute('aria-selected', String(view === 'transcript'))
+  for (const [k, id] of [['transcript', 'noteTakerViewTranscript'], ['summary', 'noteTakerViewSummary'], ['ask', 'noteTakerViewAsk']]) $(id).setAttribute('aria-selected', String(view === k))
+  if (view === 'ask') updateAskUi()
 }
 function summaryText() {
   const s = draft?.summary; if (!s) return ''
@@ -739,7 +812,7 @@ async function summarizeCurrent() {
   summarizing = false
   if (draft !== target) return // the person moved on to another note while this ran
   if (summary) {
-    target.summary = summary
+    target.summary = summary; target.compare = null
     if (!$('noteTakerCompleteTitle').value.trim() && summary.title) $('noteTakerCompleteTitle').value = summary.title // name untitled notes
     if (target.saved) target.dirty = true
   } else setSaveState(failure?.message || 'Could not summarize. Please try again.', true)
@@ -769,7 +842,8 @@ function listSkeleton() {
   const row = '<div class="note-row note-row--skeleton" aria-hidden="true"><span class="note-row-top"><strong><span class="sk sk-title"></span></strong><time><span class="sk sk-date"></span></time></span><span class="note-row-meta"><span class="sk sk-meta"></span></span><span class="note-row-preview"><span class="sk sk-block"></span><span class="sk sk-block"></span></span></div>'
   return `<div role="status" aria-label="Loading saved notes"><h4 class="note-group-label"><span class="sk" style="width:52px"></span></h4>${row.repeat(n)}</div>`
 }
-function renderSaved() {
+function renderSaved() { renderSavedList(); renderTasks() }
+function renderSavedList() {
   const list = $('noteTakerSavedList'); const err = $('noteTakerSavedError'); const limit = $('noteTakerSavedLimit')
   const count = $('noteTakerSavedCount')
   count.hidden = !savedNotes; count.textContent = savedNotes ? String(savedNotes.length) : ''
@@ -799,23 +873,24 @@ function showRecordTab() {
   if (draft && $('noteTakerEditor').value) return showComplete()
   resetSetup(); checkForRecovery()
 }
-async function openSaved(id, row) {
-  const err = $('noteTakerSavedError'); err.hidden = true
+async function openSaved(id, row = null) {
+  const err = row ? $('noteTakerSavedError') : $('noteTakerTasksError'); err.hidden = true
   if (hasUnsavedWork() && draft.id !== id && discardArmedId !== id) {
     discardArmedId = id
     err.textContent = 'You have an unsaved note open. Select this note again to discard it and open this one.'; err.hidden = false
     return
   }
-  discardArmedId = null; row.disabled = true; row.classList.add('is-loading')
+  discardArmedId = null; if (row) { row.disabled = true; row.classList.add('is-loading') }
   try {
     const note = await getSavedNote(id)
     segments = []
-    draft = { id: note.id, createdAt: note.createdAt, durationMs: note.durationMs || 0, language: note.language, agenda: '', summary: note.summary || null, saved: true, dirty: false }
+    draft = { id: note.id, createdAt: note.createdAt, durationMs: note.durationMs || 0, language: note.language, agenda: '', summary: note.summary || null, saved: true, dirty: false, speakers: note.speakers || [], hasAudio: !!note.hasAudio, audio: null, askLog: [], compare: null }
+    afterDraftChange()
     $('noteTakerEditor').value = note.transcript; $('noteTakerCompleteTitle').value = note.title === 'Untitled meeting' ? '' : note.title
     editVersion++; setSaveState(''); $('noteTakerSaveState').dataset.error = 'false'
     showComplete(); $('noteTakerCompleteTitle').blur()
   } catch (e) {
-    row.disabled = false; row.classList.remove('is-loading')
+    if (row) { row.disabled = false; row.classList.remove('is-loading') }
     err.textContent = e.message; err.hidden = false
     if (e.status === 404) loadSaved(true) // it was deleted elsewhere; refresh the list
   }
@@ -831,7 +906,7 @@ async function deleteCurrent() {
   clearTimeout(deleteArmed); deleteArmed = null; btn.disabled = true; btn.textContent = 'Deleting...'
   try {
     await deleteSavedNote(draft.id)
-    savedNotes = null; draft = null; $('noteTakerEditor').value = ''; $('noteTakerCompleteTitle').value = ''
+    savedNotes = null; draft = null; afterDraftChange(); $('noteTakerEditor').value = ''; $('noteTakerCompleteTitle').value = ''
     btn.disabled = false; btn.innerHTML = '<i class="ph ph-trash"></i> Delete'
     showSavedTab()
   } catch (e) {
@@ -870,3 +945,411 @@ window.addEventListener('online', () => { refreshQuota(); if (state === 'degrade
 window.addEventListener('focus', () => { if (!modal.hidden && quota && !quota.unlimited && quota.usedSeconds / quota.limitSeconds >= QUOTA_WARN_AT) refreshQuota() })
 window.addEventListener('offline', () => { if (isActive()) setStatus('Offline', browserLang() ? 'Live transcription will resume when you reconnect' : 'Cloud transcription will resume when you reconnect') })
 window.addEventListener('beforeunload', (e) => { if (isActive() || hasUnsavedWork()) { e.preventDefault(); e.returnValue = '' } })
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Speakers, audio playback, Ask, Tasks, recurring meetings
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ---------- Speaker labels while recording ----------
+// See note-voices.js for how voices are told apart, and for its limits. Everything here runs on the device.
+function startVoices() {
+  stopVoices(); tracker = null
+  if (!$('noteTakerLabelSpeakers').checked || !audioCtx || !sourceNode) return
+  try {
+    tracker = new VoiceTracker(audioCtx.sampleRate); tracker.reset()
+    voiceAn = audioCtx.createAnalyser(); voiceAn.fftSize = VOICE_FRAME; voiceAn.smoothingTimeConstant = 0
+    sourceNode.connect(voiceAn)
+    const buf = new Float32Array(VOICE_FRAME)
+    voiceTimer = setInterval(() => { if (!voiceAn || !tracker || state === 'paused') return; voiceAn.getFloatTimeDomainData(buf); tracker.push(buf, Date.now()) }, 50)
+  } catch { tracker = null } // labels are a bonus: never let them break a recording
+}
+function stopVoices() { clearInterval(voiceTimer); voiceTimer = null; try { voiceAn?.disconnect() } catch {} voiceAn = null }
+// After the meeting: re-cluster with everything heard, then number voices by first appearance. One voice = no labels.
+function labelSegments() {
+  if (!tracker) return []
+  let final = []
+  try { final = tracker.finalize() } catch { final = [] }
+  tracker = null
+  const used = new Set()
+  for (const sg of segments) { if (sg.vi !== undefined && final[sg.vi] !== undefined) { sg.speaker = final[sg.vi]; used.add(sg.speaker) } else sg.speaker = null }
+  if (used.size < 2) { segments.forEach((sg) => (sg.speaker = null)); return [] }
+  return Array.from({ length: Math.max(...used) + 1 }, (_, i) => speakerLabel(i))
+}
+function startRecorder() {
+  recorder?.discard(); recorder = null
+  const keep = $('noteTakerKeepAudio')
+  if (restoredRun || !keep.checked || keep.disabled || !stream) return // a restored note has lost its earlier audio
+  recorder = new SessionRecorder(stream, (planAudioMB || 30) * 1048576)
+  if (!recorder.start()) recorder = null
+}
+
+// ---------- Transcript reader ----------
+// The editable text stays the single source of truth: "[hh:mm:ss] Name: words" blocks. The reader is a view of it, so
+// old notes, editing, search and the summary all keep working, and fixing a speaker just rewrites a line prefix.
+const STAMP_LINE = /^\[(\d{2}):(\d{2}):(\d{2})\]\s*([\s\S]*)$/
+function parseTranscript(text, names) {
+  const known = [...names].sort((a, b) => b.length - a.length)
+  return text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).map((block, i) => {
+    const m = block.match(STAMP_LINE)
+    let time = null, sec = null, rest = block
+    if (m) { time = `${m[1]}:${m[2]}:${m[3]}`; sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]); rest = m[4] }
+    let speaker = null
+    for (const n of known) if (rest.startsWith(`${n}: `)) { speaker = n; rest = rest.slice(n.length + 2); break }
+    return { i, time, sec, speaker, text: rest }
+  })
+}
+const serializeLines = (ls) => ls.map((l) => `${l.time ? `[${l.time}] ` : ''}${l.speaker ? `${l.speaker}: ` : ''}${l.text}`).join('\n\n')
+// If the person retyped a name in the text editor, notice it: a prefix that repeats on many lines is a speaker.
+function redetectSpeakers() {
+  if (!draft) return
+  const counts = new Map(); let total = 0
+  for (const b of $('noteTakerEditor').value.split(/\n{2,}/)) {
+    const m = b.trim().match(/^\[\d{2}:\d{2}:\d{2}\]\s*([^\n:\[\]]{1,32}): /)
+    if (/^\s*\[\d{2}:\d{2}:\d{2}\]/.test(b)) total++
+    if (m) counts.set(m[1].trim(), (counts.get(m[1].trim()) || 0) + 1)
+  }
+  const keep = (draft.speakers || []).filter((n) => counts.has(n))
+  const added = [...counts].filter(([n, c]) => c >= 3 && !keep.includes(n) && n.split(/\s+/).length <= 4 && (keep.length || c / Math.max(1, total) >= 0.3)).map(([n]) => n)
+  draft.speakers = [...keep, ...added].slice(0, 12)
+}
+const hueOf = (name) => Math.max(0, (draft?.speakers || []).indexOf(name)) % SPEAKER_HUES
+function renderReader() {
+  const box = $('noteTakerReader'); const hint = $('noteTakerSpeakerHint')
+  if (!draft) { box.innerHTML = ''; hint.textContent = ''; return }
+  lines = parseTranscript($('noteTakerEditor').value, draft.speakers || [])
+  const labelled = !!draft.speakers?.length, playable = audioAvailable()
+  hint.textContent = [labelled ? 'Speakers are matched by software. Tap a name to fix a line or rename a speaker.' : '', playable ? 'Tap a time to play from there.' : ''].filter(Boolean).join(' ')
+  if (!lines.length) { box.innerHTML = '<p class="note-taker-empty">Nothing was transcribed.</p>'; return }
+  let prev = Symbol()
+  box.innerHTML = lines.map((l) => {
+    const turn = labelled && l.speaker !== prev; prev = l.speaker
+    const time = l.sec == null ? '<span class="note-line-time"></span>'
+      : playable ? `<button class="note-line-time" type="button" data-sec="${l.sec}" aria-label="Play from ${l.time}">${l.time}</button>` : `<time class="note-line-time">${l.time}</time>`
+    const chip = turn ? `<button class="spk spk-${l.speaker ? hueOf(l.speaker) : 'none'}" type="button" data-i="${l.i}" aria-haspopup="menu">${escapeHtml(l.speaker || 'Unassigned')}</button>` : ''
+    return `<div class="note-line${turn ? ' is-turn' : ''}" data-i="${l.i}">${time}<div class="note-line-body">${chip}<p class="note-line-text${playable && l.sec != null ? ' is-seekable' : ''}">${escapeHtml(l.text)}</p></div></div>`
+  }).join('')
+  activeLine = -1
+}
+function setEditing(on) {
+  editing = on
+  $('noteTakerEditor').hidden = !on; $('noteTakerReader').hidden = on
+  $('noteTakerEditToggle').innerHTML = on ? '<i class="ph ph-check"></i> <span>Done editing</span>' : '<i class="ph ph-pencil-simple"></i> <span>Edit text</span>'
+  closeSpeakerMenu()
+  if (on) $('noteTakerEditor').focus(); else { redetectSpeakers(); renderReader() }
+}
+function commitLines(ls) {
+  const used = [...new Set(ls.map((l) => l.speaker).filter(Boolean))]
+  draft.speakers = [...(draft.speakers || []).filter((n) => used.includes(n)), ...used.filter((n) => !(draft.speakers || []).includes(n))].slice(0, 12)
+  $('noteTakerEditor').value = serializeLines(ls)
+  markEdited(); renderReader()
+}
+function closeSpeakerMenu() { $('noteTakerSpkMenu')?.remove() }
+function openSpeakerMenu(btn) {
+  closeSpeakerMenu()
+  const i = Number(btn.dataset.i), cur = lines.find((l) => l.i === i)?.speaker || null
+  const m = document.createElement('div'); m.className = 'note-spk-menu'; m.id = 'noteTakerSpkMenu'; m.setAttribute('role', 'menu'); m.dataset.i = String(i)
+  m.innerHTML = (draft.speakers || []).map((n) => `<button type="button" role="menuitemradio" aria-checked="${n === cur}" data-act="assign" data-name="${escapeHtml(n)}"><span class="spk-dot spk-${hueOf(n)}"></span>${escapeHtml(n)}</button>`).join('')
+    + ((draft.speakers || []).length < 12 ? '<button type="button" role="menuitem" data-act="new"><i class="ph ph-plus"></i> New speaker</button>' : '')
+    + (cur ? `<form class="note-spk-rename" data-old="${escapeHtml(cur)}"><input maxlength="40" value="${escapeHtml(cur)}" aria-label="Rename ${escapeHtml(cur)}"><button type="submit">Rename everywhere</button></form>` : '')
+  btn.closest('.note-line-body').appendChild(m)
+  m.querySelector('button, input')?.focus()
+}
+function nextSpeakerName() { let n = (draft.speakers || []).length + 1; while ((draft.speakers || []).includes(speakerLabel(n - 1))) n++; return speakerLabel(n - 1) }
+function assignSpeaker(i, name) { const ls = parseTranscript($('noteTakerEditor').value, draft.speakers || []); if (!ls[i]) return; ls[i].speaker = name; commitLines(ls) }
+function renameSpeaker(oldName, raw) {
+  const name = raw.replace(/[:\[\]\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (!name || name === oldName) return closeSpeakerMenu()
+  const ls = parseTranscript($('noteTakerEditor').value, draft.speakers || []) // a name that already exists merges the two
+  ls.forEach((l) => { if (l.speaker === oldName) l.speaker = name })
+  draft.speakers = draft.speakers.map((n) => (n === oldName ? name : n))
+  commitLines(ls)
+}
+
+// ---------- Audio playback ----------
+const audioAvailable = () => !!(draft && (draft.audio?.blob || draft.hasAudio))
+const fmtClock = (sec) => { sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, r = sec % 60; return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(r).padStart(2, '0')}` }
+const audioDuration = () => (isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (draft?.durationMs || 0) / 1000)
+function audioStatus(text, isError = false) { const el = $('noteTakerAudioStatus'); el.textContent = text; el.hidden = !text; el.dataset.error = String(isError) }
+function resetAudioPlayer() {
+  audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch {}
+  if (audioUrl) URL.revokeObjectURL(audioUrl)
+  audioUrl = null; audioLoading = false; activeLine = -1; dragging = false; audioStatus(''); syncAudioBar()
+}
+function afterDraftChange() { resetAudioPlayer(); if (editing) setEditing(false); closeSpeakerMenu(); askQuotaText = ''; $('noteTakerAskInput').value = '' }
+function syncAudioBar() {
+  const bar = $('noteTakerAudioBar'), has = audioAvailable()
+  bar.hidden = !has
+  if (!has) return
+  const ready = !!audioUrl, playing = ready && !audio.paused, dur = audioDuration()
+  $('noteTakerAudioPlay').innerHTML = `<i class="ph ph-${audioLoading ? 'circle-notch' : playing ? 'pause' : 'play'}"></i>`
+  $('noteTakerAudioPlay').classList.toggle('is-busy', audioLoading)
+  $('noteTakerAudioPlay').setAttribute('aria-label', playing ? 'Pause recording' : 'Play recording')
+  $('noteTakerAudioSeek').disabled = !ready
+  if (!dragging) $('noteTakerAudioSeek').value = ready && dur ? String(Math.round((audio.currentTime / dur) * 1000)) : '0'
+  $('noteTakerAudioTime').textContent = ready ? `${fmtClock(audio.currentTime)} / ${fmtClock(dur)}` : audioLoading ? 'Loading recording...' : `Recording${dur ? `, ${fmtClock(dur)}` : ''}`
+}
+// Recorded webm often reports an infinite duration until the browser has read to the end. Nudging the playhead far
+// ahead makes it work the real length out, so the seek bar is accurate.
+function prepareAudio() {
+  return new Promise((resolve) => {
+    const done = () => { audio.currentTime = 0; audio.playbackRate = SPEEDS[speedIdx]; resolve() }
+    const settle = () => {
+      if (isFinite(audio.duration)) return done()
+      const fix = () => { if (isFinite(audio.duration)) { audio.removeEventListener('durationchange', fix); done() } }
+      audio.addEventListener('durationchange', fix); audio.currentTime = 1e101
+      setTimeout(() => { audio.removeEventListener('durationchange', fix); done() }, 3000)
+    }
+    if (audio.readyState >= 1) settle(); else audio.addEventListener('loadedmetadata', settle, { once: true })
+    audio.addEventListener('error', resolve, { once: true })
+    audio.load()
+  })
+}
+async function ensureAudio() {
+  if (audioUrl) return true
+  if (audioLoading || !draft) return false
+  const target = draft
+  audioLoading = true; audioStatus(''); syncAudioBar()
+  try {
+    const blob = target.audio?.blob || await getNoteAudio(target.id)
+    if (draft !== target) return false
+    audioUrl = URL.createObjectURL(blob); audio.src = audioUrl
+    await prepareAudio()
+    audioLoading = false; syncAudioBar()
+    return true
+  } catch (e) {
+    audioLoading = false
+    if (draft === target) { audioStatus(e.status === 404 ? 'This note has no saved audio any more.' : (e.message || 'Could not load the audio.'), true); if (e.status === 404) { target.hasAudio = false; renderReader() } }
+    syncAudioBar(); return false
+  }
+}
+async function playAt(sec) {
+  if (!(await ensureAudio())) return
+  audio.currentTime = Math.max(0, sec - 0.5) // start a beat early so the first word is not clipped
+  audio.play().catch(() => syncAudioBar()) // iOS may ask for one more tap after the recording loads
+}
+async function togglePlay() {
+  if (!audioUrl && !(await ensureAudio())) return
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause()
+}
+function syncPlayhead() {
+  syncAudioBar()
+  if (!audioUrl) return
+  const t = audio.currentTime + 0.5
+  let idx = -1
+  for (let k = 0; k < lines.length; k++) if (lines[k].sec != null && lines[k].sec <= t) idx = k
+  if (idx === activeLine) return
+  const rows = $('noteTakerReader').children
+  if (rows[activeLine]) rows[activeLine].classList.remove('is-playing')
+  activeLine = idx
+  if (rows[idx]) {
+    rows[idx].classList.add('is-playing')
+    if (!audio.paused && view === 'transcript' && !editing) rows[idx].scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }
+}
+async function deleteAudio() {
+  if (!audioAvailable()) return
+  const btn = $('noteTakerDeleteAudio'), label = '<i class="ph ph-speaker-slash"></i> Delete audio'
+  if (!audioArmed) { btn.innerHTML = '<i class="ph ph-speaker-slash"></i> Tap again to delete the audio'; audioArmed = setTimeout(() => { audioArmed = null; btn.innerHTML = label }, 4000); return }
+  clearTimeout(audioArmed); audioArmed = null; btn.disabled = true; btn.textContent = 'Deleting...'
+  const target = draft
+  try {
+    if (target.hasAudio) await deleteNoteAudio(target.id)
+    savedNotes = null; target.hasAudio = false; target.audio = null
+    if (draft === target) { resetAudioPlayer(); audioStatus('The audio was deleted. The transcript is kept.'); renderReader() }
+  } catch (e) { audioStatus(e.message || 'Could not delete the audio.', true) }
+  btn.disabled = false; btn.innerHTML = label; refreshSaveUi()
+}
+
+// ---------- Ask this meeting ----------
+function askItemHtml(x) {
+  const q = `<p class="note-ask-q">${escapeHtml(x.q)}</p>`
+  if (x.loading) return `${q}<div class="note-ask-a" role="status" aria-label="Finding the answer"><span class="sk sk-block" style="width:96%"></span><span class="sk sk-block" style="width:88%"></span><span class="sk sk-block" style="width:52%"></span><span class="sk" style="width:120px;height:28px;margin-top:10px"></span></div>`
+  if (x.error) return `${q}<div class="note-ask-a is-error"><p>${escapeHtml(x.error)}</p><button class="note-taker-ghost" type="button" data-retry="${x.n}"><i class="ph ph-arrow-clockwise"></i> Try again</button></div>`
+  const src = x.sources?.length ? `<div class="note-ask-src"><span>Heard at</span>${x.sources.map((t) => `<button class="note-src" type="button" data-at="${t}">${t}</button>`).join('')}</div>` : ''
+  return `${q}<div class="note-ask-a${x.found ? '' : ' is-empty'}"><p>${escapeHtml(x.a)}</p>${x.partial ? '<small>This is a long meeting, so only the passages closest to your question were searched.</small>' : ''}${src}</div>`
+}
+function renderAskPane() {
+  const log = draft?.askLog || []
+  $('noteTakerAskLog').innerHTML = log.map(askItemHtml).join('')
+  $('noteTakerAskSuggest').innerHTML = log.length ? '' : ASK_SUGGESTIONS.map((q) => `<button class="note-taker-chip-btn" type="button" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')
+  updateAskUi()
+}
+function updateAskUi() {
+  const ready = !!draft && $('noteTakerEditor').value.trim().length >= 40
+  const input = $('noteTakerAskInput'), send = $('noteTakerAskSend')
+  input.disabled = !ready || asking
+  send.disabled = !ready || asking || !input.value.trim()
+  send.innerHTML = asking ? '<i class="ph ph-circle-notch"></i>' : 'Ask'; send.classList.toggle('is-busy', asking)
+  $('noteTakerAskHint').textContent = !ready ? 'There is not enough transcript to ask about yet.'
+    : askQuotaText || (asksPerDay ? `You can ask up to ${asksPerDay} questions a day. Answers come only from this transcript.` : 'Answers come only from this transcript.')
+}
+const scrollAskEnd = () => $('noteTakerAskLog').lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+async function ask(question) {
+  question = (question || '').trim()
+  if (!question || asking || !draft || $('noteTakerEditor').value.trim().length < 40) return
+  const target = draft, log = (target.askLog ||= [])
+  const history = log.filter((x) => x.a && !x.error).slice(-3).map((x) => ({ q: x.q, a: x.a })) // lets "and who owns that?" work
+  const item = { n: ++askSeq, q: question, loading: true }
+  log.push(item); asking = true; $('noteTakerAskInput').value = ''
+  renderAskPane(); scrollAskEnd()
+  try {
+    const res = await askNote({ question, transcript: $('noteTakerEditor').value, title: $('noteTakerCompleteTitle').value.trim(), history })
+    Object.assign(item, { loading: false, a: res.answer, sources: res.sources || [], found: res.found, partial: res.partial })
+    if (res.quota?.limit) askQuotaText = `${Math.max(0, res.quota.limit - res.quota.used)} of ${res.quota.limit} questions left today.`
+  } catch (e) { Object.assign(item, { loading: false, error: e.message || 'Could not answer that right now.' }) }
+  asking = false
+  if (draft === target) { renderAskPane(); scrollAskEnd() } else updateAskUi()
+}
+// Jump from an answer (or a comparison) to the exact line, and play it when there is audio.
+function jumpTo(stamp) {
+  setView('transcript'); if (editing) setEditing(false)
+  renderReader()
+  const k = lines.findIndex((l) => l.time === stamp); if (k < 0) return
+  const row = $('noteTakerReader').children[k]
+  row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  row.classList.add('is-flash'); setTimeout(() => row.classList.remove('is-flash'), 1800)
+  if (audioAvailable() && lines[k].sec != null) playAt(lines[k].sec)
+}
+
+// ---------- Recurring meetings ----------
+function renderCompare() {
+  const el = $('noteTakerCompare')
+  if (!el || !draft?.summary) return
+  const c = draft.compare, head = '<h4>Since the last meeting</h4>'
+  const bar = (w) => `<span class="sk sk-block" style="width:${w}"></span>`
+  if (!draft.saved || draft.dirty) { el.innerHTML = `${head}<p class="note-compare-hint">${draft.saved ? 'Save your changes first, so the comparison uses this version.' : 'Save this note first. Recurring meetings are matched by title, so give each one the same name.'}</p>`; return }
+  if (!c) { el.innerHTML = `${head}<p class="note-compare-hint">For a meeting that repeats, see what was finished, what is still open and what is new.</p><button class="note-taker-secondary" id="noteTakerCompareGo" type="button"><i class="ph ph-arrows-left-right"></i> Compare with the previous meeting</button>`; $('noteTakerCompareGo').addEventListener('click', runCompare); return }
+  if (c.loading) { el.innerHTML = `${head}<div role="status" aria-label="Comparing meetings"><p class="note-compare-hint">${bar('58%')}</p><ul class="note-actions">${['74%', '60%', '68%'].map((w) => `<li>${bar(w)}<small>${bar('40%')}</small></li>`).join('')}</ul></div>`; return }
+  if (c.error) { el.innerHTML = `${head}<p class="note-compare-hint is-error">${escapeHtml(c.error)}</p><button class="note-taker-ghost" id="noteTakerCompareGo" type="button"><i class="ph ph-arrow-clockwise"></i> Try again</button>`; $('noteTakerCompareGo').addEventListener('click', runCompare); return }
+  const d = c.data
+  if (!d.previous) { el.innerHTML = `${head}<p class="note-compare-hint">No earlier meeting with a matching title was found. Dates and numbers in titles are ignored, so "Weekly sync 12 Sep" and "Weekly sync 19 Sep" match.</p>`; return }
+  const item = (t) => `<li><span>${escapeHtml(t.task)}</span>${t.owner || t.due ? `<small>${[t.owner, t.due].filter(Boolean).map(escapeHtml).join(', ')}</small>` : ''}${t.evidence ? `<small class="note-compare-why">${escapeHtml(t.evidence)}${t.at ? ` <button class="note-src" type="button" data-at="${t.at}">${t.at}</button>` : ''}</small>` : ''}</li>`
+  const group = (title, items) => (items.length ? `<h5>${title} <span>${items.length}</span></h5><ul class="note-actions">${items.map(item).join('')}</ul>` : '')
+  const by = (s) => d.items.filter((t) => t.status === s)
+  const finished = by('done').filter((t) => t.key)
+  const empty = !d.items.length && !d.newItems.length
+  el.innerHTML = `${head}<p class="note-compare-hint">Compared with "${escapeHtml(d.previous.title)}", ${fmtDate(d.previous.createdAt)}.${d.alreadyDone ? ` ${d.alreadyDone} earlier task${d.alreadyDone === 1 ? ' was' : 's were'} already ticked off.` : ''}</p>`
+    + (empty ? '<p class="note-compare-hint">There was nothing outstanding from last time, and no new action items.</p>' : '')
+    + group('Completed', by('done')) + group('Still open', by('open')) + group('Not discussed', by('unknown')) + group('New action items', d.newItems)
+    + (finished.length ? `<button class="note-taker-ghost" id="noteTakerCompareMark" type="button"><i class="ph ph-check-square"></i> Tick ${finished.length === 1 ? 'it' : `these ${finished.length}`} off in the earlier meeting</button>` : '')
+    + '<p class="note-compare-hint">Matched from the transcripts by AI. Check anything important.</p>'
+  $('noteTakerCompareMark')?.addEventListener('click', async (e) => {
+    const b = e.currentTarget; b.disabled = true
+    try { await setTasksDone(d.previous.id, finished.map((t) => t.key), true); savedNotes = null; b.innerHTML = '<i class="ph ph-check"></i> Ticked off' }
+    catch (err) { b.disabled = false; b.textContent = err.message || 'Could not update. Try again.' }
+  })
+}
+async function runCompare() {
+  const target = draft; if (!target?.saved || target.compare?.loading) return
+  target.compare = { loading: true }; renderCompare()
+  try {
+    const data = await compareNote(target.id)
+    target.compare = { data }
+    if (data.quota?.limit) askQuotaText = `${Math.max(0, data.quota.limit - data.quota.used)} of ${data.quota.limit} questions left today.`
+  } catch (e) { target.compare = { error: e.message || 'Could not compare these meetings.' } }
+  if (draft === target) renderCompare()
+}
+
+// ---------- Tasks across all meetings ----------
+function allTasks() {
+  return (savedNotes || []).flatMap((n) => (n.tasks || []).map((t) => ({ ...t, noteId: n.id, noteTitle: n.title, when: n.createdAt, done: (n.doneTasks || []).includes(t.key) })))
+}
+function tasksSkeleton() {
+  const row = '<li class="task-row" aria-hidden="true"><span class="sk task-box"></span><span class="task-main"><span class="sk sk-block" style="width:72%"></span><small><span class="sk" style="width:120px"></span></small></span></li>'
+  return `<div role="status" aria-label="Loading tasks"><section class="task-group"><h4 class="task-note"><span class="sk" style="width:180px"></span></h4><ul class="task-list">${row.repeat(3)}</ul></section><section class="task-group"><h4 class="task-note"><span class="sk" style="width:140px"></span></h4><ul class="task-list">${row.repeat(2)}</ul></section></div>`
+}
+function renderTasks() {
+  const list = $('noteTakerTasksList'); if (!list) return
+  const badge = $('noteTakerTaskCount')
+  if (!savedNotes) { badge.hidden = true; list.innerHTML = savedLoading ? tasksSkeleton() : savedFailed ? '<div class="note-taker-empty"><p>Your tasks could not be loaded. Nothing has changed.</p><button class="note-taker-secondary" id="noteTakerTasksRetry" type="button">Try again</button></div>' : tasksSkeleton(); return }
+  const all = allTasks(), open = all.filter((t) => !t.done), done = all.filter((t) => t.done)
+  badge.hidden = !open.length; badge.textContent = String(open.length)
+  $('noteTakerTaskOpenCount').textContent = String(open.length); $('noteTakerTaskDoneCount').textContent = String(done.length)
+  $('noteTakerTaskOpen').setAttribute('aria-selected', String(taskFilter === 'open')); $('noteTakerTaskDone').setAttribute('aria-selected', String(taskFilter === 'done'))
+  const owners = [...new Set(all.map((t) => t.owner).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  if (taskOwner && taskOwner !== '__none' && !owners.includes(taskOwner)) taskOwner = ''
+  const sel = $('noteTakerTaskOwner')
+  sel.innerHTML = `<option value="">Everyone</option>${owners.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('')}${all.some((t) => !t.owner) ? '<option value="__none">No owner</option>' : ''}`
+  sel.value = taskOwner
+  const shown = (taskFilter === 'open' ? open : done).filter((t) => !taskOwner || (taskOwner === '__none' ? !t.owner : t.owner === taskOwner))
+  const pending = savedNotes.some((n) => n.hasSummary && n.tasks === null)
+  if (!shown.length) {
+    const none = !all.length
+    list.innerHTML = `<div class="note-taker-empty"><p>${none ? 'No action items yet.' : taskFilter === 'open' ? (taskOwner ? 'Nothing open for this person.' : 'Nothing left to do.') : 'Nothing has been ticked off yet.'}</p><p class="note-empty-sub">${none ? 'Summarize a meeting and save it. Its action items show up here, and each one links back to the meeting it came from.' : taskFilter === 'open' ? 'Tasks you tick off move to Done.' : 'Tick a task on the Open list and it moves here.'}</p></div>${pending ? '<p class="note-taker-hint">Some older notes are still being indexed. Open this tab again in a moment.</p>' : ''}`
+    return
+  }
+  const groups = []
+  for (const t of shown) { let g = groups.find((x) => x.id === t.noteId); if (!g) groups.push((g = { id: t.noteId, title: t.noteTitle, when: t.when, items: [] })); g.items.push(t) }
+  const meta = (t) => [t.owner, t.due, t.priority === 'high' ? 'High priority' : ''].filter(Boolean).map(escapeHtml).join(', ')
+  list.innerHTML = groups.map((g) => `<section class="task-group"><button class="task-note" type="button" data-open="${escapeHtml(g.id)}">${escapeHtml(g.title)}<small>${fmtDate(g.when)}</small></button><ul class="task-list">${g.items.map((t) => `<li class="task-row"><label><input type="checkbox" data-note="${escapeHtml(t.noteId)}" data-key="${escapeHtml(t.key)}"${t.done ? ' checked' : ''}><span class="task-main"><span class="task-text">${escapeHtml(t.task)}</span>${meta(t) ? `<small>${meta(t)}</small>` : ''}</span></label></li>`).join('')}</ul></section>`).join('')
+    + (pending ? '<p class="note-taker-hint">Some older notes are still being indexed. Open this tab again in a moment.</p>' : '')
+}
+async function toggleTask(noteId, key, done) {
+  const n = savedNotes?.find((x) => x.id === noteId); if (!n) return
+  const before = [...(n.doneTasks || [])]
+  n.doneTasks = done ? [...new Set([...before, key])] : before.filter((k) => k !== key)
+  $('noteTakerTasksError').hidden = true; renderTasks()
+  try { const res = await setTasksDone(noteId, [key], done); n.doneTasks = res.doneTasks || n.doneTasks }
+  catch (e) { n.doneTasks = before; const err = $('noteTakerTasksError'); err.textContent = `${e.message || 'Could not update that task.'} It was put back.`; err.hidden = false }
+  renderTasks()
+}
+function showTasksTab() {
+  show('tasks'); $('noteTakerTasksError').hidden = true
+  loadSaved(savedNotes === null); renderTasks()
+}
+
+// ---------- Wiring ----------
+$('noteTakerViewSummary').addEventListener('click', () => setView('summary'))
+$('noteTakerViewTranscript').addEventListener('click', () => setView('transcript'))
+$('noteTakerViewAsk').addEventListener('click', () => { setView('ask'); if (matchMedia('(pointer: fine)').matches) $('noteTakerAskInput').focus() })
+$('noteTakerTabTasks').addEventListener('click', showTasksTab)
+$('noteTakerEditToggle').addEventListener('click', () => setEditing(!editing))
+$('noteTakerDeleteAudio').addEventListener('click', deleteAudio)
+$('noteTakerLabelSpeakers').addEventListener('change', (e) => { try { localStorage.setItem(LABEL_PREF_KEY, e.target.checked ? '1' : '0') } catch {} })
+$('noteTakerKeepAudio').addEventListener('change', (e) => { try { localStorage.setItem(AUDIO_PREF_KEY, e.target.checked ? '1' : '0') } catch {} })
+
+$('noteTakerReader').addEventListener('click', (e) => {
+  const chip = e.target.closest('.spk'); if (chip) return $('noteTakerSpkMenu')?.dataset.i === chip.dataset.i ? closeSpeakerMenu() : openSpeakerMenu(chip)
+  const menu = e.target.closest('#noteTakerSpkMenu')
+  if (menu) {
+    const b = e.target.closest('button[data-act]'); if (!b) return
+    const i = Number(menu.dataset.i)
+    if (b.dataset.act === 'assign') assignSpeaker(i, b.dataset.name)
+    else if (b.dataset.act === 'new') assignSpeaker(i, nextSpeakerName())
+    return
+  }
+  closeSpeakerMenu()
+  const t = e.target.closest('.note-line-time[data-sec]'); if (t) return playAt(Number(t.dataset.sec))
+  const txt = e.target.closest('.note-line-text.is-seekable')
+  if (txt && !String(getSelection()).trim()) { const l = lines[Number(txt.closest('.note-line').dataset.i)]; if (l?.sec != null) playAt(l.sec) }
+})
+$('noteTakerReader').addEventListener('submit', (e) => { e.preventDefault(); const f = e.target.closest('.note-spk-rename'); if (f) renameSpeaker(f.dataset.old, f.querySelector('input').value) })
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('noteTakerSpkMenu')) { e.stopPropagation(); closeSpeakerMenu() } }, true)
+document.addEventListener('click', (e) => { if ($('noteTakerSpkMenu') && !e.target.closest('.note-line-body')) closeSpeakerMenu() })
+
+$('noteTakerAudioPlay').addEventListener('click', togglePlay)
+$('noteTakerAudioSpeed').addEventListener('click', () => { speedIdx = (speedIdx + 1) % SPEEDS.length; audio.playbackRate = SPEEDS[speedIdx]; $('noteTakerAudioSpeed').textContent = `${SPEEDS[speedIdx]}x` })
+const seekBar = $('noteTakerAudioSeek')
+seekBar.addEventListener('pointerdown', () => { dragging = true })
+seekBar.addEventListener('input', () => { const d = audioDuration(); if (audioUrl && d) audio.currentTime = (Number(seekBar.value) / 1000) * d; syncAudioBar() })
+seekBar.addEventListener('change', () => { dragging = false; syncPlayhead() })
+for (const ev of ['timeupdate', 'play', 'pause', 'ended', 'durationchange']) audio.addEventListener(ev, syncPlayhead)
+
+$('noteTakerAskSend').addEventListener('click', () => ask($('noteTakerAskInput').value))
+$('noteTakerAskInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); ask(e.target.value) } })
+$('noteTakerAskInput').addEventListener('input', updateAskUi)
+$('noteTakerPaneAsk').addEventListener('click', (e) => {
+  const q = e.target.closest('[data-q]'); if (q) return ask(q.dataset.q)
+  const r = e.target.closest('[data-retry]'); if (r) { const log = draft?.askLog || [], k = log.findIndex((x) => String(x.n) === r.dataset.retry); if (k >= 0) { const [gone] = log.splice(k, 1); ask(gone.q) } return }
+  const at = e.target.closest('[data-at]'); if (at) jumpTo(at.dataset.at)
+})
+$('noteTakerSummary').addEventListener('click', (e) => { const at = e.target.closest('.note-src[data-at]'); if (at) jumpTo(at.dataset.at) })
+
+$('noteTakerTaskOpen').addEventListener('click', () => { taskFilter = 'open'; renderTasks() })
+$('noteTakerTaskDone').addEventListener('click', () => { taskFilter = 'done'; renderTasks() })
+$('noteTakerTaskOwner').addEventListener('change', (e) => { taskOwner = e.target.value; renderTasks() })
+$('noteTakerTasksList').addEventListener('change', (e) => { const c = e.target.closest('input[type="checkbox"][data-key]'); if (c) toggleTask(c.dataset.note, c.dataset.key, c.checked) })
+$('noteTakerTasksList').addEventListener('click', (e) => {
+  const o = e.target.closest('[data-open]'); if (o) return openSaved(o.dataset.open)
+  if (e.target.closest('#noteTakerTasksRetry')) loadSaved(true)
+})
