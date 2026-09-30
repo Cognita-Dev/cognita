@@ -55,20 +55,45 @@ export async function recoverNoteSession(sessionId) {
 }
 
 // Sends one recorded audio chunk (a Blob from MediaRecorder) to the Worker,
-// which transcribes it with Whisper on the Workers AI free daily
-// allocation. No token in the URL needed here — this is a normal fetch,
-// so authedFetch's Authorization header works as-is.
-export async function transcribeChunk(sessionId, blob, language, context = '') {
-  const response = await auth().authedFetch(`${WORKER_URL}/api/note-sessions/${encodeURIComponent(sessionId)}/transcribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': blob.type || 'application/octet-stream', ...(language ? { 'X-Note-Language': language } : {}), ...(context ? { 'X-Note-Context': encodeURIComponent(context.slice(-400)) } : {}) },
-    body: blob,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error || `Transcription failed (${response.status})`);
+// which transcribes it with Whisper. The Worker decides whether the person
+// still has cloud transcription left today; this only reports the chunk length
+// (X-Audio-Duration-Ms) as a hint, and the Worker trues it up to what Whisper
+// actually processed. Failures carry { status, code, quota, offline } so the UI
+// can tell "limit reached" from "network dropped" from "service busy".
+export async function transcribeChunk(sessionId, blob, language, context = '', durationMs = 0) {
+  let response;
+  try {
+    response = await auth().authedFetch(`${WORKER_URL}/api/note-sessions/${encodeURIComponent(sessionId)}/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': blob.type || 'application/octet-stream',
+        ...(language ? { 'X-Note-Language': language } : {}),
+        ...(context ? { 'X-Note-Context': encodeURIComponent(context.slice(-400)) } : {}),
+        ...(durationMs > 0 ? { 'X-Audio-Duration-Ms': String(Math.round(durationMs)) } : {}),
+      },
+      body: blob,
+    });
+  } catch (e) {
+    const err = new Error('You appear to be offline.');
+    err.offline = true;
+    throw err;
   }
-  return response.json();
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(body.error || `Transcription failed (${response.status})`);
+    err.status = response.status;
+    err.code = body.code || null;
+    err.quota = body.quota || null;
+    throw err;
+  }
+  return body; // { text, seconds, quota }
+}
+
+// Today's cloud transcription allowance, as the server counts it.
+export async function getNoteQuota() {
+  const response = await auth().authedFetch(`${WORKER_URL}/api/note-quota`);
+  if (!response.ok) throw new Error(`Could not load your transcription allowance (${response.status})`);
+  return (await response.json()).quota;
 }
 
 // ---------- Saved notes (B2-backed, see saved-notes-endpoint.js) ----------
@@ -109,4 +134,4 @@ export async function summarizeNote(payload) {
   return (await notesRequest('/api/note-summary', jsonPost(payload), 'Could not summarize the note')).summary;
 }
 
-window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote };
+window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote };
