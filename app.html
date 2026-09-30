@@ -1534,6 +1534,7 @@
         </details>
         <label class="note-taker-check" for="noteTakerAutoSave"><input type="checkbox" id="noteTakerAutoSave"><span>Save to my notes when I finish</span></label>
         <p class="note-taker-error" id="noteTakerSetupError" role="alert" hidden></p>
+        <p class="note-taker-hint">Tell everyone in the room you are recording before you start. Some places require their consent.</p>
         <button class="note-taker-primary" id="noteTakerStart" type="button"><i class="ph ph-microphone"></i> Start recording</button>
       </div>
       <div class="note-taker-live" id="noteTakerLive" data-state="idle" hidden>
@@ -1546,7 +1547,7 @@
         <div class="note-taker-transcript" id="noteTakerTranscript" aria-live="polite" tabindex="0" aria-label="Live transcript"><p class="note-taker-empty">Start speaking and the transcript will appear here.</p></div>
         <div class="note-taker-controls"><button id="noteTakerPause" class="note-taker-secondary" type="button"><i class="ph ph-pause"></i> Pause</button><button id="noteTakerStop" class="note-taker-stop" type="button"><i class="ph ph-stop"></i> Finish</button></div>
       </div>
-      <div class="note-taker-complete" id="noteTakerComplete" hidden>
+      <div class="note-taker-complete" id="noteTakerComplete" data-view="transcript" hidden>
         <div class="note-taker-complete-head">
           <div>
             <input class="note-taker-title-input" id="noteTakerCompleteTitle" maxlength="120" autocomplete="off" placeholder="Meeting notes" aria-label="Note title">
@@ -1554,13 +1555,14 @@
           </div>
           <button class="note-taker-ghost" id="noteTakerNew" type="button"><i class="ph ph-plus"></i> New note</button>
         </div>
+        <div class="note-taker-viewtabs" id="noteTakerViewTabs" role="tablist" aria-label="Note view" hidden><button class="note-taker-viewtab" id="noteTakerViewSummary" type="button" role="tab" aria-selected="false">Summary</button><button class="note-taker-viewtab" id="noteTakerViewTranscript" type="button" role="tab" aria-selected="true">Transcript</button></div>
         <textarea id="noteTakerEditor" class="note-taker-editor" aria-label="Transcript, editable" spellcheck="true"></textarea>
+        <div class="note-taker-summary" id="noteTakerSummary" hidden aria-live="polite"></div>
         <p class="note-taker-save-state" id="noteTakerSaveState" role="status" aria-live="polite"></p>
         <div class="note-taker-actions note-taker-actions-main">
           <button class="note-taker-primary" id="noteTakerSave" type="button"><i class="ph ph-floppy-disk"></i> <span>Save note</span></button>
           <button class="note-taker-secondary" id="noteTakerSummarize" type="button"><i class="ph ph-list-checks"></i> <span>Summarize</span></button>
         </div>
-        <div class="note-taker-summary" id="noteTakerSummary" hidden aria-live="polite"></div>
         <div class="note-taker-actions note-taker-actions-more">
           <button class="note-taker-ghost" id="noteTakerCopy" type="button"><i class="ph ph-copy"></i> Copy</button>
           <button class="note-taker-ghost" id="noteTakerDownload" type="button"><i class="ph ph-download-simple"></i> Download</button>
