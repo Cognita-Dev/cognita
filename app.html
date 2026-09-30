@@ -1503,6 +1503,7 @@
       <div class="note-taker-tabs" id="noteTakerTabs" role="tablist" aria-label="Note Taker">
         <button class="note-taker-tab" id="noteTakerTabRecord" type="button" role="tab" aria-selected="true">Record</button>
         <button class="note-taker-tab" id="noteTakerTabSaved" type="button" role="tab" aria-selected="false">Saved notes<span class="note-taker-tab-count" id="noteTakerSavedCount" hidden></span></button>
+        <button class="note-taker-tab" id="noteTakerTabTasks" type="button" role="tab" aria-selected="false">Tasks<span class="note-taker-tab-count" id="noteTakerTaskCount" hidden></span></button>
       </div>
       <div class="note-taker-recovery" id="noteTakerRecoveryBanner" hidden>
         <p id="noteTakerRecoveryText"></p>
@@ -1533,6 +1534,10 @@
           <p class="note-taker-hint">Used only to write a better summary. It is not saved with the note.</p>
         </details>
         <label class="note-taker-check" for="noteTakerAutoSave"><input type="checkbox" id="noteTakerAutoSave"><span>Save to my notes when I finish</span></label>
+        <label class="note-taker-check" for="noteTakerLabelSpeakers"><input type="checkbox" id="noteTakerLabelSpeakers" checked><span>Label who is speaking</span></label>
+        <p class="note-taker-hint">Works best when people take turns. Voices are compared on this device only, and you can correct any label afterwards.</p>
+        <label class="note-taker-check" for="noteTakerKeepAudio"><input type="checkbox" id="noteTakerKeepAudio"><span>Keep the audio with this note</span></label>
+        <p class="note-taker-hint" id="noteTakerAudioSetupHint"></p>
         <p class="note-taker-error" id="noteTakerSetupError" role="alert" hidden></p>
         <p class="note-taker-hint">Tell everyone in the room you are recording before you start. Some places require their consent.</p>
         <button class="note-taker-primary" id="noteTakerStart" type="button"><i class="ph ph-microphone"></i> Start recording</button>
@@ -1555,9 +1560,36 @@
           </div>
           <button class="note-taker-ghost" id="noteTakerNew" type="button"><i class="ph ph-plus"></i> New note</button>
         </div>
-        <div class="note-taker-viewtabs" id="noteTakerViewTabs" role="tablist" aria-label="Note view" hidden><button class="note-taker-viewtab" id="noteTakerViewSummary" type="button" role="tab" aria-selected="false">Summary</button><button class="note-taker-viewtab" id="noteTakerViewTranscript" type="button" role="tab" aria-selected="true">Transcript</button></div>
-        <textarea id="noteTakerEditor" class="note-taker-editor" aria-label="Transcript, editable" spellcheck="true"></textarea>
-        <div class="note-taker-summary" id="noteTakerSummary" hidden aria-live="polite"></div>
+        <div class="note-audio" id="noteTakerAudioBar" hidden>
+          <button class="note-audio-play" id="noteTakerAudioPlay" type="button" aria-label="Play recording"><i class="ph ph-play"></i></button>
+          <input class="note-audio-seek" id="noteTakerAudioSeek" type="range" min="0" max="1000" value="0" step="1" aria-label="Position in the recording" disabled>
+          <span class="note-audio-time" id="noteTakerAudioTime">Recording</span>
+          <button class="note-audio-speed" id="noteTakerAudioSpeed" type="button" aria-label="Playback speed">1x</button>
+        </div>
+        <p class="note-taker-hint note-audio-status" id="noteTakerAudioStatus" role="status" hidden></p>
+        <div class="note-taker-viewtabs" id="noteTakerViewTabs" role="tablist" aria-label="Note view">
+          <button class="note-taker-viewtab" id="noteTakerViewTranscript" type="button" role="tab" aria-selected="true">Transcript</button>
+          <button class="note-taker-viewtab" id="noteTakerViewSummary" type="button" role="tab" aria-selected="false">Summary</button>
+          <button class="note-taker-viewtab" id="noteTakerViewAsk" type="button" role="tab" aria-selected="false">Ask</button>
+        </div>
+        <div class="note-pane" id="noteTakerPaneTranscript">
+          <div class="note-transcript-tools">
+            <p class="note-taker-hint" id="noteTakerSpeakerHint"></p>
+            <button class="note-taker-ghost" id="noteTakerEditToggle" type="button"><i class="ph ph-pencil-simple"></i> <span>Edit text</span></button>
+          </div>
+          <div class="note-reader" id="noteTakerReader" aria-label="Transcript"></div>
+          <textarea id="noteTakerEditor" class="note-taker-editor" aria-label="Transcript, editable" spellcheck="true" hidden></textarea>
+        </div>
+        <div class="note-taker-summary" id="noteTakerSummary" aria-live="polite"></div>
+        <div class="note-pane note-ask" id="noteTakerPaneAsk">
+          <div class="note-ask-log" id="noteTakerAskLog" aria-live="polite"></div>
+          <div class="note-ask-suggest" id="noteTakerAskSuggest"></div>
+          <div class="note-ask-form">
+            <input id="noteTakerAskInput" type="text" maxlength="500" autocomplete="off" placeholder="Ask about this meeting" aria-label="Ask about this meeting">
+            <button class="note-taker-primary" id="noteTakerAskSend" type="button">Ask</button>
+          </div>
+          <p class="note-taker-hint" id="noteTakerAskHint"></p>
+        </div>
         <p class="note-taker-save-state" id="noteTakerSaveState" role="status" aria-live="polite"></p>
         <div class="note-taker-actions note-taker-actions-main">
           <button class="note-taker-primary" id="noteTakerSave" type="button"><i class="ph ph-floppy-disk"></i> <span>Save note</span></button>
@@ -1567,6 +1599,7 @@
           <button class="note-taker-ghost" id="noteTakerCopy" type="button"><i class="ph ph-copy"></i> Copy</button>
           <button class="note-taker-ghost" id="noteTakerDownload" type="button"><i class="ph ph-download-simple"></i> Download</button>
           <button class="note-taker-ghost" id="noteTakerAsk" type="button"><i class="ph ph-chat-circle-text"></i> Ask Cognita</button>
+          <button class="note-taker-ghost" id="noteTakerDeleteAudio" type="button" hidden><i class="ph ph-speaker-slash"></i> Delete audio</button>
           <button class="note-taker-ghost note-taker-delete" id="noteTakerDelete" type="button" hidden><i class="ph ph-trash"></i> Delete</button>
         </div>
       </div>
@@ -1579,8 +1612,20 @@
         <div id="noteTakerSavedList" class="note-taker-saved-list" aria-live="polite"></div>
         <p class="note-taker-hint" id="noteTakerSavedLimit" hidden></p>
       </div>
+      <div class="note-taker-tasks" id="noteTakerTasks" hidden>
+        <div class="note-tasks-bar">
+          <div class="note-taker-viewtabs" role="tablist" aria-label="Task filter">
+            <button class="note-taker-viewtab" id="noteTakerTaskOpen" type="button" role="tab" aria-selected="true">Open <span id="noteTakerTaskOpenCount"></span></button>
+            <button class="note-taker-viewtab" id="noteTakerTaskDone" type="button" role="tab" aria-selected="false">Done <span id="noteTakerTaskDoneCount"></span></button>
+          </div>
+          <select id="noteTakerTaskOwner" aria-label="Show tasks assigned to"><option value="">Everyone</option></select>
+        </div>
+        <p class="note-taker-error" id="noteTakerTasksError" role="alert" hidden></p>
+        <div id="noteTakerTasksList" aria-live="polite"></div>
+      </div>
     </div>
   </section>
+  <audio id="noteTakerAudio" preload="none" hidden></audio>
   <button class="note-taker-chip" id="noteTakerChip" type="button" data-state="idle" hidden aria-label="Return to the recording in progress"><span class="note-taker-chip-dot"></span><span id="noteTakerChipTime">00:00:00</span></button>
   <!-- ── Delete account modal (3 steps) ── -->
   <div class="modal-overlay" id="deleteAccountModal" hidden>
