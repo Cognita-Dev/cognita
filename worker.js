@@ -60,6 +60,7 @@ import {
   handleNoteSession,
   handleNoteSessionSegment,
   handleNoteChunkTranscribe,
+  handleNoteQuota,
 } from './note-taker-endpoint.js';
 import { handleNotesList, handleNoteGet, handleNoteSave, handleNoteDelete, handleNoteSummary } from './saved-notes-endpoint.js';
 import { handleSendVerificationEmail, handleSendPasswordReset } from './emails/auth-email-endpoint.js';
@@ -123,7 +124,7 @@ function _corsPreflight(env) {
     headers: {
       'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language, X-Note-Context',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language, X-Note-Context, X-Audio-Duration-Ms',
       'Access-Control-Max-Age': '86400',
     },
   });
@@ -135,6 +136,7 @@ const _app = {
 
   const url = new URL(request.url);
 
+  if (request.method === 'GET' && url.pathname === '/api/note-quota') return handleNoteQuota(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
   if (/^\/api\/note-sessions\/[^/]+\/segments$/.test(url.pathname) && request.method === 'POST') return handleNoteSessionSegment(request, env, url.pathname.split('/')[3]);
   if (/^\/api\/note-sessions\/[^/]+\/transcribe$/.test(url.pathname) && request.method === 'POST') return handleNoteChunkTranscribe(request, env, url.pathname.split('/')[3]);
@@ -685,6 +687,7 @@ function _isHeavyRoute(method, path) {
     path === '/api/resources/generate' ||
     path === '/api/insights/generate' ||
     path === '/api/note-summary' ||
+    /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||
     /^\/api\/resources\/[^/]+\/cards\/\d+\/image$/.test(path);
