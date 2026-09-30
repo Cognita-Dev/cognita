@@ -1,4 +1,4 @@
-import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote } from './note-taker-production.js'
+import { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote } from './note-taker-production.js'
 
 const $ = (id) => document.getElementById(id)
 const modal = $('noteTakerModal')
@@ -6,6 +6,9 @@ const RECOVERY_KEY = 'cognitaNoteTakerSession'
 const AUTOSAVE_PREF_KEY = 'cognitaNoteTakerSaveOnFinish'
 const MIN_SUMMARY_CHARS = 200 // matches saved-notes-endpoint.js
 const AUTOSAVE_MS = 20000
+const QUOTA_NOTICE_KEY = 'cognitaNoteQuotaNotice'
+const QUOTA_WARN_AT = 0.9        // show the "nearly used up" notice from 90% of today's cloud allowance
+const QUOTA_STALE_MS = 15000     // how old the mirrored allowance may be before it is fetched again
 const RETRY_PRIMARY_MS = 30000
 const MAX_SPEECH_FAILURES = 3
 const CHUNK_MIN_MS = 6000       // earliest a cloud chunk may close, and only on a pause in speech
@@ -30,7 +33,11 @@ const HALLUCINATIONS = /^(thank you\.?|thanks for watching\.?|thanks\.?|you\.?|b
 
 let stream, analyser, audioCtx, sourceNode, raf, timer, autosaveTimer, retryTimer
 let chunkRecorder = null, chunkLoopRunning = false, chunkQueue = Promise.resolve()
-let recognition, speechFailures = 0, intentionalStop = false, langOverride = null
+let recognition, speechFailures = 0, intentionalStop = false, langOverride = null, restartTimer = null, freeOnly = false
+// Cloud (Whisper) allowance as the server last reported it. Null until loaded; while null the cloud is treated as
+// available and the server decides. inflightSec is audio already sent but not yet counted in `quota`.
+let quota = null, quotaFetchedAt = 0, quotaPromise = null, inflightSec = 0, cloudBase = '', exhaustHandled = false
+let noticePriority = 0
 let startedAt, pausedMs = 0, pauseAt = 0, finishArmed = null, opener = null
 let segments = [], interim = ''
 let state = 'idle' // idle | requesting-permission | connecting | recording | paused | degraded | stopping | completed | error
@@ -61,6 +68,7 @@ function show(view) {
   $('noteTakerTabSaved').setAttribute('aria-selected', String(onSaved))
   $('noteTakerTabRecord').setAttribute('aria-selected', String(!onSaved))
   if (view !== 'setup') $('noteTakerRecoveryBanner').hidden = true
+  if (view === 'complete' || view === 'saved') hideNotice() // allowance notices belong to recording, not to reading notes
 }
 
 function render() {
@@ -88,12 +96,133 @@ function appendFinal(text) {
   if (sessionId) persistNoteSegment(sessionId, { segmentId: seg.id, text, startMs: elapsedMs(), endMs: elapsedMs() }).catch(() => {})
 }
 
+// ---------- Cloud transcription allowance ----------
+// The Worker counts and enforces the daily Whisper allowance (note-taker-endpoint.js). This only mirrors what it
+// reports so the person is warned early and the recorder can hand over to the free browser engine BEFORE a chunk is
+// refused. Browser recognition is free and never counted. If the allowance cannot be loaded, cloud is assumed
+// available and the server remains the authority.
+function fmtSpan(sec, floor = false) {
+  sec = Math.max(0, sec)
+  if (sec >= 3600) { const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return m ? `${h} h ${m} min` : `${h} h` }
+  const m = floor ? Math.floor(sec / 60) : Math.round(sec / 60)
+  return `${m} min`
+}
+const fmtLeft = (sec) => (sec > 0 && sec < 60 ? 'less than a minute' : fmtSpan(sec, true))
+function fmtUsed(q) { return q.limitSeconds < 3600 ? `${Math.round(q.usedSeconds / 60)} of ${Math.round(q.limitSeconds / 60)} min` : `${fmtSpan(q.usedSeconds)} of ${fmtSpan(q.limitSeconds)}` }
+const resetTime = () => { const d = quota?.resetsAt ? new Date(quota.resetsAt) : null; return d && !isNaN(d) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'tomorrow' }
+
+function cloudRemaining() {
+  if (!quota || quota.unlimited) return Infinity
+  if (quota.resetsAt && Date.now() >= Date.parse(quota.resetsAt)) { if (Date.now() - quotaFetchedAt > 5000) refreshQuota(true); return Infinity } // a new day has begun; the server confirms
+  return Math.max(0, quota.remainingSeconds ?? quota.limitSeconds - quota.usedSeconds)
+}
+const cloudAvailable = (reserve = 0) => cloudRemaining() - reserve > 0
+
+function refreshQuota(force = false) {
+  if (quotaPromise) return quotaPromise
+  if (!force && Date.now() - quotaFetchedAt < QUOTA_STALE_MS) return Promise.resolve(quota)
+  quotaPromise = getNoteQuota().then(applyQuota).catch(() => {}).then(() => { quotaFetchedAt = Date.now(); quotaPromise = null; return quota })
+  return quotaPromise
+}
+function noticeSeen(q) { try { const v = JSON.parse(localStorage.getItem(QUOTA_NOTICE_KEY) || 'null'); return v && v.reset === q.resetsAt ? v.level : 0 } catch { return 0 } }
+function markNoticeSeen(q, level) { try { localStorage.setItem(QUOTA_NOTICE_KEY, JSON.stringify({ reset: q.resetsAt, level })) } catch {} }
+
+function applyQuota(q) {
+  if (!q) return
+  quota = q; quotaFetchedAt = Date.now()
+  renderQuota()
+  if (state === 'degraded' && cloudBase) setStatus('Recording', cloudDetail())
+  if (q.unlimited) return
+  // Each threshold is announced once per day, so opening the panel again does not repeat it.
+  const ratio = q.usedSeconds / q.limitSeconds
+  const level = ratio >= 1 ? 100 : ratio >= QUOTA_WARN_AT ? 90 : 0
+  if (level && noticeSeen(q) < level) { markNoticeSeen(q, level); showQuotaNotice(level === 100 ? 'full' : 'warn') }
+}
+function cloudDetail() {
+  if (!quota || quota.unlimited) return cloudBase
+  const left = cloudRemaining() - inflightSec
+  return left > 0 ? `${cloudBase} ${fmtLeft(left)} left today.` : cloudBase
+}
+function renderQuota() {
+  const box = $('noteTakerQuota'); const q = quota
+  const show = !!q && !q.unlimited && (q.usedSeconds > 0 || !browserLang())
+  box.hidden = !show
+  if (!show) return
+  const ratio = Math.min(1, q.usedSeconds / q.limitSeconds)
+  box.dataset.level = ratio >= 1 ? 'full' : ratio >= QUOTA_WARN_AT ? 'warning' : 'ok'
+  $('noteTakerQuotaValue').textContent = ratio >= 1 ? 'Used up' : `${fmtLeft(q.remainingSeconds)} left`
+  $('noteTakerQuotaBar').firstElementChild.style.width = `${ratio * 100}%`
+  $('noteTakerQuotaBar').setAttribute('aria-valuenow', String(Math.round(ratio * 100)))
+  $('noteTakerQuotaHint').textContent = browserLang()
+    ? `Only used if live recognition falls back to the cloud. Resets at ${resetTime()}.`
+    : `${langLabel(langCode()) || 'This language'} uses cloud transcription. Resets at ${resetTime()}.`
+}
+
+// ----- Notices -----
+const NOTICE_RANK = { warn: 1, full: 2, switched: 3, paused: 4, blocked: 4 }
+function hideNotice() { $('noteTakerNotice').hidden = true; noticePriority = 0; $('noteTakerChip').dataset.alert = 'false' }
+function showNotice(kind, tone, text, actions = []) {
+  if (NOTICE_RANK[kind] < noticePriority) return // a warning must never replace "recording is paused"
+  noticePriority = NOTICE_RANK[kind]
+  const box = $('noteTakerNotice'); box.dataset.tone = tone
+  $('noteTakerNoticeText').textContent = text
+  const holder = $('noteTakerNoticeActions'); holder.replaceChildren()
+  for (const a of [...actions, { label: 'Dismiss', ghost: true, onClick: hideNotice }]) {
+    const el = document.createElement(a.href ? 'a' : 'button')
+    el.className = a.ghost ? 'note-taker-ghost' : a.primary ? 'note-taker-primary' : 'note-taker-secondary'
+    el.textContent = a.label
+    if (a.href) el.href = a.href; else { el.type = 'button'; el.addEventListener('click', a.onClick) }
+    holder.appendChild(el)
+  }
+  box.hidden = false
+  $('noteTakerChip').dataset.alert = String(modal.hidden) // minimized: mark the chip so the notice is not missed
+}
+function upgradeAction() { const u = quota?.upgrade; return u ? [{ label: `See ${u.name}`, href: '/pricing.html' }] : [] }
+function showQuotaNotice(kind) {
+  const q = quota; if (!q) return
+  const reset = resetTime(), u = q.upgrade
+  const more = u ? ` ${u.name} includes ${fmtSpan(u.limitSeconds)} a day.` : ''
+  const lang = langLabel(langCode()) || 'this language'
+  if (kind === 'warn') return showNotice(kind, 'warning', `You have used ${fmtUsed(q)} of today's cloud transcription. Live recognition in your browser does not count toward this. It resets at ${reset}.${more}`, upgradeAction())
+  if (kind === 'full') return showNotice(kind, 'limit', `Today's cloud transcription is used up. Live recognition in your browser is still free. It resets at ${reset}.${more}`, upgradeAction())
+  if (kind === 'switched') return showNotice(kind, 'limit', `Today's cloud transcription is used up, so recording continues with your browser's free live recognition. It resets at ${reset}.${more}`, upgradeAction())
+  // 'paused' (mid-recording) and 'blocked' (before starting): this language has no free engine
+  if (!Speech) return showNotice(kind, 'limit', `Today's cloud transcription is used up, and this browser has no free live recognition. Recording is available again after ${reset}.${more}`, upgradeAction())
+  const go = kind === 'paused' ? continueInEnglish : startInEnglish
+  showNotice(kind, 'limit', `Today's cloud transcription is used up, and ${lang} needs it. You can continue in English with free live recognition, or come back after ${reset}.${more}`,
+    [{ label: kind === 'paused' ? 'Continue in English' : 'Record in English', primary: true, onClick: go }, ...upgradeAction()])
+}
+
+// Cloud-only languages (no browser model) cannot record without allowance. A language the browser handles
+// never needs to ask: it just carries on with the free engine.
+async function gateCloud() {
+  if (browserLang()) return true
+  if (quota && !cloudAvailable()) await refreshQuota(true) // an upgrade or a new day may have changed it
+  if (cloudAvailable()) return true
+  showQuotaNotice('blocked'); renderQuota()
+  return false
+}
+function switchToEnglish() { $('noteTakerLanguage').value = 'en-NG'; updateLanguageHint(); hideNotice() }
+function startInEnglish() { switchToEnglish(); start() }
+function continueInEnglish() { switchToEnglish(); if (state === 'paused') resumeCapture() }
+// Allowance ran out mid-recording. A language with a free engine switches to it seamlessly; otherwise the note pauses.
+function handleQuotaExhausted() {
+  if (exhaustHandled || !['degraded', 'recording'].includes(state)) return
+  exhaustHandled = true
+  stopChunkLoop(); clearTimeout(retryTimer)
+  if (browserLang()) { showQuotaNotice('switched'); startPrimarySpeech(); return }
+  pause()
+  showQuotaNotice('paused')
+}
+
 // ---------- Open / minimize / close ----------
 function open() {
   opener = document.activeElement
   modal.hidden = false
   $('noteTakerChip').hidden = true
   document.body.classList.add('note-taker-open')
+  $('noteTakerChip').dataset.alert = 'false'
+  refreshQuota()
   if (isActive()) { show('live'); render(); return $('noteTakerPause').focus() }
   if (draft && $('noteTakerEditor').value) { show('complete'); return $('noteTakerEditor').focus() }
   resetSetup()
@@ -124,6 +253,7 @@ function updateLanguageHint() {
     ? 'Transcribed in the cloud, so text arrives after each pause rather than word by word. Accuracy for this language is still limited; check names and numbers.'
     : !Speech && l?.browser !== undefined ? 'Your browser has no live recognition, so text arrives after each pause.'
     : l?.browser ? 'Words appear live as people speak.' : 'Language is detected automatically. Text arrives after each pause.'
+  renderQuota()
 }
 
 function checkForRecovery() {
@@ -142,7 +272,7 @@ function checkForRecovery() {
       $('noteTakerMeetingTitle').value = session.title || ''
       $('noteTakerLanguage').value = LANGS[session.language] ? session.language : 'en-NG'
       // Recovery used to skip the mic, timer and level meter entirely, so the restored note recorded nothing.
-      if (await beginCapture()) saveRecoveryPointer()
+      if (await beginCapture()) saveRecoveryPointer(); else if (!isActive()) banner.hidden = false // blocked (e.g. allowance used up): the unfinished note stays restorable
     } catch { clearRecoveryPointer(); showSetupError("That note couldn't be restored. You can start a new one below.") }
   }
   $('noteTakerRecoveryDiscard').onclick = () => { clearRecoveryPointer(); banner.hidden = true }
@@ -197,6 +327,7 @@ function startPrimarySpeech() {
   recognition.lang = langOverride || browserLang()
   recognition.onresult = (e) => {
     speechFailures = 0 // a working session must not accumulate old errors toward the fallback
+    freeOnly = false
     interim = ''
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) appendFinal(bestAlternative(e.results[i]))
@@ -215,16 +346,25 @@ function startPrimarySpeech() {
   recognition.onend = () => {
     if (interim.trim()) { appendFinal(interim); interim = ''; render() } // don't lose words the recognizer never finalized
     if (intentionalStop || state !== 'recording') return
-    try { startPrimarySpeech() } catch { if (++speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback() }
+    restartPrimary(freeOnly ? 2000 : 0) // with no cloud to fall back on, pace the retries instead of spinning
   }
-  try { recognition.start(); setState('recording'); setStatus('Recording', 'Live transcription') }
-  catch { startWhisperFallback() }
+  try { recognition.start(); setState('recording'); setStatus('Recording', freeOnly ? 'Live transcription. Cloud transcription is used up for today.' : 'Live transcription') }
+  catch { startWhisperFallback(); if (state === 'recording') restartPrimary(2000) }
+}
+function restartPrimary(delay) {
+  clearTimeout(restartTimer)
+  const go = () => {
+    if (intentionalStop || state !== 'recording') return
+    try { startPrimarySpeech() }
+    catch { if (++speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback(); if (state === 'recording') restartPrimary(2000) }
+  }
+  if (delay) restartTimer = setTimeout(go, delay); else go()
 }
 function stopPrimarySpeech() {
   intentionalStop = true
   const r = recognition; recognition = null
   try { r?.stop() } catch {}
-  clearTimeout(retryTimer)
+  clearTimeout(retryTimer); clearTimeout(restartTimer)
 }
 function fatalMicError() {
   setState('error'); stopPrimarySpeech(); stopChunkLoop()
@@ -252,40 +392,73 @@ function recordOneChunk() {
       if (rec.state !== 'inactive' && ((age >= CHUNK_MIN_MS && paused) || age >= CHUNK_MAX_MS || (!voiced && age >= CHUNK_MIN_MS) || !chunkLoopRunning)) try { rec.stop() } catch {}
     }, 100)
     rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data) }
-    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length ? new Blob(parts, { type: mimeType || 'audio/webm' }) : null) }
+    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length ? { blob: new Blob(parts, { type: mimeType || 'audio/webm' }), ms: Date.now() - t0 } : null) }
     rec.onerror = () => { clearInterval(poll); resolve(null) }
     chunkRecorder = rec
     rec.start()
   })
 }
-async function transcribeAndAppend(blob) {
-  if (!blob || !sessionId) return
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+async function transcribeAndAppend({ blob, ms }) {
+  const sec = Math.ceil(ms / 1000)
+  const settle = () => { inflightSec = Math.max(0, inflightSec - sec) } // once answered, the audio is in the server's count (or was never charged)
+  if (!sessionId) return settle()
   const context = segments.slice(-3).map((s) => s.text).join(' ') // recent words steer spelling and continuity
-  try {
-    const { text } = await transcribeChunk(sessionId, blob, langCode(), context)
-    if (text && !HALLUCINATIONS.test(text.trim())) { appendFinal(text); render() }
-  } catch (e) {
-    if (/limit/i.test(e.message || '')) { setStatus('Daily limit reached', e.message); stopChunkLoop(); setState('paused') }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await transcribeChunk(sessionId, blob, langCode(), context, ms)
+      settle()
+      if (res.quota) applyQuota(res.quota)
+      const text = (res.text || '').trim()
+      if (text && !HALLUCINATIONS.test(text)) { appendFinal(text); render() }
+      return
+    } catch (e) {
+      if (e.quota) applyQuota(e.quota)
+      if (e.code === 'WHISPER_QUOTA_EXHAUSTED') { settle(); return handleQuotaExhausted() }
+      // Network drops and 5xx are usually momentary: one retry, so a hiccup does not silently lose a few seconds of speech.
+      if ((e.offline || e.status >= 500) && attempt < 1 && isActive()) { await wait(1500); continue }
+      settle()
+      return reportChunkFailure(e)
+    }
   }
+}
+function reportChunkFailure(e) {
+  if (!isActive()) return
+  if (e.status === 401 || e.status === 403) return setStatus('Signed out', 'Sign in again to keep transcribing. The text so far is safe.')
+  if (e.code === 'PROVIDER_BUSY') return setStatus('Recording', 'Cloud transcription is busy. Some speech was missed. This did not use your allowance.')
+  setStatus('Recording', e.offline ? 'Offline. Some speech could not be transcribed.' : 'Some speech could not be transcribed.')
 }
 async function runChunkLoop() {
   if (chunkLoopRunning) return
   chunkLoopRunning = true
   while (chunkLoopRunning && state === 'degraded') {
-    const blob = await recordOneChunk()
-    if (blob) chunkQueue = chunkQueue.then(() => transcribeAndAppend(blob)).catch(() => {})
+    // Audio already sent counts against the allowance too, so hand over before recording a chunk that would be refused.
+    if (!cloudAvailable(inflightSec)) { chunkLoopRunning = false; handleQuotaExhausted(); break }
+    const chunk = await recordOneChunk()
+    if (!chunk) continue
+    if (chunkLoopRunning && !cloudAvailable(inflightSec)) { chunkLoopRunning = false; handleQuotaExhausted(); break } // another device used the rest while this was recording
+    inflightSec += Math.ceil(chunk.ms / 1000)
+    chunkQueue = chunkQueue.then(() => transcribeAndAppend(chunk)).catch(() => {})
   }
   chunkLoopRunning = false
 }
 function stopChunkLoop() { chunkLoopRunning = false; try { if (chunkRecorder?.state !== 'inactive') chunkRecorder?.stop() } catch {} }
 function startCloudMode(reason) {
   stopPrimarySpeech()
+  exhaustHandled = false; cloudBase = reason
   setState('degraded')
-  setStatus('Recording', reason)
+  setStatus('Recording', cloudDetail())
   render()
   runChunkLoop()
 }
 function startWhisperFallback() {
+  // Cloud is the fallback for a flaky browser engine. With today's allowance gone there is nothing to fall back to,
+  // so keep retrying the free engine rather than leaving the note silent.
+  if (!cloudAvailable(inflightSec)) {
+    freeOnly = true; speechFailures = 0
+    if (state === 'recording') setStatus('Recording', 'Live recognition hit a problem and is retrying. Cloud transcription is used up for today.')
+    return
+  }
   startCloudMode('Live recognition hit a problem. Text now arrives after each pause.')
   if (browserLang()) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (state === 'degraded') { stopChunkLoop(); startPrimarySpeech() } }, RETRY_PRIMARY_MS) }
 }
@@ -303,9 +476,10 @@ async function acquireMic() {
   }
 }
 async function beginCapture() {
+  if (!(await gateCloud())) return false
   if (!stream && !(await acquireMic())) return false
   show('live'); setState('connecting'); setStatus('Starting', ''); segments = segments || []; interim = ''
-  pausedMs = 0; pauseAt = 0; startedAt = Date.now(); langOverride = null; render()
+  pausedMs = 0; pauseAt = 0; startedAt = Date.now(); langOverride = null; freeOnly = false; inflightSec = 0; render()
   clearInterval(timer)
   timer = setInterval(() => { const t = elapsed(); $('noteTakerTimer').textContent = t; $('noteTakerChipTime').textContent = t }, 250)
   startLevelMeter()
@@ -316,6 +490,7 @@ async function beginCapture() {
 }
 async function start() {
   showSetupError('')
+  if (!(await gateCloud())) return // before the mic and before a session is created, so a blocked start costs nothing
   if (!(await acquireMic())) return
   setState('connecting')
   let session
@@ -346,12 +521,18 @@ function pause() {
     $('noteTakerPause').innerHTML = '<i class="ph ph-play"></i> Resume'
     setStatus('Paused', 'Nothing is being recorded')
   } else if (state === 'paused' || state === 'error') {
-    if (pauseAt) { pausedMs += Date.now() - pauseAt; pauseAt = 0 }
-    stream?.getTracks().forEach((t) => (t.enabled = true))
-    $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
-    if (browserLang()) startPrimarySpeech(); else startCloudMode('Cloud transcription. Text arrives after each pause.')
-    drawLevel()
+    resumeCapture()
   }
+}
+async function resumeCapture() {
+  // A cloud-only language cannot resume without allowance (it may have reset or been upgraded since).
+  if (!(await gateCloud())) return
+  if (pauseAt) { pausedMs += Date.now() - pauseAt; pauseAt = 0 }
+  stream?.getTracks().forEach((t) => (t.enabled = true))
+  $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
+  hideNotice()
+  if (browserLang()) startPrimarySpeech(); else startCloudMode('Cloud transcription. Text arrives after each pause.')
+  drawLevel()
 }
 function finish() {
   if (!segments.length && !interim) return stopNow()
@@ -365,6 +546,7 @@ async function stopNow() {
   clearInterval(timer); clearInterval(autosaveTimer); clearTimeout(retryTimer)
   stopPrimarySpeech(); stopChunkLoop()
   await chunkQueue.catch(() => {})
+  inflightSec = 0; exhaustHandled = false; hideNotice()
   stopLevelMeter()
   stream?.getTracks().forEach((t) => t.stop()); stream = null
   if (interim.trim()) { appendFinal(interim); interim = '' }
@@ -612,6 +794,8 @@ $('noteTakerAsk').addEventListener('click', () => { const input = $('composerInp
 modal.addEventListener('mousedown', (e) => { if (e.target === modal) close() })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) close() })
 window.addEventListener('cognita:open-note-taker', open)
-window.addEventListener('online', () => { if (state === 'degraded' && browserLang()) { clearTimeout(retryTimer); stopChunkLoop(); startPrimarySpeech() } })
+window.addEventListener('online', () => { refreshQuota(); if (state === 'degraded' && browserLang()) { clearTimeout(retryTimer); stopChunkLoop(); startPrimarySpeech() } })
+// Coming back to the tab after upgrading (or after midnight UTC) should not leave a stale "used up" on screen.
+window.addEventListener('focus', () => { if (!modal.hidden && quota && !quota.unlimited && quota.usedSeconds / quota.limitSeconds >= QUOTA_WARN_AT) refreshQuota() })
 window.addEventListener('offline', () => { if (isActive()) setStatus('Offline', browserLang() ? 'Live transcription will resume when you reconnect' : 'Cloud transcription will resume when you reconnect') })
 window.addEventListener('beforeunload', (e) => { if (isActive() || hasUnsavedWork()) { e.preventDefault(); e.returnValue = '' } })
