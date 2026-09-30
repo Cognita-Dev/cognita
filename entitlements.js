@@ -39,7 +39,7 @@ export const PLANS = {
       visionPerDay: 0,             // no image-understanding on Starter
       toolCallsPerDay: 0,          // no connector tool-use on Starter
       noteTakerSessionsPerDay: 3,
-      noteTakerChunksPerDay: 200,   // ~8s/chunk -> roughly 27 minutes/day
+      noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
       savedNotesMax: 15,           // notes a user can keep saved in B2 at once
       // Real, AI-generated illustrations rendered onto flashcard faces
@@ -93,7 +93,7 @@ export const PLANS = {
       visionPerDay: 15,
       toolCallsPerDay: 30,
       noteTakerSessionsPerDay: 30,
-      noteTakerChunksPerDay: 2000,  // roughly 4.4 hours/day
+      noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
       savedNotesMax: 200,           // notes a user can keep saved in B2 at once
       // One deck's worth of illustrated cards per day, roughly — kept
@@ -138,7 +138,7 @@ export const PLANS = {
       visionPerDay: 60,
       toolCallsPerDay: 150,
       noteTakerSessionsPerDay: 150,
-      noteTakerChunksPerDay: 8000,  // roughly 17.8 hours/day
+      noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
       savedNotesMax: 1000,           // notes a user can keep saved in B2 at once
       flashcardImagePerDay: 80,
@@ -190,7 +190,7 @@ export const PLANS = {
       visionPerDay: UNLIMITED,
       toolCallsPerDay: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
-      noteTakerChunksPerDay: UNLIMITED,
+      noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
       savedNotesMax: UNLIMITED,           // notes a user can keep saved in B2 at once
       flashcardImagePerDay: UNLIMITED,
