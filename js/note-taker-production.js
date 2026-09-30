@@ -93,7 +93,9 @@ export async function transcribeChunk(sessionId, blob, language, context = '', d
 export async function getNoteQuota() {
   const response = await auth().authedFetch(`${WORKER_URL}/api/note-quota`);
   if (!response.ok) throw new Error(`Could not load your transcription allowance (${response.status})`);
-  return (await response.json()).quota;
+  const body = await response.json();
+  // The plan's other note limits ride along so the panel can say what is included before anyone hits a wall.
+  return { ...body.quota, audioMaxMB: body.audioMaxMB, asksPerDay: body.asksPerDay };
 }
 
 // ---------- Saved notes (B2-backed, see saved-notes-endpoint.js) ----------
@@ -134,4 +136,34 @@ export async function summarizeNote(payload) {
   return (await notesRequest('/api/note-summary', jsonPost(payload), 'Could not summarize the note')).summary;
 }
 
-window.CognitaNoteTakerProduction = { createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote };
+export async function askNote(payload) {
+  return notesRequest('/api/note-ask', jsonPost(payload), 'Could not answer that');
+}
+export async function compareNote(noteId) {
+  return notesRequest('/api/note-compare', jsonPost({ noteId }), 'Could not compare these meetings');
+}
+export async function setTasksDone(noteId, keys, done) {
+  return notesRequest(`/api/notes/${encodeURIComponent(noteId)}/tasks`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, done }) }, 'Could not update that task');
+}
+
+// ---------- Audio kept with a saved note ----------
+
+export async function uploadNoteAudio(noteId, blob) {
+  return notesRequest(`/api/notes/${encodeURIComponent(noteId)}/audio`, { method: 'PUT', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob }, 'Could not save the audio');
+}
+export async function deleteNoteAudio(noteId) {
+  return notesRequest(`/api/notes/${encodeURIComponent(noteId)}/audio`, { method: 'DELETE' }, 'Could not delete the audio');
+}
+// The recording is private, so the browser fetches it with the sign-in token and plays it from memory.
+export async function getNoteAudio(noteId) {
+  let response;
+  try { response = await auth().authedFetch(`${WORKER_URL}/api/notes/${encodeURIComponent(noteId)}/audio`); }
+  catch (e) { const err = new Error('You appear to be offline. Check your connection and try again.'); err.offline = true; throw err; }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const err = new Error(body.error || `Could not load the audio (${response.status})`); err.status = response.status; throw err;
+  }
+  return response.blob();
+}
+
+window.CognitaNoteTakerProduction = { askNote, compareNote, setTasksDone, uploadNoteAudio, deleteNoteAudio, getNoteAudio, createNoteSession, patchNoteSession, persistNoteSegment, recoverNoteSession, transcribeChunk, getNoteQuota, listSavedNotes, getSavedNote, saveNote, deleteSavedNote, summarizeNote };
