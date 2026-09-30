@@ -1,8 +1,8 @@
-import { requireAuth } from './auth-middleware.js';
+import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { fsGet, fsSet, fsUpdate } from './firestore-rest.js';
-import { resolveAccount } from './subscription.js';
-import { getPlan } from './entitlements.js';
-import { checkAndIncrement } from './usage.js';
+import { resolveAccountWithRole } from './subscription.js';
+import { getPlan, UNLIMITED } from './entitlements.js';
+import { checkAndIncrement, getUsage, reserveUsage, adjustUsage, nextUsageResetIso } from './usage.js';
 
 const MAX_TITLE = 160;
 const MAX_SEGMENT = 12000;
@@ -21,7 +21,19 @@ const BASE_PROMPTS = {
   'pcm-NG': 'Nigerian Pidgin conversation: how far, abeg, wahala, na so, wetin, dey, sabi, oga.',
   'yo-NG': 'Ọ̀rọ̀ ní èdè Yorùbá. Ẹ kú àárọ̀, ẹ ṣé, Ọ̀gbẹ́ni, Ìbàdàn, Èkó, Ọ̀yọ́.',
 };
-const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+
+// ---------- Cloud (Whisper) transcription allowance ----------
+// Metered in SECONDS OF AUDIO per UTC day, per plan (entitlements.js:
+// noteTakerWhisperSecondsPerDay). Only this endpoint spends it. The browser's
+// own SpeechRecognition never reaches the server, so it is free and uncounted.
+// The client only ever displays what this file reports; it never reports usage.
+const WHISPER_RESOURCE = 'noteTakerWhisperSeconds';
+const MAX_CHUNK_BYTES = 1.5 * 1024 * 1024; // a 14 s chunk is ~250 KB at worst; anything bigger is not a real chunk
+const MIN_CHARGE_SECONDS = 1;
+const MAX_ESTIMATE_SECONDS = 60;   // most one request can reserve up front
+const MAX_CHARGE_SECONDS = 120;    // most one request can be charged after Whisper reports the real length
+const BYTES_PER_SECOND_CEILING = 40000; // 320 kbps: no speech recording is denser, so bytes / this can only under-count the length
+const UPGRADE_PATH = ['free', 'plus', 'studio'];
 
 function json(data, status = 200, env) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...(env.APP_ORIGIN ? { 'Access-Control-Allow-Origin': env.APP_ORIGIN } : {}) } });
@@ -59,7 +71,7 @@ export async function handleNoteSessionCreate(request, env) {
   const identity = await requireAuth(request, env);
   let account;
   try {
-    account = await resolveAccount(identity.uid, env);
+    account = await resolveAccountWithRole(identity.uid, env);
   } catch (e) {
     console.error('[note-taker] account resolution failed:', e.message);
     return json({ error: 'Could not verify your account. Please try again.' }, 500, env);
@@ -88,31 +100,109 @@ export async function handleNoteSessionSegment(request, env, sessionId) {
   return json({ ok: true, segmentId }, 201, env);
 }
 
-// Free-tier transcription: the browser records short audio chunks
-// (MediaRecorder) and POSTs each one here; this endpoint transcribes it with
-// Whisper on the Workers AI free daily allocation (env.AI binding — no
-// AI Gateway, no external token, no per-minute billing). This trades true
-// word-by-word streaming for a fresh transcript roughly every chunk length,
-// in exchange for $0 marginal cost.
+// Cloud transcription: the browser records short audio chunks (MediaRecorder)
+// and POSTs each one here; this endpoint transcribes it with Whisper on
+// Workers AI (env.AI binding, no external token). This trades true
+// word-by-word streaming for a fresh transcript roughly every chunk length.
+//
+// Gating, in order, all server-side:
+//   1. verified identity, then the plan resolved from that uid (never from the client)
+//   2. size checks, before anything is charged
+//   3. RESERVE an estimate of the chunk's length against today's allowance.
+//      Already at or over the limit -> 429 WHISPER_QUOTA_EXHAUSTED, Whisper is never called.
+//   4. run Whisper. If it fails, the reservation is refunded in full.
+//   5. TRUE UP to the duration Whisper itself reports (transcription_info.duration),
+//      so a client that under-reports the length cannot get cheap audio.
+// Every response carries the fresh `quota` snapshot so the UI stays in step.
+function authFailure(e, env) {
+  const a = describeAuthError(e);
+  return json({ error: a.message, ...(a.code ? { code: a.code } : {}) }, a.status, env);
+}
+
+async function planFor(uid, env) {
+  const account = await resolveAccountWithRole(uid, env);
+  return { account, plan: getPlan(account.planId) };
+}
+
+function upgradeOption(planId) {
+  const i = UPGRADE_PATH.indexOf(planId);
+  if (i === -1 || i === UPGRADE_PATH.length - 1) return null; // Studio and admin have nothing above them
+  const next = getPlan(UPGRADE_PATH[i + 1]);
+  return { id: next.id, name: next.name, limitSeconds: next.limits.noteTakerWhisperSecondsPerDay };
+}
+
+// `used` is the raw day total, which can sit a few seconds past the limit
+// (the last chunk is allowed to finish). Everything shown is clamped.
+function quotaSnapshot(plan, used) {
+  const limit = plan.limits.noteTakerWhisperSecondsPerDay;
+  const unlimited = limit >= UNLIMITED;
+  const usedSeconds = unlimited ? Math.max(0, used) : Math.min(Math.max(0, used), limit);
+  return {
+    unlimited,
+    limitSeconds: unlimited ? null : limit,
+    usedSeconds,
+    remainingSeconds: unlimited ? null : Math.max(0, limit - used),
+    resetsAt: nextUsageResetIso(),
+    planId: plan.id,
+    planName: plan.name,
+    upgrade: unlimited ? null : upgradeOption(plan.id),
+  };
+}
+
+function exhaustedMessage(plan) {
+  return `You have used all of today's cloud transcription on the ${plan.name} plan. Live recognition in your browser is still free.`;
+}
+
+function estimateSeconds(claimedHeader, bytes) {
+  const claimed = Math.max(0, Number(claimedHeader) || 0) / 1000;
+  const floor = bytes / BYTES_PER_SECOND_CEILING;
+  return Math.min(MAX_ESTIMATE_SECONDS, Math.max(MIN_CHARGE_SECONDS, Math.ceil(Math.max(claimed, floor))));
+}
+
+export async function handleNoteQuota(request, env) {
+  let identity;
+  try { identity = await requireAuth(request, env); } catch (e) { return authFailure(e, env); }
+  let plan;
+  try { ({ plan } = await planFor(identity.uid, env)); }
+  catch (e) { console.error('[note-taker] quota: account resolution failed:', e.message); return json({ error: 'Could not load your transcription allowance. Please try again.' }, 500, env); }
+  const metered = plan.limits.noteTakerWhisperSecondsPerDay < UNLIMITED;
+  let used = 0;
+  if (metered) {
+    try { used = await getUsage(identity.uid, WHISPER_RESOURCE, env); }
+    catch (e) { console.error('[note-taker] quota: usage read failed:', e.message); return json({ error: 'Could not load your transcription allowance. Please try again.' }, 500, env); }
+  }
+  return json({ quota: quotaSnapshot(plan, used) }, 200, env);
+}
+
 export async function handleNoteChunkTranscribe(request, env, sessionId) {
-  const identity = await requireAuth(request, env);
+  let identity;
+  try { identity = await requireAuth(request, env); } catch (e) { return authFailure(e, env); }
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(sessionId)) return json({ error: 'Invalid session id' }, 400, env);
 
   let plan;
-  try {
-    const account = await resolveAccount(identity.uid, env);
-    plan = getPlan(account.planId);
-  } catch (e) {
-    return json({ error: 'Could not verify your account. Please try again.' }, 500, env);
-  }
-  const quota = await checkAndIncrement(identity.uid, 'noteTakerChunks', plan.limits.noteTakerChunksPerDay, env);
-  if (!quota.allowed) {
-    return json({ error: `You've reached your Note Taker transcription limit for the ${plan.name} plan (${quota.limit} chunks per day).` }, 429, env);
-  }
+  try { ({ plan } = await planFor(identity.uid, env)); }
+  catch (e) { console.error('[note-taker] account resolution failed:', e.message); return json({ error: 'Could not verify your account. Please try again.', code: 'ACCOUNT_UNAVAILABLE' }, 500, env); }
+  const limit = plan.limits.noteTakerWhisperSecondsPerDay;
+  const metered = limit < UNLIMITED;
 
+  // Reject bad uploads before they can cost anything.
+  const declared = Number(request.headers.get('Content-Length') || 0);
+  if (declared > MAX_CHUNK_BYTES) return json({ error: 'Audio chunk too large.', code: 'CHUNK_TOO_LARGE' }, 413, env);
   const audioBuffer = await request.arrayBuffer();
-  if (!audioBuffer.byteLength) return json({ error: 'No audio received.' }, 400, env);
-  if (audioBuffer.byteLength > MAX_CHUNK_BYTES) return json({ error: 'Audio chunk too large.' }, 413, env);
+  if (!audioBuffer.byteLength) return json({ error: 'No audio received.', code: 'NO_AUDIO' }, 400, env);
+  if (audioBuffer.byteLength > MAX_CHUNK_BYTES) return json({ error: 'Audio chunk too large.', code: 'CHUNK_TOO_LARGE' }, 413, env);
+
+  // Reserve first. If the allowance cannot be checked we refuse rather than give away free Whisper time.
+  const estimate = estimateSeconds(request.headers.get('X-Audio-Duration-Ms'), audioBuffer.byteLength);
+  let reservation = null;
+  if (metered) {
+    try { reservation = await reserveUsage(identity.uid, WHISPER_RESOURCE, estimate, limit, env); }
+    catch (e) { console.error('[note-taker] usage reserve failed:', e.message); return json({ error: 'Could not check your transcription allowance. Please try again.', code: 'QUOTA_UNAVAILABLE' }, 503, env); }
+    if (!reservation.allowed) {
+      return json({ error: exhaustedMessage(plan), code: 'WHISPER_QUOTA_EXHAUSTED', quota: quotaSnapshot(plan, reservation.used) }, 429, env);
+    }
+  }
+  const refund = async () => { if (reservation) await adjustUsage(identity.uid, WHISPER_RESOURCE, -estimate, reservation.day, env).catch((e) => console.error('[note-taker] refund failed:', e.message)); };
 
   const requestedLang = request.headers.get('X-Note-Language') || 'en-NG';
   const langHint = Object.prototype.hasOwnProperty.call(LANGUAGE_MAP, requestedLang) ? LANGUAGE_MAP[requestedLang] : requestedLang.split('-')[0];
@@ -133,12 +223,31 @@ export async function handleNoteChunkTranscribe(request, env, sessionId) {
     result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', input);
   } catch (e) {
     console.error('[note-taker] Whisper transcription failed:', e.message);
-    return json({ error: 'Transcription is temporarily unavailable.' }, 502, env);
+    await refund(); // our failure must never cost the person their allowance
+    const snapshot = quotaSnapshot(plan, reservation ? Math.max(0, reservation.used - estimate) : 0);
+    // Workers AI has its own account-wide daily allocation. Hitting it is not the person's doing, and
+    // the client answers it differently (fall back to the free browser engine) from a personal limit.
+    const busy = /limit|quota|neuron|capacity|too many|overload|429|4006/i.test(String(e?.message || e));
+    return json({
+      error: busy ? 'Cloud transcription is very busy right now. Please try again shortly.' : 'Transcription is temporarily unavailable.',
+      code: busy ? 'PROVIDER_BUSY' : 'TRANSCRIPTION_FAILED',
+      quota: snapshot,
+    }, busy ? 503 : 502, env);
   }
 
-  return json({ text: (result?.text || '').trim() }, 200, env);
+  // True up to the length Whisper actually processed.
+  let charged = estimate;
+  const reported = Number(result?.transcription_info?.duration);
+  if (Number.isFinite(reported) && reported > 0) charged = Math.min(MAX_CHARGE_SECONDS, Math.max(MIN_CHARGE_SECONDS, Math.ceil(reported)));
+  let usedNow = reservation ? reservation.used : 0;
+  if (reservation && charged !== estimate) {
+    const total = await adjustUsage(identity.uid, WHISPER_RESOURCE, charged - estimate, reservation.day, env).catch((e) => { console.error('[note-taker] true-up failed:', e.message); return null; });
+    if (total !== null) usedNow = total;
+  }
+
+  return json({ text: (result?.text || '').trim(), seconds: charged, quota: quotaSnapshot(plan, usedNow) }, 200, env);
 }
 
 export function noteTakerCors(request, env) {
-  return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': env.APP_ORIGIN || '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Note-Language,X-Note-Context', 'Access-Control-Allow-Credentials': 'true' } });
+  return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': env.APP_ORIGIN || '*', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Note-Language,X-Note-Context,X-Audio-Duration-Ms', 'Access-Control-Allow-Credentials': 'true' } });
 }
