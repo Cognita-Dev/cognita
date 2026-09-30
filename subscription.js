@@ -19,7 +19,7 @@ import { getPlan, planSatisfies } from './entitlements.js';
 //   'cancelled' — user cancelled, access continues until periodEnd
 //   'expired'   — grace period or cancellation period has passed
 
-const GRACE_PERIOD_DAYS = 3;
+export const GRACE_PERIOD_DAYS = 3;
 // Safety net: if an 'active' account is this many days past its period end
 // and no renewal has been recorded, something went wrong (missed webhook).
 // Access stops rather than continuing for free indefinitely.
