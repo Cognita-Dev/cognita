@@ -5,7 +5,7 @@
 // Every function here catches its own errors. A problem with an email must
 // never break a payment, a webhook or a cancellation.
 
-import { getPlan } from '../entitlements.js';
+import { getPlan, PLANS, UNLIMITED } from '../entitlements.js';
 import { GRACE_PERIOD_DAYS } from '../subscription.js';
 import { lookupUser, firstName } from './firebase-users.js';
 import { sendEmail, claimOnce, releaseClaim, formatLagosDate, formatNaira } from './mailer.js';
@@ -16,6 +16,41 @@ import {
 } from './auth-email-templates.js';
 
 const SIXTY_DAYS = 60 * 24 * 60 * 60;
+
+// Plain-language descriptions of what a plan includes, built from the plan
+// definitions in entitlements.js. That way the emails cannot go out of date
+// when a plan changes. Order here is the order they appear in an email.
+const PERKS = [
+  [(p) => (p.models.chat || []).includes('advanced'), 'Advanced AI model for harder tasks'],
+  [(p) => (p.models.chat || []).includes('reasoning'), 'Reasoning model for step-by-step problems'],
+  [(p) => !!p.models.vision, 'Upload a picture and ask Cognita about it'],
+  [(p) => !!(p.features && p.features.connectorTools), 'Connected apps: GitHub, Google, Facebook and Instagram, and Canva'],
+  [(p) => !!(p.features && p.features.aiInbox), 'AI Inbox for comments and messages on your pages'],
+  [(p) => !!(p.features && p.features.insightsDigest), 'Performance digests for your Facebook and Instagram pages'],
+  [(p) => !!(p.features && p.features.longContext), 'Longer conversations, so Cognita remembers more of the chat'],
+  [(p) => !!(p.features && p.features.designTemplates), 'Design templates for documents'],
+  [(p) => !!p.models.flashcardImages, 'Pictures on flashcards'],
+  [(p) => !!(p.features && p.features.prioritySupport), 'Priority support'],
+];
+
+const _count = (n) => (n >= UNLIMITED ? 'unlimited' : String(n));
+
+/** What a plan includes, as short plain sentences. */
+export function planPerks(plan) {
+  const l = plan.limits || {};
+  const daily =
+    'Up to ' + _count(l.messagesPerDay) + ' chat messages, ' + _count(l.documentGenPerDay) + ' documents and ' +
+    _count(l.imageGenPerDay) + ' images a day';
+  return [daily].concat(PERKS.filter(([has]) => has(plan)).map(([, text]) => text));
+}
+
+/** What a plan has that Cognita Starter (the free plan) does not. */
+export function planLosses(plan) {
+  const free = PLANS.free;
+  const lost = PERKS.filter(([has]) => has(plan) && !has(free)).map(([, text]) => text);
+  lost.push('Higher daily limits (Starter allows ' + _count(free.limits.messagesPerDay) + ' chat messages a day)');
+  return lost;
+}
 
 // Works out who to write to. Prefers the address the payment provider
 // gave us, and asks Firebase for the rest (the name, or the address itself).
@@ -69,6 +104,7 @@ export async function sendPaymentReceiptEmail(env, info) {
       reference: info.renewal ? '' : info.reference || '',
       renewal: !!info.renewal,
       accountEmail: email || '',
+      perks: planPerks(plan),
     });
 
     const key = 'receipt:' + (info.reference || info.dedupeKey || info.uid + ':' + paidAt.toISOString().slice(0, 10));
@@ -117,6 +153,7 @@ export async function sendSubscriptionCancelledEmail(env, info) {
       name,
       planName: plan.name,
       accessUntilText: info.periodEnd ? formatLagosDate(info.periodEnd) : '',
+      losses: planLosses(plan),
     });
     const key = 'cancelled:' + info.uid + ':' + String(info.periodEnd || 'none').slice(0, 10);
     await _sendOnce(env, key, SIXTY_DAYS, email, message, 'subscription cancelled');
