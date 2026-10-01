@@ -180,7 +180,11 @@ function mdHtml(source) {
 }
 
 function mdText(source) {
-  return String(source).replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '$1 ($2)').replace(/\*\*([^*]+)\*\*/g, '$1');
+  return String(source)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, url) =>
+      // An address or link that is its own label is shown once, not twice.
+      label === url || 'mailto:' + label === url ? label : label + ' (' + url + ')')
+    .replace(/\*\*([^*]+)\*\*/g, '$1');
 }
 
 const inl = (v) => (v && v.__md != null ? mdHtml(v.__md) : esc(v));
@@ -223,7 +227,7 @@ export function masthead({ icon, label, badge, badgeTone }) {
     : '';
   const badgeCell = badge ? '<td align="right" valign="middle" style="padding-left:12px;">' + statusBadge(badge, badgeTone) + '</td>' : '';
   return {
-    gap: 26,
+    gap: icon ? 26 : 12,
     html:
       '<table ' + TBL + ' width="100%"><tr>' + iconCell +
       '<td valign="middle" class="t-muted" style="font-family:' + SANS + ';font-size:14px;line-height:20px;font-weight:600;color:' + L.muted + ';">' + esc(label) + '</td>' +
@@ -244,7 +248,8 @@ export function heading(text) {
 /** A section title inside the card. */
 export function sectionTitle(text) {
   return {
-    gap: 10,
+    kind: 'section',
+    gap: 12,
     html: '<h2 class="t-ink" style="margin:0;font-family:' + SANS + ';font-size:16px;line-height:24px;font-weight:600;color:' + L.ink + ';">' + esc(text) + '</h2>',
     text: String(text),
   };
@@ -444,18 +449,20 @@ export function steps(items) {
   const list = (items || []).filter((r) => r && r[0]);
   if (!list.length) return null;
   const rows = list
-    .map(
-      (r, i) =>
-        '<tr><td width="40" valign="top" style="width:40px;padding:0 0 16px 0;">' +
+    .map((r, i) => {
+      const pad = i === list.length - 1 ? 0 : 18; // no trailing space after the last step
+      return (
+        '<tr><td width="40" valign="top" style="width:40px;padding:0 0 ' + pad + 'px 0;">' +
         '<table ' + TBL + '><tr><td class="bg-accent-soft t-accent" align="center" valign="middle" width="28" height="28" style="width:28px;height:28px;background:' + L.accentSoft + ';border-radius:14px;font-family:' + SANS + ';font-size:13px;line-height:28px;font-weight:700;color:' + L.accent + ';">' + (i + 1) + '</td></tr></table></td>' +
-        '<td valign="top" style="padding:0 0 16px 0;">' +
+        '<td valign="top" style="padding:0 0 ' + pad + 'px 0;">' +
         '<div class="t-ink" style="font-family:' + SANS + ';font-size:15px;line-height:24px;font-weight:600;color:' + L.ink + ';">' + inl(r[0]) + '</div>' +
         (r[1] ? '<div class="t-body" style="padding-top:1px;font-family:' + SANS + ';font-size:14px;line-height:22px;color:' + L.body + ';">' + inl(r[1]) + '</div>' : '') +
         '</td></tr>'
-    )
+      );
+    })
     .join('');
   return {
-    gap: 4,
+    gap: 24,
     html: '<table ' + TBL + ' width="100%">' + rows + '</table>',
     text: list.map((r, i) => (i + 1) + '. ' + inlText(r[0]) + (r[1] ? '\n   ' + inlText(r[1]) : '')).join('\n'),
   };
@@ -504,6 +511,63 @@ export function featureCards(items) {
     gap: 8,
     html: '<table ' + TBL + ' width="100%">' + rows + '</table>',
     text: list.map((r) => '- ' + inlText(r[0]) + ': ' + inlText(r[1])).join('\n'),
+  };
+}
+
+/**
+ * A grid of small icons with a short label under each, three across (phones
+ * keep three across, so keep labels short). items: [[icon, label]]
+ * `icon` is the name of a file in assets/email, without "icon-" and ".png".
+ */
+export function iconGrid(items) {
+  const list = (items || []).filter((r) => r && r[0] && r[1]);
+  if (!list.length) return null;
+  let rows = '';
+  for (let i = 0; i < list.length; i += 3) {
+    const cells = [0, 1, 2]
+      .map((k) => {
+        const r = list[i + k];
+        if (!r) return '<td width="33%" style="width:33%;">&nbsp;</td>';
+        return (
+          '<td width="33%" valign="top" style="width:33%;padding:0 8px 22px 0;">' +
+          '<img src="' + asset('icon-' + r[0] + '.png') + '" width="40" height="40" alt="" style="display:block;border:0;width:40px;height:40px;">' +
+          '<div class="t-ink" style="padding-top:10px;font-family:' + SANS + ';font-size:13px;line-height:19px;font-weight:600;color:' + L.ink + ';">' + esc(r[1]) + '</div></td>'
+        );
+      })
+      .join('');
+    rows += '<tr>' + cells + '</tr>';
+  }
+  return {
+    gap: 6,
+    html: '<table ' + TBL + ' width="100%">' + rows + '</table>',
+    text: list.map((r) => '- ' + r[1]).join('\n'),
+  };
+}
+
+/**
+ * Questions and answers in plain words. items: [[question, answer]] where the
+ * answer is a string, md(), or a list of them (one paragraph each).
+ */
+export function faq(items) {
+  const list = (items || []).filter((r) => r && r[0] && r[1]);
+  if (!list.length) return null;
+  const rows = list
+    .map((r, i) => {
+      const answers = Array.isArray(r[1]) ? r[1] : [r[1]];
+      const body = answers
+        .map((a) => '<p class="t-body" style="margin:6px 0 0 0;font-family:' + SANS + ';font-size:14px;line-height:22px;color:' + L.body + ';">' + inl(a) + '</p>')
+        .join('');
+      return (
+        '<tr><td style="padding:0 0 ' + (i === list.length - 1 ? 0 : 20) + 'px 0;">' +
+        '<h3 class="t-ink" style="margin:0;font-family:' + SANS + ';font-size:15px;line-height:22px;font-weight:600;color:' + L.ink + ';">' + inl(r[0]) + '</h3>' +
+        body + '</td></tr>'
+      );
+    })
+    .join('');
+  return {
+    gap: 24,
+    html: '<table ' + TBL + ' width="100%">' + rows + '</table>',
+    text: list.map((r) => inlText(r[0]) + '\n' + (Array.isArray(r[1]) ? r[1] : [r[1]]).map(inlText).join('\n')).join('\n\n'),
   };
 }
 
@@ -583,6 +647,10 @@ export function note(text) {
 
 // ── Shell ─────────────────────────────────────────────────────
 
+// Banner background colours (the banner PNGs are drawn on these, so an email
+// with images switched off still shows a coloured band).
+const HERO_COLORS = { accent: '#a8471f', success: '#3f6b5b', warn: '#a06a1f', danger: '#b3423a', stone: '#6f6f6a' };
+
 function socialIcon(href, file, alt) {
   return (
     '<a href="' + esc(href) + '" style="text-decoration:none;display:inline-block;">' +
@@ -599,19 +667,43 @@ function footerLink(href, label) {
  *   subject, preheader     the inbox line and the preview text after it
  *   title                  the page title (also read by screen readers)
  *   blocks                 pieces from above; null and empty ones are skipped
+ *   hero                   { name, tone }: the banner at the top, from
+ *                          assets/email/banner-<name>.png
  *   reason                 "why you got this email"
  *   unsubscribe            { url, label } for optional emails only
  */
-export function renderEmail({ subject, preheader, title, blocks, reason, unsubscribe }) {
+export function renderEmail({ subject, preheader, title, blocks, reason, unsubscribe, hero }) {
   const parts = (blocks || []).filter((b) => b && b.html);
   const unsubUrl = unsubscribe && safeUrl(unsubscribe.url);
   const unsubLabel = (unsubscribe && unsubscribe.label) || 'Unsubscribe';
   const why = reason || 'You are receiving this email because of activity on your Cognita account.';
   const year = new Date().getFullYear();
 
+  // A section title always gets at least 32px of room above it.
   const rows = parts
-    .map((b, i) => '<tr><td style="padding:0 0 ' + (i === parts.length - 1 ? 0 : b.gap == null ? 20 : b.gap) + 'px 0;">' + b.html + '</td></tr>')
+    .map((b, i) => {
+      let gap = i === parts.length - 1 ? 0 : b.gap == null ? 20 : b.gap;
+      const next = parts[i + 1];
+      if (next && next.kind === 'section') gap = Math.max(gap, 32);
+      return '<tr><td style="padding:0 0 ' + gap + 'px 0;">' + b.html + '</td></tr>';
+    })
     .join('');
+
+  const heroRow = hero
+    ? '<tr><td bgcolor="' + (HERO_COLORS[hero.tone] || HERO_COLORS.accent) + '" style="background:' + (HERO_COLORS[hero.tone] || HERO_COLORS.accent) + ';border-radius:13px 13px 0 0;font-size:0;line-height:0;">' +
+      '<img src="' + asset('banner-' + hero.name + '.png') + '" width="598" height="199" alt="" style="display:block;width:100%;max-width:598px;height:auto;border:0;border-radius:13px 13px 0 0;"></td></tr>'
+    : '';
+
+  // The bar at the bottom of the card, with the three places people go next.
+  const navLink = (href, label) =>
+    '<td align="center" width="33%" style="width:33%;padding:0 4px;"><a href="' + esc(href) + '" class="t-ink" style="font-family:' + SANS + ';font-size:13px;line-height:20px;font-weight:600;color:' + L.ink + ';text-decoration:none;">' + esc(label) + '</a></td>';
+  const navBar =
+    '<tr><td class="bg-soft bd" style="background:' + L.soft + ';border-top:1px solid ' + L.line + ';border-radius:0 0 13px 13px;padding:18px 8px;">' +
+    '<table ' + TBL + ' width="100%"><tr>' +
+    navLink(BRAND.site + '/app.html', 'Open Cognita') +
+    navLink(BRAND.site + '/account.html', 'Your account') +
+    navLink(BRAND.contact, 'Get help') +
+    '</tr></table></td></tr>';
 
   const html =
 '<!DOCTYPE html>' +
@@ -667,8 +759,10 @@ darkCss() +
   '</td></tr>' +
 
   // Card
-  '<tr><td class="bg-card bd px" style="background:' + L.card + ';border:1px solid ' + L.line + ';border-radius:14px;padding:36px 40px 34px 40px;">' +
-  '<table ' + TBL + ' width="100%">' + rows + '</table>' +
+  '<tr><td class="bg-card bd" style="background:' + L.card + ';border:1px solid ' + L.line + ';border-radius:14px;overflow:hidden;">' +
+  '<table ' + TBL + ' width="100%">' + heroRow +
+  '<tr><td class="px" style="padding:' + (hero ? '32px' : '36px') + ' 40px 38px 40px;"><table ' + TBL + ' width="100%">' + rows + '</table></td></tr>' +
+  navBar + '</table>' +
   '</td></tr>' +
 
   // Footer
@@ -697,6 +791,7 @@ darkCss() +
   const textBody = parts.map((b) => b.text).filter((t) => t && String(t).trim() !== '').join('\n\n');
   const textLines = [BRAND.name, '', textBody, '', '--', BRAND.operator, why];
   if (unsubUrl) textLines.push(unsubLabel + ': ' + unsubUrl);
+  textLines.push('Open Cognita: ' + BRAND.site + '/app.html  Your account: ' + BRAND.site + '/account.html  Get help: ' + BRAND.contactAddress);
   textLines.push('Privacy: ' + BRAND.site + '/privacy.html  Terms: ' + BRAND.site + '/terms.html  Contact: ' + BRAND.contactAddress);
   textLines.push('Instagram: ' + BRAND.instagram + '  X: ' + BRAND.x);
 
