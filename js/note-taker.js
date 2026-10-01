@@ -68,6 +68,8 @@ let editing = false, lines = [], activeLine = -1, audioUrl = null, audioLoading 
 let taskFilter = 'open', taskOwner = ''
 const audio = document.getElementById('noteTakerAudio')
 const SPEEDS = [1, 1.25, 1.5, 2]
+const COPY_HTML = '<i class="ph ph-copy"></i> <span class="btn-long">Copy transcript</span><span class="btn-short">Copy</span>'
+const COPIED_HTML = '<i class="ph ph-check"></i> Copied'
 const ASK_SUGGESTIONS = ['What did we decide?', 'Who is doing what, and by when?', 'What is still unresolved?', 'What concerns were raised?']
 
 const ACTIVE = ['recording', 'paused', 'degraded', 'connecting']
@@ -273,7 +275,7 @@ function resetSetup() {
   show('setup'); showSetupError('')
   $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
   $('noteTakerStop').innerHTML = '<i class="ph ph-stop"></i> Finish'
-  $('noteTakerCopy').innerHTML = '<i class="ph ph-copy"></i> Copy'
+  $('noteTakerCopy').innerHTML = COPY_HTML
   updateLanguageHint()
   try { $('noteTakerAutoSave').checked = localStorage.getItem(AUTOSAVE_PREF_KEY) === '1' } catch {}
   try { $('noteTakerLabelSpeakers').checked = localStorage.getItem(LABEL_PREF_KEY) !== '0'; $('noteTakerKeepAudio').checked = localStorage.getItem(AUDIO_PREF_KEY) === '1' } catch {}
@@ -645,11 +647,22 @@ function newNote() {
   $('noteTakerEditor').value = ''; $('noteTakerMeetingTitle').value = ''; $('noteTakerCompleteTitle').value = ''; $('noteTakerAgenda').value = ''
   resetSetup(); checkForRecovery(); $('noteTakerMeetingTitle').focus()
 }
+let copyReset = null
+function legacyCopy(text) {
+  const ta = document.createElement('textarea')
+  ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none'
+  document.body.appendChild(ta); ta.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch {}
+  ta.remove()
+  return ok
+}
 async function copyNote() {
-  const btn = $('noteTakerCopy')
-  try { await navigator.clipboard.writeText($('noteTakerEditor').value); btn.innerHTML = '<i class="ph ph-check"></i> Copied' }
-  catch { $('noteTakerEditor').select(); btn.innerHTML = '<i class="ph ph-copy"></i> Press Ctrl+C' }
-  setTimeout(() => (btn.innerHTML = '<i class="ph ph-copy"></i> Copy'), 2000)
+  const btn = $('noteTakerCopy'), text = $('noteTakerEditor').value
+  let ok = false
+  try { await navigator.clipboard.writeText(text); ok = true } catch { ok = legacyCopy(text) }
+  btn.innerHTML = ok ? COPIED_HTML : '<i class="ph ph-warning-circle"></i> Copy failed'
+  clearTimeout(copyReset); copyReset = setTimeout(() => (btn.innerHTML = COPY_HTML), 2000)
 }
 function downloadNote() {
   const name = ($('noteTakerCompleteTitle').value.trim() || 'meeting-notes').replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 80)
@@ -1260,6 +1273,9 @@ async function deleteAudio() {
 
 // ---------- Ask this meeting ----------
 function askItemHtml(x) {
+  return `<div class="note-ask-item">${askItemInner(x)}</div>`
+}
+function askItemInner(x) {
   const q = `<p class="note-ask-q">${escapeHtml(x.q)}</p>`
   if (x.loading) return `${q}<div class="note-ask-a" role="status" aria-label="Finding the answer"><span class="sk sk-block" style="width:96%"></span><span class="sk sk-block" style="width:88%"></span><span class="sk sk-block" style="width:52%"></span><span class="sk" style="width:120px;height:28px;margin-top:10px"></span></div>`
   if (x.error) return `${q}<div class="note-ask-a is-error"><p>${escapeHtml(x.error)}</p><button class="note-taker-ghost" type="button" data-retry="${x.n}"><i class="ph ph-arrow-clockwise"></i> Try again</button></div>`
