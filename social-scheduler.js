@@ -315,6 +315,15 @@ async function _updatePostStatus(env, postId, patch) {
 
 // ── The actual publish, at fire time ────────────────────────────────────
 
+// Errors that retrying cannot fix: Meta rejected the request because the
+// connection lacks a permission, or the token itself is no good. Failing
+// these straight away (with Meta's own wording kept) is better than
+// leaving the post showing "Scheduled" for ~40 minutes while it burns
+// through retries that are certain to fail the same way.
+function _isPermissionError(message) {
+  return /\(#(?:10|200|283)\)|requires .*permission|pages_manage_posts|instagram_content_publish|does not have permission|permission/i.test(String(message || ''));
+}
+
 async function _publishDuePost(env, postId, now) {
   const post = await fsGet('scheduledPosts/' + postId, env);
   if (!post || post.status !== 'pending') return; // already handled or canceled since being indexed
@@ -331,6 +340,7 @@ async function _publishDuePost(env, postId, now) {
     return;
   }
 
+  console.log('[social-scheduler] publishing', postId, 'target=' + post.target, 'attempt=' + (post.attempts + 1), 'media=' + (post.media ? post.media.kind : 'none'));
   await _updatePostStatus(env, postId, { status: 'publishing' });
 
   try {
@@ -368,22 +378,30 @@ async function _publishDuePost(env, postId, now) {
     // metadata (type/size/when) lives on in Firestore from here on.
     if (post.media) patch.media = await _deleteMediaKeepingMetadata(env, post.media, 'published');
     await _updatePostStatus(env, postId, patch);
+    console.log('[social-scheduler] published', postId, '->', publishedPostId);
     return;
   } catch (e) {
+    // Every failed attempt is logged here. Previously the error was only
+    // written to the post's Firestore doc, so a failing post left nothing
+    // in Cloudflare Observability at all.
+    console.error('[social-scheduler] publish attempt failed for', postId, ':', e.message);
     // NOT_CONNECTED / NEEDS_RECONNECT from getValidToken (inside
     // listPages) mean retrying won't help until the user reconnects —
     // fail immediately instead of burning all 3 attempts on a connection
     // that is definitely not coming back on its own.
     const isConnectionIssue = e.message === 'NOT_CONNECTED' || e.message === 'NEEDS_RECONNECT';
+    const isPermissionIssue = !isConnectionIssue && _isPermissionError(e.message);
     const attempts = post.attempts + 1;
 
-    if (isConnectionIssue || attempts >= MAX_ATTEMPTS) {
+    if (isConnectionIssue || isPermissionIssue || attempts >= MAX_ATTEMPTS) {
       const patch = {
         status: 'failed',
         attempts,
         lastError: isConnectionIssue
-          ? 'Your Facebook connection needs to be reconnected in Account Settings > Connections.'
-          : e.message,
+          ? 'Your Facebook connection needs to be reconnected in Account Settings > Connections. It is missing a permission this feature needs.'
+          : isPermissionIssue
+            ? 'Facebook refused this post because the connection is missing a permission (' + e.message + '). Reconnect Facebook in Account Settings > Connections.'
+            : e.message,
       };
       // This is a final failure — no further retry will happen, so the
       // media is just as done here as it would be after a successful
@@ -415,6 +433,9 @@ export async function runSocialScheduler(env) {
 
   const now = new Date();
   const due = await listDuePosts(env, now, BATCH_SIZE);
+  // One line per tick, so Observability shows the cron is firing and how
+  // much was due. A silent tick used to look identical to "cron never ran".
+  console.log('[social-scheduler] tick', now.toISOString(), 'due=' + due.length);
 
   for (const { postId, kvKey } of due) {
     const claimed = await claimPost(env, postId);
@@ -425,6 +446,14 @@ export async function runSocialScheduler(env) {
       await _publishDuePost(env, postId, now);
     } catch (e) {
       console.error('[social-scheduler] failed to process', postId, ':', e.message);
+      // An unexpected failure (Firestore hiccup, etc.) happened after the
+      // index entry was removed, which would orphan the post forever:
+      // still "pending" in Firestore but never picked up again. Put the
+      // entry back (one minute out) so the next tick retries it.
+      try {
+        const kv = _requireKv(env);
+        await kv.put(_dueKey(new Date(now.getTime() + 60 * 1000).toISOString(), postId), '1');
+      } catch (_) { /* nothing more we can do */ }
     } finally {
       await releasePostClaim(env, postId);
     }
