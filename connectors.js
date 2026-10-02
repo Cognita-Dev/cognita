@@ -23,7 +23,7 @@
 // provider integrations on top.
 
 import { fsGet, fsSet, fsDelete } from './firestore-rest.js';
-import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken, hasSufficientScope } from './connector-providers.js';
+import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToken, hasSufficientScope, facebookMissingScopes } from './connector-providers.js';
 
 // The only four providers this app knows about. Kept as a single exported
 // list so routing, the account-page UI data, and validation all check
@@ -373,6 +373,9 @@ export async function getValidToken(uid, provider, env) {
       // Old connection, old scope (e.g. GitHub's 'public_repo' before it
       // became 'repo') — treat exactly like an expired/revoked token so
       // the existing reconnect messaging in connector-tools.js kicks in.
+      if (provider === 'facebook') {
+        console.warn('[connectors] facebook connection is missing permissions:', facebookMissingScopes(record.scope).join(', '), '- user must reconnect.');
+      }
       throw new Error('NEEDS_RECONNECT');
     }
     return record.accessToken;
@@ -393,6 +396,7 @@ export async function getValidToken(uid, provider, env) {
 
   await saveConnectorToken(uid, provider, {
     ...refreshed,
+    scope: refreshed.scope || record.scope || '', // never blank out a known scope list
     connectedAt: record.connectedAt, // preserve original connection date
     providerAccountId: refreshed.providerAccountId || record.providerAccountId,
   }, env);
