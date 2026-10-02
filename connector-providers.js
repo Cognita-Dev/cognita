@@ -73,6 +73,29 @@ function _basicAuthHeader(id, secret) {
   return 'Basic ' + btoa(id + ':' + secret);
 }
 
+// Asks Meta which permissions the user ACTUALLY granted to this token.
+// Under Facebook Login for Business the granted list comes from the
+// Configuration chosen by config_id, not from SCOPES.facebook below, so
+// the two can silently disagree (for example after permissions are
+// removed from the Configuration in the App Dashboard). Storing the
+// hardcoded list instead of the real one made every scope check pass
+// while Meta rejected the actual post with a permissions error.
+// Returns a comma-separated string of granted permissions, or null if
+// Meta could not be asked (callers decide what to fall back to).
+async function _fetchGrantedFacebookScopes(accessToken) {
+  try {
+    const res = await fetch('https://graph.facebook.com/' + META_GRAPH_VERSION + '/me/permissions?' + _form({ access_token: accessToken }));
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !Array.isArray(data.data)) return null;
+    return data.data
+      .filter((p) => p && p.status === 'granted' && p.permission)
+      .map((p) => p.permission)
+      .join(',');
+  } catch (e) {
+    return null;
+  }
+}
+
 // ── Per-provider scopes ─────────────────────────────────────────────
 // Keep these as narrow as the actual features need — see the scope
 // discussion for Figma and Canva. Widening a scope later is a small,
@@ -150,6 +173,14 @@ const SCOPES = {
   canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
 };
 
+const FACEBOOK_REQUIRED_SCOPES = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
+
+/** Returns the required Facebook/Instagram permissions that are missing from a stored scope string. */
+export function facebookMissingScopes(storedScope) {
+  const granted = (storedScope || '').split(',').map((x) => x.trim());
+  return FACEBOOK_REQUIRED_SCOPES.filter((r) => !granted.includes(r));
+}
+
 // ── Scope sufficiency check ─────────────────────────────────────────
 // Only meaningful for GitHub right now. Tokens issued before the scope
 // changed from 'public_repo' to 'repo' still work but can't see private
@@ -179,18 +210,14 @@ export function hasSufficientScope(provider, storedScope) {
     );
   }
   if (provider === 'facebook') {
-    // Facebook returns granted scopes comma-separated. The three scopes
-    // that actually gate what meta-tools.js can do (list Pages, post to
-    // a Page, publish to Instagram) — if a pre-existing connection is
-    // missing any of these (e.g. connected before Instagram publishing
-    // was added), force a reconnect rather than letting posting silently
-    // fail with a Graph API permission error mid-tool-call.
-    const granted = (storedScope || '').split(',').map((s) => s.trim());
-    return (
-      granted.includes('pages_manage_posts') &&
-      granted.includes('instagram_content_publish') &&
-      granted.includes('pages_show_list')
-    );
+    // Facebook returns granted scopes comma-separated. The scopes that
+    // actually gate what meta-tools.js can do (list Pages, post to a
+    // Page, publish to Instagram). If a connection is missing any of
+    // them (connected before a permission was added, or the permission
+    // was removed from the Login Configuration), force a reconnect
+    // rather than letting posting fail with a Graph API permission
+    // error mid-run.
+    return facebookMissingScopes(storedScope).length === 0;
   }
   return true; // not implemented for canva yet
 }
@@ -361,7 +388,9 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
       // in connectors.js keeps working unmodified for this provider too.
       refreshToken: longData.access_token,
       expiresAt: now + (longData.expires_in || 5184000) * 1000, // ~60 days
-      scope: SCOPES.facebook,
+      // The permissions Meta really granted (see _fetchGrantedFacebookScopes).
+      // Only if Meta cannot be asked do we fall back to the requested list.
+      scope: (await _fetchGrantedFacebookScopes(longData.access_token)) ?? SCOPES.facebook,
       providerAccountId,
     };
   }
@@ -435,7 +464,9 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
       accessToken: longData.access_token,
       refreshToken: longData.access_token,
       expiresAt: now + (longData.expires_in || 5184000) * 1000,
-      scope: SCOPES.facebook,
+      // '' when Meta could not be asked; connectors.js then keeps the
+      // scope that was already stored instead of overwriting it.
+      scope: (await _fetchGrantedFacebookScopes(longData.access_token)) ?? '',
       providerAccountId: null,
     };
   }
