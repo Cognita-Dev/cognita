@@ -468,6 +468,12 @@ function postRowHtml(post) {
         (post.status === 'failed' && post.lastError
           ? '<span class="scheduler-post-error"><i class="ph ph-warning-circle" aria-hidden="true"></i> ' + esc(post.lastError) + '</span>'
           : '') +
+        // A post that already tried and failed goes back to "Scheduled"
+        // while it waits to retry. Show why, instead of leaving it
+        // looking like it simply hasn't been picked up yet.
+        (post.status === 'pending' && post.attempts > 0 && post.lastError
+          ? '<span class="scheduler-post-error"><i class="ph ph-warning-circle" aria-hidden="true"></i> Attempt ' + esc(post.attempts) + ' of 3 failed, will retry: ' + esc(post.lastError) + '</span>'
+          : '') +
       '</div>' +
       (post.status === 'pending'
         ? '<button type="button" class="scheduler-cancel-btn" data-id="' + esc(post.id) + '" aria-label="Cancel scheduled post" title="Cancel this post"><i class="ph ph-x" aria-hidden="true"></i></button>'
