@@ -110,6 +110,10 @@ body.note-taker-open { overflow: hidden; }
 .note-taker-error { margin: 0; padding: var(--space-3); font-size: var(--text-sm); line-height: 1.5; color: var(--danger); background: var(--danger-subtle); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .note-taker-error[hidden] { display: none; }
 
+@media (pointer: coarse) {
+  .note-taker-modal :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea) { font-size: 16px; }
+}
+
 /* ── Banners ───────────────────────────────────────────────── */
 .note-taker-recovery, .note-taker-notice { flex: none; margin: var(--space-3) var(--nt-pad) 0; }
 .note-taker-recovery { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--accent-subtle); border-radius: var(--radius-sm); }
@@ -124,7 +128,9 @@ body.note-taker-open { overflow: hidden; }
 .note-taker-notice-actions a { text-decoration: none; }
 
 /* ── Setup ─────────────────────────────────────────────────── */
-.note-taker-setup .note-taker-scroll { display: grid; align-content: start; gap: var(--space-4); }
+/* A flex column, not a grid: a grid lets the overflow:hidden options list shrink to its track, so the sheet never scrolled. */
+.note-taker-setup .note-taker-scroll { display: flex; flex-direction: column; gap: var(--space-4); }
+.note-taker-scroll > * { flex-shrink: 0; }
 .note-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px var(--space-4); }
 .note-field { display: grid; gap: 6px; min-width: 0; }
 .note-field-label { font-size: var(--text-sm); font-weight: 500; color: var(--text-2); }
@@ -140,7 +146,7 @@ body.note-taker-open { overflow: hidden; }
 .note-taker-quota-hint { margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--text-3); }
 
 /* Options are one grouped list, not a stack of cards. Rows are divided by hairlines. */
-.note-options { border: 1px solid var(--border-strong); border-radius: var(--radius-md); overflow: hidden; }
+.note-options { border: 1px solid var(--border-strong); border-radius: var(--radius-md); overflow: hidden; overflow: clip; }
 .note-option + .note-option { border-top: 1px solid var(--border); }
 .note-option-text { display: grid; gap: 2px; min-width: 0; text-align: left; }
 .note-option-text strong { font-size: var(--text-sm); font-weight: 500; color: var(--text-1); }
@@ -166,6 +172,7 @@ body.note-taker-open { overflow: hidden; }
 .note-voice-name { min-width: 0; overflow-wrap: anywhere; }
 .note-voices-list .note-taker-ghost { min-height: 36px; }
 .note-voices-list .note-taker-ghost:hover { color: var(--danger); background: var(--danger-subtle); }
+.note-option-text small[data-android]::before { content: "Android: "; font-weight: 600; color: var(--text-2); }
 .note-voices-head { display: flex; }
 .note-voices-head:has(button[hidden]) { display: none; }
 .note-taker-setup .note-taker-foot .note-taker-primary { width: 100%; min-height: 46px; }
