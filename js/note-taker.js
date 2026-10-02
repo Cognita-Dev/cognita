@@ -19,10 +19,19 @@ const QUOTA_WARN_AT = 0.9        // show the "nearly used up" notice from 90% of
 const QUOTA_STALE_MS = 15000     // how old the mirrored allowance may be before it is fetched again
 const RETRY_PRIMARY_MS = 30000
 const MAX_SPEECH_FAILURES = 3
+// Android hands the microphone to ONE consumer. Chrome's recognizer goes through the phone's own speech service, which opens
+// the mic itself, so a page that is also holding a stream (level meter, recorder, speaker labels) gets audio but no text.
+const IS_ANDROID = /android/i.test(navigator.userAgent || '')
+const MIC_SETTLE_MS = 350        // time the phone needs to hand the microphone from the page to the recognizer
+const INSTANT_END_MS = 1500      // a recognizer that ends this fast without hearing anything has failed rather than finished
+const CHUNK_IDLE_MS = 2500       // a cloud chunk with no speech restarts after this long, so leading silence is never uploaded
+const MIN_VOICED_MS = 250        // less speech than this in a chunk is a click or a cough, not worth a Whisper call
+const CHUNK_BITS_PER_SECOND = 24000 // plenty for speech; uploads are about a fifth of the browser default
 const CHUNK_MIN_MS = 6000       // earliest a cloud chunk may close, and only on a pause in speech
 const CHUNK_MAX_MS = 14000      // hard ceiling so a non-stop speaker still gets transcribed
 const SILENCE_MS = 650
 const VOICED_LEVEL = 3          // mean deviation from 128 on the analyser; below this counts as silence
+const voicedLevel = () => (IS_ANDROID ? 2 : VOICED_LEVEL) // phone mics on Android are often quieter
 const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 const Speech = window.SpeechRecognition || window.webkitSpeechRecognition
 
@@ -40,6 +49,8 @@ const NG_LEXICON = /\b(lagos|abuja|ibadan|kano|enugu|port harcourt|naira|jamb|wa
 const HALLUCINATIONS = /^(thank you\.?|thanks for watching\.?|thanks\.?|you\.?|bye\.?|\.+)$/i
 
 let stream, analyser, audioCtx, sourceNode, raf, timer, autosaveTimer, retryTimer
+let exclusiveMic = false, engineAlive = false, lastSpeechError = '', fallbackBusy = false, resuming = false, wakeLock = null, hiddenAt = 0
+let partialAudio = null, lastAutosaveKey = '', lastFinalAt = 0, blipTimer = null, levelBuf = null, lastDraw = 0, renderedCount = 0, renderedMulti = false
 let chunkRecorder = null, chunkLoopRunning = false, chunkQueue = Promise.resolve()
 let recognition, speechFailures = 0, intentionalStop = false, langOverride = null, restartTimer = null, freeOnly = false
 // Cloud (Whisper) allowance as the server last reported it. Null until loaded; while null the cloud is treated as
@@ -97,18 +108,32 @@ function show(view) {
 }
 
 const multiSpeaker = () => new Set(segments.filter((s) => s.speaker != null).map((s) => s.speaker)).size > 1
-function render() {
+const segmentRow = (s, multi) => `<p class="note-segment"><time>${s.time}</time><span>${multi && s.speaker != null ? `<b class="spk spk-${s.speaker % SPEAKER_HUES}">${speakerLabel(s.speaker)}</b> ` : ''}${escapeHtml(s.text)}</span></p>`
+// Finished lines are appended as they arrive and only the grey "still being heard" line is rewritten. Rebuilding the whole
+// list on every interim result (several a second) made long meetings slower and slower.
+function render(full = false) {
   const root = $('noteTakerTranscript')
-  const multi = multiSpeaker() // a single voice needs no labels
-  const rows = segments.map((s) => `<p class="note-segment"><time>${s.time}</time><span>${multi && s.speaker != null ? `<b class="spk spk-${s.speaker % SPEAKER_HUES}">${speakerLabel(s.speaker)}</b> ` : ''}${escapeHtml(s.text)}</span></p>`)
-  if (interim) rows.push(`<p class="note-segment interim"><time></time><span>${escapeHtml(interim)}</span></p>`)
-  if (!rows.length) {
-    const cloud = !browserLang()
+  if (!segments.length && !interim) {
+    const cloud = state === 'degraded' || !browserLang()
     root.innerHTML = `<p class="note-taker-empty">${cloud ? 'Speak as normal. Text appears after each pause, usually within a few seconds.' : 'Start speaking and the transcript will appear here.'}</p>`
+    renderedCount = 0
     return
   }
+  const multi = multiSpeaker() // a single voice needs no labels
   const nearBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80
-  root.innerHTML = rows.join('')
+  if (full || renderedCount === 0 || renderedCount > segments.length || multi !== renderedMulti || root.querySelector('.note-taker-empty')) {
+    root.innerHTML = segments.map((s) => segmentRow(s, multi)).join('')
+    renderedCount = segments.length; renderedMulti = multi
+  } else if (segments.length > renderedCount) {
+    root.querySelector('.interim')?.remove()
+    root.insertAdjacentHTML('beforeend', segments.slice(renderedCount).map((s) => segmentRow(s, multi)).join(''))
+    renderedCount = segments.length
+  }
+  let row = root.querySelector('.interim')
+  if (interim) {
+    if (!row) { root.insertAdjacentHTML('beforeend', '<p class="note-segment interim"><time></time><span></span></p>'); row = root.lastElementChild }
+    row.lastElementChild.textContent = interim
+  } else row?.remove()
   if (nearBottom) root.scrollTop = root.scrollHeight // don't yank the view while someone is reading back
   if (liveAsk.open) updateLiveAskUi() // new words may be enough to ask about
 }
@@ -124,6 +149,12 @@ function appendFinal(text, range = null) {
   if (!text) return
   const last = segments[segments.length - 1]
   if (last && last.text === text) return
+  // Android Chrome sometimes sends a phrase again with more words on the end. Grow the line instead of repeating it.
+  if (IS_ANDROID && last && Date.now() - lastFinalAt < 6000 && text.split(' ').length >= 3 && last.text.split(' ').length >= 3) {
+    if (text.length > last.text.length && text.startsWith(last.text)) { last.text = text; lastFinalAt = Date.now(); render(true); return }
+    if (last.text.startsWith(text)) return
+  }
+  lastFinalAt = Date.now()
   let speaker = null, vi, startMs = null
   if (tracker) {
     const t1 = range?.t1 ?? Date.now(), t0 = range?.t0 ?? tracker.cut
@@ -187,7 +218,7 @@ function cloudDetail() {
 }
 function renderQuota() {
   const box = $('noteTakerQuota'); const q = quota
-  const show = !!q && !q.unlimited && (q.usedSeconds > 0 || !browserLang())
+  const show = !!q && !q.unlimited && (q.usedSeconds > 0 || !browserLang() || androidCloudWanted())
   box.hidden = !show
   if (!show) return
   const ratio = Math.min(1, q.usedSeconds / q.limitSeconds)
@@ -195,13 +226,15 @@ function renderQuota() {
   $('noteTakerQuotaValue').textContent = ratio >= 1 ? 'Used up' : `${fmtLeft(q.remainingSeconds)} left`
   $('noteTakerQuotaBar').firstElementChild.style.width = `${ratio * 100}%`
   $('noteTakerQuotaBar').setAttribute('aria-valuenow', String(Math.round(ratio * 100)))
-  $('noteTakerQuotaHint').textContent = browserLang()
+  $('noteTakerQuotaHint').textContent = androidCloudWanted()
+    ? `Keeping the audio on Android uses cloud transcription for the whole note. Resets at ${resetTime()}.`
+    : browserLang()
     ? `Only used if live recognition falls back to the cloud. Resets at ${resetTime()}.`
     : `${langLabel(langCode()) || 'This language'} uses cloud transcription. Resets at ${resetTime()}.`
 }
 
 // ----- Notices -----
-const NOTICE_RANK = { warn: 1, full: 2, switched: 3, paused: 4, blocked: 4 }
+const NOTICE_RANK = { warn: 1, full: 2, gap: 2, switched: 3, paused: 4, blocked: 4 }
 function hideNotice() { $('noteTakerNotice').hidden = true; noticePriority = 0; $('noteTakerChip').dataset.alert = 'false' }
 function showNotice(kind, tone, text, actions = []) {
   if (NOTICE_RANK[kind] < noticePriority) return // a warning must never replace "recording is paused"
@@ -220,14 +253,14 @@ function showNotice(kind, tone, text, actions = []) {
   $('noteTakerChip').dataset.alert = String(modal.hidden) // minimized: mark the chip so the notice is not missed
 }
 function upgradeAction() { const u = quota?.upgrade; return u ? [{ label: `See ${u.name}`, href: '/pricing.html' }] : [] }
-function showQuotaNotice(kind) {
+function showQuotaNotice(kind, extra = '') {
   const q = quota; if (!q) return
   const reset = resetTime(), u = q.upgrade
   const more = u ? ` ${u.name} includes ${fmtSpan(u.limitSeconds)} a day.` : ''
   const lang = langLabel(langCode()) || 'this language'
   if (kind === 'warn') return showNotice(kind, 'warning', `You have used ${fmtUsed(q)} of today's cloud transcription. Live recognition in your browser does not count toward this. It resets at ${reset}.${more}`, upgradeAction())
   if (kind === 'full') return showNotice(kind, 'limit', `Today's cloud transcription is used up. Live recognition in your browser is still free. It resets at ${reset}.${more}`, upgradeAction())
-  if (kind === 'switched') return showNotice(kind, 'limit', `Today's cloud transcription is used up, so recording continues with your browser's free live recognition. It resets at ${reset}.${more}`, upgradeAction())
+  if (kind === 'switched') return showNotice(kind, 'limit', `Today's cloud transcription is used up, so recording continues with your browser's free live recognition. It resets at ${reset}.${more}${extra}`, upgradeAction())
   // 'paused' (mid-recording) and 'blocked' (before starting): this language has no free engine
   if (!Speech) return showNotice(kind, 'limit', `Today's cloud transcription is used up, and this browser has no free live recognition. Recording is available again after ${reset}.${more}`, upgradeAction())
   const go = kind === 'paused' ? continueInEnglish : startInEnglish
@@ -252,7 +285,12 @@ function handleQuotaExhausted() {
   if (exhaustHandled || !['degraded', 'recording'].includes(state)) return
   exhaustHandled = true
   stopChunkLoop(); clearTimeout(retryTimer)
-  if (browserLang()) { showQuotaNotice('switched'); startPrimarySpeech(); return }
+  if (browserLang()) {
+    const dropsAudio = IS_ANDROID && !!stream // Android cannot share the microphone, so the audio recording ends here
+    showQuotaNotice('switched', dropsAudio ? ' Android lets live recognition use the microphone only on its own, so audio is not kept from here on.' : '')
+    if (dropsAudio) switchToLiveOnly(); else startPrimarySpeech()
+    return
+  }
   pause()
   showQuotaNotice('paused')
 }
@@ -287,7 +325,18 @@ function updateAudioOption() {
   if (planAudioMB === 0) { box.disabled = true; box.checked = false; hint.textContent = 'Keeping audio is not included in your plan.'; return }
   box.disabled = false
   const mins = planAudioMB ? Math.round((planAudioMB / 11) * 60) : 0
-  hint.textContent = `Stored privately with the note so you can replay it and jump to any line.${mins ? ` Room for about ${mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minutes`} per note on your plan.` : ''}`
+  hint.textContent = `Stored privately with the note so you can replay it and jump to any line.${mins ? ` Room for about ${mins >= 120 ? `${Math.round(mins / 60)} hours` : `${mins} minutes`} per note on your plan.` : ''}${androidAudioNote()}`
+}
+// Android cannot give the microphone to the recorder and to live recognition at once. Keeping the audio therefore means
+// cloud transcription (Whisper), which costs daily minutes; leaving it off keeps live text free.
+const androidAudioNote = () => (IS_ANDROID && browserLang() ? ' On Android this uses cloud transcription so the microphone can be shared, and counts toward your daily cloud minutes. Leave it off for free live text.' : '')
+const androidCloudWanted = () => IS_ANDROID && !!browserLang() && audioWanted()
+const LABEL_HINT_DEFAULT = $('noteTakerLabelHint')?.textContent || ''
+function updateLabelHint() {
+  const el = $('noteTakerLabelHint'); if (!el) return
+  el.textContent = IS_ANDROID && browserLang() && !$('noteTakerKeepAudio').checked
+    ? 'Not available with free live text on Android, because the phone gives the microphone to speech recognition. Turn on "Keep the audio" to use labels with cloud transcription.'
+    : LABEL_HINT_DEFAULT
 }
 // Closing during a recording minimizes it. The old confirm() promised the note "stays open in the
 // background", but reopening showed the setup form with no way back to the live session.
@@ -305,7 +354,7 @@ function updateLanguageHint() {
     ? 'Transcribed in the cloud, so text arrives after each pause rather than word by word. Accuracy for this language is still limited; check names and numbers.'
     : !Speech && l?.browser !== undefined ? 'Your browser has no live recognition, so text arrives after each pause.'
     : l?.browser ? 'Words appear live as people speak.' : 'Language is detected automatically. Text arrives after each pause.'
-  renderQuota()
+  updateAudioOption(); updateLabelHint(); renderQuota()
 }
 
 function checkForRecovery() {
@@ -333,29 +382,45 @@ function checkForRecovery() {
 // ---------- Audio level + silence detection ----------
 function currentLevel() {
   if (!analyser) return 0
-  const data = new Uint8Array(analyser.fftSize)
-  analyser.getByteTimeDomainData(data)
-  return data.reduce((sum, n) => sum + Math.abs(n - 128), 0) / data.length
+  if (!levelBuf || levelBuf.length !== analyser.fftSize) levelBuf = new Uint8Array(analyser.fftSize) // one buffer, not a new one every call
+  analyser.getByteTimeDomainData(levelBuf)
+  let sum = 0
+  for (let i = 0; i < levelBuf.length; i++) sum += Math.abs(levelBuf[i] - 128)
+  return sum / levelBuf.length
 }
+const meterRunning = () => !!analyser && audioCtx?.state === 'running'
 function startLevelMeter() {
+  if (!stream) return
+  stopLevelMeter()
   audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-  audioCtx.resume?.() // iOS starts contexts suspended
-  sourceNode = audioCtx.createMediaStreamSource(stream)
-  analyser = audioCtx.createAnalyser()
+  const ctx = audioCtx
+  try { ctx.resume?.()?.catch?.(() => {}) } catch {} // iOS and some Android builds start contexts suspended
+  ctx.onstatechange = () => { if (audioCtx === ctx && ctx.state === 'suspended' && isActive() && !document.hidden) try { ctx.resume()?.catch?.(() => {}) } catch {} }
+  sourceNode = ctx.createMediaStreamSource(stream)
+  analyser = ctx.createAnalyser()
+  analyser.fftSize = 1024 // a level reading needs far less than the default 2048
   sourceNode.connect(analyser)
   drawLevel()
 }
 function drawLevel() {
   cancelAnimationFrame(raf)
-  if (!analyser || !['recording', 'degraded'].includes(state)) { $('noteTakerPulse').style.setProperty('--level', 0); return }
-  $('noteTakerPulse').style.setProperty('--level', Math.min(1, currentLevel() / 32))
+  const pulse = $('noteTakerPulse')
+  if (!analyser || !['recording', 'degraded'].includes(state)) { pulse.style.setProperty('--level', 0); return }
+  const now = performance.now()
+  if (now - lastDraw >= 60 && !document.hidden) { lastDraw = now; pulse.style.setProperty('--level', Math.min(1, currentLevel() / 32)) } // about 16 updates a second is plenty for a dot
   raf = requestAnimationFrame(drawLevel)
 }
 function stopLevelMeter() {
   cancelAnimationFrame(raf)
   try { sourceNode?.disconnect() } catch {}
-  try { audioCtx?.close() } catch {}
-  analyser = null
+  try { audioCtx?.close()?.catch?.(() => {}) } catch {}
+  analyser = null; sourceNode = null; audioCtx = null
+}
+// With no meter (Android free live text) the dot still blinks when the recognizer hears something.
+function pulseBlip() {
+  if (analyser) return
+  const p = $('noteTakerPulse'); p.style.setProperty('--level', 0.7)
+  clearTimeout(blipTimer); blipTimer = setTimeout(() => p.style.setProperty('--level', 0), 280)
 }
 
 // ---------- Primary: the browser's SpeechRecognition ----------
@@ -370,50 +435,83 @@ function bestAlternative(result) {
   }
   return (best || '').trim()
 }
+// A failure is a recognizer that errors, or one that ends at once having heard nothing. Android does the second when the
+// microphone is busy. The second failure tries the plainer locale; the third hands over to the cloud.
+function countSpeechFailure() {
+  speechFailures++
+  const fb = LANGS[langCode()]?.fallback
+  if (speechFailures === 2 && fb && !langOverride) langOverride = fb
+  if (speechFailures >= MAX_SPEECH_FAILURES) { speechFailures = 0; startWhisperFallback() }
+}
+// A recognizer that keeps failing is retried more slowly, so a phone is not left beeping in a loop. A healthy one restarts at once.
+const restartDelay = () => Math.min(4000, (freeOnly ? 2000 : IS_ANDROID ? 300 : 0) + speechFailures * 500)
 function startPrimarySpeech() {
-  intentionalStop = false
-  recognition = new Speech()
-  recognition.continuous = true
-  recognition.interimResults = true
-  recognition.maxAlternatives = 5
-  recognition.lang = langOverride || browserLang()
-  recognition.onresult = (e) => {
+  intentionalStop = false; clearTimeout(restartTimer)
+  const r = new Speech(); recognition = r
+  const t0 = Date.now()
+  let heard = false, errored = false
+  r.continuous = true
+  r.interimResults = true
+  r.maxAlternatives = 5
+  r.lang = langOverride || browserLang()
+  r.onstart = r.onaudiostart = () => { engineAlive = true }
+  r.onresult = (e) => {
+    heard = true; engineAlive = true
     speechFailures = 0 // a working session must not accumulate old errors toward the fallback
-    freeOnly = false
+    freeOnly = false; lastSpeechError = ''
     interim = ''
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) appendFinal(bestAlternative(e.results[i]))
       else interim += e.results[i][0].transcript.trim() + ' '
     }
+    pulseBlip()
     render()
   }
-  recognition.onerror = (e) => {
-    if (e.error === 'no-speech' || e.error === 'aborted') return
+  r.onerror = (e) => {
+    errored = true; lastSpeechError = e.error || ''
+    if (e.error === 'no-speech') return
+    if (e.error === 'aborted') { // a quick abort with nothing heard is the Android microphone clash; a later one is just a stop
+      if (!heard && Date.now() - t0 < INSTANT_END_MS && recognition === r && !intentionalStop) countSpeechFailure()
+      return
+    }
     if (e.error === 'language-not-supported' && LANGS[langCode()]?.fallback && langOverride !== LANGS[langCode()].fallback) {
       langOverride = LANGS[langCode()].fallback; return // onend restarts with the fallback locale
     }
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { fatalMicError(); return }
-    if (++speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback()
+    if (e.error === 'service-not-allowed') { // the phone's speech service is off or missing: the cloud is the only way left
+      if (cloudAvailable(inflightSec)) { startWhisperFallback(); return }
+      setState('error'); stopPrimarySpeech()
+      setStatus('Live recognition unavailable', "This phone's speech service is switched off, and today's cloud transcription is used up. Check the phone's speech settings.")
+      return
+    }
+    if (e.error === 'not-allowed') { fatalMicError(); return }
+    countSpeechFailure()
   }
-  recognition.onend = () => {
-    if (interim.trim()) { appendFinal(interim); interim = ''; render() } // don't lose words the recognizer never finalized
-    if (intentionalStop || state !== 'recording') return
-    restartPrimary(freeOnly ? 2000 : 0) // with no cloud to fall back on, pace the retries instead of spinning
+  r.onend = () => {
+    const current = recognition === r // an old recognizer finishing late must never restart a newer one
+    if (interim.trim() && (current || !recognition)) { appendFinal(interim); interim = ''; render() } // don't lose words the recognizer never finalized
+    if (current) engineAlive = false
+    if (!current || intentionalStop || state !== 'recording') return
+    if (!heard && !errored && Date.now() - t0 < INSTANT_END_MS) countSpeechFailure() // ended at once without a word or an error
+    if (recognition !== r || state !== 'recording') return
+    restartPrimary(restartDelay())
   }
-  try { recognition.start(); setState('recording'); setStatus('Recording', freeOnly ? 'Live transcription. Cloud transcription is used up for today.' : 'Live transcription') }
-  catch { startWhisperFallback(); if (state === 'recording') restartPrimary(2000) }
+  try {
+    r.start(); setState('recording')
+    setStatus('Recording', freeOnly ? 'Live transcription. Cloud transcription is used up for today.' : exclusiveMic ? 'Live transcription on this phone' : 'Live transcription')
+  } catch { startWhisperFallback(); if (state === 'recording' && !fallbackBusy) restartPrimary(2000) }
 }
 function restartPrimary(delay) {
   clearTimeout(restartTimer)
   const go = () => {
-    if (intentionalStop || state !== 'recording') return
+    if (intentionalStop || state !== 'recording' || fallbackBusy) return
+    if (document.hidden) return // phones refuse to start the recognizer in the background; coming back to the page restarts it
     try { startPrimarySpeech() }
-    catch { if (++speechFailures >= MAX_SPEECH_FAILURES) startWhisperFallback(); if (state === 'recording') restartPrimary(2000) }
+    catch { countSpeechFailure(); if (state === 'recording' && !fallbackBusy) restartPrimary(restartDelay() || 2000) }
   }
   if (delay) restartTimer = setTimeout(go, delay); else go()
 }
 function stopPrimarySpeech() {
-  intentionalStop = true
+  intentionalStop = true; engineAlive = false
   const r = recognition; recognition = null
   try { r?.stop() } catch {}
   clearTimeout(retryTimer); clearTimeout(restartTimer)
@@ -433,18 +531,23 @@ function recordOneChunk() {
     if (!stream || !window.MediaRecorder) return resolve(null)
     const mimeType = pickMimeType()
     let rec
-    try { rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) } catch { return resolve(null) }
+    try { rec = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: CHUNK_BITS_PER_SECOND }) } catch { return resolve(null) }
     const parts = []
-    let voiced = false, silentSince = 0
+    let voiced = false, silentSince = 0, voicedMs = 0, blindSeen = false
     const t0 = Date.now()
+    let last = t0
     const poll = setInterval(() => {
-      const age = Date.now() - t0
-      if (currentLevel() > VOICED_LEVEL) { voiced = true; silentSince = 0 } else if (!silentSince) silentSince = Date.now()
-      const paused = voiced && silentSince && Date.now() - silentSince > SILENCE_MS
-      if (rec.state !== 'inactive' && ((age >= CHUNK_MIN_MS && paused) || age >= CHUNK_MAX_MS || (!voiced && age >= CHUNK_MIN_MS) || !chunkLoopRunning)) try { rec.stop() } catch {}
+      const now = Date.now(), age = now - t0
+      const blind = !meterRunning() // some phones leave the meter suspended: speech cannot be told from silence, so keep the audio rather than lose words
+      if (blind) { blindSeen = true; voiced = true }
+      else if (currentLevel() > voicedLevel()) { voiced = true; voicedMs += now - last; silentSince = 0 }
+      else if (!silentSince) silentSince = now
+      last = now
+      const paused = !blind && voiced && silentSince && now - silentSince > SILENCE_MS
+      if (rec.state !== 'inactive' && ((age >= CHUNK_MIN_MS && paused) || age >= CHUNK_MAX_MS || (!voiced && age >= CHUNK_IDLE_MS) || !chunkLoopRunning)) try { rec.stop() } catch {}
     }, 100)
     rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data) }
-    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length ? { blob: new Blob(parts, { type: mimeType || 'audio/webm' }), ms: Date.now() - t0, t0, t1: Date.now() } : null) }
+    rec.onstop = () => { clearInterval(poll); resolve(voiced && parts.length && (blindSeen || voicedMs >= MIN_VOICED_MS) ? { blob: new Blob(parts, { type: mimeType || 'audio/webm' }), ms: Date.now() - t0, t0, t1: Date.now() } : null) }
     rec.onerror = () => { clearInterval(poll); resolve(null) }
     chunkRecorder = rec
     rec.start()
@@ -503,7 +606,26 @@ function startCloudMode(reason) {
   render()
   runChunkLoop()
 }
-function startWhisperFallback() {
+const AUDIO_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+function releaseMic() { stream?.getTracks().forEach((t) => t.stop()); stream = null }
+// Takes the microphone back after the recognizer had it. Never touches the setup screen.
+async function reopenMic() {
+  if (stream?.getAudioTracks().some((t) => t.readyState === 'live')) return true
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS }); return true } catch { return false }
+}
+// Android: the browser recognizer is used only when it can have the microphone to itself.
+const useSpeechEngine = () => !!browserLang() && (!IS_ANDROID || exclusiveMic)
+const cloudReason = () => ['yo-NG', 'ha-NG', 'pcm-NG', 'auto'].includes(langCode()) ? 'Cloud transcription. Text arrives after each pause.'
+  : browserLang() ? 'Cloud transcription on this phone so the audio can be kept. Text arrives after each pause.'
+  : 'Your browser has no live recognition. Text arrives after each pause.'
+async function startEngine() {
+  if (useSpeechEngine()) {
+    if (IS_ANDROID && stream) { releaseMic(); await wait(MIC_SETTLE_MS) } // hand the microphone over before the recognizer asks for it
+    if (['connecting', 'paused', 'recording', 'degraded'].includes(state)) startPrimarySpeech()
+  } else startCloudMode(cloudReason())
+}
+async function startWhisperFallback() {
+  if (fallbackBusy) return
   // Cloud is the fallback for a flaky browser engine. With today's allowance gone there is nothing to fall back to,
   // so keep retrying the free engine rather than leaving the note silent.
   if (!cloudAvailable(inflightSec)) {
@@ -511,8 +633,30 @@ function startWhisperFallback() {
     if (state === 'recording') setStatus('Recording', 'Live recognition hit a problem and is retrying. Cloud transcription is used up for today.')
     return
   }
-  startCloudMode('Live recognition hit a problem. Text now arrives after each pause.')
-  if (browserLang()) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (state === 'degraded') { stopChunkLoop(); startPrimarySpeech() } }, RETRY_PRIMARY_MS) }
+  fallbackBusy = true
+  try {
+    stopPrimarySpeech()
+    if (!stream) { // the recognizer had the microphone: take it back, because the cloud records from it
+      const ok = await reopenMic()
+      if (!ok || !['recording', 'degraded'].includes(state)) { if (ok) releaseMic(); if (!ok) fatalMicError(); return }
+      startLevelMeter()
+    }
+    exclusiveMic = false
+    const code = lastSpeechError ? ` (${lastSpeechError})` : '' // shown so a stubborn phone can say why
+    startCloudMode(`Live recognition hit a problem${code}. Text now arrives after each pause.`)
+    if (useSpeechEngine()) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { if (state === 'degraded') { stopChunkLoop(); startPrimarySpeech() } }, RETRY_PRIMARY_MS) }
+  } finally { fallbackBusy = false }
+}
+// Android, cloud transcription ran out while the audio was being kept: the recognizer needs the microphone alone,
+// so the audio recorded so far is kept and the rest of the note continues as free live text.
+async function switchToLiveOnly() {
+  exclusiveMic = true
+  const r = recorder ? await recorder.stop() : null
+  recorder = null
+  if (r) partialAudio = { ...r, partial: true }
+  tracker = null; stopVoices(); stopLevelMeter(); releaseMic()
+  await wait(MIC_SETTLE_MS)
+  if (['recording', 'degraded'].includes(state)) startPrimarySpeech()
 }
 
 // ---------- Session lifecycle ----------
@@ -520,25 +664,39 @@ async function acquireMic() {
   if (!navigator.mediaDevices?.getUserMedia) { showSetupError('The microphone needs a secure (HTTPS) connection.'); return false }
   setState('requesting-permission')
   $('noteTakerStart').disabled = true
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); return true }
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS }); return true }
   catch (e) {
     setState('error'); $('noteTakerStart').disabled = false
     showSetupError(e.name === 'NotAllowedError' ? 'Microphone access is blocked. Allow it in your browser settings, then try again.' : 'No microphone was found. Connect one and try again.')
     return false
   }
 }
+const audioWanted = () => { const k = $('noteTakerKeepAudio'); return !restoredRun && k.checked && !k.disabled }
+async function holdScreen() { // a locked screen stops recording on phones
+  try { if (!wakeLock && navigator.wakeLock && document.visibilityState === 'visible') { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null }) } } catch { wakeLock = null }
+}
+function releaseScreen() { try { wakeLock?.release() } catch {} wakeLock = null }
 async function beginCapture(restored = false) {
   if (!(await gateCloud())) return false
-  if (!stream && !(await acquireMic())) return false
+  restoredRun = restored
+  // Android, free live text: the recognizer must have the microphone to itself. Keeping the audio needs the mic too,
+  // so asking for it moves the note to cloud transcription (the person's choice, and counted against their minutes).
+  const wantsAudio = audioWanted()
+  exclusiveMic = IS_ANDROID && !!browserLang() && !(wantsAudio && cloudAvailable())
+  if (!stream && !(await acquireMic())) return false // the permission prompt happens here, once, before the stream is handed to the recognizer
   show('live'); setState('connecting'); setStatus('Starting', ''); segments = segments || []; interim = ''
-  pausedMs = 0; pauseAt = 0; startedAt = Date.now(); langOverride = null; freeOnly = false; inflightSec = 0; render()
+  pausedMs = 0; pauseAt = 0; startedAt = Date.now(); langOverride = null; freeOnly = false; inflightSec = 0; speechFailures = 0; lastSpeechError = ''
+  partialAudio = null; lastAutosaveKey = ''; lastFinalAt = 0; renderedCount = 0; render()
   clearInterval(timer)
   timer = setInterval(() => { const t = elapsed(); $('noteTakerTimer').textContent = t; $('noteTakerChipTime').textContent = t }, 250)
-  startLevelMeter()
-  resetLiveAsk(); restoredRun = restored; startVoices(); startRecorder()
-  if (browserLang()) startPrimarySpeech()
-  else startCloudMode(['yo-NG', 'ha-NG', 'pcm-NG', 'auto'].includes(langCode()) ? 'Cloud transcription. Text arrives after each pause.' : 'Your browser has no live recognition. Text arrives after each pause.')
+  resetLiveAsk()
+  if (exclusiveMic) {
+    recorder?.discard(); recorder = null; tracker = null
+    if (wantsAudio) showQuotaNotice('switched', ' Android lets live recognition use the microphone only on its own, so audio is not kept for this note.')
+  } else { startLevelMeter(); startVoices(); startRecorder() }
+  holdScreen()
   clearInterval(autosaveTimer); autosaveTimer = setInterval(autosave, AUTOSAVE_MS)
+  await startEngine()
   return true
 }
 async function start() {
@@ -559,9 +717,12 @@ async function start() {
 }
 async function autosave() {
   if (!sessionId || !['recording', 'paused', 'degraded'].includes(state)) return
+  const transcript = segments.map((s) => s.text).join(' '), status = state === 'paused' ? 'paused' : 'recording'
+  const key = `${status}|${transcript}`
+  if (key === lastAutosaveKey) return // nothing new since the last save: skip the request
   try {
-    const res = await patchNoteSession(sessionId, { version: sessionVersion, transcript: segments.map((s) => s.text).join(' '), status: state === 'paused' ? 'paused' : 'recording', updatedAt: new Date().toISOString() })
-    sessionVersion = res.version
+    const res = await patchNoteSession(sessionId, { version: sessionVersion, transcript, status, updatedAt: new Date().toISOString() })
+    sessionVersion = res.version; lastAutosaveKey = key
   } catch (e) { if (e.session) sessionVersion = e.session.version }
 }
 function pause() {
@@ -570,7 +731,7 @@ function pause() {
     setState('paused'); pauseAt = Date.now(); recorder?.pause() // keeps the audio timeline in step with the transcript, which also skips pauses
     stream?.getTracks().forEach((t) => (t.enabled = false))
     if (cloud) stopChunkLoop(); else stopPrimarySpeech()
-    clearTimeout(retryTimer); drawLevel()
+    clearTimeout(retryTimer); drawLevel(); releaseScreen()
     $('noteTakerPause').innerHTML = '<i class="ph ph-play"></i> Resume'
     setStatus('Paused', 'Nothing is being recorded')
   } else if (state === 'paused' || state === 'error') {
@@ -578,15 +739,19 @@ function pause() {
   }
 }
 async function resumeCapture() {
-  // A cloud-only language cannot resume without allowance (it may have reset or been upgraded since).
-  if (!(await gateCloud())) return
-  if (pauseAt) { pausedMs += Date.now() - pauseAt; pauseAt = 0 }
-  stream?.getTracks().forEach((t) => (t.enabled = true))
-  recorder?.resume(); if (tracker) tracker.cut = Date.now()
-  $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
-  hideNotice()
-  if (browserLang()) startPrimarySpeech(); else startCloudMode('Cloud transcription. Text arrives after each pause.')
-  drawLevel()
+  if (resuming) return
+  resuming = true
+  try {
+    // A cloud-only language cannot resume without allowance (it may have reset or been upgraded since).
+    if (!(await gateCloud())) return
+    if (pauseAt) { pausedMs += Date.now() - pauseAt; pauseAt = 0 }
+    stream?.getTracks().forEach((t) => (t.enabled = true))
+    recorder?.resume(); if (tracker) tracker.cut = Date.now()
+    $('noteTakerPause').innerHTML = '<i class="ph ph-pause"></i> Pause'
+    hideNotice(); holdScreen()
+    await startEngine()
+    drawLevel()
+  } finally { resuming = false }
 }
 function finish() {
   if (!segments.length && !interim) return stopNow()
@@ -601,7 +766,8 @@ async function stopNow() {
   stopPrimarySpeech(); stopChunkLoop()
   await chunkQueue.catch(() => {})
   inflightSec = 0; exhaustHandled = false; hideNotice()
-  const rec = recorder ? await recorder.stop() : null; recorder = null // before the mic tracks end
+  const rec = recorder ? await recorder.stop() : partialAudio; recorder = null; partialAudio = null // before the mic tracks end
+  releaseScreen()
   stopVoices()
   stopLevelMeter()
   stream?.getTracks().forEach((t) => t.stop()); stream = null
@@ -628,7 +794,8 @@ async function stopNow() {
   $('noteTakerCompleteTitle').value = $('noteTakerMeetingTitle').value.trim()
   $('noteTakerChip').hidden = true
   showComplete()
-  if (rec?.truncated) audioStatus(`The recording stopped at the ${planAudioMB || 30} MB your plan allows. The transcript covers the whole meeting.`, true)
+  if (rec?.partial) audioStatus('Audio was kept only until live recognition took over the microphone, because Android cannot do both at once. The transcript covers the whole meeting.')
+  else if (rec?.truncated) audioStatus(`The recording stopped at the ${planAudioMB || 30} MB your plan allows. The transcript covers the whole meeting.`, true)
   if (modal.hidden) open()
   if (text.trim() && $('noteTakerAutoSave').checked) saveCurrent()
 }
@@ -970,10 +1137,30 @@ $('noteTakerAsk').addEventListener('click', () => { const input = $('composerInp
 modal.addEventListener('mousedown', (e) => { if (e.target === modal) close() })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) close() })
 window.addEventListener('cognita:open-note-taker', open)
-window.addEventListener('online', () => { refreshQuota(); if (state === 'degraded' && browserLang()) { clearTimeout(retryTimer); stopChunkLoop(); startPrimarySpeech() } })
+window.addEventListener('online', () => { refreshQuota(); if (state === 'degraded' && useSpeechEngine()) { clearTimeout(retryTimer); stopChunkLoop(); startPrimarySpeech() } })
 // Coming back to the tab after upgrading (or after midnight UTC) should not leave a stale "used up" on screen.
 window.addEventListener('focus', () => { if (!modal.hidden && quota && !quota.unlimited && quota.usedSeconds / quota.limitSeconds >= QUOTA_WARN_AT) refreshQuota() })
 window.addEventListener('offline', () => { if (isActive()) setStatus('Offline', browserLang() ? 'Live transcription will resume when you reconnect' : 'Cloud transcription will resume when you reconnect') })
+// Phones stop the microphone and the recognizer when the screen locks or the page goes to the background. On return, restart
+// whichever engine was running, and say so if speech was missed. Desktop tabs keep recording in the background, so they say nothing.
+async function recoverAfterBackground(gap) {
+  let restarted = false
+  if (state === 'recording' && !engineAlive && !fallbackBusy) { restarted = true; restartPrimary(IS_ANDROID ? MIC_SETTLE_MS : 0) }
+  else if (state === 'degraded' && !fallbackBusy) {
+    const dead = !stream || stream.getAudioTracks().every((t) => t.readyState === 'ended')
+    if (dead) {
+      restarted = true; stopChunkLoop(); fallbackBusy = true
+      try { if (await reopenMic()) { startLevelMeter(); if (state === 'degraded') startCloudMode(cloudBase || cloudReason()) } else fatalMicError() } finally { fallbackBusy = false }
+    } else if (!chunkLoopRunning) { restarted = true; runChunkLoop() }
+  }
+  if (restarted && gap > 3000) showNotice('gap', 'warning', 'Recording was interrupted while the page was in the background. Speech during that gap was not captured. Keep this page open while recording.')
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return }
+  const gap = hiddenAt ? Date.now() - hiddenAt : 0; hiddenAt = 0
+  if (!['recording', 'degraded'].includes(state)) return
+  holdScreen(); recoverAfterBackground(gap)
+})
 window.addEventListener('beforeunload', (e) => { if (isActive() || hasUnsavedWork()) { e.preventDefault(); e.returnValue = '' } })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1569,7 +1756,9 @@ $('noteTakerTabTasks').addEventListener('click', showTasksTab)
 $('noteTakerEditToggle').addEventListener('click', () => setEditing(!editing))
 $('noteTakerDeleteAudio').addEventListener('click', deleteAudio)
 $('noteTakerLabelSpeakers').addEventListener('change', (e) => { try { localStorage.setItem(LABEL_PREF_KEY, e.target.checked ? '1' : '0') } catch {} })
-$('noteTakerKeepAudio').addEventListener('change', (e) => { try { localStorage.setItem(AUDIO_PREF_KEY, e.target.checked ? '1' : '0') } catch {} })
+$('noteTakerKeepAudio').addEventListener('change', (e) => { try { localStorage.setItem(AUDIO_PREF_KEY, e.target.checked ? '1' : '0') } catch {} updateLabelHint(); renderQuota() })
+// Opening a setup option inside a short sheet used to leave its contents below the fold.
+for (const d of modal.querySelectorAll('details.note-option')) d.addEventListener('toggle', () => { if (d.open) requestAnimationFrame(() => d.scrollIntoView({ block: 'nearest', behavior: 'smooth' })) })
 
 $('noteTakerReader').addEventListener('click', (e) => {
   const chip = e.target.closest('.spk'); if (chip) return $('noteTakerSpkMenu')?.dataset.i === chip.dataset.i ? closeSpeakerMenu() : openSpeakerMenu(chip)
