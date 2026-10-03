@@ -728,55 +728,272 @@
   margin: var(--space-5) 0;
 }
 
-/* ── Code blocks — deliberately fixed-dark regardless of app theme,
-     using GitHub's dark "canvas" color (#0d1117 — near-black with a
-     blue undertone) so it reads as its own distinct surface even when
-     the app's own dark mode background is a similar shade. ── */
+/* ── Code blocks ─────────────────────────────────────────────────
+   Editor-style container that follows the app theme (light and dark).
+   Structure (built by buildCodeBlockHtml in js/code-highlight.js):
+
+     .code-block-wrap
+       .code-head            language label + actions (never scrolls)
+       .code-scroll          the ONLY horizontal scroll area
+         pre > code.code-lines
+           span.cl × N       one span per line
+
+   The line-number gutter is a CSS counter on .cl::before, so it is never
+   part of the copied or selected text. It is position: sticky, so it stays
+   put while a long line scrolls under it. Lines never wrap: long lines
+   scroll inside .code-scroll and never widen the page. */
 .code-block-wrap {
+  --code-font: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --code-size: 13px;
+  --code-lh: 21px;
+  --gutter-pad: 14px;     /* space between the gutter rule and the code */
+
+  --code-bg: #ffffff;
+  --code-head-bg: #f3f3f0;
+  --code-border: rgba(0, 0, 0, 0.1);
+  --code-text: #24292f;
+  --code-muted: #6a6e68;
+  --code-gutter-bg: #fafaf8;
+  --code-gutter-text: #a3a69e;
+  --code-gutter-text-active: #6a6e68;
+  --code-gutter-rule: rgba(0, 0, 0, 0.07);
+  --code-hover: #f7f7f4;
+  --code-gutter-hover: #f1f1ed;
+  --code-btn-hover: rgba(0, 0, 0, 0.06);
+  --code-select: rgba(168, 71, 31, 0.18);
+
+  --tk-c: #6e7781;  /* comments */
+  --tk-s: #0a3069;  /* strings */
+  --tk-n: #0550ae;  /* numbers */
+  --tk-k: #cf222e;  /* keywords */
+  --tk-f: #8250df;  /* function names */
+  --tk-t: #953800;  /* types and classes */
+  --tk-l: #0550ae;  /* true, false, nil, null */
+  --tk-m: #953800;  /* decorators, preprocessor, $variables */
+  --tk-a: #116329;  /* attributes, CSS properties, CLI flags */
+  --tk-p: #0550ae;  /* JSON / YAML keys */
+  --tk-tag: #116329;/* HTML tags */
+  --tk-ins: #1a7f37;
+  --tk-del: #cf222e;
+
   position: relative;
   max-width: 100%;
+  min-width: 0;
   margin: var(--space-4) 0;
-}
-.message-content pre {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  color: #e6edf3;
-  padding: var(--space-4);
-  padding-top: 36px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   border-radius: var(--radius-md);
-  overflow-x: auto;
-  margin: 0;
+  overflow: hidden;           /* clips the scroll area to the rounded corners */
   text-align: left;
-  white-space: pre;
-  max-width: 100%;
+  font-family: var(--code-font);
 }
-.message-content pre code {
-  background: none;
-  padding: 0;
-  color: inherit;
-  white-space: pre;
-  overflow-wrap: normal;
+@media (prefers-color-scheme: dark) {
+  .code-block-wrap {
+    --code-bg: #0f1215;
+    --code-head-bg: #161a1e;
+    --code-border: rgba(255, 255, 255, 0.09);
+    --code-text: #e6edf3;
+    --code-muted: #8b949e;
+    --code-gutter-bg: #12161a;
+    --code-gutter-text: #5d6670;
+    --code-gutter-text-active: #9aa4ae;
+    --code-gutter-rule: rgba(255, 255, 255, 0.06);
+    --code-hover: #151a1f;
+    --code-gutter-hover: #191e24;
+    --code-btn-hover: rgba(255, 255, 255, 0.08);
+    --code-select: rgba(224, 138, 82, 0.28);
+
+    --tk-c: #8b949e;
+    --tk-s: #a5d6ff;
+    --tk-n: #79c0ff;
+    --tk-k: #ff7b72;
+    --tk-f: #d2a8ff;
+    --tk-t: #ffa657;
+    --tk-l: #79c0ff;
+    --tk-m: #ffa657;
+    --tk-a: #7ee787;
+    --tk-p: #79c0ff;
+    --tk-tag: #7ee787;
+    --tk-ins: #7ee787;
+    --tk-del: #ff7b72;
+  }
 }
 
-.code-copy-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+/* Header: a quiet bar. The tone change from the code area does the
+   separating, so there is no extra rule under it. */
+.code-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #c9d1d9;
-  background: #21262d;
-  border: 1px solid #30363d;
-  border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
-  z-index: 1;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 6px 0 14px;
+  background: var(--code-head-bg);
+  font-family: var(--font);
 }
-.code-copy-btn:hover { background: #30363d; color: #fff; }
-.code-copy-btn.is-copied { color: var(--accent-2); }
+.code-lang {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--code-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+.code-copy-btn,
+.code-dl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  font: 500 12px/1 var(--font);
+  color: var(--code-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-base) var(--ease);
+}
+.code-copy-btn { min-width: 70px; }   /* "Copy" and "Copied" take the same width: no shift */
+.code-copy-btn i, .code-dl-btn i { font-size: 14px; }
+.code-copy-btn:hover, .code-dl-btn:hover { background: var(--code-btn-hover); color: var(--code-text); }
+.code-copy-btn:focus-visible, .code-dl-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.code-copy-btn.is-copied { color: var(--success); }
+.code-copy-btn.is-copied:hover { background: transparent; }
+
+/* Download only appears on blocks big enough to be a file, and only once
+   the reply has finished arriving (it fades in, space already reserved). */
+.code-block-wrap:not([data-long]) .code-dl-btn { display: none; }
+.message.is-streaming .code-dl-btn { opacity: 0; pointer-events: none; }
+
+/* The one horizontal scroll area. */
+.code-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--code-gutter-rule) transparent;
+}
+.code-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.code-scroll::-webkit-scrollbar { height: 8px; }
+.code-scroll::-webkit-scrollbar-thumb { background: var(--code-gutter-rule); border-radius: 8px; }
+.code-scroll::selection, .code-scroll ::selection { background: var(--code-select); }
+
+.code-block-wrap pre {
+  margin: 0;
+  padding: 10px 0 12px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  max-width: none;
+  overflow: visible;
+  color: var(--code-text);
+  white-space: pre;           /* indentation, tabs and blank lines kept exactly */
+  overflow-wrap: normal;      /* beats .message-content's overflow-wrap: anywhere */
+  word-break: normal;
+}
+.code-block-wrap .code-lines {
+  display: block;
+  min-width: max-content;     /* every line is as wide as the longest one */
+  padding: 0;
+  margin: 0;
+  background: none;
+  border-radius: 0;
+  color: inherit;
+  font-family: var(--code-font);
+  font-size: var(--code-size);
+  line-height: var(--code-lh);
+  font-variant-ligatures: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  tab-size: 4;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  counter-reset: ln;
+}
+
+/* One line. Fixed height, so the gutter number and the code can never
+   drift apart. */
+.code-block-wrap .cl {
+  --row-bg: var(--code-bg);
+  --gutter-bg: var(--code-gutter-bg);
+  display: block;
+  min-height: var(--code-lh);
+  padding-right: 18px;
+  counter-increment: ln;
+}
+/* Active line: follows the pointer on devices that have one. */
+@media (hover: hover) {
+  .code-block-wrap .cl:hover {
+    --row-bg: var(--code-hover);
+    --gutter-bg: var(--code-gutter-hover);
+    background: var(--code-hover);
+  }
+  .code-block-wrap .cl:hover::before { color: var(--code-gutter-text-active); }
+}
+/* Gutter: sticky, so it stays while long lines scroll underneath. The
+   box-shadow paints the gap between the gutter rule and the code with the
+   row colour, so scrolled text never shows through that gap. */
+.code-block-wrap .cl::before {
+  content: counter(ln);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: inline-block;
+  box-sizing: content-box;
+  width: calc(var(--gd, 2) * 1ch);
+  padding: 0 12px 0 14px;
+  margin-right: var(--gutter-pad);
+  vertical-align: top;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--code-gutter-text);
+  background: var(--gutter-bg);
+  border-right: 1px solid var(--code-gutter-rule);
+  box-shadow: var(--gutter-pad) 0 0 0 var(--row-bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* New lines and tokens must never fade while streaming: a fade on the line
+   being typed reads as flicker. Whole blocks still fade in once. */
+.code-block-wrap [data-sf-new] { animation: none; }
+
+/* Syntax colours */
+.tk-c { color: var(--tk-c); }
+.tk-s { color: var(--tk-s); }
+.tk-n { color: var(--tk-n); }
+.tk-k { color: var(--tk-k); }
+.tk-f { color: var(--tk-f); }
+.tk-t { color: var(--tk-t); }
+.tk-l { color: var(--tk-l); }
+.tk-m { color: var(--tk-m); }
+.tk-a { color: var(--tk-a); }
+.tk-p { color: var(--tk-p); }
+.tk-tag { color: var(--tk-tag); }
+.tk-ins { color: var(--tk-ins); }
+.tk-del { color: var(--tk-del); }
+
+@media (max-width: 640px) {
+  .code-block-wrap {
+    --code-size: 12.5px;
+    --code-lh: 20px;
+    --gutter-pad: 10px;
+    border-radius: var(--radius-sm);
+  }
+  .code-head { height: 38px; padding-left: 12px; }
+  .code-copy-btn, .code-dl-btn { height: 30px; }
+  .code-block-wrap .cl::before { padding: 0 8px 0 10px; }
+  .code-block-wrap .cl { padding-right: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .code-copy-btn, .code-dl-btn { transition: none; }
+}
 
 /* ── KaTeX math ── */
 .katex-target { overflow-x: auto; max-width: 100%; }
