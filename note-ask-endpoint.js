@@ -16,7 +16,7 @@ import { fsGet, fsUpdate, fsQuery } from './firestore-rest.js';
 import { b2DownloadFileByName } from './b2-client.js';
 import { MODEL_TIERS, UNLIMITED } from './entitlements.js';
 import { checkAndIncrement, refundUsage } from './usage.js';
-import { callWithFallback } from './providers.js';
+import { callWithFallback, makeSessionId } from './providers.js';
 import { extractJson } from './json-extract.js';
 
 const USAGE_KEY = 'noteTakerAsks';
@@ -120,10 +120,16 @@ export async function handleNoteAsk(request, env) {
   const title = clean(body?.title, 160);
 
   try {
+    // The transcript comes FIRST and the question LAST. Asking several
+    // questions about the same meeting then sends an identical beginning
+    // (instructions + title + transcript), which the model provider can
+    // reuse instead of re-reading the whole transcript each time. (For
+    // transcripts over WHOLE_TRANSCRIPT_CHARS the passages depend on the
+    // question, so reuse is partial there.)
     const result = await callWithFallback(modelTier(plan), [
       { role: 'system', content: ASK_SYSTEM },
-      { role: 'user', content: `${title ? `Meeting title: ${title}\n` : ''}${earlier}Question: ${question}\n\n<transcript>\n${context}\n</transcript>` },
-    ], env, { maxTokens: 700, jsonMode: true });
+      { role: 'user', content: `${title ? `Meeting title: ${title}\n` : ''}<transcript>\n${context}\n</transcript>\n\n${earlier}Question: ${question}` },
+    ], env, { maxTokens: 700, jsonMode: true, feature: 'note-ask', sessionId: await makeSessionId('note-ask', identity.uid) });
     const cleaned = cleanAnswer(extractJson(result.text), stampsIn(context));
     if (!cleaned) throw new Error('empty answer');
     return ok({ ...cleaned, partial: context.length < transcript.length, quota }, env);
@@ -219,7 +225,7 @@ export async function handleNoteCompare(request, env) {
     const result = await callWithFallback(modelTier(plan), [
       { role: 'system', content: COMPARE_SYSTEM },
       { role: 'user', content: `Earlier action items:\n${list}\n\n<transcript>\n${context}\n</transcript>` },
-    ], env, { maxTokens: 1500, jsonMode: true });
+    ], env, { maxTokens: 1500, jsonMode: true, feature: 'note-compare' });
     const parsed = extractJson(result.text);
     const stamps = stampsIn(context);
     const byN = new Map((Array.isArray(parsed?.items) ? parsed.items : []).map((x) => [Number(x?.n), x]));
