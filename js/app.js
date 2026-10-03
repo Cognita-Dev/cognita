@@ -9,6 +9,7 @@
 // owned by js/shell.js, not here.
 
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
+import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 const HISTORY_KEY = 'cognita:conversations';
@@ -2056,6 +2057,10 @@ function streamMorphChildren(live, fresh) {
 
     // The code block's Copy button keeps its own "Copied" state.
     if (f.classList.contains('code-copy-btn')) continue;
+    // A code block whose content is unchanged is never touched: no diffing,
+    // no re-highlighting, no flicker, however long it is.
+    if (f.classList.contains('code-block-wrap') && l.classList.contains('code-block-wrap') &&
+        l.getAttribute('data-code-key') === f.getAttribute('data-code-key')) continue;
     // A formula that is already typeset is left alone (re-typesetting it
     // every frame would flicker).
     if (f.classList.contains('katex-target')) {
@@ -2564,7 +2569,15 @@ async function copyMessageContent(contentEl, fallbackRawText, sources) {
     host.innerHTML = contentEl.classList.contains('is-typing')
       ? renderMarkdownLite(fallbackRawText || '', sources || null)
       : contentEl.innerHTML;
-    host.querySelectorAll('.code-copy-btn').forEach((b) => b.remove());
+    // Code blocks become plain <pre><code> with the exact source: no
+    // header labels, buttons or line-number markup in what is pasted.
+    host.querySelectorAll('.code-block-wrap').forEach((w) => {
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = codeTextOf(w.querySelector('code'));
+      pre.appendChild(code);
+      w.replaceWith(pre);
+    });
     document.body.appendChild(host);
     plainText = (host.innerText || host.textContent || '').trim() || plainText;
     html = host.innerHTML;
@@ -2663,34 +2676,55 @@ async function downloadGeneratedFile(btn) {
 }
 
 function wireCodeCopyButtons(container) {
-  container.querySelectorAll('.code-copy-btn').forEach((btn) => {
-    // Typewriter re-renders can call this more than once on the same
-    // buttons; only wire each button once.
-    if (btn.dataset.wired === '1') return;
-    btn.dataset.wired = '1';
-    btn.addEventListener('click', async () => {
-      const target = document.getElementById(btn.dataset.copyTarget);
-      if (!target) return;
-      const text = target.textContent;
-      let ok = false;
-      try {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } catch (e) {
-        ok = legacyCopyText(text);
-      }
-      if (!ok) {
-        showToast('Could not copy. Please select the code and copy it manually.');
-        return;
-      }
-      clearTimeout(btn._copyResetTimer);
-      btn.classList.add('is-copied');
-      btn.innerHTML = '<i class="ph ph-check"></i> Copied';
-      btn._copyResetTimer = setTimeout(() => {
-        btn.classList.remove('is-copied');
-        btn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-      }, 1800);
-    });
+  // One delegated listener per container. Stream frames replace nodes and
+  // never need re-wiring, and a button's "Copied" state is never reset by
+  // a re-render. Safe to call repeatedly.
+  if (container.dataset.codeWired === '1') return;
+  container.dataset.codeWired = '1';
+
+  container.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('.code-copy-btn, .code-dl-btn');
+    if (!btn || !container.contains(btn)) return;
+    // The streaming content element sits inside the message list, and both
+    // are wired: handle each click once.
+    if (e._codeHandled) return;
+    e._codeHandled = true;
+    const target = document.getElementById(btn.dataset.copyTarget);
+    if (!target) return;
+    const text = codeTextOf(target);
+
+    if (btn.classList.contains('code-dl-btn')) {
+      const wrap = btn.closest('.code-block-wrap');
+      const ext = (wrap && wrap.dataset.ext) || 'txt';
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'snippet.' + ext;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return;
+    }
+
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (err) {
+      ok = legacyCopyText(text);
+    }
+    if (!ok) {
+      showToast('Could not copy. Please select the code and copy it manually.');
+      return;
+    }
+    clearTimeout(btn._copyResetTimer);
+    btn.classList.add('is-copied');
+    btn.innerHTML = '<i class="ph ph-check"></i><span>Copied</span>';
+    btn._copyResetTimer = setTimeout(() => {
+      btn.classList.remove('is-copied');
+      btn.innerHTML = '<i class="ph ph-copy"></i><span>Copy</span>';
+    }, 1800);
   });
 }
 
@@ -2912,6 +2946,31 @@ function renderMarkdownLite(text, sources, idPrefix) {
   let raw = escapeHtml(text);
   raw = _unescapeAllowedTags(raw);
 
+  // Code goes first, before LaTeX and every other pass, so nothing inside it
+  // is ever reinterpreted: a "$" in shell or PHP, a "${x}" template, a
+  // "\\(x)" Swift interpolation or an "a[i]" index must reach the screen
+  // exactly as written.
+  const codeBlocks = [];
+  raw = raw.replace(/([ \t]*)```([\w+#.-]*)[^\n`]*\n([\s\S]*?)```/g, (_, indent, lang, code) => {
+    let body = code.replace(/\n[ \t]*$/, '').replace(/\n$/, '');
+    if (indent) {
+      // A fence nested in a list item: remove the list's indentation.
+      const n = indent.replace(/\t/g, '    ').length;
+      body = body.split('\n').map((ln) => ln.replace(new RegExp('^[ \\t]{0,' + n + '}'), '')).join('\n');
+    }
+    codeBlocks.push({ lang: lang || '', code: body });
+    const ph = '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00';
+    // Nested in a list item: stay on the item's indented line so the block
+    // remains inside it. Top level: make sure it is its own block.
+    return indent ? indent + ph : '\n\n' + ph + '\n\n';
+  });
+  // Inline code is protected the same way (its text is already escaped).
+  const inlineCode = [];
+  raw = raw.replace(/`([^`\n]+)`/g, (_, code) => {
+    inlineCode.push('<code>' + code + '</code>');
+    return '\x00ICODE' + (inlineCode.length - 1) + '\x00';
+  });
+
   // Protect LaTeX before anything else touches the string.
   const mathBlocks = [];
   raw = raw.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
@@ -2930,14 +2989,6 @@ function renderMarkdownLite(text, sources, idPrefix) {
     mathBlocks.push({ expr, display: false });
     return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
-
-  const codeBlocks = [];
-  raw = raw.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    codeBlocks.push({ lang: lang || '', code: code.replace(/\n$/, '') });
-    return '\x00CODEBLOCK' + (codeBlocks.length - 1) + '\x00';
-  });
-
-  raw = raw.replace(/`([^`\n]+)`/g, '<code>$1</code>');
 
   // Links: [label](url) markdown syntax becomes a real clickable anchor.
   // Must run before bold/italic (a label may itself contain other
@@ -3053,11 +3104,10 @@ function renderMarkdownLite(text, sources, idPrefix) {
   raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => {
     const block = codeBlocks[parseInt(i, 10)];
     const id = 'code-' + (idPrefix ? idPrefix + i : Math.random().toString(36).slice(2, 9));
-    return '<div class="code-block-wrap">' +
-      '<button class="code-copy-btn" data-copy-target="' + id + '"><i class="ph ph-copy"></i> Copy</button>' +
-      '<pre><code id="' + id + '">' + block.code + '</code></pre>' +
-    '</div>';
+    return buildCodeBlockHtml({ lang: block.lang, code: block.code, id });
   });
+
+  raw = raw.replace(/\x00ICODE(\d+)\x00/g, (_, i) => inlineCode[parseInt(i, 10)]);
 
   raw = raw.replace(/\x00MATH(\d+)\x00/g, (_, i) => {
     const m = mathBlocks[parseInt(i, 10)];
