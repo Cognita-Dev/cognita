@@ -2165,17 +2165,34 @@ function renderMessage(msg, index) {
 
 function wireMessageActionButtons() {
   document.querySelectorAll('[data-action="copy"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.index, 10);
       const messageEl = btn.closest('.message');
       const contentEl = messageEl ? messageEl.querySelector('.message-content') : null;
-      copyMessageContent(contentEl, conversation[idx] ? conversation[idx].content : '');
-      showToast('Copied to clipboard.');
+      const meta = conversationMeta[idx] || {};
+      const ok = await copyMessageContent(
+        contentEl,
+        conversation[idx] ? conversation[idx].content : '',
+        meta.sources || null
+      );
+      if (ok) {
+        flashCopyButton(btn);
+      } else {
+        showToast('Could not copy. Please select the text and copy it manually.');
+      }
     });
   });
 
   document.querySelectorAll('[data-action="regenerate"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      // A reply is still being written (or the chat is still loading).
+      // Cutting the conversation now would delete the messages and then
+      // fail to resend, so stop here instead.
+      if (isSending || (loadingConversationId && loadingConversationId === currentConversationId)) {
+        showToast('Please wait for the current reply to finish.');
+        return;
+      }
+
       const idx = parseInt(btn.dataset.index, 10);
       let priorUserIdx = -1;
       for (let i = idx - 1; i >= 0; i--) {
@@ -2183,12 +2200,48 @@ function wireMessageActionButtons() {
       }
       if (priorUserIdx < 0) return;
       const priorUserMsg = conversation[priorUserIdx];
+
+      // Put the original message's attachments back, so a retried message
+      // that had a photo or file does not lose it.
+      const restoredAttachments = (priorUserMsg.attachments || []).map((a) => {
+        if (a.kind === 'image') {
+          return {
+            kind: 'image',
+            name: a.name,
+            dataUrl: a.dataUrl,
+            mimeType: a.mimeType,
+            base64: (a.dataUrl || '').split(',')[1] || '',
+          };
+        }
+        if (a.kind === 'file') return { kind: 'text', name: a.name, text: a.text };
+        return { kind: 'unsupported', name: a.name };
+      });
+
+      // Keep whatever the person is currently typing or attaching in the
+      // composer, because sendMessage() clears both.
+      const composerInput = document.getElementById('composerInput');
+      const draftText = composerInput ? composerInput.value : '';
+      const draftAttachments = pendingAttachments;
+
       // Cut back to BEFORE the user message being retried — sendMessage
       // adds it again, so cutting at the reply left a duplicate.
       conversation = conversation.slice(0, priorUserIdx);
       conversationMeta = conversationMeta.slice(0, priorUserIdx);
       renderConversation();
-      await sendMessage(priorUserMsg.content);
+
+      pendingAttachments = restoredAttachments;
+      const sending = sendMessage(priorUserMsg.content);
+
+      // sendMessage() has already read and cleared the composer by now.
+      // Give the person their draft back.
+      pendingAttachments = draftAttachments;
+      renderComposerAttachments();
+      if (composerInput && draftText) {
+        composerInput.value = draftText;
+        composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      await sending;
     });
   });
 
@@ -2227,35 +2280,97 @@ async function resolvePendingToolCall(index, approved) {
   });
 }
 
+// Briefly turns the copy icon into a tick so the person can see the copy
+// worked, then puts the normal icon back.
+function flashCopyButton(btn) {
+  const icon = btn.querySelector('i');
+  if (!icon) return;
+  clearTimeout(btn._copyResetTimer);
+  btn.classList.add('is-copied');
+  icon.className = 'ph ph-check';
+  btn.setAttribute('title', 'Copied');
+  btn.setAttribute('aria-label', 'Copied');
+  btn._copyResetTimer = setTimeout(() => {
+    btn.classList.remove('is-copied');
+    icon.className = 'ph ph-copy';
+    btn.setAttribute('title', 'Copy');
+    btn.setAttribute('aria-label', 'Copy reply');
+  }, 1800);
+}
+
+// Old-fashioned copy method, used only when the modern clipboard API is
+// blocked (some in-app browsers, non-HTTPS pages, older Safari).
+function legacyCopyText(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '-9999px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 // Copies what the person actually SEES (rendered bold, lists, tables,
 // etc.) rather than the raw markdown source. Writes both a rich text/html
 // version (so pasting into Word, Gmail, Docs, Notion, etc. keeps the
 // formatting) and a plain-text fallback derived from the rendered content
 // (so pasting into a plain text field shows clean text, not **asterisks**
-// and other markdown syntax). Falls back to the old plain writeText
-// behavior on browsers/contexts that don't support rich clipboard writes
-// (e.g. non-HTTPS, older Safari, some in-app browsers).
-async function copyMessageContent(contentEl, fallbackRawText) {
-  const plainText = contentEl ? contentEl.innerText : (fallbackRawText || '');
+// and other markdown syntax).
+//
+// Returns true if something was copied and false if every method failed,
+// so the caller can show the tick (or an error) at the right moment.
+async function copyMessageContent(contentEl, fallbackRawText, sources) {
+  let plainText = fallbackRawText || '';
+  let html = '';
 
-  if (contentEl && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+  if (contentEl) {
+    // Work on an off-screen copy so that (a) the "Copy" labels of code
+    // blocks never end up in what is pasted, and (b) a reply that is still
+    // being typed out is copied in full, not half-finished.
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;top:0;left:-9999px;width:600px;opacity:0;pointer-events:none;';
+    host.innerHTML = contentEl.classList.contains('is-typing')
+      ? renderMarkdownLite(fallbackRawText || '', sources || null)
+      : contentEl.innerHTML;
+    host.querySelectorAll('.code-copy-btn').forEach((b) => b.remove());
+    document.body.appendChild(host);
+    plainText = (host.innerText || host.textContent || '').trim() || plainText;
+    html = host.innerHTML;
+    host.remove();
+  }
+
+  if (!plainText) return false;
+
+  if (html && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
     try {
-      const htmlBlob = new Blob([contentEl.innerHTML], { type: 'text/html' });
+      const htmlBlob = new Blob([html], { type: 'text/html' });
       const textBlob = new Blob([plainText], { type: 'text/plain' });
       await navigator.clipboard.write([
         new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob }),
       ]);
-      return;
+      return true;
     } catch (e) {
       console.error('[app] Rich copy failed, falling back to plain text:', e.message);
     }
   }
 
-  try {
-    await navigator.clipboard.writeText(plainText);
-  } catch (e) {
-    console.error('[app] Copy failed:', e.message);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(plainText);
+      return true;
+    } catch (e) {
+      console.error('[app] Clipboard write failed, trying legacy copy:', e.message);
+    }
   }
+
+  return legacyCopyText(plainText);
 }
 
 // Wires the re-download chip for AI-generated documents. Each click
@@ -2324,17 +2439,32 @@ async function downloadGeneratedFile(btn) {
 
 function wireCodeCopyButtons(container) {
   container.querySelectorAll('.code-copy-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    // Typewriter re-renders can call this more than once on the same
+    // buttons; only wire each button once.
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
       const target = document.getElementById(btn.dataset.copyTarget);
       if (!target) return;
-      navigator.clipboard.writeText(target.textContent).then(() => {
-        btn.classList.add('is-copied');
-        btn.innerHTML = '<i class="ph ph-check"></i> Copied';
-        setTimeout(() => {
-          btn.classList.remove('is-copied');
-          btn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-        }, 1800);
-      });
+      const text = target.textContent;
+      let ok = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } catch (e) {
+        ok = legacyCopyText(text);
+      }
+      if (!ok) {
+        showToast('Could not copy. Please select the code and copy it manually.');
+        return;
+      }
+      clearTimeout(btn._copyResetTimer);
+      btn.classList.add('is-copied');
+      btn.innerHTML = '<i class="ph ph-check"></i> Copied';
+      btn._copyResetTimer = setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+      }, 1800);
     });
   });
 }
