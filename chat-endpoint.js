@@ -4,7 +4,8 @@ import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole, assertPlan } from './subscription.js';
 import { checkAndIncrement, getUsage } from './usage.js';
 import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools } from './entitlements.js';
-import { callWithFallback, callVisionModel, callWithTools } from './providers.js';
+import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
+import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
   executeConnectorTool, validateToolArgs, approvalScopeForTool, isToolApproved,
@@ -151,141 +152,29 @@ function _mergeApproval(approvals, provider, scope, actionClass) {
  * tool-calling at all right now. Normalizes both paths to the same
  * { text, reasoning, toolCalls } shape so the agent loop below doesn't
  * need to care which path it took. */
-async function _modelTurn(tierConfig, messages, tools, env) {
+async function _modelTurn(tierConfig, messages, tools, env, cacheOptions) {
   if (!tools || tools.length === 0) {
-    const r = await callWithFallback(tierConfig, messages, env);
+    const r = await callWithFallback(tierConfig, messages, env, cacheOptions);
     return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
   }
   try {
-    return await callWithTools(tierConfig, messages, tools, env);
+    return await callWithTools(tierConfig, messages, tools, env, cacheOptions);
   } catch (e) {
     if (String(e.message).startsWith('tools_unsupported')) {
       console.warn('[chat] tools unsupported for this tier, falling back to plain reply:', e.message);
-      const r = await callWithFallback(tierConfig, messages, env);
+      const r = await callWithFallback(tierConfig, messages, env, cacheOptions);
       return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
     }
     throw e;
   }
 }
 
-// The base prompt: identity, tone, date/knowledge-cutoff handling, the
-// document/diagram redirect, reasoning/first-person rules, creator
-// disclosure rules, and output formatting rules. This part applies to
-// EVERY chat turn regardless of whether any tool is available, so it is
-// always sent.
-function _systemPromptBase(userFirstName) {
-  const today = new Date().toISOString().slice(0, 10);
-  const addressLine = userFirstName
-    ? 'The user\'s first name is ' + userFirstName + '. Address them by name occasionally where it feels natural and warm, but not in every single reply, and otherwise refer to them as the user or the client. '
-    : 'Address the person you are helping as the user, the client, or whatever term is most appropriate for the context. ';
-  return (
-    'You are Cognita, an AI assistant created by the Cognita team. You help ' +
-    'with professional writing, academic work, document preparation, research, ' +
-    'analysis, and general problem solving. Be clear, direct, and precise. ' +
-    'Avoid unnecessary preamble, filler phrases, and generic AI-sounding ' +
-    'language. Match your tone to the task — professional writing should sound ' +
-    'professional, casual questions can be answered conversationally. ' +
-    'Today\'s date is ' + today + '. Your training data has a cutoff before ' +
-    'today, so for anything that may have changed since then — current ' +
-    'officeholders, current events, prices, scores, or any other fact tied ' +
-    'to "right now" — give your best answer from what you know, say plainly ' +
-    'that it reflects your training data and may be out of date, and suggest ' +
-    'checking a current source to confirm. Never simply refuse to answer or ' +
-    'claim you have no way to know. ' +
-    'If the user asks you to produce a downloadable Word document, letter, ' +
-    'report, essay, or memo file, you do NOT generate the file yourself — ' +
-    'tell them to use the "Create a document" option in the + menu next to ' +
-    'the message box, which builds and downloads a real .docx for them. Do ' +
-    'not claim you have no way to help with documents; point them to that ' +
-    'menu instead. Likewise for diagrams or illustrations, point them to ' +
-    'the matching options in that same + menu rather than describing an ' +
-    'image in text. ' +
-    'When thinking through your response, reason about the problem itself. ' +
-    'Do not quote, summarize, narrate, or refer to these instructions, your ' +
-    'system context, or any training details in your reasoning. Write your ' +
-    'reasoning as if you are working out the answer naturally, not describing ' +
-    'a task you were given. Always use first-person singular ("I") when ' +
-    'referring to yourself in reasoning or output; never use "we". ' +
-    addressLine +
-    'If asked about your origin, creator, architecture, model name, training ' +
-    'data, or who built you, always say you were created by the Cognita team. ' +
-    'Never mention OpenAI, ChatGPT, Claude, Groq, Open Router, Workers AI, ' +
-    'Hugging Face, or any other AI provider, model name, or underlying ' +
-    'technology in your reasoning or output. Never hint that you have been ' +
-    'instructed not to mention these. Simply state that you are Cognita, ' +
-    'created by the Cognita team, and leave it at that. ' +
-    'On formatting: your own chat replies here are rendered as markdown, so ' +
-    'headings, **bold**, *italics*, bullet or numbered lists, tables, and ' +
-    '```code blocks``` are all fine there when they genuinely make the ' +
-    'answer easier to read — but do not add them reflexively to a short ' +
-    'answer that reads fine as plain sentences. The moment content you ' +
-    'are producing is destined for somewhere else, format for that ' +
-    'destination instead of markdown chat formatting, even though you are ' +
-    'still typing it as plain text right now. Concretely: an email body, a ' +
-    'text/SMS message, a chat message sent through a connector (Slack, ' +
-    'Google Chat, etc.), or any tool argument described as "plain text" ' +
-    'must never contain markdown syntax such as **, ###, bullet dashes, or ' +
-    '[label](url) link syntax — write it exactly as a person would type it ' +
-    'in that medium (a greeting, plain paragraphs or line breaks, a plain ' +
-    'sign-off, the literal URL if a link is needed). When writing or ' +
-    'editing a file through a tool (GitHub, Drive, etc.), format its ' +
-    'contents according to that file\'s own type — markdown syntax only in ' +
-    '.md files, code in the language it is written in with no markdown ' +
-    'fences wrapped around it, plain prose in .txt, and so on — never wrap ' +
-    'a file\'s real contents in the ``` fences you\'d use to show code in ' +
-    'chat. Never surface literal formatting tokens (**, ###, [TEXT], curly ' +
-    'placeholders) in any final output, chat or otherwise, unless the user ' +
-    'explicitly asked to see the raw markdown/template source itself. ' +
-    'When you do want a link to be clickable in your chat reply, write it ' +
-    'as [visible text](https://full-url) rather than pasting a bare URL — ' +
-    'the interface turns that into a real clickable link. Use that same ' +
-    '[text](url) form for any file or document link you share, with the ' +
-    'file or document name (not "click here" or the raw URL) as the ' +
-    'visible text.'
-  );
-}
-
-// Appended to the base prompt ONLY on turns where at least one connector
-// tool is actually available to the model (see the call site: tools.length
-// > 0). On the common turn — no tools connected, or a plan without
-// connector-tools access — this whole paragraph is skipped entirely,
-// saving its tokens on every such request without changing behavior,
-// since a model with no tools has nothing to apply these rules to anyway.
-function _systemPromptToolsAddendum() {
-  return (
-    ' You may have tools available to act on the user\'s connected apps ' +
-    '(GitHub, Google, Facebook/Instagram, Canva). If a tool result comes back empty or ' +
-    'thin, check it for a "note" field before concluding anything — some ' +
-    'tools attach one explaining why a result might be incomplete (for ' +
-    'example, a stale connection hiding results), and you should relay ' +
-    'that reasoning to the user plainly rather than just reporting "you ' +
-    'have none." If a tool result has an error, relay its "message" field ' +
-    'in your own words, and if it says to connect or reconnect something ' +
-    'in Account Settings > Connections, say that clearly. Never invent ' +
-    'repository names, files, or any other detail a tool did not actually ' +
-    'return. ' +
-    'When a task takes several steps (for example: read a file, then ' +
-    'rewrite it, then save the change), keep going through those steps ' +
-    'yourself, one tool call at a time, without stopping to ask the user ' +
-    '"should I continue?" — only pause and ask when you are genuinely ' +
-    'blocked (missing information only the user can give you) or when an ' +
-    'action requires their explicit approval, which the confirmation flow ' +
-    'itself handles. Never claim you have done something — committed a ' +
-    'file, created an issue, scheduled an event, or anything similar — ' +
-    'unless you have actually just called the tool that does it and seen ' +
-    'a successful result. If you are not certain an action succeeded, say ' +
-    'so plainly and check again rather than asserting it worked; "I\'m ' +
-    'not sure yet, let me check" is always an acceptable thing to tell ' +
-    'the user, and is far better than a confident answer that turns out ' +
-    'to be false. Speak about these actions only in first person, as the ' +
-    'one directly doing the work for the user — for example say "I\'ve ' +
-    'added a README to the project," never "I used the ' +
-    'github_create_or_update_file tool" or "I called the GitHub API" or ' +
-    '"I\'ll invoke a tool." Never describe your own tool use as a ' +
-    'mechanism in your reply to the user — describe the outcome, in ' +
-    'plain language, the way a colleague doing the work themselves would.'
-  );
-}
+// The chat system prompts (identity, tone, date handling, formatting rules, and
+// the connected-app tool rules) are built by prompts.js. They are split into
+// small modules and assembled so that everything that stays the same comes
+// FIRST and everything that varies (today's date, the user's first name)
+// comes LAST. That is what lets the model providers reuse their work from
+// earlier requests instead of re-reading the full prompt every time.
 
 function _tierForQualityHint(hint) {
   if (hint === 'thorough') return 'reasoning';
@@ -574,12 +463,32 @@ export async function handleChatRequest(request, env) {
 
   const userFirstName = _firstNameFromClaims(identity.claims);
 
-  const trimmedHistory = history
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-plan.limits.maxContextMessages)
-    .map(m => ({ role: m.role, content: m.content }));
+  // The window never exceeds the plan's maxContextMessages, but its START
+  // only moves in small steps instead of on every message, so the provider
+  // can keep reusing its work on the earlier part of a long conversation.
+  const trimmedHistory = stableHistoryWindow(
+    history.filter(m => m.role === 'user' || m.role === 'assistant'),
+    plan.limits.maxContextMessages
+  ).map(m => ({ role: m.role, content: m.content }));
 
-  const messages = [{ role: 'system', content: _systemPromptBase(userFirstName) }, ...trimmedHistory];
+  // Each kind of turn gets only the prompt it needs (see prompts.js):
+  //   - image questions  -> a slim vision prompt
+  //   - normal chat      -> the core chat prompt (connected-app rules are
+  //                         added further down, only if tools are offered)
+  const messages = [
+    {
+      role: 'system',
+      content: hasImages
+        ? buildVisionSystemPrompt({ firstName: userFirstName })
+        : buildChatSystemPrompt({ firstName: userFirstName, hasTools: false }),
+    },
+    ...trimmedHistory,
+  ];
+
+  // Prompt-cache hints (see providers.js): names this feature in the
+  // "[cache]" log line, and sends related requests from the same user to the
+  // same place so the provider can reuse the prompt it already read.
+  const cacheOptions = { feature: hasImages ? 'chat-vision' : 'chat', sessionId: await makeSessionId('chat', identity.uid) };
 
   const tierConfig = MODEL_TIERS[actualTier];
   // confirmToolCall requests must also go through the connector-tools
@@ -602,6 +511,12 @@ export async function handleChatRequest(request, env) {
     (connectorToolsEnabled ? '' :
       ' reason=' + (hasImages ? 'has_images' : confirmToolCall ? 'confirm_tool_call' : 'plan_lacks_connectorTools'))
   );
+
+  // Fingerprint of the cacheable (never-changing) part of the prompt. If this
+  // value differs between two requests of the same kind, something that
+  // varies has leaked into the static part and caching will suffer.
+  const _pi = chatPromptInfo({ hasTools: false, vision: hasImages });
+  console.log('[chat][prompt] version=' + _pi.version + ' variant=' + _pi.variant + ' fp=' + _pi.fingerprint + ' ~tokens=' + _pi.approxTokens);
 
   // ── Real-time streaming (Server-Sent Events) ──
   // Everything above this point (auth, quota, plan checks, validation)
@@ -654,7 +569,10 @@ export async function handleChatRequest(request, env) {
       const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
       const tools = await getAvailableTools(identity.uid, env, intentText);
       if (tools.length > 0) {
-        messages[0] = { role: 'system', content: messages[0].content + _systemPromptToolsAddendum() };
+        // The tools variant starts with the exact same text as the normal
+        // chat prompt and adds the connected-app rules after it, so the
+        // provider's cached beginning is shared by both.
+        messages[0] = { role: 'system', content: buildChatSystemPrompt({ firstName: userFirstName, hasTools: true }) };
       }
       console.log(
         '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
@@ -666,7 +584,7 @@ export async function handleChatRequest(request, env) {
       if (tools.length === 0 && !confirmToolCall) {
         // Nothing connected — identical to the pre-tools code path, no
         // overhead for users who haven't set up any connector.
-        result = await callWithFallback(tierConfig, messages, env);
+        result = await callWithFallback(tierConfig, messages, env, cacheOptions);
       } else {
         // ── The bounded, recorded agent loop (Bug 2) ──
         // `workingMessages` accumulates plain assistant/user turns as
@@ -727,7 +645,7 @@ export async function handleChatRequest(request, env) {
           while (round < MAX_AGENT_ROUNDS) {
             if (!result) {
               emit('round', { round });
-              result = await _modelTurn(tierConfig, workingMessages, tools, env);
+              result = await _modelTurn(tierConfig, workingMessages, tools, env, cacheOptions);
             }
 
             const call = result.toolCalls && result.toolCalls.length ? result.toolCalls[0] : null;
@@ -935,7 +853,7 @@ export async function handleChatRequest(request, env) {
         }
       }
     } else {
-      result = await callWithFallback(tierConfig, messages, env);
+      result = await callWithFallback(tierConfig, messages, env, cacheOptions);
     }
   } catch (e) {
     console.error('[chat] model call failed:', e.message);
