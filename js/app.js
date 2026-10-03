@@ -99,6 +99,21 @@ let placeholderRunning = false;
 // { name, kind: 'image'|'text'|'unsupported', dataUrl?, base64?, mimeType?, text? }
 let pendingAttachments = [];
 
+// ── Streaming reply + scroll-follow state (see "Streaming reply renderer") ──
+let activeStream = null;        // the reply currently being revealed, if any
+let _renderedConvId = null;     // which chat the message list last showed
+let _renderedCount = 0;         // how many messages it showed (so old ones do not replay their entrance animation)
+let _animateFromIndex = 0;      // messages below this index render without the entrance animation
+const streamScroll = { follow: true, lastAutoTop: -1, wired: false };
+const NEAR_BOTTOM_PX = 48;      // how close to the bottom still counts as "reading the latest text"
+
+// Reveal pacing. A calm, steady flow that reads like a model generating,
+// not a fast mechanical typewriter.
+const STREAM_BASE_CPS = 58;     // characters per second for normal replies (~10 words a second)
+const STREAM_MAX_SECONDS = 20;  // very long replies speed up so they never take longer than this
+const STREAM_MAX_CPS = 420;     // hard ceiling, however long the reply is
+const STREAM_RAMP_MS = 450;     // gentle ease-in over the first moments
+
 let currentAccountPlanId = null;
 let currentAccountHasVision = false;
 let currentAccountHasDocExport = false;
@@ -1472,6 +1487,7 @@ async function sendMessage(text) {
     return;
   }
   isSending = true;
+  streamScroll.follow = true; // sending means the person wants to see the answer arrive
 
   const input = document.getElementById('composerInput');
   input.value = '';
@@ -1821,6 +1837,11 @@ function renderConversationLoading() {
 }
 
 function renderConversation() {
+  // A reply that is still being revealed belongs to the DOM we are about
+  // to replace, so stop it first. The re-render below shows the finished
+  // text, which is the right outcome for "person sent another message".
+  cancelActiveStream();
+
   const emptyState = document.getElementById('emptyState');
   const list = document.getElementById('messageList');
 
@@ -1828,110 +1849,312 @@ function renderConversation() {
     emptyState.hidden = false;
     list.hidden = true;
     list.innerHTML = '';
+    _renderedConvId = currentConversationId;
+    _renderedCount = 0;
     return;
   }
+
+  const conv = document.getElementById('conversation');
+  const conversationChanged = currentConversationId !== _renderedConvId;
+  const prevTop = conv.scrollTop;
+
+  // Only brand-new messages get the entrance animation. Without this,
+  // every message in the chat fades in again on every render, which
+  // shows up as a flash each time a reply lands.
+  _animateFromIndex = conversationChanged ? 0 : _renderedCount;
 
   emptyState.hidden = true;
   list.hidden = false;
   list.innerHTML = conversation.map(renderMessage).join('');
-  scrollToBottom();
+  _renderedConvId = currentConversationId;
+  _renderedCount = conversation.length;
+
+  if (conversationChanged) scrollToBottom(true);
+  else if (streamScroll.follow) scrollToBottom();
+  else conv.scrollTop = prevTop; // the person scrolled up: leave them exactly where they were
+
   wireMessageActionButtons();
   wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
   renderMathInElement(list);
 
-  // Type out only the reply that was just received, once, then clear the
-  // flag so later re-renders (edits, resizes, unrelated updates) don't
-  // replay the animation on old messages.
+  // Reveal only the reply that was just received, once, then clear the
+  // flag so later re-renders do not replay it on old messages.
   if (freshAssistantIndex !== -1 && conversation[freshAssistantIndex] && conversation[freshAssistantIndex].role === 'assistant') {
     const idx = freshAssistantIndex;
     freshAssistantIndex = -1;
-    const messageEls = list.querySelectorAll('.message.is-assistant');
-    const targetEl = messageEls[messageEls.length - 1];
+    const targetEl = list.querySelector('.message.is-streaming');
     const contentEl = targetEl ? targetEl.querySelector('.message-content') : null;
-
-    const startTypewriter = () => {
-      if (!contentEl) return;
-      const fullText = conversation[idx].content || '';
-      const sources = (conversationMeta[idx] || {}).sources || null;
-      typewriterReveal(contentEl, fullText, sources, () => {
-        // Copy/code-copy/math only need to run once, against the final,
-        // fully-revealed HTML — re-wiring on every in-progress frame
-        // would be wasteful and would re-render KaTeX repeatedly.
-        wireCodeCopyButtons(targetEl);
-        renderMathInElement(targetEl);
+    if (targetEl && contentEl) {
+      startAssistantStream({
+        messageEl: targetEl,
+        contentEl,
+        fullText: conversation[idx].content || '',
+        sources: (conversationMeta[idx] || {}).sources || null,
+        index: idx,
       });
-    };
-
-    // Order on screen is: thought box → step trace → reply text. The
-    // step trace itself was already shown live, step by step, as it
-    // actually happened (see createLiveTurnIndicator/runStreamedTurn) —
-    // this commit render just re-renders it in its final, settled state,
-    // with no replay animation needed. Only the reply text still types
-    // out here.
-    startTypewriter();
+    }
   } else {
     freshAssistantIndex = -1;
   }
 }
 
-/* ── Typewriter reveal ─────────────────────────────────────────────
-   The reply arrives as one finished block (the backend is not
-   streamed), so this simulates a human-typed response purely on the
-   client. Unlike revealing text inside an already-fully-built DOM
-   (which reserves the final height up front and makes the bottom of
-   the message sit empty while the top fills in), this grows the
-   message from nothing: each tick it re-renders a slightly longer
-   slice of the *raw* markdown, so the bubble grows downward exactly
-   like real typing — paragraphs, list items, code fences and table
-   rows appear as they're completed, not as pre-sized empty space.
-   KaTeX math and code-copy buttons are wired only once, after the
-   full text has been revealed, via the onDone callback. */
-function typewriterReveal(contentEl, fullText, sources, onDone) {
-  if (!fullText) {
-    onDone && onDone();
-    return;
+/* ── Streaming reply renderer ──────────────────────────────────────
+   How a new reply appears on screen.
+
+   The reply text arrives from the server as one finished block, so this
+   reveals it at a calm, steady pace. The design is the same one a true
+   token stream would need, so it can be fed by real streaming later:
+
+   1. The message container is created ONCE and never replaced. Each
+      update renders the visible part of the reply to a scratch element
+      and patches only what changed into the live one (a small "morph").
+      Finished paragraphs, lists, tables and code blocks are never torn
+      down, so there is no flicker, and nothing already on screen moves.
+   2. Half-written markdown is repaired before rendering (an unclosed
+      code fence, **bold, table, link or formula), so the person never
+      sees stray symbols that then jump into formatting.
+   3. Text is revealed a whole word at a time on a time-based clock
+      (requestAnimationFrame), not a fixed tick, so the flow is even
+      whatever the frame rate or the reply length.
+   4. Auto-scroll follows only while the person is at the bottom.
+   5. The final frame is rendered from the complete text through the very
+      same path, so finishing is invisible: no swap, no jump. */
+
+function cancelActiveStream() {
+  if (activeStream) {
+    activeStream.cancel();
+    activeStream = null;
+  }
+}
+
+function streamClamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+// Moves forward from i to the end of the current word, so words appear
+// whole instead of being cut mid-word.
+function streamWordEnd(text, i) {
+  const n = text.length;
+  while (i < n && !/\s/.test(text[i])) i++;
+  return i;
+}
+
+// A table is shown row by row, and only once its header, separator and
+// first row are all there. Before that it would show as raw "| a | b |"
+// text and then suddenly turn into a table.
+function streamHoldTable(t) {
+  const hasNewline = t.endsWith('\n');
+  const body = hasNewline ? t.slice(0, -1) : t;
+  const lines = body.split('\n');
+
+  let k = lines.length - 1;
+  while (k >= 0 && lines[k].includes('|')) k--;
+  const first = k + 1;
+  if (first >= lines.length) return t;                 // last line has no pipe: not in a table
+  if (!lines[first].trim().startsWith('|')) return t;  // a pipe inside normal prose
+
+  const block = lines.slice(first);
+  const complete = hasNewline ? block : block.slice(0, -1); // drop the row still being typed
+  const before = lines.slice(0, first);
+
+  if (complete.length >= 2 && !/^[\s|:-]+$/.test(complete[1])) return t; // not a real table
+  if (complete.length < 3) return before.join('\n');                     // hold the whole table back
+  return before.concat(complete).join('\n');
+}
+
+// Repairs the end of a half-written reply so it renders cleanly.
+function streamSafePrefix(text) {
+  let t = text;
+
+  // Unclosed code fence: close it so the block shows as code from its very
+  // first line and simply grows, instead of showing raw backticks first.
+  const fences = t.match(/```/g);
+  if (fences && fences.length % 2 === 1) {
+    const at = t.lastIndexOf('```');
+    if (!t.slice(at + 3).includes('\n')) return t.slice(0, at); // the language line is still arriving
+    t = t.replace(/`{1,2}$/, '');                               // a closing fence being typed
+    return t.endsWith('\n') ? t + '```' : t + '\n```';
+  }
+  t = t.replace(/(^|\n)`{1,2}$/, '$1'); // an opening fence being typed
+
+  // Formulas: hold an unfinished one back until its closing marker arrives.
+  if (((t.match(/\$\$/g) || []).length) % 2 === 1) t = t.slice(0, t.lastIndexOf('$$'));
+  const dispOpen = t.lastIndexOf('\\[');
+  if (dispOpen > t.lastIndexOf('\\]')) t = t.slice(0, dispOpen);
+  const inlOpen = t.lastIndexOf('\\(');
+  if (inlOpen > t.lastIndexOf('\\)')) t = t.slice(0, inlOpen);
+
+  t = streamHoldTable(t);
+
+  // A half-typed HTML tag, link or citation marker.
+  t = t.replace(/<\/?[a-zA-Z]*$/, '');
+  t = t.replace(/\[[^\[\]\n]*(?:\]\([^)\s]*)?$/, '');
+
+  // A line that so far holds only a marker ("#", "-", "1.", ">", "**"):
+  // wait for the words that give it meaning.
+  const lastNl = t.lastIndexOf('\n');
+  const lastLine = t.slice(lastNl + 1);
+  if (/^[ \t]*(?:#{1,6}|[-*•_]{1,2}|\d+\.?|>)[ \t]*$/.test(lastLine)) t = t.slice(0, lastNl + 1);
+
+  // Close unfinished inline formatting in the last paragraph.
+  const blankAt = t.lastIndexOf('\n\n');
+  const startAt = blankAt === -1 ? 0 : blankAt + 2;
+  let para = t.slice(startAt);
+  para = para.replace(/(^|[\s(])\*{1,3}$/, '$1'); // an opening "**" with no word after it yet
+
+  const lastLineOfPara = para.slice(para.lastIndexOf('\n') + 1);
+  if (((lastLineOfPara.match(/`/g) || []).length) % 2 === 1) {
+    para = /^[^`]*`$/.test(lastLineOfPara)
+      ? para.slice(0, -1)   // just the opening backtick so far
+      : para + '`';
+  }
+  if (((para.match(/\*\*/g) || []).length) % 2 === 1) {
+    if (/[^*]\*$/.test(para)) para = para.slice(0, -1); // half of a closing "**"
+    para += '**';
+  }
+  const noBold = para.replace(/\*\*/g, '').split('\n').map((l) => l.replace(/^[ \t]*\*[ \t]/, '')).join('\n');
+  const stars = (noBold.match(/\*/g) || []).length;
+  if (stars % 2 === 1 && /\S/.test(noBold[noBold.lastIndexOf('*') + 1] || '')) para += '*';
+
+  return t.slice(0, startAt) + para;
+}
+
+// Copies attributes from the freshly rendered element onto the live one,
+// leaving the streaming bookkeeping attributes alone.
+function streamSyncAttrs(live, fresh) {
+  Array.from(fresh.attributes).forEach((a) => {
+    if (live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
+  });
+  Array.from(live.attributes).forEach((a) => {
+    if (a.name.indexOf('data-sf') === 0) return;
+    if (!fresh.hasAttribute(a.name)) live.removeAttribute(a.name);
+  });
+}
+
+// Brings a node from the scratch tree into the live one. New elements get
+// a very short fade (opacity only, so it can never move the layout).
+function streamAdopt(node) {
+  if (node.nodeType === 1) node.setAttribute('data-sf-new', '');
+  return node;
+}
+
+// Patches `live` so its children match `fresh`, touching only what
+// actually differs. Existing nodes are updated in place, never rebuilt.
+function streamMorphChildren(live, fresh) {
+  const kids = Array.from(fresh.childNodes);
+  for (let i = 0; i < kids.length; i++) {
+    const f = kids[i];
+    const l = live.childNodes[i];
+    if (!l) { live.appendChild(streamAdopt(f)); continue; }
+    if (l.nodeType !== f.nodeType || l.nodeName !== f.nodeName) {
+      live.replaceChild(streamAdopt(f), l);
+      continue;
+    }
+    if (f.nodeType === 3) { if (l.data !== f.data) l.data = f.data; continue; }
+    if (f.nodeType !== 1) continue;
+
+    // The code block's Copy button keeps its own "Copied" state.
+    if (f.classList.contains('code-copy-btn')) continue;
+    // A formula that is already typeset is left alone (re-typesetting it
+    // every frame would flicker).
+    if (f.classList.contains('katex-target')) {
+      if (l.getAttribute('data-sf-math') === f.textContent) continue;
+      live.replaceChild(streamAdopt(f), l);
+      continue;
+    }
+    streamSyncAttrs(l, f);
+    streamMorphChildren(l, f);
+  }
+  while (live.childNodes.length > kids.length) live.removeChild(live.lastChild);
+}
+
+function streamTypesetMath(root) {
+  if (!window.katex) return;
+  root.querySelectorAll('.katex-target:not([data-sf-math])').forEach((el) => {
+    const expr = el.textContent;
+    try {
+      window.katex.render(expr, el, { throwOnError: false, displayMode: el.dataset.display === 'true' });
+      el.setAttribute('data-sf-math', expr);
+    } catch (e) {
+      console.error('[app] KaTeX render failed:', e.message);
+    }
+  });
+}
+
+function streamPatch(contentEl, text, sources, idPrefix) {
+  const scratch = document.createElement('div');
+  scratch.innerHTML = renderMarkdownLite(text, sources, idPrefix);
+  streamMorphChildren(contentEl, scratch);
+  streamTypesetMath(contentEl);
+  wireCodeCopyButtons(contentEl);
+}
+
+function startAssistantStream({ messageEl, contentEl, fullText, sources, index }) {
+  const idPrefix = 's' + index + '-';
+  const total = fullText.length;
+  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // Short replies flow at the base pace. Long ones speed up just enough to
+  // finish within STREAM_MAX_SECONDS, so nobody waits half a minute.
+  const cps = streamClamp(Math.max(STREAM_BASE_CPS, total / STREAM_MAX_SECONDS), STREAM_BASE_CPS, STREAM_MAX_CPS);
+
+  let pos = 0;
+  let cut = 0;
+  let lastT = 0;
+  let startT = 0;
+  let rafId = 0;
+  let done = false;
+
+  const handle = {
+    cancel() {
+      done = true;
+      if (rafId) cancelAnimationFrame(rafId);
+    },
+  };
+
+  function finish() {
+    if (done) return;
+    done = true;
+    if (rafId) cancelAnimationFrame(rafId);
+
+    // The last frame comes from the complete text through the same path
+    // as every other frame, so nothing is swapped or rebuilt.
+    streamPatch(contentEl, fullText, sources, idPrefix);
+    contentEl.querySelectorAll('[data-sf-new]').forEach((el) => el.removeAttribute('data-sf-new'));
+    contentEl.classList.remove('is-typing');
+    messageEl.classList.remove('is-streaming');
+    messageEl.classList.add('stream-done');
+    scrollToBottom();
+    if (activeStream === handle) activeStream = null;
   }
 
-  const totalChars = fullText.length;
+  function frame(t) {
+    if (done) return;
+    if (!lastT) { lastT = t; startT = t; }
+    const dt = Math.min(t - lastT, 100); // a background tab must not make the text lurch forward
+    lastT = t;
 
-  // Calm, steady reveal speed:
-  // ~35ms per character, with sensible limits for very short/long responses.
-  const totalDurationMs = Math.min(
-    Math.max(totalChars * 35, 700),
-    10000
-  );
+    const ramp = Math.min(1, 0.5 + 0.5 * ((t - startT) / STREAM_RAMP_MS));
+    pos += cps * ramp * (dt / 1000);
+    if (pos >= total) { finish(); return; }
 
-  const tickMs = 40;
-
-  const charsPerTick = Math.max(
-    1,
-    Math.round(totalChars / (totalDurationMs / tickMs))
-  );
-
-  contentEl.classList.add('is-typing');
-
-  let revealed = 0;
-
-  const interval = setInterval(() => {
-    revealed = Math.min(
-      totalChars,
-      revealed + charsPerTick
-    );
-
-    const slice = revealed >= totalChars
-      ? fullText
-      : fullText.slice(0, revealed).replace(/\[[^\[\]\n]*(?:\]\([^)\s]*)?$/, '');
-    contentEl.innerHTML = renderMarkdownLite(slice, sources);
-
-    scrollToBottom();
-
-    if (revealed >= totalChars) {
-      clearInterval(interval);
-      contentEl.classList.remove('is-typing');
-      onDone && onDone();
+    const nextCut = streamWordEnd(fullText, Math.floor(pos));
+    if (nextCut !== cut) {
+      cut = nextCut;
+      streamPatch(contentEl, streamSafePrefix(fullText.slice(0, cut)), sources, idPrefix);
+      scrollToBottom(); // follows only if the person is still at the bottom
     }
-  }, tickMs);
+    rafId = requestAnimationFrame(frame);
+  }
+
+  activeStream = handle;
+  contentEl.classList.add('is-typing');
+  if (reduceMotion || total === 0) {
+    finish();
+    return;
+  }
+  rafId = requestAnimationFrame(frame);
 }
 
 function renderMessage(msg, index) {
@@ -2138,7 +2361,9 @@ function renderMessage(msg, index) {
   }
 
   return (
-    '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') + '">' +
+    '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') +
+      (index < _animateFromIndex ? ' no-enter' : '') +
+      (!isUser && index === freshAssistantIndex && msg.content && !visualHtml ? ' is-streaming' : '') + '">' +
       '<div class="message-body">' +
         thoughtHtml +
         actionTraceHtml +
@@ -2543,9 +2768,36 @@ function appendSystemNotice(text, kind) {
   scrollToBottom();
 }
 
-function scrollToBottom() {
+// Keeps the newest text in view, but only while the person is reading at
+// the bottom. Once they scroll up, new text never pulls them back down.
+// Pass `true` to force it (opening a chat, sending a message).
+function wireScrollFollow() {
+  if (streamScroll.wired) return;
   const conv = document.getElementById('conversation');
+  if (!conv) return;
+  streamScroll.wired = true;
+
+  conv.addEventListener('scroll', () => {
+    // Ignore the scroll events caused by our own scrolling.
+    if (Math.abs(conv.scrollTop - streamScroll.lastAutoTop) < 2) return;
+    const distance = conv.scrollHeight - conv.scrollTop - conv.clientHeight;
+    streamScroll.follow = distance <= NEAR_BOTTOM_PX;
+  }, { passive: true });
+
+  // Scrolling up with a mouse wheel or trackpad stops following at once.
+  conv.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) streamScroll.follow = false;
+  }, { passive: true });
+}
+
+function scrollToBottom(force) {
+  const conv = document.getElementById('conversation');
+  if (!conv) return;
+  wireScrollFollow();
+  if (!force && !streamScroll.follow) return;
   conv.scrollTop = conv.scrollHeight;
+  streamScroll.lastAutoTop = conv.scrollTop;
+  if (force) streamScroll.follow = true;
 }
 
 /* ── Markdown-lite + LaTeX renderer ── */
@@ -2654,7 +2906,9 @@ function _renderMarkdownLists(text) {
   return out.join('\n');
 }
 
-function renderMarkdownLite(text, sources) {
+// `idPrefix` (optional) makes the generated code/math element ids stable between
+// renders of a growing reply; without it ids are random, as before.
+function renderMarkdownLite(text, sources, idPrefix) {
   let raw = escapeHtml(text);
   raw = _unescapeAllowedTags(raw);
 
@@ -2798,7 +3052,7 @@ function renderMarkdownLite(text, sources) {
 
   raw = raw.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => {
     const block = codeBlocks[parseInt(i, 10)];
-    const id = 'code-' + Math.random().toString(36).slice(2, 9);
+    const id = 'code-' + (idPrefix ? idPrefix + i : Math.random().toString(36).slice(2, 9));
     return '<div class="code-block-wrap">' +
       '<button class="code-copy-btn" data-copy-target="' + id + '"><i class="ph ph-copy"></i> Copy</button>' +
       '<pre><code id="' + id + '">' + block.code + '</code></pre>' +
@@ -2807,7 +3061,7 @@ function renderMarkdownLite(text, sources) {
 
   raw = raw.replace(/\x00MATH(\d+)\x00/g, (_, i) => {
     const m = mathBlocks[parseInt(i, 10)];
-    const id = 'math-' + Math.random().toString(36).slice(2, 9);
+    const id = 'math-' + (idPrefix ? idPrefix + i : Math.random().toString(36).slice(2, 9));
     const tag = m.display ? 'div' : 'span';
     return '<' + tag + ' class="katex-target" id="' + id + '" data-display="' + m.display + '">' +
       escapeHtml(m.expr) + '</' + tag + '>';
