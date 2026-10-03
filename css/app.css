@@ -1041,6 +1041,14 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .message-action-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+/* Shown for a moment after a successful copy (see flashCopyButton). */
+.message-action-btn.is-copied,
+.message-action-btn.is-copied:hover { color: var(--accent); }
+.message-action-btn.is-copied i { animation: copy-pop 0.25s var(--ease); }
+@keyframes copy-pop {
+  0% { transform: scale(0.6); opacity: 0.4; }
+  100% { transform: scale(1); opacity: 1; }
+}
 
 /* ── Thinking indicator — quiet inline text with a soft pulsing
      dot, not a spinner and not "AI is thinking…" ── */
