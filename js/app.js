@@ -2438,6 +2438,92 @@ function _unescapeAllowedTags(html) {
   });
 }
 
+// ── Lists ────────────────────────────────────────────────────────────
+// Turns "- item", "* item", "• item" and "1. item" lines into real HTML
+// lists. Two things this has to get right, because models write both all
+// the time:
+//   1. A numbered item followed by indented bullets, then the next
+//      numbered item:
+//         1. Setup
+//            - Install Python
+//         2. Core syntax
+//      This is ONE numbered list with bullets nested inside its items. (It
+//      used to be split into separate one-item lists, so every heading
+//      restarted at "1." and the bullets lost their nesting.)
+//   2. A list that really does start at a later number (e.g. it was
+//      interrupted by a paragraph) keeps that number via <ol start="N">.
+const _LIST_ITEM_RE = /^([ \t]*)([-*•]|\d+\.)[ \t]+(.*\S.*)$/;
+
+function _listIndent(whitespace) {
+  return whitespace.replace(/\t/g, '    ').length;
+}
+
+// items: [{ indent, ordered, number, text }] in order. Returns one HTML string.
+function _buildListHtml(items) {
+  let html = '';
+  const stack = []; // lists currently open: { tag, indent }
+  const open = (it) => {
+    const tag = it.ordered ? 'ol' : 'ul';
+    html += (tag === 'ol' && it.number !== 1) ? '<ol start="' + it.number + '">' : '<' + tag + '>';
+    html += '<li>' + it.text;
+    stack.push({ tag, indent: it.indent });
+  };
+  for (const it of items) {
+    const tag = it.ordered ? 'ol' : 'ul';
+    if (stack.length === 0) { open(it); continue; }
+    // Back out of any deeper lists this item is no longer inside.
+    while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) {
+      html += '</li></' + stack.pop().tag + '>';
+    }
+    const top = stack[stack.length - 1];
+    if (it.indent > top.indent) {
+      open(it); // indented further: a nested list inside the current item
+    } else if (top.tag === tag) {
+      html += '</li><li>' + it.text; // next item of the same list
+    } else {
+      html += '</li></' + stack.pop().tag + '>'; // same level, other kind of list
+      open(it);
+    }
+  }
+  while (stack.length) html += '</li></' + stack.pop().tag + '>';
+  return html;
+}
+
+function _renderMarkdownLists(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!_LIST_ITEM_RE.test(lines[i])) { out.push(lines[i]); i++; continue; }
+    const items = [];
+    while (i < lines.length) {
+      const m = _LIST_ITEM_RE.exec(lines[i]);
+      if (m) {
+        items.push({ indent: _listIndent(m[1]), ordered: /\d/.test(m[2]), number: parseInt(m[2], 10), text: m[3].trim() });
+        i++;
+        continue;
+      }
+      if (lines[i].trim() === '') {
+        // Blank lines between items do not end the list, as long as another
+        // list item comes next.
+        let j = i;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        if (j < lines.length && _LIST_ITEM_RE.test(lines[j])) { i = j; continue; }
+        break;
+      }
+      if (/^[ \t]+\S/.test(lines[i])) {
+        // Indented text that is not a new item: the previous item continues.
+        items[items.length - 1].text += '<br>' + lines[i].trim();
+        i++;
+        continue;
+      }
+      break;
+    }
+    out.push('', _buildListHtml(items), '');
+  }
+  return out.join('\n');
+}
+
 function renderMarkdownLite(text, sources) {
   let raw = escapeHtml(text);
   raw = _unescapeAllowedTags(raw);
@@ -2566,17 +2652,9 @@ function renderMarkdownLite(text, sources) {
     return '<div class="md-table-wrap"><table class="md-table">' + thead + tbody + '</table></div>';
   });
 
-  raw = raw.replace(/^[ \t]*[-*•][ \t]+(.+)$/gm, '\x00ULI\x00$1');
-  raw = raw.replace(/(?:\x00ULI\x00.+(?:\n|$))+/g, (block) => {
-    const items = block.split('\x00ULI\x00').filter((s) => s.trim());
-    return '<ul>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ul>';
-  });
-
-  raw = raw.replace(/^[ \t]*\d+\.[ \t]+(.+)$/gm, '\x00OLI\x00$1');
-  raw = raw.replace(/(?:\x00OLI\x00.+(?:\n|$))+/g, (block) => {
-    const items = block.split('\x00OLI\x00').filter((s) => s.trim());
-    return '<ol>' + items.map((i) => '<li>' + i.trim() + '</li>').join('') + '</ol>';
-  });
+  // Bullet and numbered lines, including bullets nested under a numbered
+  // item, become real nested <ul>/<ol> lists (see _renderMarkdownLists).
+  raw = _renderMarkdownLists(raw);
 
   const blocks = raw.split(/\n\s*\n/);
   raw = blocks.map((block) => {
