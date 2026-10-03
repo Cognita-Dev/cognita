@@ -895,25 +895,39 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   }
 }
 
-/* ── Typewriter reveal — a thin blinking caret shown at the end of an
-     assistant message while its text is still being typed out. Removed
-     once the reveal finishes. ── */
-.message-content.is-typing::after {
-  content: '';
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  background: var(--text-3);
-  animation: typing-caret-blink 0.85s step-end infinite;
+/* ── Streaming reply ──────────────────────────────────────────────
+   There is deliberately no blinking caret: a caret after a paragraph sits
+   on its own line and moves the layout when it disappears. New text just
+   flows in; new blocks (paragraphs, list items, code blocks, tables) fade
+   in with opacity only, which can never shift the layout. */
+.message.no-enter { animation: none; }
+
+/* Reserve one line from the first frame, so the first word does not make
+   the message jump from nothing to a line of text. */
+.message-content.is-typing { min-height: 1.65em; }
+
+[data-sf-new] { animation: sf-in 180ms var(--ease) both; }
+@keyframes sf-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-@keyframes typing-caret-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
+
+/* While the reply is arriving: keep the (invisible) action row's space so
+   nothing jumps when it appears, and hold back sources and file chips
+   until the text is finished. */
+.message.is-streaming .message-actions { visibility: hidden; pointer-events: none; }
+.message.is-streaming .message-sources,
+.message.is-streaming .document-download-chip { display: none; }
+
+.message.stream-done .message-actions,
+.message.stream-done .message-sources,
+.message.stream-done .document-download-chip { animation: sf-in 240ms var(--ease) both; }
+
 @media (prefers-reduced-motion: reduce) {
-  .message-content.is-typing::after { animation: none; }
+  [data-sf-new],
+  .message.stream-done .message-actions,
+  .message.stream-done .message-sources,
+  .message.stream-done .document-download-chip { animation: none; }
 }
 
 /* Table cells wrap their text onto several lines instead of running off to
