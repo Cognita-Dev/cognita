@@ -679,7 +679,11 @@
 .message-content p { margin-bottom: var(--space-3); }
 .message-content p:last-child { margin-bottom: 0; }
 .message-content ul, .message-content ol { margin: var(--space-3) 0; padding-left: 1.3em; }
+.message-content ol { padding-left: 1.7em; } /* room for two-digit numbers like "10." */
 .message-content li { margin-bottom: var(--space-2); }
+/* A list inside a list item (e.g. bullets under "1. Setup") sits close to its parent. */
+.message-content li > ul, .message-content li > ol { margin: var(--space-2) 0 0; }
+
 .message-content code {
   background: var(--bg-subtle);
   padding: 2px 6px;
@@ -912,9 +916,18 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   .message-content.is-typing::after { animation: none; }
 }
 
+/* Table cells wrap their text onto several lines instead of running off to
+   the side (they used to be white-space: nowrap, which made every cell one
+   long line). min-width stops a column being squeezed into a thin strip:
+   a table with many columns scrolls sideways inside .md-table-wrap instead
+   of crushing its text. */
 .md-table { table-layout: auto; }
 .md-table th, .md-table td {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  min-width: 7rem;
+  line-height: 1.5;
 }
 
 /* ── Thought block — small, unobtrusive, not a card ──
