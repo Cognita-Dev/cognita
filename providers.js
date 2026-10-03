@@ -3,7 +3,80 @@
 // Callers pass in a resolved model-tier config (from entitlements.js) and
 // get back plain text. They never see provider names, model strings, or keys.
 
+import { fingerprint } from './prompts.js';
+
 const DEFAULT_MAX_TOKENS = 2048;
+
+// ── Prompt-cache support ───────────────────────────────────────────────
+// Every request to a model re-sends the whole prompt, because model APIs
+// have no memory between calls. What providers CAN do is notice that the
+// beginning of a prompt is identical to one they processed moments ago and
+// reuse that work: faster, about half price on Groq, and (on Groq) cached
+// tokens do not count toward the rate limit. That happens automatically
+// when the beginning of the prompt is byte-for-byte identical, which is why
+// prompts.js keeps everything that varies at the END of the prompt.
+//
+// This file adds two small things on top of that:
+//   1. SESSION HINTS. OpenRouter, the Vercel AI Gateway and Workers AI each
+//      accept an optional header that sends related requests to the same
+//      machine, which raises the chance of a cache hit. Groq needs none.
+//   2. VISIBILITY. Each successful call logs one "[cache]" line with how
+//      many prompt tokens were served from cache, so you can SEE whether
+//      caching works instead of guessing. Set LOG_CACHE_STATS=off in the
+//      Worker's variables to silence these lines.
+
+/**
+ * Reads the token counts out of a provider response, whatever shape it has
+ * (OpenAI-style, DeepSeek-style, or Responses-style). Returns null if the
+ * provider reported nothing usable.
+ */
+export function normalizeUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const promptTokens = Number(usage.prompt_tokens ?? usage.input_tokens) || 0;
+  const cachedTokens = Number(
+    (usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) ??
+    (usage.input_tokens_details && usage.input_tokens_details.cached_tokens) ??
+    usage.prompt_cache_hit_tokens ??
+    usage.cached_tokens
+  ) || 0;
+  const completionTokens = Number(usage.completion_tokens ?? usage.output_tokens) || 0;
+  if (!promptTokens && !completionTokens) return null;
+  return { promptTokens, cachedTokens, completionTokens };
+}
+
+function _usageFrom(data) {
+  return normalizeUsage(data && data.usage);
+}
+
+function _logCacheUsage(env, ctx, messages, step, usage) {
+  if (!usage || !usage.promptTokens) return;
+  if (env && env.LOG_CACHE_STATS === 'off') return;
+  const system = messages && messages[0] && messages[0].role === 'system' ? String(messages[0].content) : '';
+  // Callers that pass { feature } get a readable name; the rest are shown
+  // by a short fingerprint of their system prompt so they can still be told apart.
+  const feature = (ctx && ctx.feature) || ('unlabeled#' + (system ? fingerprint(system) : 'none'));
+  const pct = Math.round((100 * usage.cachedTokens) / usage.promptTokens);
+  console.log(
+    '[cache] feature=' + feature + ' ' + step.provider + '/' + step.model +
+    ' prompt=' + usage.promptTokens + ' cached=' + usage.cachedTokens + ' hit=' + pct + '%'
+  );
+}
+
+/**
+ * A stable, anonymous label for "related requests" (same feature, same
+ * user). Sent as a routing hint only. It is a one-way hash, so it carries no
+ * personal data.
+ */
+export async function makeSessionId(feature, uid) {
+  try {
+    const bytes = new TextEncoder().encode('cognita:' + feature + ':' + uid);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const hex = Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+    return 'cog-' + feature + '-' + hex;
+  } catch (e) {
+    return undefined; // a missing hint only means a slightly lower hit rate
+  }
+}
 
 async function _callGroq(messages, model, env, maxTokens) {
   const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
@@ -31,20 +104,26 @@ async function _callGroq(messages, model, env, maxTokens) {
     // return their chain of thought in one of these fields depending on
     // the model's reasoning_format setting.
     reasoning: message.reasoning || message.reasoning_content || null,
+    usage: _usageFrom(data),
   };
 }
 
-async function _callOpenRouter(messages, model, env, maxTokens) {
+async function _callOpenRouter(messages, model, env, maxTokens, ctx) {
   const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
+
+  const headers = {
+    Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
+    'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
+    'X-Title': 'Cognita',
+    'Content-Type': 'application/json',
+  };
+  // Routing hint: keeps related requests on the provider that already holds
+  // the cached prompt (OpenRouter "sticky routing").
+  if (ctx && ctx.sessionId) headers['x-session-id'] = ctx.sessionId;
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
-      'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
-      'X-Title': 'Cognita',
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -59,6 +138,7 @@ async function _callOpenRouter(messages, model, env, maxTokens) {
     text: text.trim(),
     finishReason: data.choices?.[0]?.finish_reason,
     reasoning: message.reasoning || message.reasoning_content || null,
+    usage: _usageFrom(data),
   };
 }
 
@@ -75,16 +155,21 @@ async function _callOpenRouter(messages, model, env, maxTokens) {
 // env.V0_API_KEY must be an AI Gateway API key (created in the Vercel
 // dashboard's AI Gateway → API Keys section, prefixed "vck_") — a
 // v0.dev-issued key will not authenticate here.
-async function _callV0(messages, model, env, maxTokens) {
+async function _callV0(messages, model, env, maxTokens, ctx) {
   if (!env.V0_API_KEY) throw new Error('v0_not_configured');
   const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
 
+  const headers = {
+    Authorization: 'Bearer ' + env.V0_API_KEY,
+    'Content-Type': 'application/json',
+  };
+  // Routing hint for the Vercel AI Gateway (keeps related requests together
+  // so the provider's prompt cache can be reused).
+  if (ctx && ctx.sessionId) headers['x-session-affinity'] = ctx.sessionId;
+
   const res = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + env.V0_API_KEY,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -99,10 +184,11 @@ async function _callV0(messages, model, env, maxTokens) {
     text: text.trim(),
     finishReason: data.choices?.[0]?.finish_reason,
     reasoning: message.reasoning || message.reasoning_content || null,
+    usage: _usageFrom(data),
   };
 }
 
-async function _callWorkersAI(messages, model, env) {
+async function _callWorkersAI(messages, model, env, ctx) {
   // The messages it receives are always plain role/content pairs (see
   // chat-endpoint.js), so this filter is just a safety net, not load-bearing.
   if (!env.AI) throw new Error('workersai_not_bound');
@@ -112,10 +198,14 @@ async function _callWorkersAI(messages, model, env) {
       role: m.role === 'model' ? 'assistant' : m.role,
       content: m.content,
     }));
-  const res = await env.AI.run(model, { messages: cleaned });
+  // Routing hint for Workers AI prompt caching (see providers.js header).
+  const runOptions = ctx && ctx.sessionId
+    ? { extraHeaders: { 'x-session-affinity': ctx.sessionId } }
+    : undefined;
+  const res = await env.AI.run(model, { messages: cleaned }, runOptions);
   const text = typeof res?.response === 'string' ? res.response.trim() : '';
   if (!text) throw new Error('workersai_empty');
-  return { text, finishReason: 'stop', reasoning: null };
+  return { text, finishReason: 'stop', reasoning: null, usage: _usageFrom(res) };
 }
 
 /**
@@ -187,11 +277,11 @@ export async function callVisionModel(model, messages, images, env) {
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
-async function _dispatch(providerName, messages, model, env, maxTokens) {
+async function _dispatch(providerName, messages, model, env, maxTokens, ctx) {
   if (providerName === 'groq') return _callGroq(messages, model, env, maxTokens);
-  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens);
-  if (providerName === 'vercel_v0') return _callV0(messages, model, env, maxTokens);
-  if (providerName === 'workersai') return _callWorkersAI(messages, model, env);
+  if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens, ctx);
+  if (providerName === 'vercel_v0') return _callV0(messages, model, env, maxTokens, ctx);
+  if (providerName === 'workersai') return _callWorkersAI(messages, model, env, ctx);
   throw new Error('Unknown provider: ' + providerName);
 }
 
@@ -262,10 +352,11 @@ async function _callGroqWithTools(messages, model, tools, env, maxTokens) {
     finishReason: data.choices?.[0]?.finish_reason,
     reasoning: message.reasoning || message.reasoning_content || null,
     toolCalls,
+    usage: _usageFrom(data),
   };
 }
 
-async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens) {
+async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens, ctx) {
   const body = {
     model,
     max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
@@ -274,14 +365,16 @@ async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens) 
     tools,
     tool_choice: 'auto',
   };
+  const headers = {
+    Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
+    'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
+    'X-Title': 'Cognita',
+    'Content-Type': 'application/json',
+  };
+  if (ctx && ctx.sessionId) headers['x-session-id'] = ctx.sessionId;
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
-      'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
-      'X-Title': 'Cognita',
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -301,10 +394,11 @@ async function _callOpenRouterWithTools(messages, model, tools, env, maxTokens) 
     finishReason: data.choices?.[0]?.finish_reason,
     reasoning: message.reasoning || message.reasoning_content || null,
     toolCalls,
+    usage: _usageFrom(data),
   };
 }
 
-async function _callV0WithTools(messages, model, tools, env, maxTokens) {
+async function _callV0WithTools(messages, model, tools, env, maxTokens, ctx) {
   if (!env.V0_API_KEY) throw new Error('v0_not_configured');
   const body = {
     model,
@@ -314,12 +408,14 @@ async function _callV0WithTools(messages, model, tools, env, maxTokens) {
     tools,
     tool_choice: 'auto',
   };
+  const headers = {
+    Authorization: 'Bearer ' + env.V0_API_KEY,
+    'Content-Type': 'application/json',
+  };
+  if (ctx && ctx.sessionId) headers['x-session-affinity'] = ctx.sessionId;
   const res = await fetch('https://ai-gateway.vercel.sh/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + env.V0_API_KEY,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -339,13 +435,14 @@ async function _callV0WithTools(messages, model, tools, env, maxTokens) {
     finishReason: data.choices?.[0]?.finish_reason,
     reasoning: message.reasoning || message.reasoning_content || null,
     toolCalls,
+    usage: _usageFrom(data),
   };
 }
 
-async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens) {
+async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens, ctx) {
   if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, maxTokens);
-  if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens);
-  if (providerName === 'vercel_v0') return _callV0WithTools(messages, model, tools, env, maxTokens);
+  if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens, ctx);
+  if (providerName === 'vercel_v0') return _callV0WithTools(messages, model, tools, env, maxTokens, ctx);
   // workersai (and anything else) — no tool support. Signal the caller
   // distinctly so it can retry tool-less rather than treat this as a
   // generic provider outage.
@@ -440,6 +537,7 @@ function _orderStepsByHealth(steps) {
  */
 export async function callWithTools(tierConfig, messages, tools, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+  const ctx = { feature: options.feature, sessionId: options.sessionId };
   const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
@@ -448,7 +546,9 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     try {
-      return await _dispatchWithTools(step.provider, messages, step.model, tools, env, maxTokens);
+      const result = await _dispatchWithTools(step.provider, messages, step.model, tools, env, maxTokens, ctx);
+      _logCacheUsage(env, ctx, messages, step, result.usage);
+      return result;
     } catch (err) {
       lastErr = err;
       if (_isRateLimitError(err)) _markRateLimited(step);
@@ -479,6 +579,9 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
  * @param {object} [options] - { maxTokens: number } — raise this for
  *   long-form structured generation (documents, resources) where the
  *   default 2048 tokens truncates mid-JSON and corrupts the whole output.
+ *   Optional prompt-cache helpers: { feature: 'chat' } names this call in
+ *   the "[cache]" log line; { sessionId } (see makeSessionId) is a routing
+ *   hint that raises the chance of a cache hit. Both may be left out.
  *
  * Walks the tier's full fallback chain (however many levels deep it is
  * defined in entitlements.js) rather than stopping after a single
@@ -487,15 +590,17 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
  */
 export async function callWithFallback(tierConfig, messages, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
+  const ctx = { feature: options.feature, sessionId: options.sessionId };
   const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     try {
-      const result = await _dispatch(step.provider, messages, step.model, env, maxTokens);
+      const result = await _dispatch(step.provider, messages, step.model, env, maxTokens, ctx);
+      _logCacheUsage(env, ctx, messages, step, result.usage);
       if (result.finishReason === 'length') {
-        return await _continueIfTruncated(step.provider, step.model, messages, result, env, maxTokens, options);
+        return await _continueIfTruncated(step.provider, step.model, messages, result, env, maxTokens, options, ctx);
       }
       return result;
     } catch (err) {
@@ -522,7 +627,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
 // the model to continue the JSON with no separator and no repeated
 // preamble, and we do a plain concatenation (no inserted whitespace)
 // so the two fragments have a chance of forming valid JSON when joined.
-async function _continueIfTruncated(providerName, model, messages, partial, env, maxTokens, options) {
+async function _continueIfTruncated(providerName, model, messages, partial, env, maxTokens, options, ctx) {
   try {
     const jsonMode = !!options.jsonMode;
     const continuation = messages.concat([
@@ -534,7 +639,10 @@ async function _continueIfTruncated(providerName, model, messages, partial, env,
           : 'Continue directly from where you left off. Do not repeat anything already written.',
       },
     ]);
-    const extra = await _dispatch(providerName, continuation, model, env, maxTokens);
+    // `continuation` starts with the exact same messages as the first call,
+    // so the provider can reuse its cached work for all of it.
+    const extra = await _dispatch(providerName, continuation, model, env, maxTokens, ctx);
+    _logCacheUsage(env, ctx, continuation, { provider: providerName, model }, extra.usage);
     return {
       text: jsonMode ? (partial.text + extra.text).trim() : (partial.text + '\n\n' + extra.text).trim(),
       finishReason: 'stop',
