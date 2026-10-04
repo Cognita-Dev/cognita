@@ -3,13 +3,16 @@
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole, assertPlan } from './subscription.js';
 import { checkAndIncrement, getUsage } from './usage.js';
-import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools } from './entitlements.js';
+import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox } from './entitlements.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
   executeConnectorTool, validateToolArgs, approvalScopeForTool, isToolApproved,
+  getSandboxToolSchemas, isSandboxToolName,
 } from './connector-tools.js';
+import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
+import * as sandboxTools from './sandbox-tools.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Agent loop bounds (see Bug 2 in the audit doc). A user request can
@@ -31,6 +34,13 @@ import {
 // ends the turn with an honest "I got partway through and need your
 // input to continue" message — never a fabricated completion.
 const MAX_AGENT_ROUNDS = 8;
+
+// Sandbox work is naturally longer (write, run, read the error, fix, run
+// again), so a turn that can use the sandbox gets a higher ceiling. Every
+// sandbox run is also counted against the plan's sandboxRunsPerDay and a
+// per-turn cap (MAX_SANDBOX_CALLS_PER_TURN in sandbox-tools.js), so a higher
+// round ceiling cannot become a way around those limits.
+const MAX_AGENT_ROUNDS_SANDBOX = 14;
 
 // If the model calls the same tool with invalid/missing arguments this
 // many times in a row, stop silently retrying and surface it to the user
@@ -124,6 +134,23 @@ function _looksLikeUnfinishedStall(text) {
 // repo, a different provider, or a different action class, and it never
 // persists across conversations (the frontend only sends it back for the
 // same conversation it came from).
+// The browser's report of a sandbox run it just did for us (Tier 1). It is
+// treated as data only: the call description, the result and the trace are
+// size-capped and re-shaped here, and nothing in it can grant a permission
+// (billing for the run happens here, in the Worker, not from this object).
+function _parseSandboxResume(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const call = raw.call && typeof raw.call === 'object' ? raw.call : null;
+  if (!call || typeof call.name !== 'string' || !isSandboxToolName(call.name)) return null;
+  return {
+    call: { id: typeof call.id === 'string' ? call.id.slice(0, 40) : '', name: call.name, args: (call.args && typeof call.args === 'object') ? call.args : {} },
+    assistantText: typeof raw.assistantText === 'string' ? raw.assistantText.slice(0, 4000) : '',
+    result: raw.result && typeof raw.result === 'object' ? raw.result : {},
+    cancelled: !!raw.cancelled,
+    trace: sandboxTools.sanitizeTrace(raw.trace),
+  };
+}
+
 function _sanitizeApprovals(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -373,6 +400,12 @@ export async function handleChatRequest(request, env) {
   // see _sanitizeApprovals / isToolApproved.
   let approvals = _sanitizeApprovals(body.approvals);
 
+  // Tier 1 sandbox runs happen in the person's browser. When one finishes,
+  // the browser sends its result back on this same endpoint (see the agent
+  // loop below), exactly like a confirmed action resumes a paused turn.
+  const sandboxResume = _parseSandboxResume(body.sandboxResume);
+  const conversationId = cleanConversationId(body.conversationId);
+
   let account;
   try {
     // resolveAccountWithRole applies the unlimited/v0 'admin' plan
@@ -390,8 +423,12 @@ export async function handleChatRequest(request, env) {
     return _jsonError('Connected-app actions are not available on the ' + plan.name + ' plan.', 403, env);
   }
 
+  if (sandboxResume && !planHasSandbox(account.planId)) {
+    return _jsonError('The sandbox is not available on the ' + plan.name + ' plan.', 403, env);
+  }
+
   let quota;
-  if (confirmToolCall) {
+  if (confirmToolCall || sandboxResume) {
     // Not a new message — just read today's count for the response's
     // remainingToday field, don't increment it.
     const used = await getUsage(identity.uid, 'messages', env);
@@ -402,6 +439,20 @@ export async function handleChatRequest(request, env) {
       return _jsonError(
         'You have reached your daily message limit for the ' + plan.name + ' plan (' + quota.limit + ' per day). ' +
         'It resets at midnight UTC, or you can upgrade for a higher limit.',
+        429, env
+      );
+    }
+  }
+
+  // Each finished sandbox run is counted here, by the Worker, when its result
+  // comes back: the browser never reports usage, it only asks to continue,
+  // and every continuation costs one run.
+  if (sandboxResume) {
+    const runQuota = await checkAndIncrement(identity.uid, 'sandboxRuns', plan.limits.sandboxRunsPerDay, env);
+    if (!runQuota.allowed) {
+      return _jsonError(
+        'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + runQuota.limit +
+        ' runs per day). It resets at midnight UTC, or you can upgrade for a higher limit.',
         429, env
       );
     }
@@ -497,6 +548,9 @@ export async function handleChatRequest(request, env) {
   // loop, and the loop needs the `tools` schema available so it can keep
   // chaining further tool calls afterward (Bug 2).
   const connectorToolsEnabled = !hasImages && planHasConnectorTools(account.planId);
+  // The sandbox (sandbox-tools.js) needs no connected app, so it is gated by
+  // its own plan flag, not by connectorToolsEnabled.
+  const sandboxEnabled = !hasImages && planHasSandbox(account.planId);
 
   // Diagnostics for the connector tool-calling pipeline (see project
   // notes on issue 5c — "connected tools aren't used in chat"). Never
@@ -507,7 +561,7 @@ export async function handleChatRequest(request, env) {
     '[chat][tools] uid=' + identity.uid +
     ' plan=' + account.planId +
     ' role=' + (account.role || 'none') +
-    ' connectorToolsEnabled=' + connectorToolsEnabled +
+    ' connectorToolsEnabled=' + connectorToolsEnabled + ' sandboxEnabled=' + sandboxEnabled +
     (connectorToolsEnabled ? '' :
       ' reason=' + (hasImages ? 'has_images' : confirmToolCall ? 'confirm_tool_call' : 'plan_lacks_connectorTools'))
   );
@@ -556,32 +610,66 @@ export async function handleChatRequest(request, env) {
   // prose (Bug 2's "recorded thought chain").
   let steps = [];
   let quotaExceededError = null;
+  // Sandbox bookkeeping. `turnTrace` is every finished tool exchange of this
+  // turn (connector and sandbox), in order. The Worker keeps no state between
+  // requests, so when a Tier 1 sandbox call has to run in the browser, the
+  // trace goes out with the paused turn and comes back with the result.
+  let pendingSandboxCall = null;
+  let turnTrace = [];
+  let stepNo = 0;
 
   try {
     if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
-    } else if (connectorToolsEnabled) {
+    } else if (connectorToolsEnabled || sandboxEnabled) {
       // Only used by getAvailableTools' router, and only once a user's
       // connected-tool count actually crosses ROUTER_THRESHOLD — see
       // connector-tools.js. Below that, this is computed but ignored, so
       // it's cheap/harmless for the common case of 1-2 connectors.
       const lastUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
       const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
-      const tools = await getAvailableTools(identity.uid, env, intentText);
-      if (tools.length > 0) {
-        // The tools variant starts with the exact same text as the normal
-        // chat prompt and adds the connected-app rules after it, so the
-        // provider's cached beginning is shared by both.
-        messages[0] = { role: 'system', content: buildChatSystemPrompt({ firstName: userFirstName, hasTools: true }) };
+      const connectorTools = connectorToolsEnabled ? await getAvailableTools(identity.uid, env, intentText) : [];
+
+      // Sandbox tools: offered only for what the active provider can really
+      // do, and withheld once today's run allowance is used up or the person
+      // just stopped a run, so the model never plans around a tool it cannot
+      // call.
+      let sandboxProvider = null;
+      let sandboxToolSchemas = [];
+      let sandboxLimitNote = '';
+      if (sandboxEnabled) {
+        sandboxProvider = await selectSandboxProvider(env, account.planId);
+        const usedRuns = await getUsage(identity.uid, 'sandboxRuns', env);
+        if (usedRuns >= plan.limits.sandboxRunsPerDay) {
+          sandboxLimitNote = '\n\nThe user has used up today\'s code-running allowance. Do not run code and do not claim to have run any; answer without it and mention the limit briefly if it matters.';
+        } else if (!(sandboxResume && sandboxResume.cancelled)) {
+          sandboxToolSchemas = getSandboxToolSchemas(sandboxProvider.capabilities);
+        }
       }
+      const tools = connectorTools.concat(sandboxToolSchemas);
+      if (tools.length > 0 || sandboxLimitNote) {
+        // The tools variant starts with the exact same text as the normal
+        // chat prompt and adds the connected-app / sandbox rules after it,
+        // so the provider's cached beginning is shared by every variant.
+        messages[0] = {
+          role: 'system',
+          content: buildChatSystemPrompt({
+            firstName: userFirstName,
+            hasTools: connectorTools.length > 0,
+            hasSandbox: sandboxToolSchemas.length > 0,
+          }) + sandboxLimitNote,
+        };
+      }
+      const maxRounds = sandboxToolSchemas.length > 0 ? MAX_AGENT_ROUNDS_SANDBOX : MAX_AGENT_ROUNDS;
       console.log(
         '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
         ' toolCount=' + tools.length +
         ' tier=' + actualTier + ' provider=' + tierConfig.provider + ' model=' + tierConfig.model +
-        ' resuming=' + !!confirmToolCall
+        ' resuming=' + !!confirmToolCall + ' sandboxResume=' + !!sandboxResume +
+        ' sandboxProvider=' + (sandboxProvider ? sandboxProvider.id : 'none')
       );
 
-      if (tools.length === 0 && !confirmToolCall) {
+      if (tools.length === 0 && !confirmToolCall && !sandboxResume) {
         // Nothing connected — identical to the pre-tools code path, no
         // overhead for users who haven't set up any connector.
         result = await callWithFallback(tierConfig, messages, env, cacheOptions);
@@ -628,21 +716,45 @@ export async function handleChatRequest(request, env) {
             if (scope !== 'unscoped') {
               approvals = _mergeApproval(approvals, providerForTool(confirmToolCall.name), scope, confirmToolCall.name);
             }
-            workingMessages = workingMessages.concat([
-              {
-                role: 'user',
-                content: 'Tool call: ' + describeTool(confirmToolCall.name, confirmToolCall.args) + ' (just approved and run by the user)\n' +
-                  'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
-                  '\n\nContinue the task if it is not fully finished yet — call another tool if one is needed. ' +
-                  'If it is fully finished, say so plainly. Do not ask the user anything you can find out yourself.',
-              },
-            ]);
+            const confirmedEntry = sandboxTools.makeTraceEntry({
+              n: ++stepNo, kind: 'tool', assistantText: '',
+              description: describeTool(confirmToolCall.name, confirmToolCall.args),
+              resultText: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+              blob: execOutcome.error ? null : sandboxTools.extractImportableText(execOutcome.result),
+            });
+            turnTrace.push(confirmedEntry);
+            workingMessages = sandboxTools.appendExchange(workingMessages, confirmedEntry, true);
             round = 1;
           }
         }
 
+        // Resuming after a Tier 1 sandbox run finished in the browser: rebuild
+        // what the model had already done this turn, then add the run's real
+        // result as the newest tool exchange.
+        if (sandboxResume) {
+          turnTrace = sandboxResume.trace.slice();
+          stepNo = turnTrace.reduce((m, e) => Math.max(m, e.n), 0);
+          for (const e of turnTrace) workingMessages = sandboxTools.appendExchange(workingMessages, e);
+          const normalized = sandboxTools.normalizeResult(sandboxResume.result, sandboxTools.describe(sandboxResume.call.name, sandboxResume.call.args));
+          const ranEntry = sandboxTools.makeTraceEntry({
+            n: ++stepNo, kind: 'sbx', assistantText: sandboxResume.assistantText,
+            description: describeTool(sandboxResume.call.name, sandboxResume.call.args),
+            resultText: sandboxTools.resultForModel(normalized),
+          });
+          turnTrace.push(ranEntry);
+          workingMessages = sandboxTools.appendExchange(workingMessages, ranEntry);
+          console.log('[chat][sandbox] resumed tool=' + sandboxResume.call.name + ' ok=' + normalized.ok + ' exit=' + normalized.exitCode + ' ms=' + normalized.durationMs + ' cancelled=' + !!sandboxResume.cancelled);
+          if (sandboxResume.cancelled) {
+            workingMessages = workingMessages.concat([{
+              role: 'user',
+              content: 'The user stopped that run. Do not start another one. Say briefly where things stand and what they can ask for next.',
+            }]);
+          }
+          round = turnTrace.length;
+        }
+
         if (!quotaExceededError) {
-          while (round < MAX_AGENT_ROUNDS) {
+          while (round < maxRounds) {
             if (!result) {
               emit('round', { round });
               result = await _modelTurn(tierConfig, workingMessages, tools, env, cacheOptions);
@@ -659,7 +771,7 @@ export async function handleChatRequest(request, env) {
               // before accepting this as the final answer.
               const claimsCompletion = _claimsCompletion(result.text || '');
               const leakedNarration = _looksLikeLeakedNarration(result.text || '');
-              const somethingExecutedThisTurn = steps.some((s) => s.type === 'executed' && s.ok);
+              const somethingExecutedThisTurn = steps.some((s) => s.type === 'executed' && s.ok) || turnTrace.length > 0;
               if ((claimsCompletion && !somethingExecutedThisTurn) || leakedNarration) {
                 if (groundingRetries < MAX_GROUNDING_RETRIES) {
                   console.warn(
@@ -764,6 +876,95 @@ export async function handleChatRequest(request, env) {
               continue;
             }
 
+            // Sandbox tools. These change only the person's private scratch
+            // workspace, so they never need the write confirmation below, and
+            // they are counted against the sandbox run allowance instead of
+            // the connected-app action allowance.
+            if (isSandboxToolName(call.name)) {
+              let sbName = call.name;
+              let sbArgs = call.args || {};
+              const sbValid = sandboxTools.validateSandboxArgs(sbName, sbArgs);
+              let importFailure = null;
+              if (sbValid.ok && sbName === 'sandbox_import_from_tool') {
+                // The file text comes from an earlier connected-app result held in
+                // this turn's trace, so the model never has to retype it and the
+                // sandbox never needs a credential. It becomes a plain file write.
+                const imp = sandboxTools.resolveImport(sbArgs, turnTrace);
+                if (imp.ok) {
+                  sbName = 'sandbox_write_file';
+                  sbArgs = { path: sbArgs.path, content: imp.content, imported: true };
+                } else {
+                  importFailure = imp.error;
+                }
+              }
+              const sbProblem = !sbValid.ok ? sbValid.error : importFailure;
+              if (sbProblem) {
+                invalidArgAttempts[call.name] = (invalidArgAttempts[call.name] || 0) + 1;
+                if (invalidArgAttempts[call.name] > MAX_INVALID_ARG_RETRIES_PER_TOOL) {
+                  result = { text: 'I could not get that step to work. ' + sbProblem, reasoning: result.reasoning || null, toolCalls: null };
+                  break;
+                }
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: 'Attempting ' + call.name + '.' },
+                  { role: 'user', content: 'That call was not valid: ' + sbProblem + ' Fix it and try again.' },
+                ]);
+                result = null;
+                round++;
+                continue;
+              }
+              if (turnTrace.filter((e) => e.k === 'sbx').length >= sandboxTools.MAX_SANDBOX_CALLS_PER_TURN) {
+                result = {
+                  text: 'I ran a lot of steps on this and hit my limit for one request. Tell me if you want me to keep going from where things stand.',
+                  reasoning: null, toolCalls: null,
+                };
+                break;
+              }
+              const sbUsed = await getUsage(identity.uid, 'sandboxRuns', env);
+              if (sbUsed >= plan.limits.sandboxRunsPerDay) {
+                quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' +
+                  plan.limits.sandboxRunsPerDay + ' runs per day). It resets at midnight UTC.';
+                break;
+              }
+
+              if (sandboxProvider.site === 'client') {
+                // Tier 1: pause the turn and ask the browser to run it. The run is
+                // counted when its result comes back (see sandboxResume above).
+                pendingSandboxCall = sandboxTools.buildClientCall(sbName, sbArgs, plan, { assistantText: (result.text || '').slice(0, 4000) });
+                if (call.name === 'sandbox_import_from_tool') pendingSandboxCall.summary = describeTool('sandbox_import_from_tool', call.args);
+                emit('sandbox_call', { id: pendingSandboxCall.id, name: pendingSandboxCall.name, summary: pendingSandboxCall.summary });
+                console.log('[chat][sandbox] paused for browser run tool=' + sbName + ' provider=' + sandboxProvider.id);
+                break;
+              }
+
+              // Tier 3 (server-side provider): run it now and keep going in this request.
+              const sbCharge = await checkAndIncrement(identity.uid, 'sandboxRuns', plan.limits.sandboxRunsPerDay, env);
+              if (!sbCharge.allowed) {
+                quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + sbCharge.limit + ' runs per day). It resets at midnight UTC.';
+                break;
+              }
+              let sbResult;
+              try {
+                sbResult = await sandboxTools.execute(sbName, sbArgs, { provider: sandboxProvider, uid: identity.uid, conversationId, plan, env });
+              } catch (e) {
+                console.warn('[chat][sandbox] remote execution failed:', e && e.message);
+                sbResult = sandboxTools.normalizeResult({ exitCode: 1, stderr: 'The sandbox could not run this right now.', error: true }, sandboxTools.describe(call.name, call.args));
+              }
+              steps.push({
+                type: 'sandbox', name: call.name, provider: 'sandbox', ok: sbResult.ok,
+                summary: describeTool(call.name, call.args), sandbox: sbResult,
+              });
+              emit('step', steps[steps.length - 1]);
+              const sbEntry = sandboxTools.makeTraceEntry({
+                n: ++stepNo, kind: 'sbx', assistantText: (result.text && result.text.trim()) ? result.text : '',
+                description: describeTool(call.name, call.args), resultText: sandboxTools.resultForModel(sbResult),
+              });
+              turnTrace.push(sbEntry);
+              workingMessages = sandboxTools.appendExchange(workingMessages, sbEntry);
+              result = null;
+              round++;
+              continue;
+            }
+
             // Bug 4: has this exact provider+scope+tool already been
             // approved earlier in this same conversation?
             const alreadyApproved = isToolApproved(approvals, call.name, call.args);
@@ -826,21 +1027,21 @@ export async function handleChatRequest(request, env) {
             // something the assistant said, so it belongs in the 'user'
             // role either way.
             const sawAssistantText = !!(result.text && result.text.trim());
-            workingMessages = workingMessages.concat(
-              (sawAssistantText ? [{ role: 'assistant', content: result.text }] : []).concat([{
-                role: 'user',
-                content: (sawAssistantText ? '' : 'Tool call: ' + describeTool(call.name, call.args) + '\n') +
-                  'Result: ' + JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result) +
-                  '\n\nContinue the task if it is not fully finished yet — call another tool if one is needed. ' +
-                  'If it is fully finished, say so plainly. Do not ask the user anything you can find out yourself.',
-              }])
-            );
+            const toolEntry = sandboxTools.makeTraceEntry({
+              n: ++stepNo, kind: 'tool', assistantText: sawAssistantText ? result.text : '',
+              description: describeTool(call.name, call.args),
+              resultText: JSON.stringify(execOutcome.error ? execOutcome : execOutcome.result),
+              // Full text of a fetched file, kept so sandbox_import_from_tool can place it in the workspace.
+              blob: (sandboxToolSchemas.length > 0 && !execOutcome.error) ? sandboxTools.extractImportableText(execOutcome.result) : null,
+            });
+            turnTrace.push(toolEntry);
+            workingMessages = sandboxTools.appendExchange(workingMessages, toolEntry);
 
             result = null;
             round++;
           }
 
-          if (round >= MAX_AGENT_ROUNDS && !pendingToolCall && !quotaExceededError && (!result || (result.toolCalls && result.toolCalls.length))) {
+          if (round >= maxRounds && !pendingToolCall && !pendingSandboxCall && !quotaExceededError && (!result || (result.toolCalls && result.toolCalls.length))) {
             // Hit the ceiling mid-task — never fabricate completion here.
             console.warn('[chat][tools] hit MAX_AGENT_ROUNDS uid=' + identity.uid);
             result = {
@@ -925,6 +1126,11 @@ export async function handleChatRequest(request, env) {
     thinkingHeading,
     remainingToday: plan.limits.messagesPerDay - quota.used,
     pendingToolCall,
+    // Set only when a Tier 1 sandbox call has to run in the person's browser.
+    // The browser runs it, then calls this endpoint again with
+    // sandboxResume = { call, assistantText, result, trace: turnTrace }.
+    pendingSandboxCall,
+    turnTrace: pendingSandboxCall ? turnTrace : undefined,
     // `steps` is the full recorded chain for this turn (possibly empty).
     // `toolExecuted` is kept as a legacy single-object mirror of the last
     // executed step, for any older client code that hasn't moved to
