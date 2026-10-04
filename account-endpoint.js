@@ -93,6 +93,7 @@ export async function handleUsageRequest(request, env) {
     'documentGen',
     'resourceGen',
     'flashcardImage',
+    'sandboxRuns',
   ], env);
   return new Response(JSON.stringify({
     planName: plan.name,
@@ -104,6 +105,7 @@ export async function handleUsageRequest(request, env) {
       documentGen: { used: used.documentGen, limit: plan.limits.documentGenPerDay },
       resourceGen: { used: used.resourceGen, limit: plan.limits.resourceGenPerDay },
       flashcardImage: { used: used.flashcardImage, limit: plan.limits.flashcardImagePerDay },
+      sandboxRuns: { used: used.sandboxRuns, limit: plan.limits.sandboxRunsPerDay },
     },
   }), {
     status: 200,
