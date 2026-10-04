@@ -117,6 +117,7 @@ Shown in `/api/usage` as `sandboxRuns`. Change the numbers in one place.
 1. Replace the files in the same paths. New files: `sandbox-tools.js`,
    `sandbox-provider.js`, `sandbox-frame.html`, `js/sandbox-client.js`,
    `js/sandbox-shell.js`, `tests/sandbox*.test.mjs`.
+1b. In vercel.json the main page's `frame-src` must include `'self'`, otherwise the browser refuses to load the sandbox iframe (already done in the shipped file).
 2. Deploy the Worker (`wrangler deploy`) and the site (Vercel).
 3. After deploy open `https://app.cognita.com.ng/sandbox-frame` and check the
    response headers: the `Content-Security-Policy` must be the one from the
