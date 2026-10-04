@@ -38,6 +38,14 @@ export const PLANS = {
       maxContextMessages: 8,       // how much conversation history is sent
       visionPerDay: 0,             // no image-understanding on Starter
       toolCallsPerDay: 0,          // no connector tool-use on Starter
+      // Agent sandbox (sandbox-tools.js). Runs are counted by the Worker each time the
+      // model is allowed to run code; the code itself runs in the person's own browser
+      // (Tier 1), so these cap model round trips, not Cognita compute. The other three
+      // numbers are sent to the browser as the limits for that run.
+      sandboxRunsPerDay: 10,
+      sandboxTimeoutSec: 20,
+      sandboxMaxFileMB: 2,
+      sandboxMaxWorkspaceMB: 10,
       noteTakerSessionsPerDay: 3,
       noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
@@ -72,6 +80,7 @@ export const PLANS = {
       longContext: false,
       designTemplates: false,
       connectorTools: false,       // chat cannot call connected-app tools
+      sandbox: true,               // agent sandbox (browser tier) is available on every plan
       aiInbox: false,               // AI Inbox (comment/DM triage) — see planHasAiInbox
       insightsDigest: false,        // AI Insights Digest — see planHasInsightsDigest
     },
@@ -94,6 +103,14 @@ export const PLANS = {
       maxContextMessages: 24,
       visionPerDay: 15,
       toolCallsPerDay: 30,
+      // Agent sandbox (sandbox-tools.js). Runs are counted by the Worker each time the
+      // model is allowed to run code; the code itself runs in the person's own browser
+      // (Tier 1), so these cap model round trips, not Cognita compute. The other three
+      // numbers are sent to the browser as the limits for that run.
+      sandboxRunsPerDay: 60,
+      sandboxTimeoutSec: 45,
+      sandboxMaxFileMB: 5,
+      sandboxMaxWorkspaceMB: 25,
       noteTakerSessionsPerDay: 30,
       noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
@@ -119,6 +136,7 @@ export const PLANS = {
       longContext: true,
       designTemplates: true,
       connectorTools: true,
+      sandbox: true,
       aiInbox: true,
       insightsDigest: true,
     },
@@ -141,6 +159,14 @@ export const PLANS = {
       maxContextMessages: 60,
       visionPerDay: 60,
       toolCallsPerDay: 150,
+      // Agent sandbox (sandbox-tools.js). Runs are counted by the Worker each time the
+      // model is allowed to run code; the code itself runs in the person's own browser
+      // (Tier 1), so these cap model round trips, not Cognita compute. The other three
+      // numbers are sent to the browser as the limits for that run.
+      sandboxRunsPerDay: 250,
+      sandboxTimeoutSec: 90,
+      sandboxMaxFileMB: 10,
+      sandboxMaxWorkspaceMB: 50,
       noteTakerSessionsPerDay: 150,
       noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
@@ -163,6 +189,7 @@ export const PLANS = {
       longContext: true,
       designTemplates: true,
       connectorTools: true,
+      sandbox: true,
       aiInbox: true,
       insightsDigest: true,
     },
@@ -195,6 +222,14 @@ export const PLANS = {
       maxContextMessages: 60,
       visionPerDay: UNLIMITED,
       toolCallsPerDay: UNLIMITED,
+      // Agent sandbox (sandbox-tools.js). Runs are counted by the Worker each time the
+      // model is allowed to run code; the code itself runs in the person's own browser
+      // (Tier 1), so these cap model round trips, not Cognita compute. The other three
+      // numbers are sent to the browser as the limits for that run.
+      sandboxRunsPerDay: UNLIMITED,
+      sandboxTimeoutSec: 120,
+      sandboxMaxFileMB: 20,
+      sandboxMaxWorkspaceMB: 50,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
@@ -224,11 +259,26 @@ export const PLANS = {
       longContext: true,
       designTemplates: true,
       connectorTools: true,
+      sandbox: true,
       aiInbox: true,
       insightsDigest: true,
     },
   },
 };
+
+// Agent sandbox (sandbox-tools.js). Tier 1 runs inside the person's own
+// browser, so it is on for every plan; the daily run limit above is what
+// differs. A paid remote Linux tier is a separate, opt-in flag that no
+// plan has yet (see sandbox-provider.js). Set features.sandboxRemote: true
+// on a plan, and configure SANDBOX_REMOTE_URL / SANDBOX_REMOTE_TOKEN, to
+// turn it on for that plan.
+export function planHasSandbox(planId) {
+  return !!getPlan(planId).features.sandbox;
+}
+
+export function planHasRemoteSandbox(planId) {
+  return !!getPlan(planId).features.sandboxRemote;
+}
 
 // Can this plan use connected-app tools (GitHub/Google/Facebook/Canva)
 export function planHasConnectorTools(planId) {
