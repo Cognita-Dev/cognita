@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cognita sandbox</title>
+<!--
+  Tier 1 agent sandbox page. It is only ever loaded inside
+  <iframe sandbox="allow-scripts"> by js/sandbox-client.js. That means:
+    - it has an opaque origin: no cookies, no localStorage, no Firebase
+      session, no access to the Cognita page or its DOM;
+    - the parent never sends it a token, key or secret, only workspace
+      files and the tool call to run;
+    - its own Content-Security-Policy (set for this path in vercel.json)
+      allows nothing but this page, its inline code, and the Pyodide CDN, so
+      model-written code cannot call out to other sites.
+  Python runs in a Web Worker (Pyodide) and JavaScript in a throwaway Web
+  Worker, so a runaway loop is stopped by terminating the worker.
+-->
+</head>
+<body>
+<script src="/js/sandbox-shell.js"></script>
+
+<script type="text/plain" id="py-worker-src">
+/* Pyodide worker. One long-lived interpreter; every run gets fresh globals. */
+var PYODIDE_VERSION = '0.29.5';
+var pyodide = null;
+var loading = null;
+var post = function (m) { self.postMessage(m); };
+
+var RUNNER = [
+  'import sys, os, runpy, traceback',
+  'os.environ["MPLBACKEND"] = "Agg"',
+  'def __cognita_run(mode, code, file, args, cwd):',
+  '    os.chdir(cwd)',
+  '    sys.argv = ([file] if mode == "file" else (["-c"] if mode == "code" else [code])) + list(args)',
+  '    sys.path.insert(0, cwd)',
+  '    try:',
+  '        if mode == "module":',
+  '            runpy.run_module(code, run_name="__main__", alter_sys=True)',
+  '        else:',
+  '            src = open(file).read() if mode == "file" else code',
+  '            fname = file if mode == "file" else "<string>"',
+  '            g = {"__name__": "__main__", "__file__": fname}',
+  '            exec(compile(src, fname, "exec"), g)',
+  '        return 0',
+  '    except SystemExit as e:',
+  '        c = e.code',
+  '        if c is None: return 0',
+  '        if isinstance(c, int): return c',
+  '        sys.stderr.write(str(c) + "\\n"); return 1',
+  '    except BaseException as e:',
+  '        tb = e.__traceback__.tb_next if e.__traceback__ is not None else None',
+  '        traceback.print_exception(type(e), e, tb)',
+  '        return 1',
+  '    finally:',
+  '        try: sys.path.remove(cwd)',
+  '        except ValueError: pass'
+].join('\n');
+
+async function boot() {
+  if (pyodide) return pyodide;
+  if (loading) return loading;
+  loading = (async function () {
+    post({ t: 'status', text: 'Starting Python\u2026' });
+    importScripts('https://cdn.jsdelivr.net/pyodide/v' + PYODIDE_VERSION + '/full/pyodide.js');
+    var py = await self.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v' + PYODIDE_VERSION + '/full/' });
+    py.FS.mkdirTree('/workspace');
+    await py.runPythonAsync(RUNNER);
+    pyodide = py;
+    return py;
+  })();
+  try { return await loading; } finally { loading = null; }
+}
+
+// Emscripten file-system errors are plain objects, not Error instances.
+function describeError(e) {
+  if (e && typeof e.message === 'string' && e.message) return e.message;
+  try { return 'Internal error: ' + JSON.stringify(e, Object.getOwnPropertyNames(Object(e))).slice(0, 300); } catch (x) { return 'Internal error'; }
+}
+
+function wipe(py, dir) {
+  var names = py.FS.readdir(dir);
+  for (var i = 0; i < names.length; i++) {
+    var n = names[i]; if (n === '.' || n === '..') continue;
+    var p = dir + '/' + n, st = py.FS.stat(p);
+    if (py.FS.isDir(st.mode)) { wipe(py, p); py.FS.rmdir(p); } else py.FS.unlink(p);
+  }
+}
+function writeSnapshot(py, files, dirs) {
+  // The previous run may have left the interpreter inside a folder it is
+  // about to delete (that fails with EBUSY), so step out first.
+  try { py.FS.chdir('/workspace'); } catch (e) {}
+  wipe(py, '/workspace');
+  (dirs || []).forEach(function (d) { try { py.FS.mkdirTree(d); } catch (e) {} });
+  (files || []).forEach(function (f) {
+    var dir = f.path.slice(0, f.path.lastIndexOf('/'));
+    try { py.FS.mkdirTree(dir); } catch (e) {}
+    py.FS.writeFile(f.path, new Uint8Array(f.data));
+  });
+}
+function readSnapshot(py) {
+  var files = [], dirs = [], transfer = [];
+  (function walk(dir) {
+    var names = py.FS.readdir(dir);
+    for (var i = 0; i < names.length; i++) {
+      var n = names[i]; if (n === '.' || n === '..') continue;
+      var p = dir + '/' + n, st = py.FS.stat(p);
+      if (py.FS.isDir(st.mode)) { dirs.push(p); walk(p); }
+      else {
+        if (p.indexOf('/__pycache__/') !== -1 || /\.pyc$/.test(p)) continue;
+        var bytes = py.FS.readFile(p); var copy = bytes.slice().buffer;
+        files.push({ path: p, data: copy }); transfer.push(copy);
+      }
+    }
+  })('/workspace');
+  return { files: files, dirs: dirs, transfer: transfer };
+}
+
+self.onmessage = async function (ev) {
+  var m = ev.data;
+  if (m.t === 'warm') { try { await boot(); post({ t: 'ready' }); } catch (e) { post({ t: 'boot_error', message: String(e && e.message || e) }); } return; }
+  if (m.t === 'install') {
+    try {
+      var py = await boot();
+      post({ t: 'status', text: 'Loading ' + m.packages.join(', ') + '\u2026' });
+      await py.loadPackage(m.packages, { messageCallback: function (s) { post({ t: 'out', stream: 'stdout', text: s + '\n' }); }, errorCallback: function (s) { post({ t: 'out', stream: 'stderr', text: s + '\n' }); } });
+      post({ t: 'installed', id: m.id, ok: true });
+    } catch (e) { post({ t: 'installed', id: m.id, ok: false, message: String(e && e.message || e).split('\n').slice(-1)[0] }); }
+    return;
+  }
+  if (m.t === 'list') {
+    try { var p0 = await boot(); post({ t: 'listed', id: m.id, packages: Object.keys(p0.loadedPackages || {}) }); } catch (e) { post({ t: 'listed', id: m.id, packages: [] }); }
+    return;
+  }
+  if (m.t !== 'run') return;
+  var code = 1;
+  var synced = false;   // only report the file tree back if it was loaded correctly first
+  try {
+    var py2 = await boot();
+    if (m.files) writeSnapshot(py2, m.files, m.dirs);
+    synced = true;
+    py2.setStdout({ batched: function (s) { post({ t: 'out', stream: 'stdout', text: s + '\n' }); } });
+    py2.setStderr({ batched: function (s) { post({ t: 'out', stream: 'stderr', text: s + '\n' }); } });
+    if (m.mode === 'file' || m.mode === 'code') {
+      var src = m.mode === 'file' ? new TextDecoder().decode(py2.FS.readFile(m.file)) : m.code;
+      try { await py2.loadPackagesFromImports(src, { messageCallback: function () {}, errorCallback: function () {} }); } catch (e) {}
+    }
+    if (m.mode === 'module' && m.code === 'pytest') { try { await py2.loadPackage('pytest'); } catch (e) {} }
+    var fn = py2.globals.get('__cognita_run');
+    try { code = fn(m.mode, m.code || '', m.file || '', m.args || [], m.cwd || '/workspace'); }
+    finally { fn.destroy(); }
+    if (typeof code !== 'number') code = Number(code) || 0;
+  } catch (e) {
+    post({ t: 'out', stream: 'stderr', text: describeError(e) + '\n' });
+    code = 1;
+  }
+  var snap = null;
+  if (synced) { try { snap = readSnapshot(await boot()); } catch (e) {} }
+  self.postMessage({ t: 'done', id: m.id, exitCode: code, files: snap ? snap.files : null, dirs: snap ? snap.dirs : null }, snap ? snap.transfer : []);
+};
+</script>
+
+<script type="text/plain" id="js-worker-src">
+/* One-shot JavaScript worker. Terminated when the run ends or times out. */
+self.onmessage = async function (ev) {
+  var m = ev.data, files = new Map(), changed = new Set(), dec = new TextDecoder(), enc = new TextEncoder();
+  (m.files || []).forEach(function (f) { files.set(f.path, new Uint8Array(f.data)); });
+  var cwd = m.cwd || '/workspace';
+  function abs(p) {
+    var j = p.charAt(0) === '/' ? p : cwd + '/' + p, out = [];
+    j.split('/').forEach(function (x) { if (x === '' || x === '.') return; if (x === '..') { if (!out.length) throw new Error('path outside workspace'); out.pop(); } else out.push(x); });
+    var f = '/' + out.join('/');
+    if (f !== '/workspace' && f.indexOf('/workspace/') !== 0) throw new Error('path outside workspace: ' + p);
+    return f;
+  }
+  var workspace = {
+    cwd: cwd,
+    readText: function (p) { var f = files.get(abs(p)); if (!f) throw new Error('no such file: ' + p); return dec.decode(f); },
+    writeText: function (p, t) { var a = abs(p); files.set(a, enc.encode(String(t))); changed.add(a); },
+    exists: function (p) { return files.has(abs(p)); },
+    list: function () { return Array.from(files.keys()); }
+  };
+  function fmt(a) { return a.map(function (x) { if (typeof x === 'string') return x; try { return typeof x === 'object' ? JSON.stringify(x, null, 2) : String(x); } catch (e) { return String(x); } }).join(' '); }
+  var consoleObj = {
+    log: function () { self.postMessage({ t: 'out', stream: 'stdout', text: fmt([].slice.call(arguments)) + '\n' }); },
+    error: function () { self.postMessage({ t: 'out', stream: 'stderr', text: fmt([].slice.call(arguments)) + '\n' }); }
+  };
+  consoleObj.info = consoleObj.debug = consoleObj.log; consoleObj.warn = consoleObj.error;
+  var code = 0;
+  try {
+    var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    await new AsyncFunction('console', 'workspace', m.code)(consoleObj, workspace);
+  } catch (e) {
+    self.postMessage({ t: 'out', stream: 'stderr', text: (e && e.stack ? e.stack.split('\n').slice(0, 6).join('\n') : String(e)) + '\n' });
+    code = 1;
+  }
+  var out = [], transfer = [];
+  changed.forEach(function (p) { var b = files.get(p).slice().buffer; out.push({ path: p, data: b }); transfer.push(b); });
+  self.postMessage({ t: 'done', exitCode: code, files: out }, transfer);
+};
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var Shell = self.CognitaShell;
+  var parentWin = window.parent;
+  var vfs = new Shell.VFS();
+  var cwd = Shell.ROOT, env = { HOME: Shell.ROOT, PWD: Shell.ROOT };
+  var offered = new Map();          // path -> title
+  var enc = new TextEncoder();
+
+  var pyWorker = null, pyReady = null, pySyncedVersion = -1, idleTimer = null;
+  var active = null;                // { id, kill() } for the call that is running
+  var queue = Promise.resolve();
+  var seq = 0;
+
+  function send(m, transfer) { parentWin.postMessage(m, '*', transfer || []); }
+
+  function blobUrl(id) {
+    return URL.createObjectURL(new Blob([document.getElementById(id).textContent], { type: 'text/javascript' }));
+  }
+  var pyUrl = null, jsUrl = null;
+
+  // ── Python worker lifecycle ─────────────────────────────────────
+  function killPy() {
+    if (pyWorker) { try { pyWorker.terminate(); } catch (e) {} }
+    pyWorker = null; pyReady = null; pySyncedVersion = -1;
+  }
+  function touchIdle() {
+    clearTimeout(idleTimer);
+    // Free the interpreter's memory after a quiet period; it restarts on demand.
+    idleTimer = setTimeout(killPy, 5 * 60 * 1000);
+  }
+  function getPy() {
+    if (pyWorker && pyReady) return pyReady;
+    pyUrl = pyUrl || blobUrl('py-worker-src');
+    pyWorker = new Worker(pyUrl);
+    var w = pyWorker;
+    pyReady = new Promise(function (resolve, reject) {
+      function onMsg(ev) {
+        var m = ev.data;
+        if (m.t === 'status') { send({ t: 'status', id: active && active.id, text: m.text }); }
+        else if (m.t === 'ready') { w.removeEventListener('message', onMsg); resolve(w); }
+        else if (m.t === 'boot_error') { w.removeEventListener('message', onMsg); killPy(); reject(new Error(m.message)); }
+      }
+      w.addEventListener('message', onMsg);
+      w.onerror = function (e) { killPy(); reject(new Error(e && e.message || 'Python worker failed to start')); };
+      w.postMessage({ t: 'warm' });
+    });
+    return pyReady;
+  }
+
+  // ── Output handling for one call ────────────────────────────────
+  function makeCollector(id, limits) {
+    var max = (limits && limits.maxOutputChars) || 12000;
+    var c = { stdout: '', stderr: '', truncated: false };
+    c.add = function (stream, text) {
+      var room = max - c.stdout.length - c.stderr.length;
+      if (room <= 0) { c.truncated = true; return; }
+      if (text.length > room) { text = text.slice(0, room); c.truncated = true; }
+      c[stream] += text;
+      send({ t: 'out', id: id, stream: stream, text: text });
+    };
+    return c;
+  }
+
+  // Runs one Python invocation in the worker and applies its file changes to the workspace.
+  async function runPython(spec, io, limits, id) {
+    var w;
+    try { w = await getPy(); }
+    catch (e) {
+      io.err('Python could not start: ' + e.message + '\nThis device or browser may not support running Python here.\n');
+      return 127;
+    }
+    touchIdle();
+    return new Promise(function (resolve) {
+      var finished = false;
+      var timer = setTimeout(function () {
+        if (finished) return; finished = true; killPy();
+        io.err('Timed out after ' + Math.round(limits.timeoutMs / 1000) + ' s. The run was stopped.\n'); resolve(124);
+      }, limits.timeoutMs);
+      active = { id: id, kill: function () { if (finished) return; finished = true; clearTimeout(timer); killPy(); resolve(130); } };
+      function onMsg(ev) {
+        var m = ev.data;
+        if (m.t === 'out') io[m.stream === 'stderr' ? 'err' : 'out'](m.text);
+        else if (m.t === 'status') send({ t: 'status', id: id, text: m.text });
+        else if (m.t === 'done') {
+          if (finished) return; finished = true; clearTimeout(timer); w.removeEventListener('message', onMsg);
+          var code = m.exitCode;
+          try { if (m.files) applySnapshot(m.files, m.dirs); }
+          catch (e) { io.err((e && e.message || 'Could not save the files this run created.') + '\n'); code = code || 1; pySyncedVersion = -1; resolve(code); return; }
+          pySyncedVersion = vfs.version;
+          resolve(code);
+        }
+      }
+      w.addEventListener('message', onMsg);
+      var msg = { t: 'run', id: id, mode: spec.mode, code: spec.code, file: spec.file, args: spec.args, cwd: cwd };
+      var transfer = [];
+      if (pySyncedVersion !== vfs.version) {
+        var snap = snapshotForWorker();
+        msg.files = snap.files; msg.dirs = snap.dirs; transfer = snap.transfer;
+      }
+      w.postMessage(msg, transfer);
+    });
+  }
+
+  function snapshotForWorker() {
+    var files = [], transfer = [];
+    vfs.files.forEach(function (f, p) { var b = f.data.slice().buffer; files.push({ path: p, data: b }); transfer.push(b); });
+    return { files: files, dirs: Array.from(vfs.dirs).filter(function (d) { return d !== Shell.ROOT; }), transfer: transfer };
+  }
+  // Replaces the workspace with what Python left behind, without bumping versions of unchanged files.
+  function applySnapshot(files, dirs) {
+    var seen = new Set();
+    files.forEach(function (f) {
+      var bytes = new Uint8Array(f.data), cur = vfs.files.get(f.path);
+      seen.add(f.path);
+      if (cur && cur.data.length === bytes.length && sameBytes(cur.data, bytes)) return;
+      vfs.writeFile(f.path, bytes);
+    });
+    Array.from(vfs.files.keys()).forEach(function (p) { if (!seen.has(p)) vfs.files.delete(p); });
+    (dirs || []).forEach(function (d) { vfs.dirs.add(d); });
+  }
+  function sameBytes(a, b) { for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+
+  async function runJs(spec, io, limits, id) {
+    jsUrl = jsUrl || blobUrl('js-worker-src');
+    return new Promise(function (resolve) {
+      var w = new Worker(jsUrl), finished = false;
+      function end(code) { if (finished) return; finished = true; clearTimeout(timer); try { w.terminate(); } catch (e) {} resolve(code); }
+      var timer = setTimeout(function () { io.err('Timed out after ' + Math.round(limits.timeoutMs / 1000) + ' s. The run was stopped.\n'); end(124); }, limits.timeoutMs);
+      active = { id: id, kill: function () { end(130); } };
+      w.onmessage = function (ev) {
+        var m = ev.data;
+        if (m.t === 'out') io[m.stream === 'stderr' ? 'err' : 'out'](m.text);
+        else if (m.t === 'done') {
+          (m.files || []).forEach(function (f) { try { vfs.writeFile(f.path, new Uint8Array(f.data)); } catch (e) { io.err(e.message + '\n'); m.exitCode = m.exitCode || 1; } });
+          end(m.exitCode);
+        }
+      };
+      w.onerror = function (e) { io.err((e && e.message || 'JavaScript worker error') + '\n'); end(1); };
+      var snap = snapshotForWorker();
+      w.postMessage({ code: spec.code, cwd: cwd, files: snap.files }, snap.transfer);
+    });
+  }
+
+  async function pipInstall(pkgs, io, listOnly, limits, id) {
+    var w;
+    try { w = await getPy(); } catch (e) { io.err('Python could not start: ' + e.message + '\n'); return 127; }
+    touchIdle();
+    return new Promise(function (resolve) {
+      var rid = 'p' + (++seq), finished = false;
+      var timer = setTimeout(function () { if (finished) return; finished = true; killPy(); io.err('Timed out while loading packages.\n'); resolve(124); }, Math.max(limits.timeoutMs, 60000));
+      active = { id: id, kill: function () { if (finished) return; finished = true; clearTimeout(timer); killPy(); resolve(130); } };
+      function onMsg(ev) {
+        var m = ev.data;
+        if (m.t === 'out') io[m.stream === 'stderr' ? 'err' : 'out'](m.text);
+        else if (m.t === 'status') send({ t: 'status', id: id, text: m.text });
+        else if (m.t === 'listed' && m.id === rid) { finished = true; clearTimeout(timer); w.removeEventListener('message', onMsg); io.out(m.packages.sort().join('\n') + '\n'); resolve(0); }
+        else if (m.t === 'installed' && m.id === rid) {
+          finished = true; clearTimeout(timer); w.removeEventListener('message', onMsg);
+          if (m.ok) { io.out('Loaded: ' + pkgs.join(', ') + '\n'); resolve(0); }
+          else { io.err('Could not install ' + pkgs.join(', ') + ': ' + (m.message || 'unknown package') + '\nThe browser sandbox has no internet access, so only packages bundled with it can be used (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, and others).\n'); resolve(1); }
+        }
+      }
+      w.addEventListener('message', onMsg);
+      w.postMessage(listOnly ? { t: 'list', id: rid } : { t: 'install', id: rid, packages: pkgs });
+    });
+  }
+
+  // ── Tool calls ──────────────────────────────────────────────────
+  function relPath(p) { return Shell.resolvePath(p, cwd); }
+  function bad(p) { throw new Error('"' + p + '" is outside /workspace.'); }
+
+  async function execTool(call) {
+    var name = call.name, a = call.args || {}, limits = call.limits || {};
+    vfs.setLimits({ maxFileBytes: limits.maxFileBytes, maxWorkspaceBytes: limits.maxWorkspaceBytes });
+    var before = vfs.versions();
+    var col = makeCollector(call.id, limits);
+    var io = { out: function (t) { col.add('stdout', t); }, err: function (t) { col.add('stderr', t); } };
+    var exitCode = 0, command = '', note;
+    var ctx = {
+      fs: vfs, cwd: cwd, env: env, maxOutput: limits.maxOutputChars || 12000,
+      // A command line such as "cd src && python a.py" must run Python from src.
+      runPython: function (spec, shellIo) { cwd = ctx.cwd; return runPython(spec, shellIo, limits, call.id); },
+      runJs: function (spec, shellIo) { cwd = ctx.cwd; return runJs(spec, shellIo, limits, call.id); },
+      pipInstall: function (pkgs, shellIo, listOnly) { return pipInstall(pkgs, shellIo, listOnly, limits, call.id); },
+      onOutput: null
+    };
+    var t0 = performance.now();
+    try {
+      switch (name) {
+        case 'sandbox_create_workspace':
+          if (a.reset) { vfs.reset(); offered.clear(); cwd = Shell.ROOT; pySyncedVersion = -1; }
+          command = a.reset ? 'reset workspace' : 'workspace'; io.out('Workspace ready at ' + Shell.ROOT + ' (' + vfs.files.size + ' files).\n'); break;
+        case 'sandbox_get_working_directory': command = 'pwd'; io.out(cwd + '\n'); break;
+        case 'sandbox_write_file': {
+          var wp = relPath(a.path); if (!wp) bad(a.path);
+          vfs.writeFile(wp, String(a.content)); command = (a.imported ? 'import ' : 'write ') + wp;
+          io.out((a.imported ? 'Placed ' : 'Wrote ') + wp + ' (' + enc.encode(String(a.content)).length + ' bytes).\n'); break;
+        }
+        case 'sandbox_read_file': {
+          var rp = relPath(a.path); if (!rp) bad(a.path);
+          var text = vfs.readText(rp), cap = Math.min(Math.max(parseInt(a.maxChars, 10) || 8000, 1), 20000);
+          command = 'read ' + rp; io.out(text.length > cap ? text.slice(0, cap) + '\n[file continues: ' + (text.length - cap) + ' more characters]\n' : text); break;
+        }
+        case 'sandbox_list_files': {
+          var lp = relPath(a.path || '.'); if (!lp) bad(a.path);
+          command = 'ls ' + lp;
+          if (!vfs.isDir(lp)) throw new Error(lp + ' is not a folder.');
+          if (a.recursive) { vfs.walk(lp).forEach(function (f) { io.out(f + '  ' + vfs.readBytes(f).length + ' bytes\n'); }); if (!vfs.walk(lp).length) io.out('(no files)\n'); }
+          else { var es = vfs.list(lp); es.forEach(function (e) { io.out((e.type === 'dir' ? 'dir   ' : 'file  ') + e.name + (e.type === 'file' ? '  ' + e.size + ' bytes' : '') + '\n'); }); if (!es.length) io.out('(empty)\n'); }
+          break;
+        }
+        case 'sandbox_make_directory': { var mp = relPath(a.path); if (!mp) bad(a.path); vfs.mkdirp(mp); command = 'mkdir ' + mp; io.out('Created ' + mp + '\n'); break; }
+        case 'sandbox_move_file': {
+          var f1 = relPath(a.from), f2 = relPath(a.to); if (!f1) bad(a.from); if (!f2) bad(a.to);
+          vfs.move(f1, f2); command = 'mv ' + f1 + ' ' + f2; io.out('Moved.\n'); break;
+        }
+        case 'sandbox_delete_file': {
+          var dp = relPath(a.path); if (!dp) bad(a.path);
+          if (dp === Shell.ROOT) throw new Error('The workspace root cannot be deleted. Use reset instead.');
+          vfs.remove(dp, true); offered.delete(dp); if (cwd === dp || cwd.indexOf(dp + '/') === 0) cwd = Shell.ROOT;
+          command = 'rm ' + dp; io.out('Deleted ' + dp + '\n'); break;
+        }
+        case 'sandbox_offer_file': {
+          var op = relPath(a.path); if (!op) bad(a.path);
+          if (!vfs.isFile(op)) throw new Error(op + ' does not exist.');
+          offered.set(op, String(a.title || Shell.basename(op)).slice(0, 120)); command = 'offer ' + op; io.out('Ready for download: ' + op + '\n'); break;
+        }
+        case 'sandbox_run_python': {
+          var pf = null;
+          if (a.filename) { pf = relPath(a.filename); if (!pf) bad(a.filename); vfs.writeFile(pf, String(a.code)); }
+          command = pf ? 'python ' + pf : 'python (inline code)';
+          exitCode = await runPython(pf ? { mode: 'file', file: pf, args: [] } : { mode: 'code', code: String(a.code), args: [] }, io, limits, call.id);
+          break;
+        }
+        case 'sandbox_run_javascript': command = 'node (inline code)'; exitCode = await runJs({ code: String(a.code) }, io, limits, call.id); break;
+        case 'sandbox_run_tests': {
+          var runner = a.runner === 'pytest' ? 'pytest' : 'unittest', tp = a.path ? relPath(a.path) : null;
+          if (a.path && !tp) bad(a.path);
+          command = runner + (tp ? ' ' + tp : '');
+          if (runner === 'pytest') exitCode = await runPython({ mode: 'module', code: 'pytest', args: tp ? [tp] : ['-q'] }, io, limits, call.id);
+          else exitCode = await runPython({ mode: 'module', code: 'unittest', args: tp && vfs.isFile(tp) ? ['-v', tp] : ['discover', '-v'].concat(tp ? ['-s', tp] : []) }, io, limits, call.id);
+          break;
+        }
+        case 'sandbox_run_command': {
+          command = String(a.command);
+          var r = await Shell.runShell(command, Object.assign(ctx, { onOutput: function (s, t) { send({ t: 'out', id: call.id, stream: s, text: t }); } }));
+          cwd = ctx.cwd; exitCode = r.exitCode; col.stdout = r.stdout; col.stderr = r.stderr; col.truncated = col.truncated || r.truncated;
+          break;
+        }
+        default:
+          exitCode = 127; io.err('This sandbox does not support ' + name + '.\n'); command = name;
+      }
+    } catch (e) {
+      exitCode = exitCode || 1; io.err((e && e.message || String(e)) + '\n');
+    }
+    var changes = vfs.diffSince(before);
+    var res = {
+      command: command, cwd: cwd, stdout: col.stdout, stderr: col.stderr, exitCode: exitCode,
+      durationMs: Math.round(performance.now() - t0), truncated: col.truncated, files: changes,
+      cancelled: exitCode === 130 || undefined, note: note
+    };
+    var off = [];
+    offered.forEach(function (title, p) { if (vfs.isFile(p)) off.push({ path: p, title: title, size: vfs.readBytes(p).length }); });
+    if (name === 'sandbox_offer_file' || off.length) res.offered = off;
+    return { result: res, changed: changes.length > 0 };
+  }
+
+  function exportSnapshot() {
+    var files = [], transfer = [];
+    vfs.files.forEach(function (f, p) { var b = f.data.slice().buffer; files.push({ path: p, data: b }); transfer.push(b); });
+    return { snapshot: { files: files, dirs: Array.from(vfs.dirs), cwd: cwd, offered: Array.from(offered.entries()) }, transfer: transfer };
+  }
+
+  // ── Messages from the parent page ───────────────────────────────
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== parentWin) return;
+    var m = ev.data;
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'call') {
+      queue = queue.then(async function () {
+        var out;
+        try { out = await execTool(m.call); }
+        catch (e) { out = { result: { command: m.call.name, cwd: cwd, stdout: '', stderr: String(e && e.message || e), exitCode: 1, durationMs: 0 }, changed: false }; }
+        active = null;
+        var pack = out.changed ? exportSnapshot() : null;
+        send({ t: 'result', id: m.call.id, result: out.result, snapshot: pack ? pack.snapshot : null, cwd: cwd }, pack ? pack.transfer : []);
+      });
+    } else if (m.t === 'cancel') {
+      if (active && active.id === m.id) active.kill();
+    } else if (m.t === 'load') {
+      vfs.reset(); offered.clear(); pySyncedVersion = -1;
+      var s = m.snapshot || {};
+      (s.dirs || []).forEach(function (d) { try { vfs.dirs.add(d); } catch (e) {} });
+      (s.files || []).forEach(function (f) { try { vfs.files.set(f.path, { data: new Uint8Array(f.data), version: ++vfs.version }); } catch (e) {} });
+      cwd = s.cwd && (s.cwd === Shell.ROOT || s.cwd.indexOf(Shell.ROOT + '/') === 0) ? s.cwd : Shell.ROOT;
+      (s.offered || []).forEach(function (p) { if (vfs.isFile(p[0])) offered.set(p[0], p[1]); });
+      send({ t: 'loaded', id: m.id });
+    } else if (m.t === 'export') {
+      var p = Shell.resolvePath(String(m.path), Shell.ROOT);
+      if (!p || !vfs.isFile(p)) { send({ t: 'exported', id: m.id, ok: false }); return; }
+      var buf = vfs.readBytes(p).slice().buffer;
+      send({ t: 'exported', id: m.id, ok: true, path: p, data: buf }, [buf]);
+    } else if (m.t === 'warm') {
+      getPy().then(function () { send({ t: 'warmed', id: m.id, ok: true }); }, function (e) { send({ t: 'warmed', id: m.id, ok: false, message: e.message }); });
+    }
+  });
+
+  send({ t: 'ready' });
+})();
+</script>
+</body>
+</html>
