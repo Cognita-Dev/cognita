@@ -10,8 +10,17 @@
 
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
+import { SandboxClient } from './sandbox-client.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
+
+// The code sandbox (Tier 1) runs in this browser, in a sandboxed iframe. It is
+// created the first time the model asks to run something.
+let _sandboxClient = null;
+function getSandbox() {
+  if (!_sandboxClient) _sandboxClient = new SandboxClient();
+  return _sandboxClient;
+}
 const HISTORY_KEY = 'cognita:conversations';
 
 const QUALITY_META = {
@@ -1537,10 +1546,17 @@ async function sendMessage(text) {
  * This drives a single live indicator bubble in real time as each event
  * arrives, then commits the finished turn into `conversation` /
  * `conversationMeta` exactly once, on `done`. */
-async function runStreamedTurn(payload) {
-  const live = createLiveTurnIndicator();
-  const startedAt = performance.now();
+async function runStreamedTurn(payload, resume) {
+  // `resume` is set when this request continues a turn that paused so the
+  // browser could run code (see continueAfterSandbox). It carries the live
+  // indicator, the start time and the steps already finished, so the person
+  // sees one unbroken turn instead of several.
+  const turn = resume || { live: createLiveTurnIndicator(), startedAt: performance.now(), carry: [] };
+  const live = turn.live;
+  const startedAt = turn.startedAt;
+  payload.conversationId = payload.conversationId || ensureConversationId();
   let settled = false;
+  let paused = null;
 
   const finishWithError = (message, status) => {
     if (settled) return;
@@ -1569,8 +1585,9 @@ async function runStreamedTurn(payload) {
       // `steps` is the full recorded action chain for this turn (Bug 2) —
       // may contain several entries (read → write → verify, etc.), not
       // just one. Falls back to the legacy single-object `toolExecuted`
-      // field for compatibility with any cached older responses.
-      steps: Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : []),
+      // field for compatibility with any cached older responses. Steps
+      // finished before a sandbox pause (turn.carry) come first.
+      steps: turn.carry.concat(Array.isArray(data.steps) ? data.steps : (data.toolExecuted ? [data.toolExecuted] : [])),
     };
     // The backend echoes back the full, updated approvals list — including
     // anything newly approved this turn — so this conversation never
@@ -1590,13 +1607,24 @@ async function runStreamedTurn(payload) {
     }, {
       onRound: () => live.addPendingRow(),
       onStep: (step) => live.addStep(step),
-      onDone: (data) => finishWithData(data),
+      onSandboxCall: (c) => live.addPendingRow(c && c.summary),
+      onDone: (data) => {
+        if (data && data.pendingSandboxCall) { paused = data; return; }
+        finishWithData(data);
+      },
       onError: (data) => finishWithError(data && data.message, data && data.status),
       onFatal: (message, status) => finishWithError(message, status),
     });
   } catch (e) {
     console.error('[app] chat stream failed:', e.message);
     finishWithError('Could not reach Cognita. Please check your connection.', 0);
+    return;
+  }
+
+  // The turn paused because the model asked to run code. Run it here, in
+  // the browser sandbox, then send the real result back to continue.
+  if (paused && !settled) {
+    await continueAfterSandbox(payload, paused, turn);
     return;
   }
 
@@ -1607,6 +1635,78 @@ async function runStreamedTurn(payload) {
   if (!settled) {
     finishWithError('Connection to Cognita was interrupted before a response was received.', 0);
   }
+}
+
+/* Runs the sandbox call the Worker handed over, shows it live, then
+ * resumes the same turn with the real result. Everything the model sees
+ * about the run (output, exit code, files) comes from this execution. */
+async function continueAfterSandbox(payload, paused, turn) {
+  const call = paused.pendingSandboxCall;
+  const live = turn.live;
+  if (Array.isArray(paused.steps)) turn.carry.push(...paused.steps);
+  if (Array.isArray(paused.approvals)) conversationApprovals = paused.approvals;
+
+  const run = live.startSandboxRun(call);
+  let outcome;
+  try {
+    outcome = await getSandbox().run(call, payload.conversationId, {
+      onOutput: run.onOutput,
+      onStatus: run.onStatus,
+    });
+  } catch (e) {
+    outcome = { result: { command: call.summary || call.name, cwd: '/workspace', stdout: '', stderr: 'The sandbox could not run this: ' + (e && e.message ? e.message : 'unknown error'), exitCode: 1, durationMs: 0 }, cancelled: false };
+  }
+  const result = outcome.result || {};
+
+  const step = {
+    type: 'sandbox', name: call.name, provider: 'sandbox',
+    ok: result.exitCode === 0, cancelled: !!outcome.cancelled,
+    summary: call.summary || call.name,
+    sandbox: trimSandboxResultForStorage(result),
+  };
+  run.finish(step);
+  turn.carry.push(step);
+
+  await runStreamedTurn({
+    messages: payload.messages,
+    quality: payload.quality,
+    approvals: conversationApprovals,
+    conversationId: payload.conversationId,
+    sandboxResume: {
+      // Long string arguments (such as imported file text) are not sent back;
+      // the server only needs the tool name for its log and the trace.
+      call: { id: call.id, name: call.name, args: shortenArgs(call.args) },
+      assistantText: call.assistantText || '',
+      result,
+      cancelled: !!outcome.cancelled,
+      trace: Array.isArray(paused.turnTrace) ? paused.turnTrace : [],
+    },
+  }, turn);
+}
+
+function shortenArgs(args) {
+  const out = {};
+  Object.keys(args || {}).slice(0, 10).forEach((k) => {
+    const v = args[k];
+    out[k] = typeof v === 'string' && v.length > 300 ? v.slice(0, 300) : v;
+  });
+  return out;
+}
+
+// What is kept in the saved conversation for a sandbox step: enough to show
+// the command, its output and the files it touched, not unbounded text.
+function trimSandboxResultForStorage(r) {
+  const cut = (t) => (typeof t === 'string' && t.length > 4000 ? t.slice(0, 4000) + '\n[output cut]' : (t || ''));
+  return {
+    command: String(r.command || '').slice(0, 300),
+    cwd: r.cwd || '/workspace',
+    stdout: cut(r.stdout), stderr: cut(r.stderr),
+    exitCode: Number.isInteger(r.exitCode) ? r.exitCode : 0,
+    durationMs: r.durationMs || 0,
+    truncated: !!r.truncated,
+    files: (Array.isArray(r.files) ? r.files : []).slice(0, 20),
+    offered: (Array.isArray(r.offered) ? r.offered : []).slice(0, 10),
+  };
 }
 
 /* ── SSE client ──────────────────────────────────────────────────────
@@ -1655,6 +1755,7 @@ async function streamChatSSE(url, options, handlers) {
   const dispatch = (eventName, data) => {
     if (eventName === 'round') handlers.onRound && handlers.onRound(data);
     else if (eventName === 'step') handlers.onStep && handlers.onStep(data);
+    else if (eventName === 'sandbox_call') handlers.onSandboxCall && handlers.onSandboxCall(data);
     else if (eventName === 'error') handlers.onError && handlers.onError(data);
     else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
     // Unknown event names are ignored rather than treated as fatal, so a
@@ -1756,8 +1857,12 @@ function createLiveTurnIndicator() {
     if (traceEl) traceEl.style.display = '';
   }
 
-  function addPendingRow() {
+  function addPendingRow(text) {
     reveal();
+    if (pendingRow && text) {
+      const l = pendingRow.querySelector('.tool-trace-card-label');
+      if (l) l.textContent = text;
+    }
     if (!traceEl || pendingRow) return; // only one placeholder at a time
     const row = document.createElement('div');
     row.className = 'tool-trace-card tool-trace-card--pending';
@@ -1765,7 +1870,7 @@ function createLiveTurnIndicator() {
     icon.className = 'ph ph-circle-notch trace-spin';
     const label = document.createElement('span');
     label.className = 'tool-trace-card-label';
-    label.textContent = 'Working\u2026';
+    label.textContent = text || 'Working\u2026';
     row.appendChild(icon);
     row.appendChild(label);
     traceEl.appendChild(row);
@@ -1783,6 +1888,14 @@ function createLiveTurnIndicator() {
     // covers it) — it just closes out any pending placeholder.
     if (step.type === 'awaiting_confirmation') {
       if (pendingRow) { pendingRow.remove(); pendingRow = null; }
+      return;
+    }
+
+    // A run the Worker did itself on a remote sandbox: show it like a browser run.
+    if (step.type === 'sandbox') {
+      if (pendingRow) { pendingRow.remove(); pendingRow = null; }
+      traceEl.appendChild(htmlToElement(renderSandboxStepHtml(step)));
+      scrollToBottom();
       return;
     }
 
@@ -1805,6 +1918,64 @@ function createLiveTurnIndicator() {
     scrollToBottom();
   }
 
+  // The running view of one sandbox call: title, elapsed time, a Stop button
+  // and a terminal block that fills as output arrives. When the run ends,
+  // finish() swaps it for the settled card that history reloads also use.
+  function startSandboxRun(call) {
+    reveal();
+    if (pendingRow) { pendingRow.remove(); pendingRow = null; }
+    const card = document.createElement('div');
+    card.className = 'tool-trace-card sbx-card sbx-card--running';
+    card.innerHTML =
+      '<details class="sbx" open>' +
+        '<summary class="sbx-head">' +
+          '<i class="ph ph-circle-notch trace-spin"></i>' +
+          '<span class="sbx-title"></span>' +
+          '<span class="sbx-time">0.0s</span>' +
+          '<button type="button" class="sbx-stop" aria-label="Stop this run"><i class="ph ph-stop"></i> Stop</button>' +
+        '</summary>' +
+        '<div class="sbx-body"><pre class="sbx-out" aria-live="off"></pre></div>' +
+      '</details>';
+    card.querySelector('.sbx-title').textContent = call.summary || 'Running code';
+    const timeEl = card.querySelector('.sbx-time');
+    const outEl = card.querySelector('.sbx-out');
+    const titleEl = card.querySelector('.sbx-title');
+    const t0 = performance.now();
+    const tick = setInterval(() => { timeEl.textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    card.querySelector('.sbx-stop').addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      ev.currentTarget.disabled = true;
+      getSandbox().cancel(call.id);
+    });
+    traceEl.appendChild(card);
+    scrollToBottom();
+
+    let shown = 0;
+    const MAX_SHOWN = 20000;
+    return {
+      onOutput(stream, text) {
+        if (shown >= MAX_SHOWN) return;
+        const piece = text.length > MAX_SHOWN - shown ? text.slice(0, MAX_SHOWN - shown) : text;
+        shown += piece.length;
+        // Keep following the output only while the person has not scrolled it up.
+        const stick = outEl.scrollHeight - outEl.scrollTop - outEl.clientHeight < 24;
+        const span = document.createElement('span');
+        if (stream === 'stderr') span.className = 'sbx-err';
+        span.textContent = piece;
+        outEl.appendChild(span);
+        if (stick) outEl.scrollTop = outEl.scrollHeight;
+        scrollToBottom();
+      },
+      onStatus(text) { titleEl.textContent = text; },
+      finish(step) {
+        clearInterval(tick);
+        const settled = htmlToElement(renderSandboxStepHtml(step));
+        card.replaceWith(settled);
+        scrollToBottom();
+      },
+    };
+  }
+
   function remove() {
     const timers = activeThinkingTimers[id];
     if (timers) {
@@ -1815,7 +1986,73 @@ function createLiveTurnIndicator() {
     el.remove();
   }
 
-  return { id, addPendingRow, addStep, remove };
+  return { id, addPendingRow, addStep, startSandboxRun, remove };
+}
+
+/* ── Sandbox step cards ───────────────────────────────────────────────
+ * One compact, expandable card per code run: what ran, whether it worked,
+ * how long it took, the output, the files it changed, and any file the
+ * assistant offered for download. Text is always escaped; output is never
+ * treated as HTML. Used for the live run, for runs the Worker made on a
+ * remote sandbox, and for settled history. */
+function htmlToElement(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content.firstElementChild;
+}
+
+function formatBytes(n) {
+  if (!Number.isFinite(n)) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+function renderSandboxStepHtml(step) {
+  const sb = step.sandbox || {};
+  const ok = step.ok !== false && !step.cancelled;
+  const icon = step.cancelled ? 'ph-stop-circle' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
+  const cls = step.cancelled ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
+  const secs = sb.durationMs ? (sb.durationMs / 1000).toFixed(1) + 's' : '';
+
+  let out = '';
+  if (sb.stdout) out += '<span>' + escapeHtml(sb.stdout) + '</span>';
+  if (sb.stderr) out += '<span class="sbx-err">' + escapeHtml(sb.stderr) + '</span>';
+  if (!out) out = '<span class="sbx-muted">(no output)</span>';
+
+  const status = step.cancelled ? 'Stopped' : (ok ? 'Succeeded' : 'Failed (exit code ' + (sb.exitCode != null ? sb.exitCode : 1) + ')');
+  const files = (sb.files || []).map((f) => {
+    const fi = f.change === 'deleted' ? 'ph-file-minus' : (f.change === 'created' ? 'ph-file-plus' : 'ph-file-text');
+    return '<li><i class="ph ' + fi + '"></i><span class="sbx-file-path">' + escapeHtml(f.path) + '</span>' +
+      (f.change === 'deleted' ? '' : '<span class="sbx-muted">' + escapeHtml(formatBytes(f.size)) + '</span>') + '</li>';
+  }).join('');
+  const offered = (sb.offered || []).map((f) =>
+    '<button type="button" class="sbx-download" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(f.title || f.path.split('/').pop()) + '">' +
+      '<i class="ph ph-download-simple"></i> ' + escapeHtml(f.title || f.path.split('/').pop()) +
+    '</button>'
+  ).join('');
+
+  return (
+    '<div class="tool-trace-card sbx-card ' + cls + '">' +
+      '<details class="sbx"' + (!ok && !step.cancelled ? ' open' : '') + '>' +
+        '<summary class="sbx-head">' +
+          '<i class="ph ' + icon + '"></i>' +
+          '<span class="sbx-title">' + escapeHtml(step.summary || step.name || 'Ran code') + '</span>' +
+          (secs ? '<span class="sbx-time">' + secs + '</span>' : '') +
+          '<i class="ph ph-caret-down sbx-caret"></i>' +
+        '</summary>' +
+        '<div class="sbx-body">' +
+          (sb.command ? '<div class="sbx-cmd"><span class="sbx-prompt">$</span> ' + escapeHtml(sb.command) + '</div>' : '') +
+          '<pre class="sbx-out">' + out + '</pre>' +
+          (sb.truncated ? '<div class="sbx-note">Output was cut to keep things fast.</div>' : '') +
+          '<div class="sbx-meta">' + escapeHtml(status) + (sb.cwd ? ' \u00b7 ' + escapeHtml(sb.cwd) : '') + '</div>' +
+          (files ? '<ul class="sbx-files">' + files + '</ul>' : '') +
+          (offered ? '<div class="sbx-actions">' + offered + '</div>' : '') +
+          (!ok && !step.cancelled ? '<div class="sbx-actions"><button type="button" class="sbx-retry"><i class="ph ph-arrow-clockwise"></i> Try again</button></div>' : '') +
+        '</div>' +
+      '</details>' +
+    '</div>'
+  );
 }
 
 /* ════════════════════════════════════════════════════════
@@ -2314,6 +2551,7 @@ function renderMessage(msg, index) {
   let actionTraceHtml = '';
   if (hasSteps || ptc) {
     const cardsHtml = traceSteps.map((te) => {
+      if (te.type === 'sandbox') return renderSandboxStepHtml(te);
       const ok = te.ok !== false;
       const finalIcon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
       const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
@@ -2480,6 +2718,16 @@ function wireMessageActionButtons() {
   });
   document.querySelectorAll('[data-tool-action="cancel"]').forEach((btn) => {
     btn.addEventListener('click', () => resolvePendingToolCall(parseInt(btn.dataset.index, 10), false));
+  });
+  // Files the assistant offered from the sandbox workspace.
+  document.querySelectorAll('.sbx-download').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const ok = await getSandbox().downloadFile(ensureConversationId(), btn.dataset.sbxPath);
+      if (!ok) showToast('That file is no longer in the workspace. Ask for it again and it will be rebuilt.');
+    });
+  });
+  document.querySelectorAll('.sbx-retry').forEach((btn) => {
+    btn.addEventListener('click', () => { if (!isSending) sendMessage('That did not work. Please fix the problem and try again.'); });
   });
 }
 
