@@ -13,6 +13,13 @@ webhook-endpoint.js
 library-endpoint.js
 connectors-endpoint.js
 note-taker-endpoint.js
+note-ask-endpoint.js
+saved-notes-endpoint.js
+insights-endpoint.js
+social-inbox-endpoint.js
+social-media-endpoint.js
+social-scheduler-endpoint.js
+account-deletion-endpoint.js
 
 admin-resources-endpoint.js
 admin-roles-endpoint.js
@@ -29,6 +36,15 @@ subscription.js
 usage.js
 library-cache.js
 download-proxy.js
+paystack-client.js
+rate-limit.js
+json-extract.js
+prompts.js
+account-deletion.js
+facebook-data-deletion.js
+insights-digest.js
+social-inbox.js
+social-scheduler.js
 
 connectors.js
 connector-providers.js
@@ -37,6 +53,7 @@ canva-tools.js
 figma-tools.js
 github-tools.js
 google-tools.js
+meta-tools.js
 
 docx-builder.js
 pdf-builder.js
@@ -45,6 +62,12 @@ pptx-builder.js
 # NOTE: excerpt-builder.js is intentionally NOT listed here. It is shared:
 # the Worker bundles it, AND the browser imports it (js/resources.js).
 # Ignoring it makes the Resources page fail to load on Vercel.
+
+# Agent sandbox: Worker-only server files.
+# The browser files js/sandbox-client.js, js/sandbox-shell.js and
+# sandbox-frame.html MUST be served, so they are NOT listed here.
+sandbox-tools.js
+sandbox-provider.js
 
 worker.js
 wrangler.jsonc
@@ -55,6 +78,4 @@ reminders/
 
 pwa/vapid-keygen.html
 
-# Added: new Worker-only file and test suite must not be served by Vercel
-paystack-client.js
 tests/
