@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-03.1';
+export const PROMPT_VERSION = '2026-10-03.2';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -158,6 +158,37 @@ const TOOL_USE_RULES =
   'mechanism in your reply to the user — describe the outcome, in ' +
   'plain language, the way a colleague doing the work themselves would.';
 
+// Only sent when the agent sandbox is offered (sandbox-tools.js). Kept as its
+// own static module so the cacheable beginning of the prompt stays identical
+// for every user who gets it.
+const SANDBOX_RULES =
+  'You can run real code in a private workspace that belongs to this ' +
+  'conversation. Use it whenever the answer depends on actual computation, ' +
+  'data analysis, parsing or converting a file, checking that code works, or ' +
+  'producing a file, instead of estimating or guessing. The workspace is ' +
+  '/workspace and its files are kept between calls. Work in small steps: ' +
+  'write or import files, run them, read the real output, fix problems, and ' +
+  'run again. Judge success only by the exit code and output you get back. ' +
+  'Never say that code ran, and never state the result of a calculation, ' +
+  'unless a sandbox call actually returned it. If a call fails, read the ' +
+  'error, fix the cause and try again before reporting the problem. ' +
+  'The sandbox has no internet access and cannot reach the user\'s ' +
+  'connected apps. To work on a file from Google Drive, Sheets, Docs, Gmail ' +
+  'or GitHub, first fetch it with that app\'s own tool, then place the ' +
+  'result in the workspace with sandbox_import_from_tool instead of ' +
+  'retyping large content. Send a result back to a connected app only when ' +
+  'the user asked for it, using that app\'s own tool, which asks for their ' +
+  'confirmation as usual. The browser sandbox runs Python (with numpy, ' +
+  'pandas, matplotlib, scipy and other bundled packages), JavaScript, and a ' +
+  'small built-in shell (pwd, cd, ls, cat, grep, find, mkdir, cp, mv, rm and ' +
+  'a few more). Unless a tool result says otherwise it has no git, npm or ' +
+  'background processes, so if a task truly needs those, say so plainly. ' +
+  'When you create a file the user will want, such as a report, chart or ' +
+  'CSV, call sandbox_offer_file so they get a download button; every other ' +
+  'file is temporary scratch. Describe results in plain language and do not ' +
+  'paste raw terminal output unless it helps the user. Do not mention tools, ' +
+  'sandboxes or workspaces as machinery; say what you did and what you found.';
+
 // Image questions only (the vision model).
 const IMAGE_RULES =
   'The user has attached one or more images. Describe and analyse what you ' +
@@ -175,6 +206,17 @@ const CHAT_CORE = join([IDENTITY, KNOWLEDGE, REDIRECTS, REASONING_HYGIENE, FORMA
 // Plain text chat + connected-app tools. Always starts with CHAT_CORE, so
 // the cacheable beginning is shared with the no-tools variant.
 const CHAT_WITH_TOOLS = join([CHAT_CORE, TOOL_USE_RULES, TOOL_OUTPUT_FORMATTING]);
+
+// Sandbox variants. Both start with the same text as the variants above, so
+// the cacheable beginning is shared.
+const CHAT_WITH_SANDBOX = join([CHAT_CORE, SANDBOX_RULES, TOOL_OUTPUT_FORMATTING]);
+const CHAT_WITH_TOOLS_AND_SANDBOX = join([CHAT_WITH_TOOLS, SANDBOX_RULES]);
+
+function _staticFor(hasTools, hasSandbox) {
+  if (hasTools && hasSandbox) return CHAT_WITH_TOOLS_AND_SANDBOX;
+  if (hasSandbox) return CHAT_WITH_SANDBOX;
+  return hasTools ? CHAT_WITH_TOOLS : CHAT_CORE;
+}
 
 // Image questions: its own slim prompt (no reasoning rules, no tool rules).
 const VISION_CORE = join([IDENTITY, KNOWLEDGE, REDIRECTS, FORMATTING_CHAT, IMAGE_RULES]);
@@ -215,10 +257,12 @@ function buildSessionBlock(firstName, now) {
  * @param {string|null} [opts.firstName] - from the signed-in user's account
  * @param {boolean} [opts.hasTools] - true only when connected-app tools are
  *   being offered to the model on THIS turn
+ * @param {boolean} [opts.hasSandbox] - true only when the agent sandbox tools
+ *   are being offered on THIS turn
  * @param {Date} [opts.now] - injectable for tests
  */
-export function buildChatSystemPrompt({ firstName = null, hasTools = false, now } = {}) {
-  return (hasTools ? CHAT_WITH_TOOLS : CHAT_CORE) + '\n\n' + buildSessionBlock(firstName, now);
+export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, now } = {}) {
+  return _staticFor(hasTools, hasSandbox) + '\n\n' + buildSessionBlock(firstName, now);
 }
 
 /** System prompt for a turn where the user attached images (vision model). */
@@ -249,11 +293,11 @@ export function approxTokens(text) {
  * Logged once per request: if `fingerprint` changes between requests that
  * should be identical, something dynamic has leaked into the static part.
  */
-export function chatPromptInfo({ hasTools = false, vision = false } = {}) {
-  const staticPart = vision ? VISION_CORE : (hasTools ? CHAT_WITH_TOOLS : CHAT_CORE);
+export function chatPromptInfo({ hasTools = false, hasSandbox = false, vision = false } = {}) {
+  const staticPart = vision ? VISION_CORE : _staticFor(hasTools, hasSandbox);
   return {
     version: PROMPT_VERSION,
-    variant: vision ? 'vision' : (hasTools ? 'chat+tools' : 'chat'),
+    variant: vision ? 'vision' : (hasTools && hasSandbox ? 'chat+tools+sandbox' : hasSandbox ? 'chat+sandbox' : hasTools ? 'chat+tools' : 'chat'),
     fingerprint: fingerprint(staticPart),
     approxTokens: approxTokens(staticPart),
   };
