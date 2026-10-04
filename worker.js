@@ -394,11 +394,6 @@ const _app = {
       return handleInboxMarkSpam(request, env, itemId);
     }
 
-    // Hit directly by Meta's servers — Webhooks product, separate from
-    // the OAuth login flow. No Authorization header will ever be
-    // present, same category as the Data Deletion callback above, so it
-    // deliberately sits outside requireAuth; handleMetaWebhookEvent does
-    // its own HMAC-signature check on the raw body instead.
     if (request.method === 'GET' && url.pathname === '/webhooks/meta') {
       return handleMetaWebhookVerify(request, env);
     }
