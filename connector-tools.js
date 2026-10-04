@@ -17,6 +17,12 @@
 //   2. toolRequiresConfirmation(name) / describeTool(name, args) — used by
 //      chat-endpoint.js to implement the write-action confirmation flow
 //      without needing to know which provider a tool belongs to.
+//   2b. Sandbox tools (sandbox-tools.js) are registered here too, as the
+//      pseudo-provider 'sandbox', so the same validation, description and
+//      confirmation helpers work for them. They are NOT connector tools:
+//      they need no OAuth connection, are never filtered by the router
+//      below, and are added to the model's tool list separately through
+//      getSandboxToolSchemas(). They never receive a token.
 //   3. executeConnectorTool(name, args, uid, env) — runs the tool and
 //      normalizes the two "you need to (re)connect" errors every
 //      executor can throw (via connectors.js's getValidToken) into a
@@ -28,6 +34,7 @@ import * as githubTools from './github-tools.js';
 import * as googleTools from './google-tools.js';
 import * as metaTools from './meta-tools.js';
 import * as canvaTools from './canva-tools.js';
+import * as sandboxTools from './sandbox-tools.js';
 
 // Keyed by the same provider names as CONNECTOR_PROVIDERS (connectors.js)
 // — kept as one object literal, rather than a naming convention, so a
@@ -69,6 +76,30 @@ for (const provider of CONNECTOR_PROVIDERS) {
         ? tool.function.parameters.required
         : [];
   }
+}
+
+// Sandbox tools: same lookup tables, provider name 'sandbox'.
+const SANDBOX_PROVIDER = 'sandbox';
+for (const tool of sandboxTools.TOOLS) {
+  TOOL_NAME_TO_PROVIDER[tool.function.name] = SANDBOX_PROVIDER;
+  TOOL_NAME_TO_REQUIRED[tool.function.name] =
+    (tool.function.parameters && Array.isArray(tool.function.parameters.required))
+      ? tool.function.parameters.required
+      : [];
+}
+
+/**
+ * The sandbox tool schemas to offer, given what the active sandbox provider
+ * can really do (see sandbox-provider.js). Kept apart from getAvailableTools:
+ * a user with no connected apps still gets the sandbox.
+ */
+export function getSandboxToolSchemas(capabilities) {
+  return sandboxTools.toolsForCapabilities(capabilities);
+}
+
+/** Is this one of the sandbox tools (as opposed to a connected-app tool)? */
+export function isSandboxToolName(name) {
+  return TOOL_NAME_TO_PROVIDER[name] === SANDBOX_PROVIDER;
 }
 
 // ── Tool router ──────────────────────────────────────────────────────
@@ -165,6 +196,7 @@ export function providerForTool(name) {
 export function toolRequiresConfirmation(name) {
   const provider = providerForTool(name);
   if (!provider) return true; // unknown tool — treat as requiring confirmation, safest default
+  if (provider === SANDBOX_PROVIDER) return sandboxTools.REQUIRES_CONFIRMATION.includes(name);
   return REGISTRY[provider].REQUIRES_CONFIRMATION.includes(name);
 }
 
@@ -172,6 +204,7 @@ export function toolRequiresConfirmation(name) {
 export function describeTool(name, args) {
   const provider = providerForTool(name);
   if (!provider) return 'Perform an action in a connected app.';
+  if (provider === SANDBOX_PROVIDER) return sandboxTools.describe(name, args || {});
   return REGISTRY[provider].describe(name, args || {});
 }
 
@@ -207,6 +240,7 @@ export function validateToolArgs(name, args) {
  */
 export function approvalScopeForTool(name, args) {
   const provider = providerForTool(name);
+  if (provider === SANDBOX_PROVIDER) return 'unscoped'; // sandbox tools never need an approval record
   if (!provider || typeof REGISTRY[provider].approvalScope !== 'function') return 'unscoped';
   return REGISTRY[provider].approvalScope(name, args || {}) || 'unscoped';
 }
@@ -252,6 +286,11 @@ export async function executeConnectorTool(name, args, uid, env) {
   const provider = providerForTool(name);
   if (!provider) {
     return { error: true, code: 'UNKNOWN_TOOL', message: 'Unknown tool: ' + name };
+  }
+  if (provider === SANDBOX_PROVIDER) {
+    // Sandbox calls are run by chat-endpoint.js through the sandbox provider
+    // (in the browser or on a remote server), never by this function.
+    return { error: true, code: 'SANDBOX_ROUTING', message: 'Sandbox tools are run through the sandbox provider.' };
   }
 
   try {
