@@ -89,10 +89,25 @@ const LAST_UID_KEY = 'cognita:lastUid';
 // synced into the account of) a different person on the same browser.
 const USER_SCOPED_LOCAL_KEYS = ['cognita:conversations', 'cognita:pendingDeletes'];
 
+// The code sandbox keeps each chat's files in this browser (IndexedDB). They
+// belong to the person who made them, so they go when that person signs out
+// or a different account signs in. Loaded on demand, and any failure is
+// swallowed: clearing these files must never block signing out.
+function _clearSandboxWorkspaces() {
+  try {
+    return import('./sandbox-client.js')
+      .then((m) => m.clearAllSandboxWorkspaces())
+      .catch(() => {});
+  } catch (_) {
+    return Promise.resolve();
+  }
+}
+
 function _clearUserScopedLocalData() {
   try {
     USER_SCOPED_LOCAL_KEYS.forEach((k) => localStorage.removeItem(k));
   } catch (_) { /* storage unavailable — nothing to clear */ }
+  return _clearSandboxWorkspaces();
 }
 
 // If a different account signs in on this browser, wipe the previous
@@ -433,7 +448,7 @@ async function logOut() {
   _knownUid = null;
   // Shared-computer privacy: don't leave this person's chats behind.
   // (They're mirrored to the cloud and come back on next sign-in.)
-  _clearUserScopedLocalData();
+  await _clearUserScopedLocalData();
 }
 
 // Asks the server to send the one-time welcome email. The server decides
