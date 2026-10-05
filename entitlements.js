@@ -46,6 +46,10 @@ export const PLANS = {
       sandboxTimeoutSec: 20,
       sandboxMaxFileMB: 2,
       sandboxMaxWorkspaceMB: 10,
+      // Saving a sandbox file to Cognita storage (POST /api/files/:conversationId).
+      // Counted by the Worker under the usage key sandboxArtifacts.
+      sandboxArtifactMaxMB: 2,
+      sandboxArtifactsPerDay: 5,
       noteTakerSessionsPerDay: 3,
       noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
@@ -111,6 +115,10 @@ export const PLANS = {
       sandboxTimeoutSec: 45,
       sandboxMaxFileMB: 5,
       sandboxMaxWorkspaceMB: 25,
+      // Saving a sandbox file to Cognita storage (POST /api/files/:conversationId).
+      // Counted by the Worker under the usage key sandboxArtifacts.
+      sandboxArtifactMaxMB: 5,
+      sandboxArtifactsPerDay: 30,
       noteTakerSessionsPerDay: 30,
       noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
@@ -167,6 +175,10 @@ export const PLANS = {
       sandboxTimeoutSec: 90,
       sandboxMaxFileMB: 10,
       sandboxMaxWorkspaceMB: 50,
+      // Saving a sandbox file to Cognita storage (POST /api/files/:conversationId).
+      // Counted by the Worker under the usage key sandboxArtifacts.
+      sandboxArtifactMaxMB: 10,
+      sandboxArtifactsPerDay: 100,
       noteTakerSessionsPerDay: 150,
       noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
@@ -230,6 +242,10 @@ export const PLANS = {
       sandboxTimeoutSec: 120,
       sandboxMaxFileMB: 20,
       sandboxMaxWorkspaceMB: 50,
+      // Saving a sandbox file to Cognita storage (POST /api/files/:conversationId).
+      // Counted by the Worker under the usage key sandboxArtifacts.
+      sandboxArtifactMaxMB: 10,
+      sandboxArtifactsPerDay: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
