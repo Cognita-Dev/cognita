@@ -11,8 +11,9 @@
     - the parent never sends it a token, key or secret, only workspace
       files and the tool call to run;
     - its own Content-Security-Policy (set for this path in vercel.json)
-      allows nothing but this page, its inline code, and the Pyodide CDN, so
-      model-written code cannot call out to other sites.
+      allows nothing but this page, its inline code, and Cognita's own Pyodide
+      host (pyodide.cognita.com.ng), so model-written code cannot call out to
+      other sites.
   Python runs in a Web Worker (Pyodide) and JavaScript in a throwaway Web
   Worker, so a runaway loop is stopped by terminating the worker.
 -->
@@ -22,7 +23,12 @@
 
 <script type="text/plain" id="py-worker-src">
 /* Pyodide worker. One long-lived interpreter; every run gets fresh globals. */
-var PYODIDE_VERSION = '0.29.5';
+// Where Pyodide is loaded from: Cognita's own Cloudflare Pages site (built by
+// scripts/build-pyodide-bundle.mjs), with the version in the path. The iframe
+// CSP in vercel.json allows only this host. To roll back to the public CDN,
+// set this to 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/' and put
+// https://cdn.jsdelivr.net back in that CSP.
+var PYODIDE_BASE_URL = 'https://pyodide.cognita.com.ng/v0.29.5/';
 var pyodide = null;
 var loading = null;
 var post = function (m) { self.postMessage(m); };
@@ -62,8 +68,8 @@ async function boot() {
   if (loading) return loading;
   loading = (async function () {
     post({ t: 'status', text: 'Starting Python\u2026' });
-    importScripts('https://cdn.jsdelivr.net/pyodide/v' + PYODIDE_VERSION + '/full/pyodide.js');
-    var py = await self.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v' + PYODIDE_VERSION + '/full/' });
+    importScripts(PYODIDE_BASE_URL + 'pyodide.js');
+    var py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
     py.FS.mkdirTree('/workspace');
     await py.runPythonAsync(RUNNER);
     pyodide = py;
@@ -361,7 +367,7 @@ self.onmessage = async function (ev) {
         else if (m.t === 'installed' && m.id === rid) {
           finished = true; clearTimeout(timer); w.removeEventListener('message', onMsg);
           if (m.ok) { io.out('Loaded: ' + pkgs.join(', ') + '\n'); resolve(0); }
-          else { io.err('Could not install ' + pkgs.join(', ') + ': ' + (m.message || 'unknown package') + '\nThe browser sandbox has no internet access, so only packages bundled with it can be used (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, and others).\n'); resolve(1); }
+          else { io.err('Could not install ' + pkgs.join(', ') + ': ' + (m.message || 'unknown package') + '\nThe browser sandbox has no internet access, so only the packages bundled with it can be used (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, openpyxl, pillow, pyyaml, pytest).\n'); resolve(1); }
         }
       }
       w.addEventListener('message', onMsg);
@@ -499,6 +505,27 @@ self.onmessage = async function (ev) {
       cwd = s.cwd && (s.cwd === Shell.ROOT || s.cwd.indexOf(Shell.ROOT + '/') === 0) ? s.cwd : Shell.ROOT;
       (s.offered || []).forEach(function (p) { if (vfs.isFile(p[0])) offered.set(p[0], p[1]); });
       send({ t: 'loaded', id: m.id });
+    } else if (m.t === 'put') {
+      // Files the person attached. They land in /workspace/uploads, with a
+      // number added to the name if one with that name is already there.
+      queue = queue.then(function () {
+        var lim = m.limits || {};
+        vfs.setLimits({ maxFileBytes: lim.maxFileBytes || 2097152, maxWorkspaceBytes: lim.maxWorkspaceBytes || 10485760 });
+        var saved = [], errors = [], dir = Shell.ROOT + '/uploads';
+        (m.files || []).forEach(function (f) {
+          try {
+            var base = String(f.name || 'file').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').replace(/^\.+/, '').slice(0, 100) || 'file';
+            var dot = base.lastIndexOf('.'), stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : '';
+            var name = base, n = 2;
+            while (vfs.exists(dir + '/' + name)) { name = stem + '-' + (n++) + ext; }
+            vfs.mkdirp(dir);
+            vfs.writeFile(dir + '/' + name, new Uint8Array(f.data));
+            saved.push({ name: f.name, path: dir + '/' + name, size: f.data.byteLength });
+          } catch (e) { errors.push({ name: f.name, error: String(e && e.message || e) }); }
+        });
+        var pack = saved.length ? exportSnapshot() : null;
+        send({ t: 'stored', id: m.id, ok: errors.length === 0, saved: saved, errors: errors, snapshot: pack ? pack.snapshot : null }, pack ? pack.transfer : []);
+      });
     } else if (m.t === 'export') {
       var p = Shell.resolvePath(String(m.path), Shell.ROOT);
       if (!p || !vfs.isFile(p)) { send({ t: 'exported', id: m.id, ok: false }); return; }
