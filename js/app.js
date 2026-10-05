@@ -150,7 +150,7 @@ let documentFormat = 'docx';
 const THINKING_WORDS = [
   'Thinking',
   'Reasoning',
-  'Working through it',
+  'Thinking it through',
   'Digging into it',
   'Considering the angles',
   'Piecing it together',
@@ -1716,6 +1716,8 @@ async function runStreamedTurn(payload, resume) {
   const finishWithData = (data) => {
     if (settled) return;
     settled = true;
+    live.stopWorkClock();
+    const workMs = live.workElapsedMs();
     live.remove();
     approvingIndex = null;
     const elapsedMs = performance.now() - startedAt;
@@ -1730,6 +1732,7 @@ async function runStreamedTurn(payload, resume) {
       thinkingHeading: data.thinkingHeading || null,
       sources: data.sources || null,
       elapsedMs,
+      workMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
       // Files from the workspace the person can download, shown under the
       // answer (see renderDeliverablesHtml). Only path, title and size are kept.
@@ -2002,21 +2005,29 @@ function createLiveTurnIndicator() {
   if (wordEl) wordEl.textContent = THINKING_WORDS[0];
 
   const startedAt = performance.now();
+  // Two clocks. The thinking timer runs from the moment the message is sent.
+  // The work timer starts only when the first real step begins (a tool call or
+  // a code run), so "Worked for" measures the work and not the wait for the
+  // model to decide whether any work was needed.
+  let workStartedAt = null;
+  let workEndedAt = null;
   let wordIdx = 0;
   const wordInterval = setInterval(() => {
     wordIdx = (wordIdx + 1) % THINKING_WORDS.length;
     if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
   }, 2200);
   const timerInterval = setInterval(() => {
-    const t = ((performance.now() - startedAt) / 1000).toFixed(1) + 's';
-    if (timerEl) timerEl.textContent = t;
-    if (actTimeEl) actTimeEl.textContent = t;
+    if (timerEl) timerEl.textContent = ((performance.now() - startedAt) / 1000).toFixed(1) + 's';
+    if (actTimeEl && workStartedAt !== null) {
+      actTimeEl.textContent = ((performance.now() - workStartedAt) / 1000).toFixed(1) + 's';
+    }
   }, 100);
   activeThinkingTimers[id] = { wordInterval, timerInterval };
 
   let pendingItem = null;   // the one "in progress" row, if any
 
   function reveal() {
+    if (workStartedAt === null) workStartedAt = performance.now();
     if (idleEl) idleEl.style.display = 'none';
     actEl.hidden = false;
   }
@@ -2036,7 +2047,14 @@ function createLiveTurnIndicator() {
     scrollToBottom();
   }
 
-  function addPendingRow(text) { putPending(text, ''); }
+  // The server sends `round` every time the model starts a turn, including the
+  // very first one, before anyone knows whether work is needed. Without text
+  // that is still just thinking, so the "Working" view stays hidden until a
+  // real step has started. Between steps it shows the next row as before.
+  function addPendingRow(text) {
+    if (!text && workStartedAt === null) return;
+    putPending(text, '');
+  }
   function addStepStart(m) { if (m) putPending(m.summary, m.providerLabel); }
 
   function addStep(step) {
@@ -2115,7 +2133,15 @@ function createLiveTurnIndicator() {
     el.remove();
   }
 
-  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, remove };
+  // Milliseconds of actual work (first step to now), or null if the turn never
+  // needed any. Safe to call after remove().
+  function workElapsedMs() {
+    if (workStartedAt === null) return null;
+    return Math.round((workEndedAt !== null ? workEndedAt : performance.now()) - workStartedAt);
+  }
+  function stopWorkClock() { if (workStartedAt !== null && workEndedAt === null) workEndedAt = performance.now(); }
+
+  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, remove };
 }
 
 /* ── Files the person can take away ───────────────────────────────────
@@ -2645,10 +2671,13 @@ function renderActivityHtml(meta, index, isUser) {
   }
 
   const failed = steps.filter((st) => st.ok === false && st.type !== 'blocked').length;
+  // "Worked for" counts from the first step; "Thought for" counts the whole
+  // wait. Older saved chats have no workMs and fall back to the total.
   const t = formatDuration(meta.elapsedMs);
+  const tWork = formatDuration(meta.workMs != null ? meta.workMs : meta.elapsedMs);
   let label;
   if (pendingApproval) label = 'Waiting for your approval';
-  else if (steps.length) label = (t ? 'Worked for ' + t + ', ' : '') + plural(steps.length, 'step', 'steps') + (failed ? ', ' + failed + ' failed' : '');
+  else if (steps.length) label = (tWork ? 'Worked for ' + tWork + ', ' : '') + plural(steps.length, 'step', 'steps') + (failed ? ', ' + failed + ' failed' : '');
   else if (ptc && ptc.status === 'cancelled') label = 'Declined';
   else if (ptc) label = approvingIndex === index ? 'Running approved action' : 'Approved';
   else label = t ? 'Thought for ' + t : 'Reasoning';
