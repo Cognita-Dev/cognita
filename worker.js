@@ -21,7 +21,7 @@ import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js'
 import { handleAccountDeletionRequest } from './account-deletion-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
-import { handleFilesList, handleFileGet } from './files-endpoint.js';
+import { handleFilesList, handleFileGet, handleFileSave } from './files-endpoint.js';
 import {
   handleAdminResourceCreate,
   handleAdminResourceBatchCreate,
@@ -222,6 +222,11 @@ const _app = {
 
     if (request.method === 'POST' && url.pathname === '/api/document') {
       return handleDocumentRequest(request, env);
+    }
+
+    if (request.method === 'POST' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
+      const conversationId = url.pathname.split('/')[3];
+      return handleFileSave(request, env, conversationId);
     }
 
     if (request.method === 'GET' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
@@ -679,6 +684,8 @@ function _maxBodyBytes(path) {
   if (path.startsWith('/webhooks/')) return 1 * MB;
   if (path === '/auth/facebook/data-deletion') return 100 * KB;
   if (path === '/api/chat') return 36 * MB;       // up to 4 images as base64
+  // Saving a sandbox file: up to 10 MB of file is about 13.4 MB as base64.
+  if (/^\/api\/files\/[^/]+$/.test(path)) return 14 * MB;
   if (SMALL_BODY_PREFIXES.some((p) => path === p || path.startsWith(p))) return 100 * KB;
   return 15 * MB;
 }
