@@ -35,6 +35,7 @@ import * as googleTools from './google-tools.js';
 import * as metaTools from './meta-tools.js';
 import * as canvaTools from './canva-tools.js';
 import * as sandboxTools from './sandbox-tools.js';
+import { describeConfirmation as _describeConfirmation } from './confirmation.js';
 
 // Keyed by the same provider names as CONNECTOR_PROVIDERS (connectors.js)
 // — kept as one object literal, rather than a naming convention, so a
@@ -325,4 +326,31 @@ export async function executeConnectorTool(name, args, uid, env) {
       message: 'That action could not be completed because of a configuration issue on Cognita\'s side, not something the user can fix themselves. Apologize briefly, do not mention any technical details, error codes, project IDs, or third-party console instructions, and tell the user to reach out to Cognita support for help with this.',
     };
   }
+}
+
+/**
+ * The structured content of the approval card for a write action (who, what,
+ * key details, what it will do). Plain text only; see confirmation.js.
+ */
+export function describeConfirmation(name, args) {
+  return _describeConfirmation(name, args, providerForTool(name));
+}
+
+/**
+ * Small facts the activity timeline shows for a step: which app it touched
+ * (Google Drive, not just "google") and whether it reads, changes or runs.
+ */
+export function stepMeta(name) {
+  const provider = providerForTool(name);
+  let providerLabel = '';
+  if (provider === SANDBOX_PROVIDER) providerLabel = 'Code';
+  else if (provider === 'github') providerLabel = 'GitHub';
+  else if (provider === 'canva') providerLabel = 'Canva';
+  else if (provider === 'facebook') providerLabel = String(name).startsWith('instagram_') ? 'Instagram' : 'Facebook';
+  else if (provider === 'google') {
+    const d = googleTools.TOOL_DOMAINS || {};
+    providerLabel = (d.calendar || []).includes(name) ? 'Google Calendar' : (d.gmail || []).includes(name) ? 'Gmail' : 'Google Drive';
+  }
+  const kind = provider === SANDBOX_PROVIDER ? 'run' : (toolRequiresConfirmation(name) ? 'write' : 'read');
+  return { providerLabel, kind };
 }
