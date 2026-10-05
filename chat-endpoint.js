@@ -192,6 +192,17 @@ async function _modelTurn(tierConfig, messages, tools, env, cacheOptions) {
       const r = await callWithFallback(tierConfig, messages, env, cacheOptions);
       return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
     }
+    if (String(e.message).startsWith('All providers unavailable')) {
+      // Every tool-capable provider failed (rate limits, a removed model).
+      // Plain chat has one more safety net, Workers AI, so answer without
+      // tools rather than show an error. The model is told tools are off so
+      // it cannot claim to have run anything.
+      console.warn('[chat] tool providers exhausted, answering without tools');
+      const note = '\n\nTools are temporarily unavailable. Answer from your own knowledge, do not claim to have run code or used any connected app, and say so briefly if the request needed one.';
+      const plain = messages.map((m, i) => (i === 0 && m.role === 'system' ? { ...m, content: String(m.content) + note } : m));
+      const r = await callWithFallback(tierConfig, plain, env, cacheOptions);
+      return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
+    }
     throw e;
   }
 }

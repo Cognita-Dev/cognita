@@ -368,12 +368,23 @@ export const MODEL_TIERS = {
     },
   },
   reasoning: {
+    // deepseek/deepseek-r1:free stopped being free (OpenRouter now answers
+    // 404 "unavailable for free"). openai/gpt-oss-120b:free is the closest
+    // free replacement: same reasoning family as the Groq models below and
+    // reliable at tool calls. It runs on OpenRouter's quota, so it also keeps
+    // this tier off Groq's small per-minute limit. Free model names change
+    // without notice; providers.js leaves a vanished one out of the chain for
+    // an hour, so a removal costs one logged line, not a failed request.
     provider: 'openrouter',
-    model: 'deepseek/deepseek-r1:free',
+    model: 'openai/gpt-oss-120b:free',
     fallback: {
       provider: 'groq',
       model: 'openai/gpt-oss-120b',
-      fallback: { provider: 'groq', model: 'openai/gpt-oss-20b' },
+      fallback: {
+        provider: 'openrouter',
+        model: 'openrouter/free',
+        fallback: { provider: 'groq', model: 'openai/gpt-oss-20b' },
+      },
     },
   },
   // Admin-only. See PLANS.admin — no regular plan's models.chat ever

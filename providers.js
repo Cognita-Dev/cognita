@@ -278,7 +278,7 @@ export async function callVisionModel(model, messages, images, env) {
  * callWithFallback() from outside this file.
  */
 async function _dispatch(providerName, messages, model, env, maxTokens, ctx) {
-  if (providerName === 'groq') return _callGroq(messages, model, env, maxTokens);
+  if (providerName === 'groq') return _callGroq(messages, model, env, _groqMaxTokens(messages, null, maxTokens, env));
   if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens, ctx);
   if (providerName === 'vercel_v0') return _callV0(messages, model, env, maxTokens, ctx);
   if (providerName === 'workersai') return _callWorkersAI(messages, model, env, ctx);
@@ -439,8 +439,77 @@ async function _callV0WithTools(messages, model, tools, env, maxTokens, ctx) {
   };
 }
 
+
+// ── Groq per-minute token budget ───────────────────────────────────────
+// Groq's free tier allows about 8,000 tokens per minute for each gpt-oss
+// model, and it counts the room reserved for the answer (max_tokens) as
+// well as the prompt. A long chat with tools attached can ask for more than
+// that in one request, and Groq rejects it with a 413 that can never
+// succeed. Instead of sending a doomed request (and logging an error), this
+// estimates the size first, trims the reserved answer room to fit, and if
+// even a decent answer cannot fit it skips Groq and lets the next provider in
+// the chain take the request. Set GROQ_TPM_LIMIT in the Worker variables if
+// your Groq plan has a different limit.
+const GROQ_TPM_DEFAULT = 8000;
+const GROQ_TPM_MARGIN = 300;       // slack for the estimate being a little off
+const GROQ_MIN_ANSWER_ROOM = 1024; // below this, an answer would get cut off
+
+function _estimateTokens(messages, tools) {
+  let chars = 0;
+  for (const m of messages || []) {
+    chars += typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
+  }
+  if (tools) chars += JSON.stringify(tools).length;
+  return Math.ceil(chars / 3) + 50; // 3 characters per token is deliberately cautious
+}
+
+function _groqMaxTokens(messages, tools, wanted, env) {
+  const limit = Number(env && env.GROQ_TPM_LIMIT) || GROQ_TPM_DEFAULT;
+  const room = limit - GROQ_TPM_MARGIN - _estimateTokens(messages, tools);
+  if (room < GROQ_MIN_ANSWER_ROOM) {
+    const err = new Error('groq_skipped_too_large: prompt is about ' + _estimateTokens(messages, tools) + ' tokens, over the ' + limit + ' per-minute cap');
+    err.skip = true; // expected, not an outage: logged quietly and not remembered as a rate limit
+    throw err;
+  }
+  return Math.min(wanted || DEFAULT_MAX_TOKENS, room);
+}
+
+// ── Models that no longer exist ────────────────────────────────────────
+// Free models on OpenRouter come and go. A 404 for a model is not going to
+// fix itself in the next minute, so it is remembered for an hour and the
+// step is left out of the chain (unless it would leave nothing to try).
+const GONE_MODEL_COOLDOWN_MS = 60 * 60 * 1000;
+const _goneUntil = new Map();
+
+function _isModelGone(err) {
+  return /_(?:404|410)\b|model_not_found|model_decommissioned|no endpoints found|unavailable for free/i.test(String(err && err.message));
+}
+function _isGone(step) {
+  const until = _goneUntil.get(_stepKey(step));
+  return typeof until === 'number' && Date.now() < until;
+}
+function _markGone(step) {
+  _goneUntil.set(_stepKey(step), Date.now() + GONE_MODEL_COOLDOWN_MS);
+}
+
+// One place that records a failed step, so both call paths log and remember
+// failures the same way.
+function _noteStepFailure(step, err, label, what) {
+  if (err && err.skip) {
+    console.log('[providers] ' + what + ' ' + label + ' (' + step.provider + '/' + step.model + ') skipped:', err.message);
+    return;
+  }
+  if (_isRateLimitError(err)) _markRateLimited(step);
+  if (_isModelGone(err)) {
+    _markGone(step);
+    console.warn('[providers] ' + what + ' ' + label + ' (' + step.provider + '/' + step.model + ') no longer exists, leaving it out for an hour:', err.message);
+    return;
+  }
+  console.warn('[providers] ' + what + ' ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
+}
+
 async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens, ctx) {
-  if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, maxTokens);
+  if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, _groqMaxTokens(messages, tools, maxTokens, env));
   if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens, ctx);
   if (providerName === 'vercel_v0') return _callV0WithTools(messages, model, tools, env, maxTokens, ctx);
   // workersai (and anything else) — no tool support. Signal the caller
@@ -509,7 +578,9 @@ function _isRateLimitError(err) {
 
 // Same steps, reordered so anything currently cooling down from a recent
 // rate limit sinks to the end instead of being tried first.
-function _orderStepsByHealth(steps) {
+function _orderStepsByHealth(allSteps) {
+  const present = allSteps.filter((st) => !_isGone(st));
+  const steps = present.length ? present : allSteps;
   const ready = [];
   const cooling = [];
   for (const step of steps) {
@@ -551,10 +622,8 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
       return result;
     } catch (err) {
       lastErr = err;
-      if (_isRateLimitError(err)) _markRateLimited(step);
       if (!String(err.message).startsWith('tools_unsupported')) allToolsUnsupported = false;
-      const label = i === 0 ? 'primary' : 'fallback #' + i;
-      console.warn('[providers] tool-call ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
+      _noteStepFailure(step, err, i === 0 ? 'primary' : 'fallback #' + i, 'tool-call');
     }
   }
 
@@ -605,9 +674,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
       return result;
     } catch (err) {
       lastErr = err;
-      if (_isRateLimitError(err)) _markRateLimited(step);
-      const label = i === 0 ? 'primary' : 'fallback #' + i;
-      console.warn('[providers] ' + label + ' (' + step.provider + '/' + step.model + ') failed:', err.message);
+      _noteStepFailure(step, err, i === 0 ? 'primary' : 'fallback #' + i, 'chat');
     }
   }
   console.error('[providers] chain exhausted, last error:', lastErr && lastErr.message);
