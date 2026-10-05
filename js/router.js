@@ -64,6 +64,9 @@ function setActiveUsageWidget(view) {
   const resourcesWidget = document.getElementById('usageWidgetResources');
   if (chatWidget) chatWidget.hidden = view !== 'chat';
   if (resourcesWidget) resourcesWidget.hidden = view !== 'resources';
+  // Code runs belong to the chat view and appear only once there is something to show (see refreshUsage in app.js).
+  const sandboxWidget = document.getElementById('usageWidgetSandbox');
+  if (sandboxWidget) sandboxWidget.hidden = view !== 'chat' || sandboxWidget.dataset.active !== '1';
 }
 
 let currentView = null;
