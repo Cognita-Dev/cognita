@@ -9,7 +9,7 @@ import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableH
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
   executeConnectorTool, validateToolArgs, approvalScopeForTool, isToolApproved,
-  getSandboxToolSchemas, isSandboxToolName,
+  getSandboxToolSchemas, isSandboxToolName, describeConfirmation, stepMeta,
 } from './connector-tools.js';
 import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
@@ -550,7 +550,23 @@ export async function handleChatRequest(request, env) {
   const connectorToolsEnabled = !hasImages && planHasConnectorTools(account.planId);
   // The sandbox (sandbox-tools.js) needs no connected app, so it is gated by
   // its own plan flag, not by connectorToolsEnabled.
-  const sandboxEnabled = !hasImages && planHasSandbox(account.planId);
+  //
+  // Offering it costs about 1,300 tokens on every message, so it is only
+  // offered when the request needs it (see shouldOfferSandbox): the person is
+  // resuming a browser run, the browser says this chat already uses the
+  // workspace or has a data file attached, or the message asks for something
+  // code is for. Everything else gets the plain chat prompt with no tools.
+  const planAllowsSandbox = !hasImages && planHasSandbox(account.planId);
+  const gateUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
+  const gate = planAllowsSandbox
+    ? sandboxTools.shouldOfferSandbox({
+        text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
+        hint: body.sandboxHint === true,
+        resuming: !!sandboxResume,
+      })
+    : { offer: false, reason: hasImages ? 'images' : 'plan' };
+  const sandboxEnabled = planAllowsSandbox && gate.offer;
+  console.log('[chat][sandbox] gate=' + (sandboxEnabled ? 'offered' : 'skipped') + ' reason=' + gate.reason);
 
   // Diagnostics for the connector tool-calling pipeline (see project
   // notes on issue 5c — "connected tools aren't used in chat"). Never
@@ -617,6 +633,9 @@ export async function handleChatRequest(request, env) {
   let pendingSandboxCall = null;
   let turnTrace = [];
   let stepNo = 0;
+  // The newest user message, kept so the end of the turn can tell whether the
+  // person asked for a file (see collectDeliverables in sandbox-tools.js).
+  let lastUserText = '';
 
   try {
     if (hasImages) {
@@ -628,6 +647,7 @@ export async function handleChatRequest(request, env) {
       // it's cheap/harmless for the common case of 1-2 connectors.
       const lastUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
       const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
+      lastUserText = intentText;
       const connectorTools = connectorToolsEnabled ? await getAvailableTools(identity.uid, env, intentText) : [];
 
       // Sandbox tools: offered only for what the active provider can really
@@ -700,12 +720,17 @@ export async function handleChatRequest(request, env) {
             quotaExceededError = 'You have reached your daily connected-app action limit for the ' + plan.name + ' plan (' +
               toolQuota.limit + ' per day). It resets at midnight UTC.';
           } else {
+            const confirmedMeta = stepMeta(confirmToolCall.name);
+            emit('step_start', { name: confirmToolCall.name, provider: providerForTool(confirmToolCall.name), ...confirmedMeta, summary: describeTool(confirmToolCall.name, confirmToolCall.args) });
+            const confirmedT0 = Date.now();
             const execOutcome = await executeConnectorTool(confirmToolCall.name, confirmToolCall.args, identity.uid, env);
             console.log('[chat][tools] executorRan=true (confirmed) tool=' + confirmToolCall.name + ' success=' + !execOutcome.error);
             steps.push({
               type: 'executed',
               name: confirmToolCall.name,
               provider: providerForTool(confirmToolCall.name),
+              ...confirmedMeta,
+              ms: Date.now() - confirmedT0,
               ok: !execOutcome.error,
               summary: describeTool(confirmToolCall.name, confirmToolCall.args),
             });
@@ -736,10 +761,20 @@ export async function handleChatRequest(request, env) {
           stepNo = turnTrace.reduce((m, e) => Math.max(m, e.n), 0);
           for (const e of turnTrace) workingMessages = sandboxTools.appendExchange(workingMessages, e);
           const normalized = sandboxTools.normalizeResult(sandboxResume.result, sandboxTools.describe(sandboxResume.call.name, sandboxResume.call.args));
+          // The person asked for a file, this run made one, and nothing has been
+          // offered yet this turn: tell the model to offer it (see resultForModel).
+          const offeredSoFar = turnTrace.some((e) => e.o);
+          const madeFile = Array.isArray(normalized.files) && normalized.files.some((f) => f.change !== 'deleted');
+          const offerHint = normalized.ok && madeFile && !offeredSoFar &&
+            sandboxResume.call.name !== 'sandbox_offer_file' && sandboxTools.userWantsFile(lastUserText);
           const ranEntry = sandboxTools.makeTraceEntry({
             n: ++stepNo, kind: 'sbx', assistantText: sandboxResume.assistantText,
             description: describeTool(sandboxResume.call.name, sandboxResume.call.args),
-            resultText: sandboxTools.resultForModel(normalized),
+            resultText: sandboxTools.resultForModel(normalized, offerHint),
+            tool: sandboxResume.call.name,
+            files: normalized.files,
+            offered: normalized.ok && sandboxResume.call.name === 'sandbox_offer_file'
+              ? { path: sandboxResume.call.args.path, title: sandboxResume.call.args.title } : null,
           });
           turnTrace.push(ranEntry);
           workingMessages = sandboxTools.appendExchange(workingMessages, ranEntry);
@@ -942,6 +977,7 @@ export async function handleChatRequest(request, env) {
                 quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + sbCharge.limit + ' runs per day). It resets at midnight UTC.';
                 break;
               }
+              emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Code', kind: 'run', summary: describeTool(call.name, call.args) });
               let sbResult;
               try {
                 sbResult = await sandboxTools.execute(sbName, sbArgs, { provider: sandboxProvider, uid: identity.uid, conversationId, plan, env });
@@ -950,13 +986,15 @@ export async function handleChatRequest(request, env) {
                 sbResult = sandboxTools.normalizeResult({ exitCode: 1, stderr: 'The sandbox could not run this right now.', error: true }, sandboxTools.describe(call.name, call.args));
               }
               steps.push({
-                type: 'sandbox', name: call.name, provider: 'sandbox', ok: sbResult.ok,
+                type: 'sandbox', name: call.name, provider: 'sandbox', providerLabel: 'Code', kind: 'run', ms: sbResult.durationMs, ok: sbResult.ok,
                 summary: describeTool(call.name, call.args), sandbox: sbResult,
               });
               emit('step', steps[steps.length - 1]);
               const sbEntry = sandboxTools.makeTraceEntry({
                 n: ++stepNo, kind: 'sbx', assistantText: (result.text && result.text.trim()) ? result.text : '',
                 description: describeTool(call.name, call.args), resultText: sandboxTools.resultForModel(sbResult),
+                tool: sbName, files: sbResult.files,
+                offered: sbResult.ok && sbName === 'sandbox_offer_file' ? { path: sbArgs.path, title: sbArgs.title } : null,
               });
               turnTrace.push(sbEntry);
               workingMessages = sandboxTools.appendExchange(workingMessages, sbEntry);
@@ -975,14 +1013,26 @@ export async function handleChatRequest(request, env) {
               // the user mid-task. Everything recorded in `steps` so far
               // is already real, already-executed work; only this one
               // write is what's actually being asked about.
+              // `summary` stays for the model and for chats saved before the new
+              // card; the structured fields below feed the approval card.
+              const card = describeConfirmation(call.name, call.args);
               pendingToolCall = {
                 id: call.id,
                 name: call.name,
                 args: call.args,
                 provider: providerForTool(call.name),
                 summary: describeTool(call.name, call.args),
+                providerKey: card.providerKey,
+                providerLabel: card.providerLabel,
+                verb: card.verb,
+                title: card.title,
+                details: card.details,
+                consequence: card.consequence,
+                // True only when approving this really covers the same kind of
+                // action for the rest of the chat (see _mergeApproval above).
+                remembers: approvalScopeForTool(call.name, call.args) !== 'unscoped',
               };
-              steps.push({ type: 'awaiting_confirmation', name: call.name, provider: pendingToolCall.provider, summary: pendingToolCall.summary });
+              steps.push({ type: 'awaiting_confirmation', name: call.name, provider: pendingToolCall.provider, ...stepMeta(call.name), summary: pendingToolCall.summary });
               emit('step', steps[steps.length - 1]);
               console.log('[chat][tools] executorRan=false (awaiting user confirmation) tool=' + call.name);
               break;
@@ -999,6 +1049,9 @@ export async function handleChatRequest(request, env) {
               break;
             }
 
+            const autoMeta = stepMeta(call.name);
+            emit('step_start', { name: call.name, provider: providerForTool(call.name), ...autoMeta, summary: describeTool(call.name, call.args) });
+            const autoT0 = Date.now();
             const execOutcome = await executeConnectorTool(call.name, call.args, identity.uid, env);
             console.log(
               '[chat][tools] executorRan=true tool=' + call.name +
@@ -1009,6 +1062,8 @@ export async function handleChatRequest(request, env) {
               type: 'executed',
               name: call.name,
               provider: providerForTool(call.name),
+              ...autoMeta,
+              ms: Date.now() - autoT0,
               ok: !execOutcome.error,
               summary: describeTool(call.name, call.args),
             });
@@ -1131,6 +1186,10 @@ export async function handleChatRequest(request, env) {
     // sandboxResume = { call, assistantText, result, trace: turnTrace }.
     pendingSandboxCall,
     turnTrace: pendingSandboxCall ? turnTrace : undefined,
+    // Files from the workspace the person should be able to download, shown as
+    // buttons under the answer. Includes files the model forgot to offer when
+    // the person asked for one. Empty while the turn is still paused.
+    deliverables: pendingSandboxCall ? [] : sandboxTools.collectDeliverables(turnTrace, lastUserText),
     // `steps` is the full recorded chain for this turn (possibly empty).
     // `toolExecuted` is kept as a legacy single-object mirror of the last
     // executed step, for any older client code that hasn't moved to
