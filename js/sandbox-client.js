@@ -65,9 +65,34 @@ async function _prune() {
   if (drop.length) await _idb('readwrite', (s) => { drop.forEach((id) => s.delete(id)); });
 }
 
-/** Removes every saved workspace, for example on sign-out. */
+// Every SandboxClient that exists on this page, so sign-out can stop their frames.
+const _instances = new Set();
+
+/**
+ * Removes every saved workspace, for example on sign-out or when a different
+ * person signs in on this browser. Order matters:
+ *   1. stop the frames, so nothing writes to the database while it is deleted;
+ *   2. close our open database handle (an open handle makes deleteDatabase wait);
+ *   3. delete the whole database.
+ * It always resolves, even if the browser blocks the delete, so it can never
+ * hold up signing out. A blocked delete finishes by itself once the old
+ * handles close.
+ */
 export async function clearAllSandboxWorkspaces() {
-  await _idb('readwrite', (s) => s.clear());
+  _instances.forEach((c) => { try { c._destroyFrame('Signed out'); } catch (_) {} });
+  try {
+    if (_db) { const db = await _db; if (db) db.close(); }
+  } catch (_) { /* nothing open */ }
+  _db = null;
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    try {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = finish; req.onerror = finish; req.onblocked = finish;
+    } catch (_) { finish(); }
+    setTimeout(finish, 1500);
+  });
 }
 
 export class SandboxClient {
@@ -80,6 +105,7 @@ export class SandboxClient {
     this.seq = 0;
     this._onMessage = this._onMessage.bind(this);
     window.addEventListener('message', this._onMessage);
+    _instances.add(this);
   }
 
   // ── Frame lifecycle ────────────────────────────────────────────────
@@ -132,7 +158,7 @@ export class SandboxClient {
     if (m.t === 'out') { const h = this.pending.get(m.id); if (h && h.onOutput) h.onOutput(m.stream === 'stderr' ? 'stderr' : 'stdout', String(m.text || '')); return; }
     if (m.t === 'status') { const h = this.pending.get(m.id); if (h && h.onStatus) h.onStatus(String(m.text || '')); return; }
     if (m.t === 'result') { const h = this.pending.get(m.id); if (h) h.resolve(m); return; }
-    if (m.t === 'loaded' || m.t === 'exported' || m.t === 'warmed') {
+    if (m.t === 'loaded' || m.t === 'exported' || m.t === 'warmed' || m.t === 'stored') {
       const w = this.waiters.get(m.id); if (w) { this.waiters.delete(m.id); w(m); }
     }
   }
@@ -217,6 +243,40 @@ export class SandboxClient {
     return new Blob([res.data], { type: _mimeFor(path) });
   }
 
+  /**
+   * A blob: address for a workspace file, to show in an <img>. Returns null if
+   * the file is gone (for example the browser cleared its storage). The caller
+   * owns the address and must call URL.revokeObjectURL when it is done.
+   * Pictures are only ever shown through <img src>, never inserted as markup.
+   */
+  async getObjectUrl(conversationId, path) {
+    const blob = await this.exportFile(conversationId, path);
+    return blob ? URL.createObjectURL(blob) : null;
+  }
+
+  /**
+   * Writes files the person attached straight into /workspace/uploads, so a
+   * big spreadsheet never has to be pasted into the prompt.
+   * files: [{ name, data: ArrayBuffer }]. limits: { maxFileBytes, maxWorkspaceBytes }.
+   * Resolves { saved: [{ name, path, size }], errors: [{ name, error }] }.
+   * The buffers are handed over to the frame, so do not reuse them afterwards.
+   */
+  async putFiles(conversationId, files, limits) {
+    try {
+      await this._ensureFrame();
+      await this._useWorkspace(conversationId);
+    } catch (e) {
+      this._destroyFrame();
+      return { saved: [], errors: files.map((f) => ({ name: f.name, error: 'The code sandbox could not start in this browser.' })) };
+    }
+    const res = await this._request({ t: 'put', files, limits: limits || {} }, files.map((f) => f.data));
+    if (!res || res.ok === false && !res.saved) {
+      return { saved: [], errors: files.map((f) => ({ name: f.name, error: 'The sandbox did not answer.' })) };
+    }
+    if (res.snapshot) await _saveWorkspace(conversationId, res.snapshot);
+    return { saved: res.saved || [], errors: res.errors || [] };
+  }
+
   async downloadFile(conversationId, path, filename) {
     const blob = await this.exportFile(conversationId, path);
     if (!blob) return false;
@@ -236,7 +296,10 @@ function _failure(call, message) {
 const MIME = {
   csv: 'text/csv', json: 'application/json', txt: 'text/plain', md: 'text/markdown', html: 'text/html',
   py: 'text/x-python', js: 'text/javascript', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
-  svg: 'image/svg+xml', pdf: 'application/pdf', xml: 'application/xml', log: 'text/plain', zip: 'application/zip',
+  svg: 'image/svg+xml', gif: 'image/gif', webp: 'image/webp',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  tsv: 'text/tab-separated-values', pdf: 'application/pdf', xml: 'application/xml', log: 'text/plain', zip: 'application/zip',
 };
 function _mimeFor(path) {
   const ext = String(path).split('.').pop().toLowerCase();
