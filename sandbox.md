@@ -10,9 +10,10 @@ agent framework.
 **Tier 1, browser sandbox.** Code runs on the person's own device, so it costs
 Cognita nothing.
 
-- Python through Pyodide (Python 3.13, pinned to 0.29.5 in `sandbox-frame.html`).
-  numpy, pandas, matplotlib, scipy and other bundled packages load only when
-  the code imports them.
+- Python through Pyodide (Python 3.13, pinned to 0.29.5), now **self-hosted** at
+  `https://pyodide.cognita.com.ng/v0.29.5/` (see "Self-hosted Pyodide" below).
+  numpy, pandas, matplotlib, scipy, openpyxl and other bundled packages load
+  only when the code imports them.
 - JavaScript in a throwaway Web Worker.
 - A built-in shell written for this project (`js/sandbox-shell.js`): pwd, cd,
   ls, tree, cat, head, tail, wc, grep, find, mkdir, touch, cp, mv, rm, echo,
@@ -80,7 +81,20 @@ connector tool, which keeps its own confirmation card. Sandbox tools never
 bypass it, and they cannot reach any connector.
 
 Limit: the import only carries text the connector tool returns (capped at
-300,000 characters like the connectors themselves). Binary Drive files are not importable.
+300,000 characters like the connectors themselves).
+
+**Honest wording (W0).** Sandbox code cannot reach connectors, and the model is told so.
+It never claims it "can't access Google/GitHub" when a connector is linked. It uses the
+connector tool for that app, and the sandbox only for computing.
+
+### Not built, and why: binary Drive files (W9)
+Reading a `.xlsx`, `.pdf` or image from Google Drive into the workspace is **not built**.
+The connector tools return text only. Moving real bytes would need a new Worker route that
+downloads the file with the person's Google token and streams it to the browser, plus new
+size limits and a new consent surface, because it moves a person's private file through our
+server. That is a separate piece of work with its own security review. Today: Drive text
+files, Docs and Sheets (as CSV) work; for an Excel file, ask the person to download it and
+attach it to the chat, which now goes straight into the workspace.
 
 ## Security model
 
@@ -96,9 +110,9 @@ Limit: the import only carries text the connector tool returns (capped at
 - Usage is counted by the Worker only (`sandboxRuns`), never reported by the browser.
 - Everything the browser sends back is treated as untrusted data: re-shaped,
   size-capped, and shown to the model only as a tool result.
-- Known gap: the CDN is allowed for Pyodide, so code could in theory send tiny
-  amounts of data to it as URL text. Self-hosting Pyodide on your own domain
-  removes that and lets `connect-src` be `'self'`-only.
+- The frame's CSP allows scripts and connections only to `https://pyodide.cognita.com.ng`,
+  your own host. The public CDN is no longer allowed. Code could still send tiny
+  amounts of data to that one host as URL text, but it is a host you control and can log.
 - Known gap: browser limits are enforced inside the same page the person controls. A person who tampers with their own browser can only affect their own sandbox, and the Worker's run counter still applies.
 
 ## Plans (entitlements.js)
@@ -110,13 +124,45 @@ Limit: the import only carries text the connector tool returns (capped at
 | Studio | 250 | 90 s | 10 MB | 50 MB |
 | Admin | 999999 | 120 s | 10 MB | 50 MB |
 
-Shown in `/api/usage` as `sandboxRuns`. Change the numbers in one place.
+Shown in `/api/usage` as `sandboxRuns`, with a `limits` object. The app shows it as a "Code runs" bar
+in the sidebar (only while a chat that used code is open) and on the Account page.
+Change the numbers in one place.
+
+Saving a file to Cognita storage (the "Save to Cognita" button) has its own limits:
+
+| Plan | Max saved file | Saves/day | Files per chat |
+|---|---|---|---|
+| Free | 2 MB | 5 | 20 |
+| Plus | 5 MB | 30 | 20 |
+| Studio | 10 MB | 100 | 20 |
+| Admin | 10 MB | unlimited | 20 |
+
+The 20-file cap counts every generated file in that chat (documents too), not only sandbox files.
+Allowed types: csv, tsv, txt, md, json, xlsx, png, jpg, svg, pdf, html, py, js (exact list: `ARTIFACT_MIME` in `files-endpoint.js`).
+
+## What the person sees
+
+- **Offered only when needed.** `sandbox-intent.js` decides per message whether the code tools are
+  sent to the model at all. When skipped, the model sees zero extra tokens. Log line: `[chat][sandbox] gate=offered|skipped reason=...`.
+- **Files.** A file the assistant made appears as a download chip under the answer (`deliverables`), with Save to Cognita.
+- **Charts.** matplotlib PNGs show inline under the answer, tap to enlarge.
+- **Uploads.** CSV, TSV, JSON, MD, XLSX or large text files attached in chat go straight into the
+  workspace (`/workspace/uploads`), not into the prompt. The model gets a short stub.
+- **Sign-out** deletes every workspace on that device (also on account switch and account deletion).
+- **Steps display.** One "Activity" timeline per message, and a redesigned approval card (`confirmation.js`).
+
+## Self-hosted Pyodide
+
+Built by `scripts/build-pyodide-bundle.mjs` (55 MB, 37 files, hash-checked, openpyxl vendored) and served by Cloudflare Pages.
+See `pyodide-host/README.md`. **Until the Pages site is live, Python in the sandbox will not load.**
+Rollback in one line: in `sandbox-frame.html` set `PYODIDE_BASE_URL` back to
+`https://cdn.jsdelivr.net/pyodide/v0.29.5/full/` and in `vercel.json` put `https://cdn.jsdelivr.net` back in the frame's `script-src` and `connect-src`. (openpyxl is then unavailable.)
 
 ## Deploying
 
-1. Replace the files in the same paths. New files: `sandbox-tools.js`,
-   `sandbox-provider.js`, `sandbox-frame.html`, `js/sandbox-client.js`,
-   `js/sandbox-shell.js`, `tests/sandbox*.test.mjs`.
+1. Replace the files in the same paths. New files: `sandbox-tools.js`, `sandbox-intent.js`,
+   `confirmation.js`, `sandbox-provider.js`, `sandbox-frame.html`, `css/activity.css`,
+   `js/sandbox-client.js`, `js/sandbox-shell.js`, `scripts/`, `pyodide-host/`, `tests/*.test.mjs`.
 1b. In vercel.json the main page's `frame-src` must include `'self'`, otherwise the browser refuses to load the sandbox iframe (already done in the shipped file).
 2. Deploy the Worker (`wrangler deploy`) and the site (Vercel).
 3. After deploy open `https://app.cognita.com.ng/sandbox-frame` and check the
@@ -128,17 +174,13 @@ Shown in `/api/usage` as `sandboxRuns`. Change the numbers in one place.
 
 ## Tests
 
-`node tests/sandbox.test.mjs` (14 checks, no setup) and
-`node tests/sandbox-chat.test.mjs` (5 end-to-end checks through the real
-chat endpoint; needs the same throwaway key files as `billing.test.mjs`).
-The iframe, shell, JavaScript worker, timeouts, limits, reload persistence and
-Python (unittest, exit codes, tracebacks, cd then python, killed infinite
-loop, files surviving a restart) were also run in headless Chromium.
-Not tested: real iPhone, pandas/matplotlib (the CDN was not reachable from my
-environment), the live Vercel header merge, and the new CSS on a real phone.
+`node tests/sandbox.test.mjs` (gate table of 40 phrases, confirmation card text, tool results) and
+`node tests/sandbox-chat.test.mjs` (the file-save route and usage keys through the real Worker).
+The chat test needs throwaway key files (`tests/key.pem`, `cert.pem`, `sa.pem`, never committed):
+`openssl req -x509 -newkey rsa:2048 -nodes -keyout tests/key.pem -out tests/cert.pem -subj /CN=t -days 2 && openssl genrsa -out tests/sa.pem 2048`.
+The frame was also run in headless Chromium against the self-hosted bundle (numpy, pandas, matplotlib, openpyxl).
+Not tested: a real iPhone, the live Cloudflare Pages site, the live Vercel header merge.
 
-## Not built yet
+## Not built
 
-Saving a sandbox file into Cognita's permanent library (today files are
-download-only, which keeps temporary files out of storage), shell-level git/npm
-(Tier 3), a GitHub Actions provider, and self-hosted Pyodide.
+Binary Drive files (above), shell-level git/npm (Tier 3), a GitHub Actions provider.
