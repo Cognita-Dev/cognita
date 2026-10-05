@@ -11,6 +11,7 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
+import { shouldOfferSandbox } from '../sandbox-intent.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 
@@ -47,8 +48,13 @@ const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 // docx, etc.) is either extracted client-side (see below) or flagged to
 // the user rather than silently dropped.
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp|gif)$/i;
-const TEXT_FILE_RE = /\.(txt|csv)$/i;
-const TEXT_MIME_TYPES = ['text/plain', 'text/csv'];
+const TEXT_FILE_RE = /\.(txt|csv|tsv|json|md)$/i;
+const TEXT_MIME_TYPES = ['text/plain', 'text/csv', 'text/tab-separated-values', 'application/json', 'text/markdown'];
+// Files that go straight into the code workspace instead of the prompt.
+const WORKSPACE_DATA_RE = /\.(csv|tsv|json|xlsx)$/i;
+const WORKSPACE_TEXT_RE = /\.(txt|md)$/i;
+const WORKSPACE_TEXT_MIN_BYTES = 4096;   // smaller txt/md files stay in the prompt
+const DEFAULT_SANDBOX_FILE_MB = 2;       // used until the plan limits arrive
 const PDF_FILE_RE = /\.pdf$/i;
 const PDF_MIME = 'application/pdf';
 const DOCX_FILE_RE = /\.docx$/i;
@@ -98,6 +104,7 @@ let conversationApprovals = [];
 let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
+let approvingIndex = null;   // message whose approved action is running right now
 let freshAssistantIndex = -1; // index of the just-received assistant reply to type out; -1 = none pending
 
 let placeholderIndex = 0;
@@ -126,6 +133,8 @@ const STREAM_RAMP_MS = 450;     // gentle ease-in over the first moments
 
 let currentAccountPlanId = null;
 let currentAccountHasVision = false;
+// From /api/usage. Null until it arrives; the defaults below are the Free plan's.
+let currentSandboxLimits = null;
 let currentAccountHasDocExport = false;
 let currentAccountChatTiers = ['fast'];
 // Can this plan actually use connected-app tools (GitHub/Google/Facebook/
@@ -315,28 +324,52 @@ function showUsageUnavailable() {
   }
 }
 
+/* True when this chat has already run code. The Worker then keeps offering the
+ * sandbox tools, so a follow-up such as "now put that in a file" works even
+ * though the message itself says nothing about code. */
+function conversationHasSandbox() {
+  return conversationMeta.some((m) => m && Array.isArray(m.steps) && m.steps.some((s) => s && s.type === 'sandbox')) ||
+    conversation.some((m) => m && Array.isArray(m.attachments) && m.attachments.some((a) => a && a.kind === 'workspace'));
+}
+
+/* Fills one usage meter. entitlements.js's UNLIMITED sentinel (999999) is a real,
+ * comparable number for the backend's quota math, but showing it raw ("3 / 999999")
+ * would be confusing, so it reads "Unlimited" once the limit is clearly not a
+ * real day-to-day cap. */
+function fillUsageMeter(valueEl, barEl, usage) {
+  if (!valueEl || !barEl || !usage) return;
+  const { used, limit } = usage;
+  const isUnlimited = limit >= 999999;
+  valueEl.textContent = isUnlimited ? 'Unlimited' : (used + ' / ' + limit);
+  valueEl.classList.remove('skeleton');
+  const pct = (!isUnlimited && limit > 0) ? Math.min(100, (used / limit) * 100) : 0;
+  barEl.style.width = pct + '%';
+  barEl.classList.toggle('is-near-limit', pct >= 70 && pct < 100);
+  barEl.classList.toggle('is-at-limit', pct >= 100);
+  barEl.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
+}
+
 async function refreshUsage() {
   try {
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/usage');
     if (!res.ok) { showUsageUnavailable(); return; }
     const data = await res.json();
+    if (data.limits) currentSandboxLimits = data.limits;
 
-    const { used, limit } = data.usage.messages;
-    const usageEl = document.getElementById('usageMessages');
-    // entitlements.js's UNLIMITED sentinel (999999) is a real, comparable
-    // number for the backend's quota math, but showing it raw ("3 / 999999")
-    // would be a confusing display for an admin account — show "Unlimited"
-    // instead once the limit is clearly not a real day-to-day cap.
-    const isUnlimited = limit >= 999999;
-    usageEl.textContent = isUnlimited ? 'Unlimited' : (used + ' / ' + limit);
-    usageEl.classList.remove('skeleton');
+    fillUsageMeter(document.getElementById('usageMessages'), document.getElementById('usageMessagesBar'), data.usage.messages);
 
-    const pct = (!isUnlimited && limit > 0) ? Math.min(100, (used / limit) * 100) : 0;
-    const fill = document.getElementById('usageMessagesBar');
-    fill.style.width = pct + '%';
-    fill.classList.toggle('is-near-limit', pct >= 70 && pct < 100);
-    fill.classList.toggle('is-at-limit', pct >= 100);
-    fill.parentElement.setAttribute('aria-valuenow', String(Math.round(pct)));
+    // Code runs: shown only once there is something to show (a run was used
+    // today, or the plan limit is at 70 percent or more), and only in the chat view.
+    const sb = data.usage.sandboxRuns;
+    const sbWidget = document.getElementById('usageWidgetSandbox');
+    if (sb && sbWidget) {
+      const pct = sb.limit < 999999 && sb.limit > 0 ? (sb.used / sb.limit) * 100 : 0;
+      const show = sb.used > 0 || pct >= 70;
+      fillUsageMeter(document.getElementById('usageSandbox'), document.getElementById('usageSandboxBar'), sb);
+      sbWidget.dataset.active = show ? '1' : '0';
+      const chatWidget = document.getElementById('usageWidgetChat');
+      sbWidget.hidden = !(show && chatWidget && !chatWidget.hidden);
+    }
   } catch (e) {
     console.error('[app] Could not load usage:', e.message);
     showUsageUnavailable();
@@ -1222,6 +1255,29 @@ async function handlePickedFile(file) {
     return;
   }
 
+  // Spreadsheets and data files go into the code workspace, so a big file is
+  // never pasted into the prompt. Small txt/md files stay inline as before.
+  if (WORKSPACE_DATA_RE.test(file.name) || (WORKSPACE_TEXT_RE.test(file.name) && file.size > WORKSPACE_TEXT_MIN_BYTES)) {
+    const maxBytes = sandboxFileLimitBytes();
+    const isXlsx = /\.xlsx$/i.test(file.name);
+    if (file.size <= maxBytes) {
+      try {
+        const data = await file.arrayBuffer();
+        pendingAttachments.push({
+          name: file.name, kind: 'data', size: file.size, data,
+          preview: isXlsx ? '' : previewOfText(new TextDecoder('utf-8', { fatal: false }).decode(data.slice(0, 16384))),
+        });
+      } catch (err) {
+        console.error('[app] Could not read file:', err.message);
+        showToast('Could not read that file.');
+      }
+      return;
+    }
+    showToast(file.name + ' is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB your plan allows for code runs.');
+    if (isXlsx) { pendingAttachments.push({ name: file.name, kind: 'unsupported' }); return; }
+    // Text formats fall through to the inline path below (capped as before).
+  }
+
   if (isTextLike) {
     try {
       const text = await file.text();
@@ -1282,6 +1338,31 @@ async function handlePickedFile(file) {
 function _capText(text) {
   if (text.length <= MAX_EXTRACTED_CHARS) return text;
   return text.slice(0, MAX_EXTRACTED_CHARS) + '\n\n[Content truncated — file was longer than could be included.]';
+}
+
+function sandboxFileLimitBytes() {
+  const mb = currentSandboxLimits && currentSandboxLimits.maxFileMB ? currentSandboxLimits.maxFileMB : DEFAULT_SANDBOX_FILE_MB;
+  return mb * 1024 * 1024;
+}
+
+/* The first 12 lines, at most 1,500 characters. Enough for the model to see the
+ * columns and a few rows without the whole file going through the prompt. */
+function previewOfText(text) {
+  const lines = String(text || '').split(/\r?\n/).slice(0, 12).join('\n');
+  return lines.length > 1500 ? lines.slice(0, 1500) + '\n[preview cut]' : lines;
+}
+
+/* What the model is told about a file that was put in the workspace. It stays
+ * in the chat history, so later messages still know the file exists. */
+function workspaceStub(att) {
+  const kb = att.size < 1024 ? att.size + ' B' : Math.max(1, Math.round(att.size / 1024)) + ' KB';
+  if (/\.xlsx$/i.test(att.name)) {
+    return '[Attached Excel workbook "' + att.name + '" (' + kb + ') is in the workspace at ' + att.path +
+      '. Open it with pandas.read_excel. If it is missing later, ask the user to attach it again.]';
+  }
+  const header = /\.(csv|tsv)$/i.test(att.name) && att.preview ? '\nHeader row: ' + att.preview.split('\n')[0] : '';
+  return '[Attached file "' + att.name + '" (' + kb + ') is in the workspace at ' + att.path +
+    '. If it is missing later, ask the user to attach it again.' + header + '\nPreview (first lines):\n' + (att.preview || '(empty)') + ']';
 }
 
 async function extractPdfText(file) {
@@ -1473,11 +1554,15 @@ function buildEffectiveContent(msg) {
   if (msg.attachments && msg.attachments.length) {
     const fileAtts = msg.attachments.filter((a) => a.kind === 'file');
     const unsupportedAtts = msg.attachments.filter((a) => a.kind === 'unsupported');
+    const workspaceAtts = msg.attachments.filter((a) => a.kind === 'workspace' && a.stub);
 
     if (fileAtts.length) {
       text += fileAtts.map((a) =>
         '\n\n--- Content of attached file "' + a.name + '" ---\n' + a.text
       ).join('');
+    }
+    if (workspaceAtts.length) {
+      text += workspaceAtts.map((a) => '\n\n' + a.stub).join('');
     }
     if (unsupportedAtts.length) {
       text += unsupportedAtts.map((a) =>
@@ -1486,6 +1571,57 @@ function buildEffectiveContent(msg) {
     }
   }
   return text.trim();
+}
+
+/* Copies the attached data files into this chat's workspace. Resolves a Map
+ * from each pending attachment to the saved message attachment. A file that
+ * could not be saved falls back to the old inline text for text formats, or to
+ * "not readable" for spreadsheets, and the person is told why. */
+async function putDataAttachments(list) {
+  const out = new Map();
+  if (!list.length) return out;
+  const conversationId = ensureConversationId();
+  const lim = currentSandboxLimits || {};
+  let res;
+  try {
+    res = await getSandbox().putFiles(
+      conversationId,
+      list.map((a) => ({ name: a.name, data: a.data.slice(0) })),
+      { maxFileBytes: sandboxFileLimitBytes(), maxWorkspaceBytes: (lim.maxWorkspaceMB || 10) * 1024 * 1024 }
+    );
+  } catch (e) {
+    res = { saved: [], errors: list.map((a) => ({ name: a.name, error: 'The code sandbox could not start.' })) };
+  }
+  const byName = new Map((res.saved || []).map((s) => [s.name, s]));
+  const failed = new Map((res.errors || []).map((e) => [e.name, e.error]));
+  list.forEach((a) => {
+    const saved = byName.get(a.name);
+    if (saved) {
+      const att = { kind: 'workspace', name: a.name, path: saved.path, size: a.size, preview: a.preview };
+      att.stub = workspaceStub(att);
+      delete att.preview;
+      out.set(a, att);
+      return;
+    }
+    showToast(a.name + ': ' + (failed.get(a.name) || 'could not be added to the workspace.'));
+    if (/\.xlsx$/i.test(a.name)) { out.set(a, { kind: 'unsupported', name: a.name }); return; }
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(a.data);
+    out.set(a, { kind: 'file', name: a.name, text: _capText(text) });
+  });
+  return out;
+}
+
+/* Starts loading the Python core in the background, but only when it is likely
+ * to be needed and the connection can afford it: this chat already ran code, a
+ * data file is attached, or the message matches the sandbox gate. Never on
+ * page load, never on Data Saver or a 2G link. Loads the core only (never
+ * pandas), so the cost is small. */
+function warmSandboxIfUseful(text, hasDataFile) {
+  const c = navigator.connection;
+  if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return;
+  if (hasDataFile || conversationHasSandbox() || shouldOfferSandbox({ text }).offer) {
+    getSandbox().warm();
+  }
 }
 
 async function sendMessage(text) {
@@ -1508,10 +1644,17 @@ async function sendMessage(text) {
   // Attachments kept for display (thumbnails/chips) — never the raw
   // base64 string or full file text is put into the visible message.
   const attachmentsForMessage = pendingAttachments.map((a) => {
+    if (a.kind === 'data') return savedToWorkspace.get(a) || { kind: 'unsupported', name: a.name };
+    if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
     if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
     if (a.kind === 'text') return { kind: 'file', name: a.name, text: a.text };
     return { kind: 'unsupported', name: a.name };
   });
+
+  // A data file (csv, xlsx, ...) goes straight into the workspace, so the
+  // sandbox tools must be offered for this message (see sandboxHint below).
+  const sendingDataFile = pendingAttachments.some((a) => a.kind === 'data' || a.kind === 'workspace');
+  const savedToWorkspace = await putDataAttachments(pendingAttachments.filter((a) => a.kind === 'data'));
 
   // What actually goes to the vision model — base64 + mime only, never
   // rendered as text anywhere.
@@ -1532,9 +1675,11 @@ async function sendMessage(text) {
     messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
     quality: currentQuality,
     approvals: conversationApprovals,
+    sandboxHint: sendingDataFile || conversationHasSandbox(),
   };
   if (outgoingImages.length > 0) payload.images = outgoingImages;
 
+  warmSandboxIfUseful(text, sendingDataFile);
   await runStreamedTurn(payload);
   isSending = false;
 }
@@ -1562,6 +1707,9 @@ async function runStreamedTurn(payload, resume) {
     if (settled) return;
     settled = true;
     live.remove();
+    const wasApproving = approvingIndex;
+    approvingIndex = null;
+    if (wasApproving != null) refreshActivity(wasApproving);
     appendSystemNotice(message || 'Something went wrong. Please try again.', status === 429 ? 'limit' : 'error');
   };
 
@@ -1569,6 +1717,7 @@ async function runStreamedTurn(payload, resume) {
     if (settled) return;
     settled = true;
     live.remove();
+    approvingIndex = null;
     const elapsedMs = performance.now() - startedAt;
     conversation.push({ role: 'assistant', content: data.reply || '' });
     conversationMeta[conversation.length - 1] = {
@@ -1582,6 +1731,9 @@ async function runStreamedTurn(payload, resume) {
       sources: data.sources || null,
       elapsedMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
+      // Files from the workspace the person can download, shown under the
+      // answer (see renderDeliverablesHtml). Only path, title and size are kept.
+      deliverables: cleanDeliverables(data.deliverables),
       // `steps` is the full recorded action chain for this turn (Bug 2) —
       // may contain several entries (read → write → verify, etc.), not
       // just one. Falls back to the legacy single-object `toolExecuted`
@@ -1606,6 +1758,7 @@ async function runStreamedTurn(payload, resume) {
       body: JSON.stringify(payload),
     }, {
       onRound: () => live.addPendingRow(),
+      onStepStart: (m) => live.addStepStart(m),
       onStep: (step) => live.addStep(step),
       onSandboxCall: (c) => live.addPendingRow(c && c.summary),
       onDone: (data) => {
@@ -1705,6 +1858,7 @@ function trimSandboxResultForStorage(r) {
     durationMs: r.durationMs || 0,
     truncated: !!r.truncated,
     files: (Array.isArray(r.files) ? r.files : []).slice(0, 20),
+    images: imageFilesOf(r.files),
     offered: (Array.isArray(r.offered) ? r.offered : []).slice(0, 10),
   };
 }
@@ -1755,6 +1909,7 @@ async function streamChatSSE(url, options, handlers) {
   const dispatch = (eventName, data) => {
     if (eventName === 'round') handlers.onRound && handlers.onRound(data);
     else if (eventName === 'step') handlers.onStep && handlers.onStep(data);
+    else if (eventName === 'step_start') handlers.onStepStart && handlers.onStepStart(data);
     else if (eventName === 'sandbox_call') handlers.onSandboxCall && handlers.onSandboxCall(data);
     else if (eventName === 'error') handlers.onError && handlers.onError(data);
     else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
@@ -1804,14 +1959,11 @@ async function streamChatSSE(url, options, handlers) {
   }
 }
 
-/* Live, streaming version of appendThinkingIndicator(): starts identical
- * (rotating word + timer), then morphs in place into a growing action
- * trace the instant the first `round`/`step` event arrives — each tool
- * step appears the moment it actually finishes on the backend, never a
- * client-side replay of an already-known array (see the removed
- * animateToolTrace()). Text is inserted via textContent throughout, not
- * innerHTML, since step summaries can contain user- or repo-controlled
- * strings (file names, issue titles, etc.). */
+/* Live version of the Activity component (see renderActivityHtml for the
+ * finished one). It starts as the calm "thinking" line with the cycling
+ * words, and turns into the same timeline the saved message uses the moment
+ * the first step arrives. Step titles can contain text from repos, files or
+ * emails, so every string goes in through escapeHtml or textContent. */
 function createLiveTurnIndicator() {
   const list = document.getElementById('messageList');
   const id = 'live-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
@@ -1825,7 +1977,15 @@ function createLiveTurnIndicator() {
         '<span class="thinking-word" data-role="word"></span>' +
         '<span class="thinking-timer" data-role="timer">0.0s</span>' +
       '</div>' +
-      '<div class="tool-trace-list" data-role="live-trace" style="display:none;"></div>' +
+      '<section class="act is-open is-live" data-role="act" hidden>' +
+        '<button type="button" class="act-head" aria-expanded="true">' +
+          '<span class="act-label">Working</span>' +
+          '<span class="act-time" data-role="act-time">0.0s</span>' +
+          '<i class="ph ph-caret-down act-caret" aria-hidden="true"></i>' +
+        '</button>' +
+        '<div class="act-body"><ol class="act-rail" role="list" data-role="rail"></ol></div>' +
+        '<span class="act-sr" aria-live="polite" data-role="status"></span>' +
+      '</section>' +
     '</div>';
   document.getElementById('emptyState').hidden = true;
   list.hidden = false;
@@ -1834,8 +1994,11 @@ function createLiveTurnIndicator() {
 
   const wordEl = el.querySelector('[data-role="word"]');
   const timerEl = el.querySelector('[data-role="timer"]');
-  const traceEl = el.querySelector('[data-role="live-trace"]');
   const idleEl = el.querySelector('[data-role="idle-indicator"]');
+  const actEl = el.querySelector('[data-role="act"]');
+  const railEl = el.querySelector('[data-role="rail"]');
+  const actTimeEl = el.querySelector('[data-role="act-time"]');
+  const statusEl = el.querySelector('[data-role="status"]');
   if (wordEl) wordEl.textContent = THINKING_WORDS[0];
 
   const startedAt = performance.now();
@@ -1845,109 +2008,74 @@ function createLiveTurnIndicator() {
     if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
   }, 2200);
   const timerInterval = setInterval(() => {
-    const elapsed = (performance.now() - startedAt) / 1000;
-    if (timerEl) timerEl.textContent = elapsed.toFixed(1) + 's';
+    const t = ((performance.now() - startedAt) / 1000).toFixed(1) + 's';
+    if (timerEl) timerEl.textContent = t;
+    if (actTimeEl) actTimeEl.textContent = t;
   }, 100);
   activeThinkingTimers[id] = { wordInterval, timerInterval };
 
-  let pendingRow = null; // the single "working on the next step…" placeholder, if any
+  let pendingItem = null;   // the one "in progress" row, if any
 
   function reveal() {
     if (idleEl) idleEl.style.display = 'none';
-    if (traceEl) traceEl.style.display = '';
+    actEl.hidden = false;
   }
+  function say(text) { if (statusEl) statusEl.textContent = text || ''; }
 
-  function addPendingRow(text) {
+  function putPending(title, sub) {
     reveal();
-    if (pendingRow && text) {
-      const l = pendingRow.querySelector('.tool-trace-card-label');
-      if (l) l.textContent = text;
+    if (!pendingItem) {
+      pendingItem = htmlToElement(actItemHtml({ state: 'running', title: title || 'Working', sub: sub || '' }));
+      railEl.appendChild(pendingItem);
+    } else {
+      if (title) pendingItem.querySelector('.act-title').textContent = title;
+      const subEl = pendingItem.querySelector('.act-sub');
+      if (subEl) subEl.textContent = sub || '';
     }
-    if (!traceEl || pendingRow) return; // only one placeholder at a time
-    const row = document.createElement('div');
-    row.className = 'tool-trace-card tool-trace-card--pending';
-    const icon = document.createElement('i');
-    icon.className = 'ph ph-circle-notch trace-spin';
-    const label = document.createElement('span');
-    label.className = 'tool-trace-card-label';
-    label.textContent = text || 'Working\u2026';
-    row.appendChild(icon);
-    row.appendChild(label);
-    traceEl.appendChild(row);
-    pendingRow = row;
+    say(title);
     scrollToBottom();
   }
+
+  function addPendingRow(text) { putPending(text, ''); }
+  function addStepStart(m) { if (m) putPending(m.summary, m.providerLabel); }
 
   function addStep(step) {
     if (!step) return;
     reveal();
-    if (!traceEl) return;
-
-    // "awaiting_confirmation" isn't rendered as its own trace row (the
-    // confirm/cancel card that appears once the turn commits already
-    // covers it) — it just closes out any pending placeholder.
     if (step.type === 'awaiting_confirmation') {
-      if (pendingRow) { pendingRow.remove(); pendingRow = null; }
+      if (pendingItem) { pendingItem.remove(); pendingItem = null; }
       return;
     }
-
-    // A run the Worker did itself on a remote sandbox: show it like a browser run.
-    if (step.type === 'sandbox') {
-      if (pendingRow) { pendingRow.remove(); pendingRow = null; }
-      traceEl.appendChild(htmlToElement(renderSandboxStepHtml(step)));
-      scrollToBottom();
-      return;
-    }
-
-    const ok = step.ok !== false;
-    const finalIcon = step.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
-    const statusClass = step.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
-
-    const row = pendingRow || document.createElement('div');
-    if (!pendingRow) traceEl.appendChild(row);
-    row.className = 'tool-trace-card ' + statusClass;
-    row.innerHTML = '';
-    const icon = document.createElement('i');
-    icon.className = 'ph ' + finalIcon;
-    const label = document.createElement('span');
-    label.className = 'tool-trace-card-label';
-    label.textContent = step.summary || step.name || 'Action performed.';
-    row.appendChild(icon);
-    row.appendChild(label);
-    pendingRow = null;
+    const item = htmlToElement(step.type === 'sandbox' ? renderSandboxStepHtml(step) : renderStepItemHtml(step));
+    if (pendingItem) { pendingItem.replaceWith(item); pendingItem = null; }
+    else railEl.appendChild(item);
+    hydrateFigures(item);
+    say(step.summary);
     scrollToBottom();
   }
 
-  // The running view of one sandbox call: title, elapsed time, a Stop button
-  // and a terminal block that fills as output arrives. When the run ends,
-  // finish() swaps it for the settled card that history reloads also use.
+  // The running view of one code call: a row with the elapsed time and a Stop
+  // button, and a terminal block that fills as output arrives. When the run
+  // ends, finish() swaps it for the settled row that saved chats also use.
   function startSandboxRun(call) {
     reveal();
-    if (pendingRow) { pendingRow.remove(); pendingRow = null; }
-    const card = document.createElement('div');
-    card.className = 'tool-trace-card sbx-card sbx-card--running';
-    card.innerHTML =
-      '<details class="sbx" open>' +
-        '<summary class="sbx-head">' +
-          '<i class="ph ph-circle-notch trace-spin"></i>' +
-          '<span class="sbx-title"></span>' +
-          '<span class="sbx-time">0.0s</span>' +
-          '<button type="button" class="sbx-stop" aria-label="Stop this run"><i class="ph ph-stop"></i> Stop</button>' +
-        '</summary>' +
-        '<div class="sbx-body"><pre class="sbx-out" aria-live="off"></pre></div>' +
-      '</details>';
-    card.querySelector('.sbx-title').textContent = call.summary || 'Running code';
-    const timeEl = card.querySelector('.sbx-time');
-    const outEl = card.querySelector('.sbx-out');
-    const titleEl = card.querySelector('.sbx-title');
+    if (pendingItem) { pendingItem.remove(); pendingItem = null; }
+    const item = htmlToElement(actItemHtml({
+      state: 'running', title: call.summary || 'Running code', sub: 'Code', live: true,
+      detailHtml: '<div class="sbx-body"><pre class="sbx-out" aria-live="off"></pre></div>', openDetail: true,
+    }));
+    const timeEl = item.querySelector('.act-ms');
+    const outEl = item.querySelector('.sbx-out');
+    const titleEl = item.querySelector('.act-title');
     const t0 = performance.now();
     const tick = setInterval(() => { timeEl.textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
-    card.querySelector('.sbx-stop').addEventListener('click', (ev) => {
+    item.querySelector('.sbx-stop').addEventListener('click', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       ev.currentTarget.disabled = true;
       getSandbox().cancel(call.id);
     });
-    traceEl.appendChild(card);
+    railEl.appendChild(item);
+    say(call.summary);
     scrollToBottom();
 
     let shown = 0;
@@ -1970,7 +2098,8 @@ function createLiveTurnIndicator() {
       finish(step) {
         clearInterval(tick);
         const settled = htmlToElement(renderSandboxStepHtml(step));
-        card.replaceWith(settled);
+        item.replaceWith(settled);
+        hydrateFigures(settled);
         scrollToBottom();
       },
     };
@@ -1986,8 +2115,301 @@ function createLiveTurnIndicator() {
     el.remove();
   }
 
-  return { id, addPendingRow, addStep, startSandboxRun, remove };
+  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, remove };
 }
+
+/* ── Files the person can take away ───────────────────────────────────
+ * The workspace lives in this browser, so a file the assistant wrote there is
+ * invisible until it is offered. The Worker sends `deliverables` (files the
+ * assistant offered, plus files it made when the person asked for one) and
+ * they are shown as buttons right under the answer, not hidden in a step. */
+function cleanDeliverables(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 6)
+    .filter((f) => f && typeof f.path === 'string' && f.path.startsWith('/workspace/'))
+    .map((f) => ({
+      path: f.path.slice(0, 300),
+      title: typeof f.title === 'string' ? f.title.slice(0, 120) : '',
+      size: Number.isFinite(f.size) ? f.size : null,
+    }));
+}
+
+function renderDeliverablesHtml(meta, msgIndex) {
+  const files = Array.isArray(meta.deliverables) ? meta.deliverables : [];
+  if (!files.length) return '';
+  const chips = files.map((f) => {
+    const name = f.path.split('/').pop();
+    const saved = savedRecordFor(msgIndex, f.path);
+    if (saved) return '<span class="deliv-item">' + savedChipHtml(saved) + '</span>';
+    return '<span class="deliv-item">' +
+      '<button type="button" class="deliv-file" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(name) + '">' +
+        '<i class="ph ph-file-arrow-down" aria-hidden="true"></i>' +
+        '<span class="deliv-file-name">' + escapeHtml(f.title || name) + '</span>' +
+        (f.size != null ? '<span class="deliv-file-size">' + escapeHtml(formatBytes(f.size)) + '</span>' : '') +
+      '</button>' +
+      '<button type="button" class="deliv-save" data-msg-index="' + msgIndex + '" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(name) + '">' +
+        '<i class="ph ph-cloud-arrow-up" aria-hidden="true"></i> Save to Cognita' +
+      '</button>' +
+    '</span>';
+  }).join('');
+  return '<div class="deliv" role="group" aria-label="Files">' + chips + '</div>';
+}
+
+/* ── Keeping a file in Cognita ─────────────────────────────────────────
+ * A file offered for download lives only in this browser. "Save to Cognita"
+ * uploads it to the person's own storage for this chat. Once saved, the
+ * button becomes the normal re-download chip, which works on any device. The
+ * record is kept on the step that offered the file. */
+function savedRecordFor(msgIndex, path) {
+  const meta = Number.isInteger(msgIndex) ? conversationMeta[msgIndex] : null;
+  if (!meta) return null;
+  for (const s of (Array.isArray(meta.steps) ? meta.steps : [])) {
+    const list = s && s.sandbox && s.sandbox.saved;
+    const hit = Array.isArray(list) ? list.find((r) => r && r.path === path) : null;
+    if (hit) return hit;
+  }
+  return (meta.savedFiles || []).find((r) => r && r.path === path) || null;
+}
+
+function savedChipHtml(rec) {
+  return '<button type="button" class="document-download-chip" ' +
+    'data-conversation-id="' + escapeHtml(rec.conversationId || '') + '" ' +
+    'data-file-id="' + escapeHtml(rec.fileId || '') + '" ' +
+    'data-filename="' + escapeHtml(rec.filename || '') + '" ' +
+    'data-mime="' + escapeHtml(rec.mimeType || '') + '">' +
+    '<i class="ph ph-file-arrow-down"></i>' +
+    '<span class="document-download-chip-name">' + escapeHtml(rec.filename || 'file') + '</span>' +
+    '<span class="document-download-chip-state"></span>' +
+  '</button>';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('read failed'));
+    r.readAsDataURL(blob);
+  });
+}
+
+async function saveFileToCognita(btn) {
+  const msgIndex = parseInt(btn.dataset.msgIndex, 10);
+  const path = btn.dataset.sbxPath;
+  const name = btn.dataset.sbxName || path.split('/').pop();
+  const meta = conversationMeta[msgIndex];
+  if (!meta || btn.disabled) return;
+
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ph ph-circle-notch trace-spin" aria-hidden="true"></i> Saving…';
+  const restore = () => { btn.disabled = false; btn.innerHTML = label; };
+
+  try {
+    const conversationId = ensureConversationId();
+    const blob = await getSandbox().exportFile(conversationId, path);
+    if (!blob) { showToast('That file is no longer on this device. Ask Cognita to make it again.'); restore(); return; }
+    const maxMB = currentSandboxLimits && currentSandboxLimits.artifactMaxMB;
+    if (maxMB && blob.size > maxMB * 1024 * 1024) {
+      showToast('That file is larger than the ' + maxMB + ' MB your plan can save.');
+      restore();
+      return;
+    }
+    const content = await blobToBase64(blob);
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/files/' + encodeURIComponent(conversationId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: name, content }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (!res.ok || !data || !data.fileId) {
+      showToast((data && data.error) || 'Could not save that file. Please try again.');
+      restore();
+      return;
+    }
+
+    const rec = { path, fileId: data.fileId, filename: data.filename, mimeType: data.mimeType, conversationId: data.conversationId || conversationId };
+    const steps = Array.isArray(meta.steps) ? meta.steps : [];
+    const sbSteps = steps.filter((s) => s && s.type === 'sandbox' && s.sandbox);
+    const holder =
+      [...sbSteps].reverse().find((s) => (s.sandbox.offered || []).some((f) => f.path === path)) ||
+      [...sbSteps].reverse().find((s) => (s.sandbox.files || []).some((f) => f.path === path)) ||
+      null;
+    if (holder) holder.sandbox.saved = (holder.sandbox.saved || []).filter((r) => r.path !== path).concat(rec);
+    else meta.savedFiles = (meta.savedFiles || []).filter((r) => r.path !== path).concat(rec);
+    persistCurrentConversation();
+    renderConversation();
+    showToast('Saved to Cognita.');
+  } catch (e) {
+    console.error('[app] Could not save file:', e.message);
+    showToast('Could not reach Cognita. Please try again.');
+    restore();
+  }
+}
+
+/* ── Charts and other pictures made by code ──────────────────────────────
+ * Any picture a run creates or changes (png, jpg, webp, gif, svg), up to 4 per
+ * step and 2 MB each, is shown inside that step and again under the answer.
+ * Pictures are only ever shown through <img src="blob:...">. Their contents are
+ * never inserted into the page as markup, so an SVG cannot run script here.
+ * Only the path and size are saved with the chat. On reload each picture is
+ * read back from this browser's workspace the first time it scrolls into view. */
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|svg)$/i;
+const MAX_FIGURES_PER_STEP = 4;
+const MAX_FIGURE_BYTES = 2 * 1024 * 1024;
+
+function imageFilesOf(files) {
+  return (Array.isArray(files) ? files : [])
+    .filter((f) => f && typeof f.path === 'string' && f.change !== 'deleted' && IMAGE_EXT_RE.test(f.path) && !(f.size > MAX_FIGURE_BYTES))
+    .slice(0, MAX_FIGURES_PER_STEP)
+    .map((f) => ({ path: f.path, size: f.size || 0 }));
+}
+
+function figureHtml(f) {
+  const name = f.path.split('/').pop();
+  return '<figure class="fig" data-fig-path="' + escapeHtml(f.path) + '">' +
+    '<button type="button" class="fig-open" aria-label="Open ' + escapeHtml(name) + ' larger">' +
+      '<span class="fig-frame"><img class="fig-img" alt="" decoding="async" hidden><span class="fig-ph">Loading picture…</span></span>' +
+    '</button>' +
+    '<figcaption class="fig-cap">' + escapeHtml(name) + '</figcaption>' +
+  '</figure>';
+}
+
+/* Under the answer: every picture the turn's steps made and left in place. */
+function renderFigureGridHtml(meta) {
+  const steps = Array.isArray(meta.steps) ? meta.steps : [];
+  const byPath = new Map();
+  steps.forEach((s) => {
+    if (!s || s.type !== 'sandbox' || !s.sandbox) return;
+    (s.sandbox.files || []).forEach((f) => { if (f && f.change === 'deleted') byPath.delete(f.path); });
+    (s.sandbox.images || imageFilesOf(s.sandbox.files)).forEach((f) => byPath.set(f.path, f));
+  });
+  const list = Array.from(byPath.values()).slice(-6);
+  return list.length ? '<div class="fig-grid">' + list.map(figureHtml).join('') + '</div>' : '';
+}
+
+let figureUrls = [];          // blob: addresses made for the current screen
+let figureObserver = null;
+let figureQueue = Promise.resolve();   // loads run one at a time so they never fight over the workspace
+
+function revokeFigureUrls() {
+  figureUrls.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) { /* already gone */ } });
+  figureUrls = [];
+}
+
+function hydrateFigures(root) {
+  if (!root || !root.querySelectorAll) return;
+  const figs = root.querySelectorAll('.fig[data-fig-path]:not([data-fig-state])');
+  if (!figs.length) return;
+  if (!('IntersectionObserver' in window)) { figs.forEach(loadFigure); return; }
+  if (!figureObserver) {
+    figureObserver = new IntersectionObserver((entries) => {
+      entries.forEach((e) => { if (e.isIntersecting) { figureObserver.unobserve(e.target); loadFigure(e.target); } });
+    }, { rootMargin: '200px' });
+  }
+  figs.forEach((f) => { f.dataset.figState = 'wait'; figureObserver.observe(f); });
+}
+
+function loadFigure(fig) {
+  fig.dataset.figState = 'loading';
+  figureQueue = figureQueue.then(async () => {
+    if (!fig.isConnected) return;
+    let url = null;
+    try { url = await getSandbox().getObjectUrl(ensureConversationId(), fig.dataset.figPath); } catch (_) { url = null; }
+    if (!fig.isConnected) { if (url) URL.revokeObjectURL(url); return; }
+    const img = fig.querySelector('.fig-img');
+    const ph = fig.querySelector('.fig-ph');
+    const gone = () => {
+      fig.dataset.figState = 'gone';
+      fig.classList.add('is-gone');
+      img.hidden = true; ph.hidden = false;
+      ph.textContent = 'This picture is no longer on this device. Ask Cognita to make it again.';
+    };
+    if (!url) { gone(); return; }
+    figureUrls.push(url);
+    img.alt = fig.querySelector('.fig-cap').textContent;
+    img.onload = () => { fig.dataset.figState = 'ready'; img.hidden = false; ph.hidden = true; };
+    img.onerror = gone;
+    img.src = url;
+  });
+}
+
+/* The enlarged view. Escape or a tap outside closes it, Tab stays inside it,
+ * and tapping the picture toggles between fitting the screen and full size
+ * (scrollable, and the browser's own pinch zoom still works). */
+let lightbox = null;
+
+function closeLightbox() {
+  if (!lightbox) return;
+  document.removeEventListener('keydown', lightbox.onKey, true);
+  lightbox.el.remove();
+  if (lightbox.url) URL.revokeObjectURL(lightbox.url);
+  document.documentElement.style.overflow = lightbox.prevOverflow;
+  const opener = lightbox.opener;
+  lightbox = null;
+  if (opener && opener.isConnected) opener.focus();
+}
+
+async function openLightbox(path, opener) {
+  closeLightbox();
+  const name = path.split('/').pop();
+  const el = document.createElement('div');
+  el.className = 'lb';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', name);
+  el.innerHTML =
+    '<div class="lb-bar">' +
+      '<span class="lb-name"></span>' +
+      '<button type="button" class="lb-btn" data-lb="download"><i class="ph ph-download-simple" aria-hidden="true"></i> Download</button>' +
+      '<button type="button" class="lb-btn" data-lb="close" aria-label="Close"><i class="ph ph-x" aria-hidden="true"></i></button>' +
+    '</div>' +
+    '<div class="lb-stage"><img class="lb-img" alt="" hidden></div>';
+  el.querySelector('.lb-name').textContent = name;
+  const img = el.querySelector('.lb-img');
+  const buttons = Array.from(el.querySelectorAll('.lb-btn'));
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); closeLightbox(); return; }
+    if (ev.key !== 'Tab') return;
+    const first = buttons[0], last = buttons[buttons.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+    else if (!el.contains(document.activeElement)) { ev.preventDefault(); first.focus(); }
+  };
+  lightbox = { el, url: null, opener, onKey, prevOverflow: document.documentElement.style.overflow };
+  document.addEventListener('keydown', onKey, true);
+  document.documentElement.style.overflow = 'hidden';
+  document.body.appendChild(el);
+  buttons[1].focus();
+
+  el.addEventListener('click', async (ev) => {
+    const act = ev.target.closest && ev.target.closest('[data-lb]');
+    if (act && act.dataset.lb === 'close') { closeLightbox(); return; }
+    if (act && act.dataset.lb === 'download') {
+      const ok = await getSandbox().downloadFile(ensureConversationId(), path, name);
+      if (!ok) showToast('That file is no longer on this device. Ask Cognita to make it again.');
+      return;
+    }
+    if (ev.target === img) { img.classList.toggle('is-zoomed'); return; }
+    if (ev.target === el || ev.target.classList.contains('lb-stage')) closeLightbox();
+  });
+
+  let url = null;
+  try { url = await getSandbox().getObjectUrl(ensureConversationId(), path); } catch (_) { url = null; }
+  if (!lightbox || lightbox.el !== el) { if (url) URL.revokeObjectURL(url); return; }
+  if (!url) { closeLightbox(); showToast('That picture is no longer on this device. Ask Cognita to make it again.'); return; }
+  lightbox.url = url;
+  img.alt = name;
+  img.src = url;
+  img.hidden = false;
+}
+
+document.addEventListener('click', (ev) => {
+  const open = ev.target.closest && ev.target.closest('.fig-open');
+  if (!open) return;
+  const fig = open.closest('.fig');
+  if (fig && fig.dataset.figState === 'ready') openLightbox(fig.dataset.figPath, open);
+});
 
 /* ── Sandbox step cards ───────────────────────────────────────────────
  * One compact, expandable card per code run: what ran, whether it worked,
@@ -2008,12 +2430,71 @@ function formatBytes(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 
-function renderSandboxStepHtml(step) {
+
+/* ── Activity timeline pieces ─────────────────────────────────────────
+ * One <li> per thing that happened: a small status node on a thin rail, a
+ * title, who it was done in (the sub line), how long it took, and an optional
+ * detail that opens underneath. The same markup is used while a turn is live
+ * and when a saved chat is reopened. Every string is escaped. */
+const PROVIDER_GLYPHS = {
+  github: 'ph-github-logo', drive: 'ph-google-drive-logo', gmail: 'ph-envelope-simple',
+  calendar: 'ph-calendar-blank', facebook: 'ph-facebook-logo', instagram: 'ph-instagram-logo',
+  figma: 'ph-figma-logo', canva: 'ph-paint-brush', google: 'ph-google-logo',
+};
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 100) return '';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm ' + String(Math.round(s - m * 60)).padStart(2, '0') + 's';
+}
+
+function actItemHtml(o) {
+  const state = o.state || 'done';
+  const words = { done: 'Done', fail: 'Failed', wait: 'Waiting', running: 'Running', stopped: 'Stopped' };
+  const icons = { done: 'ph-check', fail: 'ph-x', wait: 'ph-hand-palm', stopped: 'ph-minus' };
+  const node = '<span class="act-node" aria-hidden="true">' + (icons[state] ? '<i class="ph ' + icons[state] + '"></i>' : '') + '</span>';
+  const text =
+    '<span class="act-text">' +
+      '<span class="act-sr">' + words[state] + ': </span>' +
+      '<span class="act-title">' + escapeHtml(o.title || '') + '</span>' +
+      '<span class="act-sub">' + escapeHtml(o.sub || '') + '</span>' +
+    '</span>' +
+    '<span class="act-ms">' + escapeHtml(o.ms || '') + '</span>';
+  const open = !!(o.detailHtml && o.openDetail);
+  const toggle = o.detailHtml
+    ? '<button type="button" class="act-toggle" aria-expanded="' + open + '">' + text +
+        '<i class="ph ph-caret-down act-chev" aria-hidden="true"></i></button>'
+    : '<div class="act-toggle act-toggle--static">' + text + '</div>';
+  return (
+    '<li class="act-item' + (o.extraClass ? ' ' + o.extraClass : '') + '" data-state="' + state + '">' +
+      node +
+      '<div class="act-main">' +
+        '<div class="act-row">' + toggle +
+          (o.live ? '<button type="button" class="sbx-stop">Stop</button>' : '') +
+        '</div>' +
+        (o.detailHtml ? '<div class="act-detail"' + (open ? '' : ' hidden') + '>' + o.detailHtml + '</div>' : '') +
+      '</div>' +
+    '</li>'
+  );
+}
+
+function renderStepItemHtml(step, msgIndex) {
+  if (step && step.type === 'sandbox') return renderSandboxStepHtml(step, msgIndex);
+  const blocked = step.type === 'blocked';
+  const ok = step.ok !== false;
+  return actItemHtml({
+    state: blocked ? 'stopped' : (ok ? 'done' : 'fail'),
+    title: step.summary || step.name || 'Action performed',
+    sub: step.providerLabel || '',
+    ms: formatDuration(step.ms),
+  });
+}
+
+function renderSandboxStepHtml(step, msgIndex) {
   const sb = step.sandbox || {};
   const ok = step.ok !== false && !step.cancelled;
-  const icon = step.cancelled ? 'ph-stop-circle' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
-  const cls = step.cancelled ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
-  const secs = sb.durationMs ? (sb.durationMs / 1000).toFixed(1) + 's' : '';
 
   let out = '';
   if (sb.stdout) out += '<span>' + escapeHtml(sb.stdout) + '</span>';
@@ -2023,37 +2504,257 @@ function renderSandboxStepHtml(step) {
   const status = step.cancelled ? 'Stopped' : (ok ? 'Succeeded' : 'Failed (exit code ' + (sb.exitCode != null ? sb.exitCode : 1) + ')');
   const files = (sb.files || []).map((f) => {
     const fi = f.change === 'deleted' ? 'ph-file-minus' : (f.change === 'created' ? 'ph-file-plus' : 'ph-file-text');
-    return '<li><i class="ph ' + fi + '"></i><span class="sbx-file-path">' + escapeHtml(f.path) + '</span>' +
+    return '<li><i class="ph ' + fi + '" aria-hidden="true"></i><span class="sbx-file-path">' + escapeHtml(f.path) + '</span>' +
       (f.change === 'deleted' ? '' : '<span class="sbx-muted">' + escapeHtml(formatBytes(f.size)) + '</span>') + '</li>';
   }).join('');
-  const offered = (sb.offered || []).map((f) =>
-    '<button type="button" class="sbx-download" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(f.title || f.path.split('/').pop()) + '">' +
-      '<i class="ph ph-download-simple"></i> ' + escapeHtml(f.title || f.path.split('/').pop()) +
-    '</button>'
-  ).join('');
+  const offered = (sb.offered || []).map((f) => {
+    const name = f.title || f.path.split('/').pop();
+    const saved = savedRecordFor(msgIndex, f.path);
+    if (saved) return savedChipHtml(saved);
+    return '<button type="button" class="sbx-download" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(f.path.split('/').pop()) + '">' +
+        '<i class="ph ph-download-simple" aria-hidden="true"></i> ' + escapeHtml(name) +
+      '</button>' +
+      (Number.isInteger(msgIndex)
+        ? '<button type="button" class="sbx-save" data-msg-index="' + msgIndex + '" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(f.path.split('/').pop()) + '">' +
+            '<i class="ph ph-cloud-arrow-up" aria-hidden="true"></i> Save to Cognita</button>'
+        : '');
+  }).join('');
 
+  // Pictures are shown under the answer (renderFigureGridHtml), not repeated here.
+  const detail =
+    '<div class="sbx-body">' +
+      (sb.command ? '<div class="sbx-cmd"><span class="sbx-prompt">$</span> ' + escapeHtml(sb.command) + '</div>' : '') +
+      '<pre class="sbx-out">' + out + '</pre>' +
+      (sb.truncated ? '<div class="sbx-note">Output was cut to keep things fast.</div>' : '') +
+      '<div class="sbx-meta">' + escapeHtml(status) + '</div>' +
+      (files ? '<ul class="sbx-files">' + files + '</ul>' : '') +
+      (offered ? '<div class="sbx-actions">' + offered + '</div>' : '') +
+      (!ok && !step.cancelled ? '<div class="sbx-actions"><button type="button" class="sbx-retry"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Try again</button></div>' : '') +
+    '</div>';
+
+  return actItemHtml({
+    state: step.cancelled ? 'stopped' : (ok ? 'done' : 'fail'),
+    title: step.summary || step.name || 'Ran code',
+    sub: 'Code',
+    ms: formatDuration(sb.durationMs),
+    detailHtml: detail,
+    openDetail: !ok && !step.cancelled,
+  });
+}
+
+/* ── Approval card ───────────────────────────────────────────────────
+ * Shown when the assistant wants to change something in a connected app. It
+ * says where, what and what will happen, and has two plain buttons. Nothing
+ * on it takes focus by itself; screen readers are told through a quiet live
+ * region (announceApprovals). Chats saved before this redesign only have a
+ * one-line summary, and fall back to showing that. */
+function renderApprovalHtml(ptc, index) {
+  const glyph = PROVIDER_GLYPHS[ptc.providerKey] || 'ph-plug';
+  const verb = ptc.verb || '';
+  const primary = verb === 'delete' ? 'Delete' : verb === 'send' ? 'Send' : verb === 'post' ? 'Post' : 'Approve';
+  const titleId = 'appr-t-' + index;
+  const details = Array.isArray(ptc.details) ? ptc.details : [];
+  const short = details.filter((d) => d && !d.long);
+  const long = details.filter((d) => d && d.long);
+  const dl = short.length
+    ? '<dl class="appr-details">' + short.map((d) =>
+        '<div class="appr-row"><dt>' + escapeHtml(d.label) + '</dt><dd>' + escapeHtml(d.value) + '</dd></div>').join('') + '</dl>'
+    : '';
+  const longHtml = long.map((d, i) => {
+    const id = 'appr-l-' + index + '-' + i;
+    return '<div class="appr-long"><div class="appr-long-label">' + escapeHtml(d.label) + '</div>' +
+      '<div class="appr-long-text is-clamped" id="' + id + '">' + escapeHtml(d.value) + '</div>' +
+      (String(d.value).length > 160
+        ? '<button type="button" class="appr-more" aria-expanded="false" aria-controls="' + id + '">Show more</button>'
+        : '') +
+      '</div>';
+  }).join('');
   return (
-    '<div class="tool-trace-card sbx-card ' + cls + '">' +
-      '<details class="sbx"' + (!ok && !step.cancelled ? ' open' : '') + '>' +
-        '<summary class="sbx-head">' +
-          '<i class="ph ' + icon + '"></i>' +
-          '<span class="sbx-title">' + escapeHtml(step.summary || step.name || 'Ran code') + '</span>' +
-          (secs ? '<span class="sbx-time">' + secs + '</span>' : '') +
-          '<i class="ph ph-caret-down sbx-caret"></i>' +
-        '</summary>' +
-        '<div class="sbx-body">' +
-          (sb.command ? '<div class="sbx-cmd"><span class="sbx-prompt">$</span> ' + escapeHtml(sb.command) + '</div>' : '') +
-          '<pre class="sbx-out">' + out + '</pre>' +
-          (sb.truncated ? '<div class="sbx-note">Output was cut to keep things fast.</div>' : '') +
-          '<div class="sbx-meta">' + escapeHtml(status) + (sb.cwd ? ' \u00b7 ' + escapeHtml(sb.cwd) : '') + '</div>' +
-          (files ? '<ul class="sbx-files">' + files + '</ul>' : '') +
-          (offered ? '<div class="sbx-actions">' + offered + '</div>' : '') +
-          (!ok && !step.cancelled ? '<div class="sbx-actions"><button type="button" class="sbx-retry"><i class="ph ph-arrow-clockwise"></i> Try again</button></div>' : '') +
-        '</div>' +
-      '</details>' +
+    '<div class="appr' + (verb === 'delete' ? ' appr--danger' : '') + '" role="group" aria-labelledby="' + titleId + '" data-state="pending" data-index="' + index + '">' +
+      '<div class="appr-top">' +
+        '<span class="appr-tile" aria-hidden="true"><i class="ph ' + glyph + '"></i></span>' +
+        '<span class="appr-who"><span class="appr-over">Needs your approval</span>' +
+          (ptc.providerLabel ? '<span class="appr-prov">' + escapeHtml(ptc.providerLabel) + '</span>' : '') + '</span>' +
+      '</div>' +
+      '<div class="appr-title" id="' + titleId + '" role="heading" aria-level="3">' + escapeHtml(ptc.title || ptc.summary || 'Make this change?') + '</div>' +
+      dl + longHtml +
+      (ptc.consequence ? '<p class="appr-conseq">' + escapeHtml(ptc.consequence) + '</p>' : '') +
+      '<div class="appr-actions">' +
+        '<button type="button" class="appr-btn appr-btn--primary" data-tool-action="confirm" data-index="' + index + '">' + primary + '</button>' +
+        '<button type="button" class="appr-btn appr-btn--ghost" data-tool-action="cancel" data-index="' + index + '">Not now</button>' +
+      '</div>' +
+      (ptc.remembers ? '<p class="appr-note">Cognita won’t ask again for this same kind of action in this chat.</p>' : '') +
     '</div>'
   );
 }
+
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+/* The finished Activity for one assistant message. Closed by default so the
+ * answer stays the main thing; open when something failed or an approval is
+ * waiting. A message that has just arrived opens, then folds itself shut after
+ * a moment (see collapseFreshActivity). */
+function renderActivityHtml(meta, index, isUser) {
+  if (isUser || !meta) return '';
+  const steps = (Array.isArray(meta.steps) ? meta.steps : []).filter((s) => s && s.type !== 'awaiting_confirmation');
+  const ptc = meta.pendingToolCall || null;
+  if (!steps.length && !ptc && !meta.thinking && !meta.thinkingHeading) return '';
+
+  const items = [];
+  if (meta.thinking) {
+    items.push(actItemHtml({
+      state: 'done', title: 'Reasoning summary',
+      detailHtml: '<div class="act-prose">' + renderMarkdownLite(meta.thinking) + '</div>',
+    }));
+  } else if (meta.thinkingHeading && !steps.length) {
+    items.push(actItemHtml({ state: 'done', title: meta.thinkingHeading }));
+  }
+
+  // Runs of plain reads in the same app become one row: "Read 4 items in GitHub".
+  const isRead = (st) => st.type !== 'sandbox' && st.type !== 'blocked' && st.ok !== false && st.kind === 'read' && st.providerLabel;
+  for (let i = 0; i < steps.length; ) {
+    let j = i;
+    if (isRead(steps[i])) { while (j + 1 < steps.length && isRead(steps[j + 1]) && steps[j + 1].providerLabel === steps[i].providerLabel) j++; }
+    const n = j - i + 1;
+    if (n >= 2) {
+      const group = steps.slice(i, j + 1);
+      items.push(actItemHtml({
+        state: 'done', title: 'Read ' + n + ' items', sub: steps[i].providerLabel,
+        ms: formatDuration(group.reduce((t, g) => t + (Number.isFinite(g.ms) ? g.ms : 0), 0)),
+        detailHtml: '<ul class="act-list">' + group.map((g) => '<li>' + escapeHtml(g.summary || g.name || '') + '</li>').join('') + '</ul>',
+      }));
+      i = j + 1;
+    } else {
+      items.push(renderStepItemHtml(steps[i], index));
+      i++;
+    }
+  }
+
+  let pendingApproval = false;
+  if (ptc) {
+    if (ptc.status === 'pending') {
+      pendingApproval = true;
+      items.push('<li class="act-item act-item--appr" data-state="wait"><span class="act-node" aria-hidden="true"><i class="ph ph-hand-palm"></i></span><div class="act-main">' + renderApprovalHtml(ptc, index) + '</div></li>');
+    } else if (ptc.status === 'cancelled') {
+      items.push(actItemHtml({ state: 'stopped', title: 'Declined. Nothing was changed.', extraClass: 'act-item--quiet' }));
+    } else if (approvingIndex === index) {
+      items.push(actItemHtml({ state: 'running', title: 'Approved, running', sub: ptc.providerLabel || '' }));
+    } else {
+      items.push(actItemHtml({ state: 'done', title: 'Approved', sub: ptc.providerLabel || '' }));
+    }
+  }
+
+  const failed = steps.filter((st) => st.ok === false && st.type !== 'blocked').length;
+  const t = formatDuration(meta.elapsedMs);
+  let label;
+  if (pendingApproval) label = 'Waiting for your approval';
+  else if (steps.length) label = (t ? 'Worked for ' + t + ', ' : '') + plural(steps.length, 'step', 'steps') + (failed ? ', ' + failed + ' failed' : '');
+  else if (ptc && ptc.status === 'cancelled') label = 'Declined';
+  else if (ptc) label = approvingIndex === index ? 'Running approved action' : 'Approved';
+  else label = t ? 'Thought for ' + t : 'Reasoning';
+
+  const wantOpen = failed > 0 || pendingApproval || (!!ptc && !steps.length && !meta.thinking);
+  const fresh = index === freshAssistantIndex && !wantOpen && steps.length > 0;
+  const open = wantOpen || fresh;
+  return (
+    '<section class="act' + (open ? ' is-open' : '') + (failed ? ' has-fail' : '') + '"' + (fresh ? ' data-autocollapse="1"' : '') + ' data-index="' + index + '">' +
+      '<button type="button" class="act-head" aria-expanded="' + open + '">' +
+        '<span class="act-label">' + escapeHtml(label) + '</span>' +
+        '<i class="ph ph-caret-down act-caret" aria-hidden="true"></i>' +
+      '</button>' +
+      '<div class="act-body"><ol class="act-rail" role="list">' + items.join('') + '</ol></div>' +
+    '</section>'
+  );
+}
+
+// Redraws only one message's Activity (used when an approval is answered, so
+// the rest of the chat does not flicker).
+function refreshActivity(index) {
+  const list = document.getElementById('messageList');
+  const msgEl = list && list.children[index];
+  const meta = conversationMeta[index];
+  if (!msgEl || !meta) return;
+  const old = msgEl.querySelector('.act');
+  const html = renderActivityHtml(meta, index, false);
+  if (!html) { if (old) old.remove(); return; }
+  const fresh = htmlToElement(html);
+  if (old) old.replaceWith(fresh);
+  else msgEl.querySelector('.message-body').prepend(fresh);
+  hydrateFigures(fresh);
+}
+
+function setActOpen(act, open) {
+  act.classList.toggle('is-open', open);
+  const head = act.querySelector('.act-head');
+  if (head) head.setAttribute('aria-expanded', String(open));
+}
+
+// A just-arrived message shows its steps, then folds them away so the answer
+// is what the eye lands on. Skipped if the person already touched it.
+function collapseFreshActivity(root) {
+  root.querySelectorAll('.act[data-autocollapse="1"]').forEach((act) => {
+    setTimeout(() => {
+      if (act.isConnected && act.dataset.autocollapse === '1') {
+        act.removeAttribute('data-autocollapse');
+        setActOpen(act, false);
+      }
+    }, 600);
+  });
+}
+
+let _announcedApprovals = new Set();
+function announceApprovals() {
+  const cards = document.querySelectorAll('.appr[data-state="pending"]');
+  if (!cards.length) return;
+  let region = document.getElementById('apprAnnounce');
+  if (!region) {
+    region = document.createElement('div');
+    region.id = 'apprAnnounce';
+    region.className = 'act-sr';
+    region.setAttribute('aria-live', 'polite');
+    document.body.appendChild(region);
+  }
+  cards.forEach((card) => {
+    const key = currentConversationId + ':' + card.dataset.index;
+    if (_announcedApprovals.has(key)) return;
+    _announcedApprovals.add(key);
+    const t = card.querySelector('.appr-title');
+    region.textContent = 'Cognita needs your approval: ' + (t ? t.textContent : 'a change');
+  });
+}
+
+document.addEventListener('click', (ev) => {
+  const t = ev.target;
+  if (!t || !t.closest) return;
+  const head = t.closest('.act-head');
+  if (head) {
+    const act = head.closest('.act');
+    act.removeAttribute('data-autocollapse');
+    setActOpen(act, !act.classList.contains('is-open'));
+    return;
+  }
+  const tog = t.closest('.act-toggle[aria-expanded]');
+  if (tog) {
+    const item = tog.closest('.act-item');
+    const detail = item && item.querySelector('.act-detail');
+    if (!detail) return;
+    const open = tog.getAttribute('aria-expanded') !== 'true';
+    tog.setAttribute('aria-expanded', String(open));
+    detail.hidden = !open;
+    return;
+  }
+  const more = t.closest('.appr-more');
+  if (more) {
+    const box = document.getElementById(more.getAttribute('aria-controls'));
+    const open = more.getAttribute('aria-expanded') !== 'true';
+    more.setAttribute('aria-expanded', String(open));
+    more.textContent = open ? 'Show less' : 'Show more';
+    if (box) box.classList.toggle('is-clamped', !open);
+    return;
+  }
+  const act = t.closest('[data-tool-action]');
+  if (act) resolvePendingToolCall(parseInt(act.dataset.index, 10), act.dataset.toolAction === 'confirm');
+});
 
 /* ════════════════════════════════════════════════════════
    CONVERSATION RENDERING
@@ -2103,6 +2804,7 @@ function renderConversation() {
 
   emptyState.hidden = true;
   list.hidden = false;
+  revokeFigureUrls();
   list.innerHTML = conversation.map(renderMessage).join('');
   _renderedConvId = currentConversationId;
   _renderedCount = conversation.length;
@@ -2114,6 +2816,9 @@ function renderConversation() {
   wireMessageActionButtons();
   wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
+  hydrateFigures(list);
+  collapseFreshActivity(list);
+  announceApprovals();
   renderMathInElement(list);
 
   // Reveal only the reply that was just received, once, then clear the
@@ -2433,38 +3138,9 @@ function renderMessage(msg, index) {
     attachmentsHtml = imagesHtml + chipsHtml;
   }
 
-  // A turn that used tools (Array of steps is non-empty once you filter
-  // out the pure "awaiting_confirmation" placeholder, which is rendered
-  // separately by the confirm card) never shows the model's raw
-  // reasoning in the thought box — only a short deterministic heading
-  // (see _thinkingHeadingFromSteps in chat-endpoint.js). Raw reasoning
-  // is reserved for plain, tool-free turns.
-  const rawStepList = !isUser && Array.isArray(meta.steps) ? meta.steps : [];
-  const traceSteps = rawStepList.filter((s) => s && s.type !== 'awaiting_confirmation');
-  const hasSteps = traceSteps.length > 0;
-
-  // `meta.thinking` is only ever the sanitized, first-person version of
-  // the model's real reasoning (see _cleanReasoningForDisplay in
-  // chat-endpoint.js) — never raw text, so it's always safe to render
-  // as-is here. `meta.thinkingHeading` is the fallback used whenever
-  // there wasn't a clean, trustworthy version to show (or the turn used
-  // tools) — the two are mutually exclusive, never both set.
-  let thoughtHtml = '';
-  if (!isUser && (meta.thinking || meta.thinkingHeading || hasSteps)) {
-    const secs = meta.elapsedMs ? (meta.elapsedMs / 1000).toFixed(1) : null;
-    const label = secs ? 'Thought for ' + secs + 's' : 'Thought process';
-    const bodyHtml = meta.thinking
-      ? '<div class="thought-content">' + renderMarkdownLite(meta.thinking) + '</div>'
-      : '<div class="thought-content thought-content--heading">' + escapeHtml(meta.thinkingHeading || 'Working on your request') + '</div>';
-    thoughtHtml =
-      '<details class="thought-block">' +
-        '<summary>' +
-          '<i class="ph ph-caret-right thought-caret"></i>' +
-          '<span>' + label + '</span>' +
-        '</summary>' +
-        bodyHtml +
-      '</details>';
-  }
+  // One Activity component per assistant message: reasoning summary, the steps
+  // that ran, and any approval the turn is waiting on (renderActivityHtml).
+  const activityHtml = renderActivityHtml(meta, index, isUser);
 
   let sourcesHtml = '';
   if (!isUser && meta.sources && meta.sources.length) {
@@ -2514,102 +3190,13 @@ function renderMessage(msg, index) {
       '</button>';
   }
 
-  // Action Trace: a persistent, ordered record of every step the agent
-  // loop actually ran to produce this reply (Bug 2's "recorded thought
-  // chain") — e.g. "Looking at README.md" → "Updating README.md" →
-  // a terminal row showing how the turn actually ended. Read-only steps
-  // and already-approved writes never show a confirm card, so without
-  // this list they'd leave zero visible trace that anything happened.
-  //
-  // The terminal row used to always say "Completed", even when the turn
-  // had actually just paused for the user's OK on a write, or ended
-  // mid-task — a misleading signal. It now reflects the real end state:
-  //   • no pendingToolCall at all           → "Completed"
-  //   • pendingToolCall, status "pending"   → an inline Confirm/Cancel
-  //                                            row, so approving a write
-  //                                            reads as the natural next
-  //                                            step in the trace itself
-  //                                            rather than a separate
-  //                                            floating card below the
-  //                                            reply text
-  //   • pendingToolCall, status "cancelled" → "Cancelled — no changes
-  //                                            were made"
-  //   • pendingToolCall, status "confirmed" → "Confirmed — continued
-  //                                            below" (the actual run
-  //                                            landed in the next
-  //                                            message once approved)
-  //
-  // Rendered right after the thought box and BEFORE the reply text (see
-  // the returned template below) — never trailing under the answer.
-  // `traceSteps`/`hasSteps` come from just above.
-  //
-  // The trace was already revealed live, step by step, as each one
-  // actually completed on the backend (see createLiveTurnIndicator /
-  // runStreamedTurn) — this render just shows its final, settled state.
-  // History reloads and regenerated re-renders land here identically.
-  const ptc = !isUser ? meta.pendingToolCall : null;
-  let actionTraceHtml = '';
-  if (hasSteps || ptc) {
-    const cardsHtml = traceSteps.map((te) => {
-      if (te.type === 'sandbox') return renderSandboxStepHtml(te);
-      const ok = te.ok !== false;
-      const finalIcon = te.type === 'blocked' ? 'ph-question' : (ok ? 'ph-check-circle' : 'ph-warning-circle');
-      const statusClass = te.type === 'blocked' ? 'tool-trace-card--blocked' : (ok ? 'tool-trace-card--ok' : 'tool-trace-card--error');
-      return (
-        '<div class="tool-trace-card ' + statusClass + '">' +
-          '<i class="ph ' + finalIcon + '"></i>' +
-          '<span class="tool-trace-card-label">' + escapeHtml(te.summary || te.name || 'Action performed.') + '</span>' +
-        '</div>'
-      );
-    }).join('');
-
-    let terminalHtml;
-    if (!ptc) {
-      terminalHtml =
-        '<div class="tool-trace-card tool-trace-card--done">' +
-          '<i class="ph ph-check-circle"></i>' +
-          '<span class="tool-trace-card-label">Completed</span>' +
-        '</div>';
-    } else if (ptc.status === 'pending') {
-      terminalHtml =
-        '<div class="tool-trace-card tool-trace-card--confirm" data-index="' + index + '">' +
-          '<i class="ph ph-hand-palm"></i>' +
-          '<span class="tool-trace-card-label">' + escapeHtml(ptc.summary || 'Perform this action?') + '</span>' +
-          '<div class="tool-trace-card-actions">' +
-            '<button class="tool-confirm-btn tool-confirm-btn--confirm" data-tool-action="confirm" data-index="' + index + '">' +
-              '<i class="ph ph-check"></i> Confirm' +
-            '</button>' +
-            '<button class="tool-confirm-btn tool-confirm-btn--cancel" data-tool-action="cancel" data-index="' + index + '">' +
-              '<i class="ph ph-x"></i> Cancel' +
-            '</button>' +
-          '</div>' +
-        '</div>';
-    } else if (ptc.status === 'cancelled') {
-      terminalHtml =
-        '<div class="tool-trace-card tool-trace-card--blocked">' +
-          '<i class="ph ph-x-circle"></i>' +
-          '<span class="tool-trace-card-label">Cancelled — no changes were made.</span>' +
-        '</div>';
-    } else {
-      // status === 'confirmed' — the actual run happened as the next
-      // message once the user approved it.
-      terminalHtml =
-        '<div class="tool-trace-card tool-trace-card--done">' +
-          '<i class="ph ph-check-circle"></i>' +
-          '<span class="tool-trace-card-label">Confirmed — continued below</span>' +
-        '</div>';
-    }
-
-    actionTraceHtml = '<div class="tool-trace-list">' + cardsHtml + terminalHtml + '</div>';
-  }
 
   return (
     '<div class="message ' + (isUser ? 'is-user' : 'is-assistant') +
       (index < _animateFromIndex ? ' no-enter' : '') +
       (!isUser && index === freshAssistantIndex && msg.content && !visualHtml ? ' is-streaming' : '') + '">' +
       '<div class="message-body">' +
-        thoughtHtml +
-        actionTraceHtml +
+        activityHtml +
         attachmentsHtml +
         // The freshly-received reply starts as an empty content div —
         // typewriterReveal (called from renderConversation right after
@@ -2618,7 +3205,9 @@ function renderMessage(msg, index) {
         // full text before the typing animation takes over.
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
+        (!isUser ? renderFigureGridHtml(meta) : '') +
         documentFileHtml +
+        (!isUser ? renderDeliverablesHtml(meta, index) : '') +
         sourcesHtml +
         (isUser ? '' :
           '<div class="message-actions">' +
@@ -2682,6 +3271,7 @@ function wireMessageActionButtons() {
           };
         }
         if (a.kind === 'file') return { kind: 'text', name: a.name, text: a.text };
+        if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
         return { kind: 'unsupported', name: a.name };
       });
 
@@ -2713,18 +3303,15 @@ function wireMessageActionButtons() {
     });
   });
 
-  document.querySelectorAll('[data-tool-action="confirm"]').forEach((btn) => {
-    btn.addEventListener('click', () => resolvePendingToolCall(parseInt(btn.dataset.index, 10), true));
-  });
-  document.querySelectorAll('[data-tool-action="cancel"]').forEach((btn) => {
-    btn.addEventListener('click', () => resolvePendingToolCall(parseInt(btn.dataset.index, 10), false));
-  });
   // Files the assistant offered from the sandbox workspace.
-  document.querySelectorAll('.sbx-download').forEach((btn) => {
+  document.querySelectorAll('.sbx-download, .deliv-file').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const ok = await getSandbox().downloadFile(ensureConversationId(), btn.dataset.sbxPath);
-      if (!ok) showToast('That file is no longer in the workspace. Ask for it again and it will be rebuilt.');
+      const ok = await getSandbox().downloadFile(ensureConversationId(), btn.dataset.sbxPath, btn.dataset.sbxName);
+      if (!ok) showToast('That file is no longer on this device. Ask Cognita to make it again.');
     });
+  });
+  document.querySelectorAll('.sbx-save, .deliv-save').forEach((btn) => {
+    btn.addEventListener('click', () => saveFileToCognita(btn));
   });
   document.querySelectorAll('.sbx-retry').forEach((btn) => {
     btn.addEventListener('click', () => { if (!isSending) sendMessage('That did not work. Please fix the problem and try again.'); });
@@ -2738,23 +3325,33 @@ function wireMessageActionButtons() {
 async function resolvePendingToolCall(index, approved) {
   const meta = conversationMeta[index];
   if (!meta || !meta.pendingToolCall || meta.pendingToolCall.status !== 'pending') return;
+  if (isSending && approved) return;
   const ptc = meta.pendingToolCall;
+  const card = document.querySelector('.appr[data-index="' + index + '"]');
+  if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
 
   if (!approved) {
+    // Fade the card out, then leave one quiet line behind.
+    if (card) card.classList.add('is-leaving');
+    await new Promise((r) => setTimeout(r, 160));
     meta.pendingToolCall = { ...ptc, status: 'cancelled' };
-    renderConversation();
+    refreshActivity(index);
     persistCurrentConversation();
     return;
   }
 
   meta.pendingToolCall = { ...ptc, status: 'confirmed' };
-  renderConversation();
+  approvingIndex = index;
+  if (card) card.classList.add('is-leaving');
+  await new Promise((r) => setTimeout(r, 160));
+  refreshActivity(index);
 
   await runStreamedTurn({
     messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
     quality: currentQuality,
     confirmToolCall: { name: ptc.name, args: ptc.args },
     approvals: conversationApprovals,
+    sandboxHint: conversationHasSandbox(),
   });
 }
 
