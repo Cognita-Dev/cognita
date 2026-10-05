@@ -41,6 +41,7 @@ const MAX_TEXT_FIELD = 12_000;          // stdout / stderr kept per field in a r
 const MAX_FILES_LISTED = 60;
 export const MAX_IMPORT_CHARS = 300_000; // mirrors MAX_CONTENT_CHARS in google-tools.js / github-tools.js
 const MAX_TRACE_ENTRIES = 40;
+const MAX_TRACE_FILES = 20;
 const MAX_TRACE_RESULT_CHARS = 60_000;  // model-visible result text kept per trace entry
 const MAX_TRACE_BLOB_CHARS = MAX_IMPORT_CHARS;
 const MAX_TRACE_TOTAL_CHARS = 1_200_000;
@@ -57,100 +58,83 @@ function _fn(name, description, properties, required) {
   };
 }
 
-const PATH_NOTE = ' Paths are inside the workspace (/workspace). A relative path is resolved from the current working directory.';
-
 const CATALOG = [
   { cap: CAPS.FILES, tool: _fn('sandbox_create_workspace',
-    'Starts a fresh, empty workspace for this conversation (or confirms the existing one). Set reset=true to wipe all files first. Returns the working directory.',
-    { reset: { type: 'boolean', description: 'Delete every file and start empty. Default false.' } }, []) },
+    'Start or confirm this conversation\'s workspace. reset=true wipes it.',
+    { reset: { type: 'boolean' } }, []) },
 
   { cap: CAPS.PYTHON, tool: _fn('sandbox_run_python',
-    'Runs Python code for real in the workspace and returns stdout, stderr and the exit code. Use it for calculations, data analysis (pandas, numpy), charts (matplotlib, save them to a file), parsing and converting files. Files in the workspace are visible to the code; files it writes are kept. There is no internet access.',
+    'Run Python; returns stdout, stderr, exit code. Has numpy, pandas, matplotlib, scipy, scikit-learn, sympy, openpyxl. Files written are kept.',
     {
-      code: { type: 'string', description: 'The Python source to run.' },
-      filename: { type: 'string', description: 'Optional. Save the code to this workspace file first, then run it (useful for scripts you will run again).' },
+      code: { type: 'string' },
+      filename: { type: 'string', description: 'Optional. Save the code here first, then run it.' },
     }, ['code']) },
 
   { cap: CAPS.JS, tool: _fn('sandbox_run_javascript',
-    'Runs JavaScript for real in the workspace and returns console output and the exit code. The code can read and write workspace files with workspace.readText(path), workspace.writeText(path, text) and workspace.list(). There is no DOM and no internet access.',
-    { code: { type: 'string', description: 'The JavaScript source to run. Top-level await is allowed.' } }, ['code']) },
+    'Run JavaScript; returns console output and exit code. Files: workspace.readText(p), workspace.writeText(p, t), workspace.list(). No DOM.',
+    { code: { type: 'string' } }, ['code']) },
 
   { cap: CAPS.SHELL_LITE, tool: _fn('sandbox_run_command',
-    'Runs a command in the workspace shell and returns stdout, stderr, the exit code and the working directory afterwards. The working directory is remembered between calls, so "cd project" affects later calls. Supported: pwd, cd, ls, tree, cat, head, tail, wc, grep, find, mkdir, touch, cp, mv, rm, echo, sort, uniq, diff, python, node, and "pip install <package>" for packages bundled with the browser Python. Pipes (|), redirects (> >>), && and ; work. This is a built-in shell, not full Bash: no git, npm, sudo or background jobs unless the tool result says otherwise.',
-    { command: { type: 'string', description: 'The command line to run.' } }, ['command']) },
+    'Run a shell command; the working directory persists. Has pwd cd ls tree cat head tail wc grep find mkdir touch cp mv rm echo sort uniq diff python node, pipes, redirects, && and ;. No git, npm or sudo.',
+    { command: { type: 'string' } }, ['command']) },
 
   { cap: CAPS.TESTS_PY, tool: _fn('sandbox_run_tests',
-    'Runs the project tests in the workspace and returns the results. runner is "unittest" (default) or "pytest".',
+    'Run project tests.',
     {
-      runner: { type: 'string', description: '"unittest" or "pytest". Default "unittest".' },
-      path: { type: 'string', description: 'Optional file or folder to test, relative to the working directory.' },
+      runner: { type: 'string', description: '"unittest" (default) or "pytest".' },
+      path: { type: 'string', description: 'Optional file or folder.' },
     }, []) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_write_file',
-    'Creates or overwrites a text file in the workspace. Parent folders are created automatically.' + PATH_NOTE,
-    {
-      path: { type: 'string', description: 'File path.' },
-      content: { type: 'string', description: 'Full text content of the file.' },
-    }, ['path', 'content']) },
+    'Create or overwrite a text file. Parent folders are made.',
+    { path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_read_file',
-    'Reads a text file from the workspace.' + PATH_NOTE,
-    {
-      path: { type: 'string', description: 'File path.' },
-      maxChars: { type: 'integer', description: 'Most characters to return (default 8000, max 20000).' },
-    }, ['path']) },
+    'Read a text file.',
+    { path: { type: 'string' }, maxChars: { type: 'integer', description: 'Default 8000, max 20000.' } }, ['path']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_list_files',
-    'Lists files and folders in the workspace with their sizes.' + PATH_NOTE,
-    {
-      path: { type: 'string', description: 'Folder to list. Defaults to the working directory.' },
-      recursive: { type: 'boolean', description: 'Include everything below the folder. Default false.' },
-    }, []) },
+    'List files and sizes.',
+    { path: { type: 'string', description: 'Default: working directory.' }, recursive: { type: 'boolean' } }, []) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_make_directory',
-    'Creates a folder (and any missing parents) in the workspace.' + PATH_NOTE,
-    { path: { type: 'string', description: 'Folder path.' } }, ['path']) },
+    'Create a folder and any missing parents.',
+    { path: { type: 'string' } }, ['path']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_move_file',
-    'Moves or renames a file or folder in the workspace.' + PATH_NOTE,
-    {
-      from: { type: 'string', description: 'Existing path.' },
-      to: { type: 'string', description: 'New path.' },
-    }, ['from', 'to']) },
+    'Move or rename a file or folder.',
+    { from: { type: 'string' }, to: { type: 'string' } }, ['from', 'to']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_delete_file',
-    'Deletes a file or folder from the workspace. This cannot be undone.' + PATH_NOTE,
-    { path: { type: 'string', description: 'Path to delete.' } }, ['path']) },
+    'Delete a file or folder. Cannot be undone.',
+    { path: { type: 'string' } }, ['path']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_get_working_directory',
-    'Returns the current working directory of the workspace shell.', {}, []) },
+    'Return the current working directory.', {}, []) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_import_from_tool',
-    'Places the full text returned by an EARLIER connected-app tool call in this task (for example a Google Drive file, a Google Sheet exported as CSV, a Google Doc, or a GitHub file) into the workspace as a file, without you retyping it. source_step is the step number shown in that tool result.',
+    'Put the full text from an earlier connected-app tool result (Drive file, Sheet as CSV, Doc, GitHub file) into a workspace file.',
     {
-      path: { type: 'string', description: 'Workspace file to create, for example data/sales.csv.' },
-      source_step: { type: 'integer', description: 'Step number of the earlier tool result that holds the content.' },
+      path: { type: 'string', description: 'File to create, e.g. data/sales.csv.' },
+      source_step: { type: 'integer', description: 'Step number of that earlier result.' },
     }, ['path', 'source_step']) },
 
   { cap: CAPS.FILES, tool: _fn('sandbox_offer_file',
-    'Marks a workspace file as a deliverable for the user (a report, chart, CSV, script) so they get a download button. Files you do not offer stay temporary scratch files and are not kept.',
-    {
-      path: { type: 'string', description: 'Workspace file to offer.' },
-      title: { type: 'string', description: 'Short human title, for example "Sales summary".' },
-    }, ['path']) },
+    'Give the user a download button for a workspace file (report, chart, CSV, script). Call it for every file they asked for; unoffered files are scratch.',
+    { path: { type: 'string' }, title: { type: 'string', description: 'Short title, e.g. "Sales summary".' } }, ['path']) },
 
   // Only offered by providers that report real processes (Tier 3).
   { cap: CAPS.PROCESSES, tool: _fn('sandbox_start_process',
-    'Starts a long-running command in the background (for example a dev server or a build) and returns a process id. Read its output with sandbox_get_process_output.',
-    { command: { type: 'string', description: 'The command to start.' } }, ['command']) },
+    'Start a long-running background command; returns a process id.',
+    { command: { type: 'string' } }, ['command']) },
 
   { cap: CAPS.PROCESSES, tool: _fn('sandbox_get_process_output',
-    'Returns the output so far, and whether it is still running, for a background process.',
-    { process_id: { type: 'string', description: 'The id returned by sandbox_start_process.' } }, ['process_id']) },
+    'Return output so far and whether the process is still running.',
+    { process_id: { type: 'string' } }, ['process_id']) },
 
   { cap: CAPS.PROCESSES, tool: _fn('sandbox_stop_process',
-    'Stops a background process.',
-    { process_id: { type: 'string', description: 'The id returned by sandbox_start_process.' } }, ['process_id']) },
+    'Stop a background process.',
+    { process_id: { type: 'string' } }, ['process_id']) },
 ];
 
 export const TOOLS = CATALOG.map((c) => c.tool);
@@ -177,6 +161,11 @@ export const REQUIRES_CONFIRMATION = [];
 export function approvalScope() {
   return 'workspace';
 }
+
+// The gate that decides whether a message gets the sandbox tools lives in
+// sandbox-intent.js, because the browser uses the same patterns to decide
+// when to warm up Python. One copy means the two can never disagree.
+export { SANDBOX_INTENT_PATTERNS, shouldOfferSandbox } from './sandbox-intent.js';
 
 // ── Paths ───────────────────────────────────────────────────────────────
 
@@ -305,11 +294,82 @@ export function normalizeResult(raw, fallbackCommand) {
   return out;
 }
 
-/** What the model reads for a finished sandbox call. */
-export function resultForModel(normalized) {
+/**
+ * What the model reads for a finished sandbox call.
+ * `offerHint` is true when the person asked for a file, the run just made
+ * one, and nothing has been offered yet: the model gets a plain nudge to
+ * offer it, because a file the person cannot download is not delivered.
+ */
+export function resultForModel(normalized, offerHint) {
   const r = normalized;
   const head = r.ok ? 'The command succeeded (exit code 0).' : 'The command FAILED (exit code ' + r.exitCode + '). Read stderr, fix the cause and try again.';
-  return head + '\n' + JSON.stringify(r);
+  const tail = offerHint
+    ? '\nThe user asked for a file. Call sandbox_offer_file for it now so they get a download button, then tell them it is ready by its name only.'
+    : '';
+  return head + '\n' + JSON.stringify(r) + tail;
+}
+
+// ── Getting files to the person ─────────────────────────────────────────
+// The workspace lives inside the browser, so a file the model writes there
+// is invisible to the person until it is offered for download. Models forget
+// that step, which is how a chat can say "the file has been created" while
+// the person has nothing to open. These helpers let the Worker catch that.
+
+// Words that mean the person wants something they can keep, open or send on.
+const FILE_REQUEST_PATTERNS = [
+  /\b(?:file|files|download|downloadable|attachment)\b/i,
+  /\b(?:export|save|store)\b.{0,40}\b(?:as|to|into|in)\b/i,
+  /\b(?:csv|tsv|xlsx|excel|spreadsheet|pdf|docx|word document|json|txt|markdown|png|svg)\b/i,
+  /\b(?:report|summary)\b.{0,30}\b(?:file|document|sheet)\b/i,
+];
+
+export function userWantsFile(text) {
+  const t = String(text || '');
+  return FILE_REQUEST_PATTERNS.some((re) => re.test(t));
+}
+
+// Kinds of file that are normally the point of the request. Scripts are
+// only offered on their own when the person asked for code.
+const DELIVERABLE_EXT = new Set(['txt', 'md', 'csv', 'tsv', 'json', 'xlsx', 'png', 'jpg', 'jpeg', 'webp', 'svg', 'pdf', 'docx', 'html']);
+const CODE_EXT = new Set(['py', 'js']);
+const MAX_AUTO_OFFERS = 4;
+
+function _isScratch(path) {
+  const name = path.split('/').pop() || '';
+  return name.startsWith('.') || name.startsWith('_') || /^tmp[-_.]/i.test(name) || path.includes('/__pycache__/') || path.includes('/uploads/');
+}
+
+/**
+ * Works out which files to hand the person for this turn.
+ *   offered  files the model explicitly offered during this turn
+ *   auto     files it made but forgot to offer, only when the person asked
+ *            for a file (never for ordinary scratch work)
+ * Returns [{ path, title, auto? }], at most MAX_AUTO_OFFERS + offered.
+ */
+export function collectDeliverables(trace, userText) {
+  const entries = Array.isArray(trace) ? trace : [];
+  const out = [];
+  const seen = new Set();
+  for (const e of entries) {
+    if (e && e.o && !seen.has(e.o.path)) { seen.add(e.o.path); out.push({ path: e.o.path, title: e.o.title || '' }); }
+  }
+  if (out.length > 0 || !userWantsFile(userText)) return out;
+
+  const wantsCode = /\b(?:script|code|program|python|py|javascript|\.js)\b/i.test(String(userText || ''));
+  // A file changed twice is listed once, with its latest size.
+  const latest = new Map();
+  for (const e of entries) {
+    if (!e || !Array.isArray(e.c)) continue;
+    for (const f of e.c) latest.set(f.p, f.s);
+  }
+  for (const [p, size] of latest) {
+    const ext = (p.split('.').pop() || '').toLowerCase();
+    const okExt = DELIVERABLE_EXT.has(ext) || (wantsCode && CODE_EXT.has(ext));
+    if (!okExt || _isScratch(p)) continue;
+    if (out.length >= MAX_AUTO_OFFERS) break;
+    out.push({ path: p, title: '', auto: true, size });
+  }
+  return out;
 }
 
 // ── Client round trip ───────────────────────────────────────────────────
@@ -345,8 +405,15 @@ export function buildClientCall(name, args, plan, extra) {
 // as `turnTrace` and echoed back on resume. The browser can edit it, so it
 // is only ever used as data for the model, never to decide what is allowed.
 
-/** One finished tool exchange: connector or sandbox. */
-export function makeTraceEntry({ n, kind, assistantText, description, resultText, blob }) {
+/**
+ * One finished tool exchange: connector or sandbox.
+ * Sandbox entries can also carry two small extras the Worker needs later in
+ * the same turn, because it keeps no state between requests:
+ *   t  the tool name (so we know which exchange was a file offer)
+ *   c  the files this run created or changed, [{p: path, s: size}]
+ *   o  the file the model offered for download, {path, title}
+ */
+export function makeTraceEntry({ n, kind, assistantText, description, resultText, blob, tool, files, offered }) {
   let r = String(resultText == null ? '' : resultText);
   let shortened = false;
   if (r.length > MAX_TRACE_RESULT_CHARS) { r = r.slice(0, MAX_TRACE_RESULT_CHARS); shortened = true; }
@@ -355,6 +422,17 @@ export function makeTraceEntry({ n, kind, assistantText, description, resultText
     entry.b = blob.length > MAX_TRACE_BLOB_CHARS ? blob.slice(0, MAX_TRACE_BLOB_CHARS) : blob;
   }
   if (shortened || entry.b) entry.s = true; // model should be told the full text is importable
+  if (typeof tool === 'string' && /^sandbox_[a-z_]{1,50}$/.test(tool)) entry.t = tool;
+  if (Array.isArray(files) && files.length) {
+    const c = files
+      .filter((f) => f && f.change !== 'deleted' && cleanWorkspacePath(f.path, WORKSPACE_ROOT))
+      .slice(0, MAX_TRACE_FILES)
+      .map((f) => ({ p: cleanWorkspacePath(f.path, WORKSPACE_ROOT), s: Number.isFinite(f.size) ? Math.max(0, Math.floor(f.size)) : 0 }));
+    if (c.length) entry.c = c;
+  }
+  if (offered && typeof offered.path === 'string' && cleanWorkspacePath(offered.path, WORKSPACE_ROOT)) {
+    entry.o = { path: cleanWorkspacePath(offered.path, WORKSPACE_ROOT), title: _short(offered.title || '', 120) };
+  }
   return entry;
 }
 
@@ -394,6 +472,17 @@ export function sanitizeTrace(raw) {
     };
     if (typeof e.b === 'string' && e.b) entry.b = e.b.slice(0, MAX_TRACE_BLOB_CHARS);
     if (e.s) entry.s = true;
+    // Small extras (see makeTraceEntry). Re-shaped here because the browser can edit them.
+    if (typeof e.t === 'string' && /^sandbox_[a-z_]{1,50}$/.test(e.t)) entry.t = e.t;
+    if (Array.isArray(e.c)) {
+      const c = e.c.slice(0, MAX_TRACE_FILES)
+        .filter((f) => f && typeof f.p === 'string' && cleanWorkspacePath(f.p, WORKSPACE_ROOT))
+        .map((f) => ({ p: cleanWorkspacePath(f.p, WORKSPACE_ROOT), s: Number.isFinite(f.s) ? Math.max(0, Math.floor(f.s)) : 0 }));
+      if (c.length) entry.c = c;
+    }
+    if (e.o && typeof e.o === 'object' && typeof e.o.path === 'string' && cleanWorkspacePath(e.o.path, WORKSPACE_ROOT)) {
+      entry.o = { path: cleanWorkspacePath(e.o.path, WORKSPACE_ROOT), title: _short(e.o.title || '', 120) };
+    }
     total += entry.a.length + entry.d.length + entry.r.length + (entry.b ? entry.b.length : 0);
     if (total > MAX_TRACE_TOTAL_CHARS) break;
     out.push(entry);
