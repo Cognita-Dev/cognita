@@ -94,6 +94,7 @@ export async function handleUsageRequest(request, env) {
     'resourceGen',
     'flashcardImage',
     'sandboxRuns',
+    'sandboxArtifacts',
   ], env);
   return new Response(JSON.stringify({
     planName: plan.name,
@@ -106,6 +107,15 @@ export async function handleUsageRequest(request, env) {
       resourceGen: { used: used.resourceGen, limit: plan.limits.resourceGenPerDay },
       flashcardImage: { used: used.flashcardImage, limit: plan.limits.flashcardImagePerDay },
       sandboxRuns: { used: used.sandboxRuns, limit: plan.limits.sandboxRunsPerDay },
+      sandboxArtifacts: { used: used.sandboxArtifacts, limit: plan.limits.sandboxArtifactsPerDay },
+    },
+    // Per-plan sizes the browser needs before it sends a file to the code
+    // workspace or to Cognita storage. The Worker enforces them again.
+    limits: {
+      maxFileMB: plan.limits.sandboxMaxFileMB,
+      maxWorkspaceMB: plan.limits.sandboxMaxWorkspaceMB,
+      timeoutSec: plan.limits.sandboxTimeoutSec,
+      artifactMaxMB: plan.limits.sandboxArtifactMaxMB,
     },
   }), {
     status: 200,
