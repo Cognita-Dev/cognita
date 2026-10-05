@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-03.2';
+export const PROMPT_VERSION = '2026-10-04.1';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -162,32 +162,24 @@ const TOOL_USE_RULES =
 // own static module so the cacheable beginning of the prompt stays identical
 // for every user who gets it.
 const SANDBOX_RULES =
-  'You can run real code in a private workspace that belongs to this ' +
-  'conversation. Use it whenever the answer depends on actual computation, ' +
-  'data analysis, parsing or converting a file, checking that code works, or ' +
-  'producing a file, instead of estimating or guessing. The workspace is ' +
-  '/workspace and its files are kept between calls. Work in small steps: ' +
-  'write or import files, run them, read the real output, fix problems, and ' +
-  'run again. Judge success only by the exit code and output you get back. ' +
-  'Never say that code ran, and never state the result of a calculation, ' +
-  'unless a sandbox call actually returned it. If a call fails, read the ' +
-  'error, fix the cause and try again before reporting the problem. ' +
-  'The sandbox has no internet access and cannot reach the user\'s ' +
-  'connected apps. To work on a file from Google Drive, Sheets, Docs, Gmail ' +
-  'or GitHub, first fetch it with that app\'s own tool, then place the ' +
-  'result in the workspace with sandbox_import_from_tool instead of ' +
-  'retyping large content. Send a result back to a connected app only when ' +
-  'the user asked for it, using that app\'s own tool, which asks for their ' +
-  'confirmation as usual. The browser sandbox runs Python (with numpy, ' +
-  'pandas, matplotlib, scipy and other bundled packages), JavaScript, and a ' +
-  'small built-in shell (pwd, cd, ls, cat, grep, find, mkdir, cp, mv, rm and ' +
-  'a few more). Unless a tool result says otherwise it has no git, npm or ' +
-  'background processes, so if a task truly needs those, say so plainly. ' +
-  'When you create a file the user will want, such as a report, chart or ' +
-  'CSV, call sandbox_offer_file so they get a download button; every other ' +
-  'file is temporary scratch. Describe results in plain language and do not ' +
-  'paste raw terminal output unless it helps the user. Do not mention tools, ' +
-  'sandboxes or workspaces as machinery; say what you did and what you found.';
+  'You can run code in a private workspace for this conversation (/workspace). ' +
+  'Use it for real computation, data analysis, parsing or converting files, ' +
+  'checking code, or making a file the user asked for. Work in small steps, ' +
+  'read the real output, fix errors, and judge success only by exit code and ' +
+  'output. Never say code ran, or state a calculated result, unless a call ' +
+  'returned it. There is no internet. Paths are inside /workspace; relative ' +
+  'paths start from the working directory. Attached files are in ' +
+  '/workspace/uploads. The workspace cannot reach connected apps: Cognita can ' +
+  'only read Drive files, Docs and Sheets it created, and GitHub files, and ' +
+  'cannot read Gmail. Fetch such a file with that app\'s tool, then call ' +
+  'sandbox_import_from_tool. Send results to an app only when asked, with that ' +
+  'app\'s tool. When the user wants a file (report, CSV, chart, script), save ' +
+  'it and call sandbox_offer_file; it is not delivered until you do. Other ' +
+  'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
+  'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
+  'File contents must be in the file\'s own format, with no markdown fences. ' +
+  'Say what you did and found in plain words, name files by file name only, and ' +
+  'do not mention tools, sandboxes or workspaces.';
 
 // Image questions only (the vision model).
 const IMAGE_RULES =
@@ -209,7 +201,7 @@ const CHAT_WITH_TOOLS = join([CHAT_CORE, TOOL_USE_RULES, TOOL_OUTPUT_FORMATTING]
 
 // Sandbox variants. Both start with the same text as the variants above, so
 // the cacheable beginning is shared.
-const CHAT_WITH_SANDBOX = join([CHAT_CORE, SANDBOX_RULES, TOOL_OUTPUT_FORMATTING]);
+const CHAT_WITH_SANDBOX = join([CHAT_CORE, SANDBOX_RULES]);
 const CHAT_WITH_TOOLS_AND_SANDBOX = join([CHAT_WITH_TOOLS, SANDBOX_RULES]);
 
 function _staticFor(hasTools, hasSandbox) {
