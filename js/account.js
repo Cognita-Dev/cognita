@@ -278,6 +278,7 @@ const USAGE_ICONS = {
   imageGen: 'ph-image',
   documentGen: 'ph-file-text',
   resourceGen: 'ph-graduation-cap',
+  sandboxRuns: 'ph-terminal-window',
 };
 const USAGE_LABELS = {
   messages: 'Messages',
@@ -285,6 +286,7 @@ const USAGE_LABELS = {
   imageGen: 'Images',
   documentGen: 'Documents',
   resourceGen: 'Generated resources',
+  sandboxRuns: 'Code runs',
 };
 
 function usageRow(key, used, limit) {
@@ -296,7 +298,7 @@ function usageRow(key, used, limit) {
       '<div class="settings-row-usage-text">' +
         '<div class="settings-row-usage-top">' +
           '<span class="settings-row-label">' + USAGE_LABELS[key] + '</span>' +
-          '<span class="settings-row-usage-count">' + used + ' <span>/ ' + limit + '</span></span>' +
+          '<span class="settings-row-usage-count">' + (limit >= 999999 ? 'Unlimited' : used + ' <span>/ ' + limit + '</span>') + '</span>' +
         '</div>' +
         '<div class="usage-bar"><div class="usage-bar-fill ' + barClass + '" style="width:' + pct + '%;"></div></div>' +
       '</div>' +
@@ -379,7 +381,8 @@ async function loadUsage() {
       usageRow('messages', u.messages.used, u.messages.limit) +
       usageRow('advancedModel', u.advancedModel.used, u.advancedModel.limit) +
       usageRow('imageGen', u.imageGen.used, u.imageGen.limit) +
-      usageRow('documentGen', u.documentGen.used, u.documentGen.limit);
+      usageRow('documentGen', u.documentGen.used, u.documentGen.limit) +
+      (u.sandboxRuns ? usageRow('sandboxRuns', u.sandboxRuns.used, u.sandboxRuns.limit) : '');
 
     // Resources usage lives in its own grouped section so it reads as
     // a distinct category rather than being mixed in with chat usage.
