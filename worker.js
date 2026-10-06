@@ -118,6 +118,7 @@ import {
 } from './insights-endpoint.js';
 import { runInsightsDigestScheduler } from './insights-digest.js';
 import { handleEmailUnsubscribe } from './emails/unsubscribe.js';
+import { handleLearnaRequest } from './learna-endpoint.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -136,6 +137,9 @@ const _app = {
     if (request.method === 'OPTIONS') return _corsPreflight(env);
 
   const url = new URL(request.url);
+
+  // Learna (courses, progress, tutor). Auth, plan and course-limit checks live in learna-endpoint.js.
+  if (url.pathname.startsWith('/api/learna/')) return handleLearnaRequest(request, env);
 
   if (request.method === 'GET' && url.pathname === '/api/note-quota') return handleNoteQuota(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
@@ -702,6 +706,7 @@ function _isHeavyRoute(method, path) {
     path === '/api/note-summary' ||
     path === '/api/note-ask' ||
     path === '/api/note-compare' ||
+    /^\/api\/learna\/courses\/[^/]+\/(tutor|submit)$/.test(path) ||
     /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||

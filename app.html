@@ -21,6 +21,7 @@
 <link rel="stylesheet" href="/css/activity.css">
 <link rel="stylesheet" href="/css/note-taker.css">
 <link rel="stylesheet" href="/css/resources.css">
+<link rel="stylesheet" href="/css/learna.css">
 <link rel="stylesheet" href="/css/reminders.css">
 <link rel="stylesheet" href="/css/account.css">
 <link rel="stylesheet" href="/css/scheduler.css">
@@ -107,6 +108,10 @@
       <a href="/app.html?view=library" class="sidebar-history-item" data-view="library" title="Library">
         <i class="ph ph-books"></i>
         <span>Library</span>
+      </a>
+      <a href="/app.html?view=learna" class="sidebar-history-item" data-view="learna" title="Learna">
+        <i class="ph ph-chalkboard-teacher"></i>
+        <span>Learna</span>
       </a>
       <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders" title="Reminders">
         <i class="ph ph-bell"></i>
@@ -1189,6 +1194,23 @@
 
       </div>
     </div>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       LEARNA VIEW
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-learna" hidden>
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Learna</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+    <div class="settings-view-scroll" id="learnaScroll">
+      <div class="lrn" id="learnaRoot"></div>
+    </div>
+    <div class="lrn-sr" id="learnaStatus" role="status" aria-live="polite"></div>
   </main>
 
   <!-- ══════════════════════════════════════════════════════

@@ -68,6 +68,10 @@ export const PLANS = {
       // the shape of `limits` stays identical across every plan.
       inboxAiDraftPerDay: 0,
       insightsDigestPerDay: 0,
+      // Learna (learna-endpoint.js). learnaCourses = how many courses can be taken at
+      // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
+      learnaCourses: 0,
+      learnaTutorPerDay: 0,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -132,6 +136,10 @@ export const PLANS = {
       activeReminders: 40,
       inboxAiDraftPerDay: 30,
       insightsDigestPerDay: 4,
+      // Learna (learna-endpoint.js). learnaCourses = how many courses can be taken at
+      // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
+      learnaCourses: 2,
+      learnaTutorPerDay: 150,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -189,6 +197,10 @@ export const PLANS = {
       activeReminders: 150,
       inboxAiDraftPerDay: 150,
       insightsDigestPerDay: 20,
+      // Learna (learna-endpoint.js). learnaCourses = how many courses can be taken at
+      // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
+      learnaCourses: UNLIMITED,
+      learnaTutorPerDay: 600,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -256,6 +268,10 @@ export const PLANS = {
       activeReminders: UNLIMITED,
       inboxAiDraftPerDay: UNLIMITED,
       insightsDigestPerDay: UNLIMITED,
+      // Learna (learna-endpoint.js). learnaCourses = how many courses can be taken at
+      // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
+      learnaCourses: UNLIMITED,
+      learnaTutorPerDay: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0
