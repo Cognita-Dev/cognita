@@ -21,20 +21,23 @@ body { padding-top: env(safe-area-inset-top, 0px); }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 10px 10px 20px;
+  padding: 8px 8px 8px 18px;
   border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-md);
-  backdrop-filter: blur(18px) saturate(1.5);
-  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
   z-index: 300;
-  transition: box-shadow var(--duration-base) var(--ease), background var(--duration-base) var(--ease);
+  animation: header-in var(--duration-xslow) var(--ease-out) both;
+  transition: box-shadow var(--duration-base) var(--ease), max-width var(--duration-slow) var(--ease-out), top var(--duration-slow) var(--ease-out);
 }
-@media (prefers-color-scheme: dark) {
-  .site-header { background: rgba(27, 29, 28, 0.65); }
+@keyframes header-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: none; }
 }
-.site-header.is-scrolled { box-shadow: var(--shadow-lg); }
+/* Once the page scrolls, the bar lifts slightly and tightens. */
+.site-header.is-scrolled { box-shadow: var(--shadow-md); max-width: 600px; }
 
 /* Page content needs top clearance since the header no longer sits
    in normal flow. Add this class to the first element in <main>. */
@@ -44,10 +47,10 @@ body { padding-top: env(safe-area-inset-top, 0px); }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
+  font-weight: 600;
   font-size: var(--text-base);
   color: var(--text-1);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 .site-logo img { height: 20px; width: auto; border-radius: 6px; }
 
@@ -57,14 +60,16 @@ body { padding-top: env(safe-area-inset-top, 0px); }
   align-items: center;
   gap: var(--space-5);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 450;
+  letter-spacing: -0.006em;
   color: var(--text-3);
 }
+.site-nav-inline a { transition: color var(--duration-fast) var(--ease); }
 .site-nav-inline a:hover,
 .site-nav-inline a.is-active { color: var(--text-1); }
 
 .site-nav-cta {
-  padding: 9px 18px;
+  padding: 8px 16px;
   background: var(--text-1);
   color: var(--bg-base);
   border-radius: var(--radius-full);
@@ -139,13 +144,14 @@ body.nav-open .site-nav-overlay {
   gap: var(--space-5);
 }
 .site-nav-overlay-links a {
-  font-size: clamp(1.75rem, 8vw, 2.5rem);
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: clamp(2.25rem, 10vw, 3.25rem);
+  font-weight: 400;
   letter-spacing: -0.02em;
   color: var(--text-1);
   opacity: 0;
   transform: translateY(14px);
-  transition: opacity var(--duration-base) var(--ease), transform var(--duration-base) var(--ease), color var(--duration-fast) var(--ease);
+  transition: opacity var(--duration-slow) var(--ease-out), transform var(--duration-slow) var(--ease-out), color var(--duration-fast) var(--ease);
 }
 .site-nav-overlay-links a:hover { color: var(--accent); }
 body.nav-open .site-nav-overlay-links a {
@@ -157,15 +163,15 @@ body.nav-open .site-nav-overlay-links a:nth-child(2) { transition-delay: 140ms; 
 body.nav-open .site-nav-overlay-links a:nth-child(3) { transition-delay: 200ms; }
 
 .site-nav-overlay-cta {
-  padding: 14px 30px;
+  padding: 12px 26px;
   background: var(--text-1);
   color: var(--bg-base);
   border-radius: var(--radius-full);
   font-weight: 600;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   opacity: 0;
   transform: translateY(14px);
-  transition: opacity var(--duration-base) var(--ease), transform var(--duration-base) var(--ease), opacity var(--duration-fast) linear;
+  transition: opacity var(--duration-slow) var(--ease-out), transform var(--duration-slow) var(--ease-out);
 }
 body.nav-open .site-nav-overlay-cta {
   opacity: 1;
@@ -239,15 +245,15 @@ body.nav-open { overflow: hidden; }
   display: block;
   width: 100%;
   text-align: center;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.05em;
   padding-right: 0.04em; 
   line-height: 0.72;
   color: var(--text-1);
-  font-size: clamp(5.5rem, 19vw, 13rem);
+  font-size: clamp(4.5rem, 17vw, 11rem);
   margin-bottom: -0.18em;
-  opacity: 0.08;
+  opacity: 0.06;
   user-select: none;
   pointer-events: none;
 }

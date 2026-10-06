@@ -358,7 +358,7 @@
   gap: 14px;
   margin-top: var(--space-4);
   color: var(--text-4);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .flashcard-keyboard-hint span {
@@ -376,7 +376,7 @@
   background: var(--bg-subtle);
   color: var(--text-3);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 /* ================================================================
@@ -655,7 +655,7 @@
 .worksheet-brand {
   margin-bottom: var(--space-5);
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
@@ -683,7 +683,7 @@
 
 .worksheet-student-fields span {
   color: var(--text-3);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -744,7 +744,7 @@
 .worksheet-question-type {
   margin-bottom: 7px;
   color: var(--text-4);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 750;
   text-transform: uppercase;
   letter-spacing: 0.07em;

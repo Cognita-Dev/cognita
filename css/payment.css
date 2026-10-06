@@ -29,7 +29,7 @@
   width: 100%;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: var(--space-7) var(--space-6);
   text-align: center;
   display: flex;
@@ -37,7 +37,7 @@
   align-items: center;
   gap: var(--space-3);
   box-shadow: var(--shadow-md);
-  animation: fadeInUp var(--duration-slow) var(--ease);
+  animation: page-in var(--duration-xslow) var(--ease-out) both;
 }
 
 .payment-status h1 {

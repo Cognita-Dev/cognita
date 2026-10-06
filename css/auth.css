@@ -23,8 +23,8 @@
 
 .auth-shell {
   width: 100%;
-  max-width: 320px;
-  animation: fadeInUp var(--duration-slow) var(--ease);
+  max-width: 360px;
+  animation: page-in var(--duration-xslow) var(--ease-out) both;
 }
 
 .auth-logo {
@@ -43,26 +43,26 @@
   margin-bottom: var(--space-5);
 }
 .auth-title {
-  font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
-  font-style: italic;
+  font-family: var(--font-display);
   font-weight: 400;
-  font-size: 1.375rem;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
+  font-size: clamp(1.75rem, 1.5rem + 1vw, 2.125rem);
+  letter-spacing: -0.015em;
+  line-height: 1.12;
+  text-wrap: balance;
   color: var(--text-1);
   margin-bottom: var(--space-2);
 }
 .auth-subtitle {
   color: var(--text-3);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
 }
 
 .auth-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5) var(--space-4);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-md);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -74,17 +74,20 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  min-height: 42px;
   padding: 10px var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-weight: 600;
   transition: background var(--duration-fast) var(--ease),
               border-color var(--duration-fast) var(--ease),
-              opacity var(--duration-fast) var(--ease);
+              opacity var(--duration-fast) var(--ease),
+              transform var(--duration-fast) var(--ease-out);
 }
 .auth-btn:active {
-  transform: scale(0.98);
+  transform: scale(0.985);
 }
+.auth-btn:disabled { cursor: not-allowed; }
 
 /* ══════════════════════════════════════════════════════════════
    "Sign in with Google" button
@@ -231,7 +234,7 @@
   gap: var(--space-3);
   margin: var(--space-4) 0;
   color: var(--text-4);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -256,7 +259,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-3);
 }
@@ -341,12 +344,12 @@
 .auth-password-toggle[data-state="visible"] .icon-eye-off { display: flex; }
 
 .auth-hint {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 400;
   color: var(--text-4);
 }
 .auth-link-btn {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--accent);
   padding: 0;
@@ -388,7 +391,7 @@
   transition: width var(--duration-base) var(--ease), background var(--duration-base) var(--ease);
 }
 .strength-label {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-4);
   min-width: 32px;
@@ -413,7 +416,7 @@
   padding: 3px 9px 3px 6px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-4);
   transition: color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
@@ -487,7 +490,7 @@
 .auth-legal {
   margin-top: var(--space-5);
   text-align: center;
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: var(--text-4);
   line-height: 1.6;
 }
@@ -633,7 +636,7 @@
 .verify-hint {
   margin-top: var(--space-5);
   text-align: center;
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: var(--text-4);
   line-height: 1.6;
 }

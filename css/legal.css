@@ -1,12 +1,14 @@
 /* css/legal.css */
 .legal-shell {
-  max-width: 720px;
+  max-width: 680px;
   margin: 0 auto;
   padding: var(--space-7) var(--space-5) var(--space-8);
 }
 .legal-shell h1 {
-  font-size: var(--text-3xl);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-display-sm);
+  font-weight: 400;
+  line-height: 1.05;
   letter-spacing: -0.02em;
   color: var(--text-1);
   margin-bottom: var(--space-2);
@@ -29,13 +31,14 @@
   margin-bottom: var(--space-6);
 }
 .legal-shell h2 {
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--text-1);
   margin-bottom: var(--space-3);
 }
 .legal-shell p {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--text-2);
   line-height: 1.75;
   margin-bottom: var(--space-3);
