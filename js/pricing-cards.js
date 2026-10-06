@@ -140,26 +140,71 @@ async function handlePlanClick(planId) {
   }
 }
 
-(async function initPricingCards() {
-  const grid = document.getElementById('pricingGrid');
-  if (!grid) return;
+// Placeholder cards shown while plans load. They mirror the real card's
+// structure and height so nothing jumps when the data arrives.
+function skeletonCardHtml() {
+  const line = (w, h) =>
+    '<span class="skeleton skeleton-line" style="width:' + w + ';height:' + (h || '12px') + ';"></span>';
+  return (
+    '<div class="pricing-card pricing-card--skeleton" aria-hidden="true">' +
+      '<span class="skeleton skeleton-block" style="width:40px;height:40px;margin-bottom:16px;"></span>' +
+      line('38%', '16px') +
+      '<span style="display:block;height:10px;"></span>' +
+      line('86%') + '<span style="display:block;height:6px;"></span>' + line('64%') +
+      '<span style="display:block;height:22px;"></span>' +
+      line('46%', '30px') +
+      '<span style="display:block;height:22px;"></span>' +
+      '<span class="skeleton skeleton-block" style="height:42px;width:100%;"></span>' +
+      '<span style="display:block;height:22px;"></span>' +
+      line('80%') + '<span style="display:block;height:12px;"></span>' +
+      line('72%') + '<span style="display:block;height:12px;"></span>' +
+      line('84%') + '<span style="display:block;height:12px;"></span>' +
+      line('58%') +
+    '</div>'
+  );
+}
 
+function showSkeletons(grid) {
+  grid.setAttribute('aria-busy', 'true');
+  grid.innerHTML = skeletonCardHtml() + skeletonCardHtml() + skeletonCardHtml();
+}
+
+function showError(grid, retry) {
+  grid.removeAttribute('aria-busy');
+  grid.innerHTML =
+    '<div class="pricing-error" role="alert">' +
+      '<p>We couldn\'t load pricing just now.</p>' +
+      '<button type="button" class="pricing-retry">Try again</button>' +
+    '</div>';
+  grid.querySelector('.pricing-retry').addEventListener('click', retry);
+}
+
+async function loadPricing(grid) {
+  showSkeletons(grid);
   try {
     const plans = await getPlans();
     // Keep a stable, deliberate order regardless of what the Worker returns.
     const order = ['free', 'plus', 'studio'];
     const sorted = [...plans].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    grid.removeAttribute('aria-busy');
     grid.innerHTML = sorted.map(cardHtml).join('');
 
     grid.querySelectorAll('.pricing-cta').forEach((btn) => {
       btn.addEventListener('click', () => {
-        btn.disabled = true;
+        // aria-busy shows a spinner (shared.css) and blocks repeat clicks
+        // while we check auth and navigate.
+        btn.setAttribute('aria-busy', 'true');
         handlePlanClick(btn.dataset.planId);
       });
     });
   } catch (e) {
     console.error('[pricing-cards] failed to load plans:', e.message);
-    grid.innerHTML =
-      '<p class="pricing-note">Couldn\'t load pricing right now. Please refresh the page.</p>';
+    showError(grid, () => loadPricing(grid));
   }
+}
+
+(function initPricingCards() {
+  const grid = document.getElementById('pricingGrid');
+  if (!grid) return;
+  loadPricing(grid);
 })();
