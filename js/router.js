@@ -1,5 +1,5 @@
 // js/router.js
-// Switches between the chat / resources / library / reminders / account /
+// Switches between the chat / resources / library / learna / reminders / account /
 // scheduler / inbox / insights views inside app.html
 // without a full page navigation. Uses a `?view=` query param on the
 // one real file (not a fake path) so refresh, back/forward and shared
@@ -19,6 +19,10 @@ const VIEWS = {
   library: {
     containerId: 'view-library',
     load: () => import('./library.js'),
+  },
+  learna: {
+    containerId: 'view-learna',
+    load: () => import('./learna.js'),
   },
   reminders: {
     containerId: 'view-reminders',
@@ -85,6 +89,8 @@ export async function navigate(view, { replace = false } = {}) {
 
   const url = new URL(window.location.href);
   url.searchParams.set('view', view);
+  // Learna keeps its own course/lesson in the URL; no other view should carry them.
+  if (view !== 'learna') { url.searchParams.delete('course'); url.searchParams.delete('lesson'); }
   if (replace) {
     window.history.replaceState({ view }, '', url);
   } else if (currentView !== view) {
