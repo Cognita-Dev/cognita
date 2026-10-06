@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/js/js-flag.js"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Pricing — Cognita</title>
 <link rel="icon" href="/assets/cognita.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..500&family=Instrument+Serif:ital@0;1&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/marketing.css">
 <link rel="stylesheet" href="/css/pricing.css">
@@ -46,10 +47,11 @@
   </div>
 
   <div class="pricing-grid" id="pricingGrid">
-    <div class="pricing-card skeleton" style="height:420px;"></div>
-    <div class="pricing-card skeleton" style="height:420px;"></div>
-    <div class="pricing-card skeleton" style="height:420px;"></div>
+    <div class="pricing-card pricing-card--skeleton" aria-hidden="true"><span class="skeleton skeleton-block" style="width:40px;height:40px;margin-bottom:16px;"></span><span class="skeleton skeleton-line" style="width:40%;height:16px;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:85%;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:50%;height:30px;margin-bottom:24px;"></span><span class="skeleton skeleton-block" style="height:42px;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:80%;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:65%;"></span></div>
+    <div class="pricing-card pricing-card--skeleton" aria-hidden="true"><span class="skeleton skeleton-block" style="width:40px;height:40px;margin-bottom:16px;"></span><span class="skeleton skeleton-line" style="width:40%;height:16px;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:85%;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:50%;height:30px;margin-bottom:24px;"></span><span class="skeleton skeleton-block" style="height:42px;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:80%;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:65%;"></span></div>
+    <div class="pricing-card pricing-card--skeleton" aria-hidden="true"><span class="skeleton skeleton-block" style="width:40px;height:40px;margin-bottom:16px;"></span><span class="skeleton skeleton-line" style="width:40%;height:16px;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:85%;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:50%;height:30px;margin-bottom:24px;"></span><span class="skeleton skeleton-block" style="height:42px;margin-bottom:24px;"></span><span class="skeleton skeleton-line" style="width:80%;margin-bottom:12px;"></span><span class="skeleton skeleton-line" style="width:65%;"></span></div>
   </div>
+
 
   <p class="pricing-note" id="pricingError" hidden>Could not load plans right now. Please refresh the page.</p>
 
@@ -294,5 +296,6 @@
   loadPlans();
 </script>
 
+<script src="/js/page-chrome.js" defer></script>
 </body>
 </html>
