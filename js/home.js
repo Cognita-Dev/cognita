@@ -8,13 +8,13 @@
 // What lives here, and why each piece exists:
 //   1. Header + mobile menu ........ chrome
 //   2. Workspace preview ........... hero demo: tabs, plus a one-time scripted chat
-//   3. Journey line ................ draws once when the sequence comes into view
-//   4. Showcase .................... pinned, scroll-driven card stack (all sizes;
-//                                    under Reduce Motion it becomes a crossfade). This file
-//                                    computes ONE number (--p) per frame and
-//                                    writes it to the section. CSS does the rest.
-//   5. Learna sample question ...... a real interaction, not a video
-//   6. Note Taker tabs, export formats, step highlights
+//   3. Product stack ............... the cards stack with plain CSS `position: sticky`.
+//                                    This file only (a) tells each card its own height
+//                                    so a tall card is never cut off, and (b) eases the
+//                                    card that is being covered back a little (--p).
+//   4. Learna sample question ...... a real interaction, not a video
+//   5. Note Taker tabs + export formats
+//   6. Small reveals
 //   7. Chapter rail
 // Everything degrades to a complete static page if this file never runs.
 
@@ -197,100 +197,75 @@
   })();
 
   /* ─────────────────────────────────────────────
-     3 · Journey: the line draws once
+     3 · Product stack
+     The stacking itself is CSS (position: sticky, see css/home.css).
+     Under Reduce Motion the CSS turns the cards into a plain list and
+     none of this runs.
   ───────────────────────────────────────────── */
-  (function journey() {
-    var list = $('#journey');
-    if (!list) return;
-    $$('li', list).forEach(function (li, i) { li.querySelector('.j-n').style.setProperty('--k', i); });
-    if (reduceMotion || !hasIO) { list.classList.add('is-in'); return; }
-    var io = new IntersectionObserver(function (entries) {
-      if (entries[0].isIntersecting) { list.classList.add('is-in'); io.disconnect(); }
-    }, { threshold: 0.5 });
-    io.observe(list);
-  })();
+  (function stack() {
+    var wrap = $('#stack');
+    if (!wrap || reduceMotion) return;
+    var cards = $$('.stack-card', wrap);
+    if (!cards.length) return;
 
-  /* ─────────────────────────────────────────────
-     4 · Showcase: pinned, scroll-driven card stack
-     Raw scroll progress is mapped so every stage HOLDS for roughly half of
-     its scroll distance, then transitions to the next. Integer values of
-     --p are settled stages; fractions are the card stacking over.
-  ───────────────────────────────────────────── */
-  (function showcase() {
-    var sec = $('#product');
-    var track = $('#showcaseTrack');
-    if (!sec || !track) return;
-
-    var N = $$('.stage', sec).length;
-    if (N < 2) return;
-    var frame = $('#showcaseFrame');
-    var mq = window.matchMedia('(min-height: 600px)');
-    var pinned = false;
+    var heights = [];
+    var last = cards.map(function () { return -1; });
     var visible = false;
     var tick = false;
-    var io = null;
 
-    function range() { return track.offsetHeight - (frame ? frame.offsetHeight : window.innerHeight); }
+    // (a) Each card's own height. CSS uses it so that a card taller than the
+    // screen sticks by its bottom edge instead of being cut off at the bottom.
+    function measure() {
+      cards.forEach(function (c, i) {
+        heights[i] = c.offsetHeight;
+        c.style.setProperty('--h', heights[i] + 'px');
+        var marker = c.previousElementSibling; // the .stack-anchor in front of this card
+        if (marker && marker.classList.contains('stack-anchor')) marker.style.setProperty('--h', heights[i] + 'px');
+      });
+      request();
+    }
 
+    // (b) How much of each card the next one is covering, as a number from 0 to 1.
     function update() {
       tick = false;
-      var r = range();
-      if (r <= 0) return;
-      var raw = clamp(-track.getBoundingClientRect().top / r, 0, 1) * (N - 1);
-      var i = Math.floor(raw);
-      var t = clamp((raw - i - 0.45) / 0.55, 0, 1);
-      var p = i + t * t * (3 - 2 * t);
-      sec.style.setProperty('--p', p.toFixed(3));
+      for (var i = 0; i < cards.length - 1; i += 1) {
+        var h = heights[i] || cards[i].offsetHeight;
+        // Cards scale from their top edge, so getBoundingClientRect().top is not affected by --p.
+        var covered = (cards[i].getBoundingClientRect().top + h) - cards[i + 1].getBoundingClientRect().top;
+        var p = clamp(covered / Math.max(h - 40, 1), 0, 1);
+        if (Math.abs(p - last[i]) > 0.003) {
+          cards[i].style.setProperty('--p', p.toFixed(3));
+          last[i] = p;
+        }
+      }
     }
     function request() {
       if (visible && !tick) { tick = true; requestAnimationFrame(update); }
     }
 
-    function enable() {
-      if (pinned) return;
-      pinned = true;
-      sec.classList.add('is-pinned');
-      window.addEventListener('scroll', request, { passive: true });
-      window.addEventListener('resize', request);
-      if (hasIO) {
-        io = new IntersectionObserver(function (entries) {
-          visible = entries[0].isIntersecting;
-          request();
-        }, { rootMargin: '120px 0px 120px 0px' });
-        io.observe(track);
-      } else {
-        visible = true;
-      }
-      visible = visible || !hasIO;
-      tick = false;
-      requestAnimationFrame(function () { visible = true; update(); });
+    window.addEventListener('scroll', request, { passive: true });
+    window.addEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+    if ('ResizeObserver' in window) {
+      // Tabs, hints and feedback inside a card can change its height.
+      var ro = new ResizeObserver(function () { measure(); });
+      cards.forEach(function (c) { ro.observe(c); });
     }
-    function disable() {
-      if (!pinned) return;
-      pinned = false;
-      sec.classList.remove('is-pinned');
-      sec.style.removeProperty('--p');
-      window.removeEventListener('scroll', request);
-      window.removeEventListener('resize', request);
-      if (io) { io.disconnect(); io = null; }
-    }
-    function sync() { if (mq.matches) enable(); else disable(); }
-    sync();
-    if (mq.addEventListener) mq.addEventListener('change', sync);
-    else if (mq.addListener) mq.addListener(sync);
+    if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(measure);
 
-    // Jump to a stage from the index.
-    $$('[data-go]', sec).forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var i = Number(btn.getAttribute('data-go'));
-        var top = track.getBoundingClientRect().top + window.scrollY + (i / (N - 1)) * range();
-        window.scrollTo({ top: Math.round(top) + 1, behavior: 'smooth' });
-      });
-    });
+    if (hasIO) {
+      new IntersectionObserver(function (entries) {
+        visible = entries[0].isIntersecting;
+        request();
+      }, { rootMargin: '300px 0px 300px 0px' }).observe(wrap);
+    } else {
+      visible = true;
+    }
+    measure();
   })();
 
   /* ─────────────────────────────────────────────
-     5 · Learna sample question
+     4 · Learna sample question
   ───────────────────────────────────────────── */
   (function learna() {
     var form = $('#lq');
@@ -334,7 +309,7 @@
   })();
 
   /* ─────────────────────────────────────────────
-     6a · Note Taker tabs
+     5a · Note Taker tabs
   ───────────────────────────────────────────── */
   (function notes() {
     var list = $('#noteDemo .nw-tabs');
@@ -342,7 +317,7 @@
   })();
 
   /* ─────────────────────────────────────────────
-     6b · Export formats
+     5b · Export formats
   ───────────────────────────────────────────── */
   (function exportFormats() {
     var group = $('.fmt');
@@ -373,49 +348,14 @@
   })();
 
   /* ─────────────────────────────────────────────
-     6c · Step highlights (Create pipeline, Investigate run)
-  ───────────────────────────────────────────── */
-  (function steps() {
-    var pipe = $('#pipe');
-    if (pipe) {
-      var items = $$('li', pipe);
-      var lightAll = function () { items.forEach(function (li) { li.classList.add('is-lit'); }); };
-      if (reduceMotion || !hasIO) lightAll();
-      else {
-        var io1 = new IntersectionObserver(async function (entries) {
-          if (!entries[0].isIntersecting) return;
-          io1.disconnect();
-          for (var i = 0; i < items.length; i += 1) {
-            items[i].classList.add('is-lit');
-            await wait(420);
-          }
-        }, { threshold: 0.45 });
-        io1.observe(pipe);
-      }
-    }
-
-    var run = $('#run');
-    if (run) {
-      $$('.run-steps li', run).forEach(function (li, i) { li.style.setProperty('--k', i); });
-      if (reduceMotion || !hasIO) run.classList.add('is-in');
-      else {
-        var io2 = new IntersectionObserver(function (entries) {
-          if (entries[0].isIntersecting) { run.classList.add('is-in'); io2.disconnect(); }
-        }, { threshold: 0.4 });
-        io2.observe(run);
-      }
-    }
-  })();
-
-  /* ─────────────────────────────────────────────
-     6d · Reveals and gentle parallax
+     6 · Reveals
      Classes are added here (not in the HTML) so that nothing is ever hidden
-     unless this script is running.
+     unless this script is running. Not used on the product cards: those
+     are positioned by the stack and must never be moved by anything else.
   ───────────────────────────────────────────── */
   (function motion() {
     var groups = [
-      '.facts > div', '.learna-win', '.flow li', '.note-win', '.pipe li', '.sheet#sheet', '.export',
-      '.create-more > div', '.run', '.ticks li', '.ledger li', '.trust-list > div', '.trust-links',
+      '.ledger li', '.trust-list > div', '.trust-links',
       '.home-pricing .pricing-card', '.faq-item', '.final-title', '.final p', '.final .btn-primary'
     ];
     var seen = [];
@@ -429,7 +369,7 @@
     }
     groups.forEach(tag);
     var items = $$('.rv');
-    if (!hasIO) { items.forEach(function (el) { el.classList.add('in'); }); }
+    if (reduceMotion || !hasIO) { items.forEach(function (el) { el.classList.add('in'); }); }
     else {
       var io = new IntersectionObserver(function (entries) {
         entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
@@ -439,31 +379,13 @@
     // Pricing cards are rendered after load by pricing-cards.js.
     var grid = $('#pricingGrid');
     if (grid && 'MutationObserver' in window) {
-      new MutationObserver(function () { tag('.home-pricing .pricing-card'); $$('.home-pricing .pricing-card:not(.in)').forEach(function (el) { if (hasIO) io.observe(el); else el.classList.add('in'); }); }).observe(grid, { childList: true });
+      new MutationObserver(function () {
+        tag('.home-pricing .pricing-card');
+        $$('.home-pricing .pricing-card:not(.in)').forEach(function (el) {
+          if (reduceMotion || !hasIO) el.classList.add('in'); else io.observe(el);
+        });
+      }).observe(grid, { childList: true });
     }
-
-    if (reduceMotion) return;
-    var par = [
-      ['.learna-win', -26], ['.note-win', -22], ['.doc-stage', -34], ['.pipe', 14], ['.run', -26], ['.ledger', 12]
-    ].map(function (pair) {
-      var el = $(pair[0]);
-      if (el) { el.setAttribute('data-par', ''); el.style.setProperty('--amp', String(pair[1])); }
-      return el;
-    }).filter(Boolean);
-    var tick = false;
-    function updatePar() {
-      tick = false;
-      var vh = window.innerHeight;
-      par.forEach(function (el) {
-        var r = el.getBoundingClientRect();
-        if (r.bottom < -200 || r.top > vh + 200) return;
-        var c = (r.top + r.height / 2 - vh / 2) / (vh / 2 + r.height / 2);
-        el.style.setProperty('--par', clamp(c, -1, 1).toFixed(3));
-      });
-    }
-    window.addEventListener('scroll', function () { if (!tick) { tick = true; requestAnimationFrame(updatePar); } }, { passive: true });
-    window.addEventListener('resize', updatePar);
-    updatePar();
   })();
 
   /* ─────────────────────────────────────────────
