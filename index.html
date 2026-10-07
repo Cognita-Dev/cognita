@@ -104,6 +104,10 @@
         <div class="ws-panel" role="tabpanel" id="ws-panel-chat" aria-labelledby="ws-tab-chat" data-scene="chat">
           <div class="ws-top"><h2>Q3 retention brief</h2></div>
           <div class="chat" id="demoChat">
+            <div class="chat-empty" id="demoEmpty" aria-hidden="true">
+              <p>What are you working on?</p>
+              <div class="suggest"><span>Draft an email</span><span>Explain a concept</span><span>Outline a document</span><span>Think through a decision</span></div>
+            </div>
             <div class="chat-msg chat-user" data-step="user">
               <div class="chat-files">
                 <span class="file-chip"><i class="ph ph-file-xls" aria-hidden="true"></i>Q3-churn-numbers.xlsx</span>
@@ -227,13 +231,13 @@
           <div class="stage-card" aria-hidden="true">
             <div class="card-bar"><span>Pricing decision</span><span class="level"><i class="ph ph-brain"></i>Advanced</span></div>
             <div class="card-body">
-              <p class="ask">Customers are leaving after month two. Do we discount, wait, or contact the at-risk accounts?</p>
+              <p class="sx ask" style="--k:0">Customers are leaving after month two. Do we discount, wait, or contact the at-risk accounts?</p>
               <div class="opts">
-                <div class="opt"><b>Offer a blanket discount</b><span>Quick to do, but it costs margin on people who would have stayed.</span></div>
-                <div class="opt"><b>Wait and see</b><span>Cheapest, but the rising ticket volume suggests this isn't noise.</span></div>
-                <div class="opt is-picked"><b><i class="ph ph-check-circle"></i>Contact at-risk accounts directly</b><span>Targets the accounts whose usage is falling. The cost is mostly time.</span></div>
+                <div class="sx opt" style="--k:1"><b>Offer a blanket discount</b><span>Quick to do, but it costs margin on people who would have stayed.</span></div>
+                <div class="sx opt" style="--k:2"><b>Wait and see</b><span>Cheapest, but the rising ticket volume suggests this isn't noise.</span></div>
+                <div class="sx opt is-picked" style="--k:3"><b><i class="ph ph-check-circle"></i>Contact at-risk accounts directly</b><span>Targets the accounts whose usage is falling. The cost is mostly time.</span></div>
               </div>
-              <p class="push">One assumption to check first: are the accounts with falling usage the same ones filing tickets?</p>
+              <p class="sx push" style="--k:4">One assumption to check first: are the accounts with falling usage the same ones filing tickets?</p>
             </div>
           </div>
         </article>
@@ -247,15 +251,15 @@
           <div class="stage-card" aria-hidden="true">
             <div class="card-bar"><span>3 files attached</span><span class="level"><i class="ph ph-paperclip"></i>Read</span></div>
             <div class="card-body">
-              <div class="files">
+              <div class="sx files" style="--k:0">
                 <span class="file-chip"><i class="ph ph-file-xls"></i>Q3-churn-numbers.xlsx</span>
                 <span class="file-chip"><i class="ph ph-file-csv"></i>support-tickets.csv</span>
                 <span class="file-chip"><i class="ph ph-file-doc"></i>onboarding-notes.docx</span>
               </div>
               <ul class="found">
-                <li><p>Churn rose from 3.1% in July to 4.6% in September.</p><small>Q3-churn-numbers.xlsx · Monthly</small></li>
-                <li><p>Setup and billing account for most support tickets.</p><small>support-tickets.csv · topic column</small></li>
-                <li><p>New accounts that skip the import step are the likeliest to cancel.</p><small>onboarding-notes.docx · page 2</small></li>
+                <li class="sx" style="--k:1"><p>Churn rose from 3.1% in July to 4.6% in September.</p><small>Q3-churn-numbers.xlsx · Monthly</small></li>
+                <li class="sx" style="--k:2"><p>Setup and billing account for most support tickets.</p><small>support-tickets.csv · topic column</small></li>
+                <li class="sx" style="--k:3"><p>New accounts that skip the import step are the likeliest to cancel.</p><small>onboarding-notes.docx · page 2</small></li>
               </ul>
             </div>
           </div>
@@ -270,9 +274,9 @@
           <div class="stage-card stage-card--dark" aria-hidden="true">
             <div class="card-bar"><span>Ran Python</span><span class="level">1.2 s · on your device</span></div>
             <div class="card-body">
-<pre class="code"><code>df = pd.read_csv("support-tickets.csv")
+<pre class="sx code" style="--k:0"><code>df = pd.read_csv("support-tickets.csv")
 df.groupby("topic").size().nlargest(3)</code></pre>
-<pre class="out"><code>topic
+<pre class="sx out" style="--k:1"><code>topic
 setup      74
 billing    52
 export     29</code></pre>
@@ -289,15 +293,15 @@ export     29</code></pre>
           <div class="stage-card" aria-hidden="true">
             <div class="card-bar"><span>JavaScript Foundations · Functions</span><span class="level">Guided</span></div>
             <div class="card-body">
-              <p class="ask">What does this return?</p>
-<pre class="code code--light"><code>function f(x) {
+              <p class="sx ask" style="--k:0">What does this return?</p>
+<pre class="sx code code--light" style="--k:1"><code>function f(x) {
   return x + 1;
 }
 f(f(1));</code></pre>
-              <div class="choices">
+              <div class="sx choices" style="--k:2">
                 <span>2</span><span class="is-on">3</span><span>4</span>
               </div>
-              <div class="lesson-foot"><span class="btn-mini">Check answer</span><span class="btn-mini btn-mini--ghost">Show a hint</span></div>
+              <div class="sx lesson-foot" style="--k:3"><span class="btn-mini">Check answer</span><span class="btn-mini btn-mini--ghost">Show a hint</span></div>
             </div>
           </div>
         </article>
@@ -310,15 +314,15 @@ f(f(1));</code></pre>
           </div>
           <div class="stage-card stage-card--plain" aria-hidden="true">
             <div class="sheet sheet--mini">
-              <p class="sheet-title">Q3 Retention Brief</p>
-              <p class="sheet-meta">Prepared for the leadership team</p>
-              <p class="sheet-h">Summary</p>
-              <p class="sheet-p">Churn rose through the quarter. The causes are concentrated in onboarding and billing.</p>
+              <p class="sx sheet-title" style="--k:0">Q3 Retention Brief</p>
+              <p class="sx sheet-meta" style="--k:1">Prepared for the leadership team</p>
+              <p class="sx sheet-h" style="--k:2">Summary</p>
+              <p class="sx sheet-p" style="--k:3">Churn rose through the quarter. The causes are concentrated in onboarding and billing.</p>
               <span class="sheet-bar"></span><span class="sheet-bar sheet-bar--s"></span>
-              <p class="sheet-h">Recommendation</p>
+              <p class="sx sheet-h" style="--k:4">Recommendation</p>
               <span class="sheet-bar"></span><span class="sheet-bar sheet-bar--s"></span>
             </div>
-            <div class="out-files">
+            <div class="sx out-files" style="--k:5">
               <span class="file-chip"><i class="ph ph-file-doc"></i>.docx</span>
               <span class="file-chip"><i class="ph ph-file-pdf"></i>.pdf</span>
               <span class="file-chip"><i class="ph ph-file-ppt"></i>.pptx</span>
@@ -336,9 +340,9 @@ f(f(1));</code></pre>
             <div class="card-bar"><span>Saved notes</span><span class="level"><i class="ph ph-microphone"></i>Note Taker</span></div>
             <div class="card-body">
               <ul class="keep">
-                <li><i class="ph ph-note"></i><div><strong>Product review</strong><small>Transcript, summary and 3 tasks</small></div></li>
-                <li><i class="ph ph-check-circle"></i><div><strong>Ship guided import</strong><small>Task from Product review · Fri</small></div></li>
-                <li><i class="ph ph-bell"></i><div><strong>Send retention brief to the client</strong><small>Reminder · Fri 9:00 · On this device, Email</small></div></li>
+                <li class="sx" style="--k:0"><i class="ph ph-note"></i><div><strong>Product review</strong><small>Transcript, summary and 3 tasks</small></div></li>
+                <li class="sx" style="--k:1"><i class="ph ph-check-circle"></i><div><strong>Ship guided import</strong><small>Task from Product review · Fri</small></div></li>
+                <li class="sx" style="--k:2"><i class="ph ph-bell"></i><div><strong>Send retention brief to the client</strong><small>Reminder · Fri 9:00 · On this device, Email</small></div></li>
               </ul>
             </div>
           </div>
