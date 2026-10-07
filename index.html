@@ -57,12 +57,10 @@
 
 <nav class="rail" id="rail" aria-label="On this page">
   <a href="#product" data-rail="product"><span>Product</span></a>
-  <a href="#learna" data-rail="learna"><span>Learna</span></a>
-  <a href="#notes" data-rail="notes"><span>Notes</span></a>
-  <a href="#create" data-rail="create"><span>Create</span></a>
-  <a href="#investigate" data-rail="investigate"><span>Investigate</span></a>
   <a href="#connected" data-rail="connected"><span>Connected</span></a>
+  <a href="#trust" data-rail="trust"><span>Your work</span></a>
   <a href="#pricing" data-rail="pricing"><span>Pricing</span></a>
+  <a href="#faq" data-rail="faq"><span>Questions</span></a>
 </nav>
 
 <main id="main-content">
@@ -193,382 +191,224 @@
     <p class="demo-caption">An illustrative preview of the signed-in workspace.</p>
   </section>
 
-  <!-- ═════════ 2 · THE IDEA ═════════ -->
-  <section class="thesis wrap" id="thesis" aria-labelledby="thesis-title">
-    <div class="intro" data-reveal>
-      <h2 class="h2" id="thesis-title">One place for the work around your thinking.</h2>
-      <p class="lead">The idea is rarely the hard part. The work is reading the source, checking the numbers, learning what you don't know, writing it up, and remembering to follow through. Cognita keeps all of it in one workspace, so nothing has to be carried from tab to tab.</p>
-    </div>
-    <ol class="journey" id="journey" aria-label="How work moves through Cognita">
-      <li><span class="j-n">1</span><strong>Idea</strong><small>A question, a pile of notes, a half-formed plan</small></li>
-      <li><span class="j-n">2</span><strong>Understand</strong><small>PDFs, spreadsheets, Word files, transcripts</small></li>
-      <li><span class="j-n">3</span><strong>Explore</strong><small>Options, trade-offs, calculations</small></li>
-      <li><span class="j-n">4</span><strong>Learn</strong><small>Courses with practice that is checked</small></li>
-      <li><span class="j-n">5</span><strong>Create</strong><small>Word, PDF and PowerPoint files</small></li>
-      <li><span class="j-n">6</span><strong>Organize</strong><small>Saved notes, library, reminders</small></li>
-      <li><span class="j-n">7</span><strong>Use</strong><small>Send it, schedule it, connect it</small></li>
-    </ol>
-  </section>
-
-  <!-- ═════════ 3 · SCROLL-DRIVEN SHOWCASE ═════════ -->
-  <section class="showcase" id="product" aria-labelledby="product-title" style="--n:5">
-    <div class="wrap showcase-head">
+  <!-- ═════════ 2 · PRODUCT (one stack of cards; replaces the old thesis, showcase, Learna, Notes, Create and Investigate sections) ═════════ -->
+  <section class="product" id="product" aria-labelledby="product-title">
+    <div class="wrap product-head">
       <div class="intro" data-reveal>
         <p class="kicker">The product</p>
-        <h2 class="h2" id="product-title">From a first question to finished work.</h2>
+        <h2 class="h2" id="product-title">One place for the work around your thinking.</h2>
+        <p class="lead">The idea is rarely the hard part. The work is reading the source, checking the numbers, learning what you don't know, writing it up and following through. Cognita keeps all of it in one workspace.</p>
       </div>
     </div>
 
-    <div class="showcase-track" id="showcaseTrack">
-      <div class="showcase-frame" id="showcaseFrame">
+    <div class="wrap">
+      <div class="stack" id="stack">
 
-        <article class="stage" style="--i:0" aria-labelledby="st-think">
-          <div class="stage-copy">
+        <!-- 1 · Think -->
+        <span class="stack-anchor" id="think" style="--i:0"></span>
+        <article class="stack-card" style="--i:0" aria-labelledby="st-think">
+          <div class="card-copy">
             <p class="kicker">Think</p>
             <h3 class="h3" id="st-think">Work the problem, not just the prompt.</h3>
             <p>Ask a question, then keep going. Use Standard for quick answers, or Advanced and Thorough when a decision needs real reasoning. Cognita sets out the options, weighs the trade-offs, and questions the assumption that doesn't hold up.</p>
           </div>
-          <div class="stage-card" aria-hidden="true">
+          <div class="demo" aria-hidden="true">
             <div class="card-bar"><span>Pricing decision</span><span class="level"><i class="ph ph-brain"></i>Advanced</span></div>
             <div class="card-body">
-              <p class="sx ask" style="--k:0">Customers are leaving after month two. Do we discount, wait, or contact the at-risk accounts?</p>
+              <p class="ask">Customers are leaving after month two. Do we discount, wait, or contact the at-risk accounts?</p>
               <div class="opts">
-                <div class="sx opt" style="--k:1"><b>Offer a blanket discount</b><span>Quick to do, but it costs margin on people who would have stayed.</span></div>
-                <div class="sx opt" style="--k:2"><b>Wait and see</b><span>Cheapest, but the rising ticket volume suggests this isn't noise.</span></div>
-                <div class="sx opt is-picked" style="--k:3"><b><i class="ph ph-check-circle"></i>Contact at-risk accounts directly</b><span>Targets the accounts whose usage is falling. The cost is mostly time.</span></div>
+                <div class="opt"><b>Offer a blanket discount</b><span>Quick to do, but it costs margin on people who would have stayed.</span></div>
+                <div class="opt"><b>Wait and see</b><span>Cheapest, but the rising ticket volume suggests this isn't noise.</span></div>
+                <div class="opt is-picked"><b><i class="ph ph-check-circle"></i>Contact at-risk accounts directly</b><span>Targets the accounts whose usage is falling. The cost is mostly time.</span></div>
               </div>
-              <p class="sx push" style="--k:4">One assumption to check first: are the accounts with falling usage the same ones filing tickets?</p>
+              <p class="push">One assumption to check first: are the accounts with falling usage the same ones filing tickets?</p>
             </div>
           </div>
         </article>
 
-        <article class="stage" style="--i:1" aria-labelledby="st-read">
-          <div class="stage-copy">
+        <!-- 2 · Read -->
+        <span class="stack-anchor" id="read" style="--i:1"></span>
+        <article class="stack-card" style="--i:1" aria-labelledby="st-read">
+          <div class="card-copy">
             <p class="kicker">Read</p>
             <h3 class="h3" id="st-read">Start from what you already have.</h3>
             <p>Attach PDFs, spreadsheets, Word documents, CSVs or plain notes. Cognita reads what is actually in them, pulls out what matters, and tells you where each point came from.</p>
           </div>
-          <div class="stage-card" aria-hidden="true">
+          <div class="demo" aria-hidden="true">
             <div class="card-bar"><span>3 files attached</span><span class="level"><i class="ph ph-paperclip"></i>Read</span></div>
             <div class="card-body">
-              <div class="sx files" style="--k:0">
+              <div class="files">
                 <span class="file-chip"><i class="ph ph-file-xls"></i>Q3-churn-numbers.xlsx</span>
                 <span class="file-chip"><i class="ph ph-file-csv"></i>support-tickets.csv</span>
                 <span class="file-chip"><i class="ph ph-file-doc"></i>onboarding-notes.docx</span>
               </div>
               <ul class="found">
-                <li class="sx" style="--k:1"><p>Churn rose from 3.1% in July to 4.6% in September.</p><small>Q3-churn-numbers.xlsx · Monthly</small></li>
-                <li class="sx" style="--k:2"><p>Setup and billing account for most support tickets.</p><small>support-tickets.csv · topic column</small></li>
-                <li class="sx" style="--k:3"><p>New accounts that skip the import step are the likeliest to cancel.</p><small>onboarding-notes.docx · page 2</small></li>
+                <li><p>Churn rose from 3.1% in July to 4.6% in September.</p><small>Q3-churn-numbers.xlsx · Monthly</small></li>
+                <li><p>Setup and billing account for most support tickets.</p><small>support-tickets.csv · topic column</small></li>
+                <li><p>New accounts that skip the import step are the likeliest to cancel.</p><small>onboarding-notes.docx · page 2</small></li>
               </ul>
             </div>
           </div>
         </article>
 
-        <article class="stage" style="--i:2" aria-labelledby="st-investigate">
-          <div class="stage-copy">
+        <!-- 3 · Investigate -->
+        <span class="stack-anchor" id="investigate" style="--i:2"></span>
+        <article class="stack-card stack-card--ink" style="--i:2" aria-labelledby="st-investigate">
+          <div class="card-copy">
             <p class="kicker">Investigate</p>
             <h3 class="h3" id="st-investigate">Run the numbers instead of estimating them.</h3>
-            <p>When a question needs real calculation, Cognita writes the code, runs it on your own device, reads the true output and carries on. Python and JavaScript, with nothing to set up.</p>
+            <p>When a question needs real calculation, Cognita writes the code, runs it in your browser, reads the true output and carries on. Python with numpy, pandas, matplotlib, scipy and openpyxl, plus JavaScript, with nothing to set up.</p>
+            <ul class="card-facts">
+              <li><span>Code runs on your own device. Nothing is uploaded unless you download it.</span></li>
+              <li><span>Results are real files you can download.</span></li>
+              <li><span>A contained workspace: no installing packages and no network access.</span></li>
+            </ul>
           </div>
-          <div class="stage-card stage-card--dark" aria-hidden="true">
-            <div class="card-bar"><span>Ran Python</span><span class="level">1.2 s · on your device</span></div>
-            <div class="card-body">
-<pre class="sx code" style="--k:0"><code>df = pd.read_csv("support-tickets.csv")
-df.groupby("topic").size().nlargest(3)</code></pre>
-<pre class="sx out" style="--k:1"><code>topic
-setup      74
-billing    52
-export     29</code></pre>
-            </div>
+          <div class="demo demo--dark" aria-hidden="true">
+            <div class="card-bar"><span><i class="ph ph-terminal-window"></i>Cognita ran 3 steps</span><span class="level">1.2 s · on your device</span></div>
+            <ol class="run-steps">
+              <li><i class="ph ph-check-circle"></i><span>Read <b>support-tickets.csv</b><small>312 rows, 6 columns</small></span></li>
+              <li><i class="ph ph-check-circle"></i><span>Group tickets by topic and month<small>pandas</small></span></li>
+              <li><i class="ph ph-check-circle"></i><span>Save <b>monthly-ticket-summary.xlsx</b><small>openpyxl</small></span></li>
+            </ol>
+<pre class="run-code"><code>summary = df.groupby([df.month, "topic"]).size().unstack(fill_value=0)
+summary.to_excel("monthly-ticket-summary.xlsx")</code></pre>
+<pre class="run-out"><code>topic   billing  export  setup
+Jul          14       8     21
+Aug          17       9     24
+Sep          21      12     29</code></pre>
           </div>
         </article>
 
-        <article class="stage" style="--i:3" aria-labelledby="st-learn">
-          <div class="stage-copy">
+        <!-- 4 · Learn (Learna) -->
+        <span class="stack-anchor" id="learna" style="--i:3"></span>
+        <article class="stack-card" style="--i:3" aria-labelledby="st-learn">
+          <div class="card-copy">
             <p class="kicker">Learn</p>
             <h3 class="h3" id="st-learn">Learn the part you're missing.</h3>
-            <p>Learna turns a subject into a course: short lessons, practice you can't skip past, and a tutor who helps without handing over the answer.</p>
+            <p>Learna turns a subject into a course in languages, coding, public speaking, UI/UX design or sales. Short lessons, practice you can't skip past, and a tutor who knows where you are.</p>
+            <dl class="card-facts">
+              <div><dt>Practice that is actually marked</dt><dd>Answers are checked exactly, code runs against tests in your browser, and written answers are scored against a rubric.</dd></div>
+              <div><dt>A tutor that doesn't give it away</dt><dd>Ask for a hint at any point. The tutor only sees an answer after you've been shown it.</dd></div>
+              <div><dt>Progress that means something</dt><dd>A lesson counts as mastered when you pass most activities without being shown the answer.</dd></div>
+            </dl>
+            <p class="card-note">Anyone with an account can browse the courses. Taking a course is part of the paid plans. <a href="#pricing">See pricing</a></p>
           </div>
-          <div class="stage-card" aria-hidden="true">
-            <div class="card-bar"><span>JavaScript Foundations · Functions</span><span class="level">Guided</span></div>
-            <div class="card-body">
-              <p class="sx ask" style="--k:0">What does this return?</p>
-<pre class="sx code code--light" style="--k:1"><code>function f(x) {
-  return x + 1;
-}
-f(f(1));</code></pre>
-              <div class="sx choices" style="--k:2">
-                <span>2</span><span class="is-on">3</span><span>4</span>
-              </div>
-              <div class="sx lesson-foot" style="--k:3"><span class="btn-mini">Check answer</span><span class="btn-mini btn-mini--ghost">Show a hint</span></div>
-            </div>
-          </div>
-        </article>
-
-        <article class="stage" style="--i:4" aria-labelledby="st-create">
-          <div class="stage-copy">
-            <p class="kicker">Create</p>
-            <h3 class="h3" id="st-create">Finish as a file, not a chat.</h3>
-            <p>Ask for a report, brief, letter or deck and download it as Word, PDF or PowerPoint. Teachers can generate lesson plans, worksheets, exams and more from a few details.</p>
-          </div>
-          <div class="stage-card stage-card--plain" aria-hidden="true">
-            <div class="sheet sheet--mini">
-              <p class="sx sheet-title" style="--k:0">Q3 Retention Brief</p>
-              <p class="sx sheet-meta" style="--k:1">Prepared for the leadership team</p>
-              <p class="sx sheet-h" style="--k:2">Summary</p>
-              <p class="sx sheet-p" style="--k:3">Churn rose through the quarter. The causes are concentrated in onboarding and billing.</p>
-              <span class="sheet-bar"></span><span class="sheet-bar sheet-bar--s"></span>
-              <p class="sx sheet-h" style="--k:4">Recommendation</p>
-              <span class="sheet-bar"></span><span class="sheet-bar sheet-bar--s"></span>
-            </div>
-            <div class="sx out-files" style="--k:5">
-              <span class="file-chip"><i class="ph ph-file-doc"></i>.docx</span>
-              <span class="file-chip"><i class="ph ph-file-pdf"></i>.pdf</span>
-              <span class="file-chip"><i class="ph ph-file-ppt"></i>.pptx</span>
-            </div>
-          </div>
-        </article>
-
-        <article class="stage" style="--i:5" aria-labelledby="st-organize">
-          <div class="stage-copy">
-            <p class="kicker">Organize</p>
-            <h3 class="h3" id="st-organize">Keep what matters. Come back to it.</h3>
-            <p>Record a meeting and keep the transcript, the summary and the tasks in saved notes. Set reminders that reach you on your device or by email. Browse a library of ready-made resources.</p>
-          </div>
-          <div class="stage-card" aria-hidden="true">
-            <div class="card-bar"><span>Saved notes</span><span class="level"><i class="ph ph-microphone"></i>Note Taker</span></div>
-            <div class="card-body">
-              <ul class="keep">
-                <li class="sx" style="--k:0"><i class="ph ph-note"></i><div><strong>Product review</strong><small>Transcript, summary and 3 tasks</small></div></li>
-                <li class="sx" style="--k:1"><i class="ph ph-check-circle"></i><div><strong>Ship guided import</strong><small>Task from Product review · Fri</small></div></li>
-                <li class="sx" style="--k:2"><i class="ph ph-bell"></i><div><strong>Send retention brief to the client</strong><small>Reminder · Fri 9:00 · On this device, Email</small></div></li>
-              </ul>
-            </div>
-          </div>
-        </article>
-
-        <div class="showcase-index" id="showcaseIndex" aria-label="Product tour stages">
-          <div class="showcase-line" aria-hidden="true"><i></i></div>
-          <ol>
-            <li><button type="button" data-go="0" style="--i:0">Think</button></li>
-            <li><button type="button" data-go="1" style="--i:1">Read</button></li>
-            <li><button type="button" data-go="2" style="--i:2">Investigate</button></li>
-            <li><button type="button" data-go="3" style="--i:3">Learn</button></li>
-            <li><button type="button" data-go="4" style="--i:4">Create</button></li>
-            <li><button type="button" data-go="5" style="--i:5">Organize</button></li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ═════════ 4 · LEARNA ═════════ -->
-  <section class="band" id="learna" aria-labelledby="learna-title">
-    <div class="wrap split">
-      <div class="split-copy">
-        <p class="kicker">Learna</p>
-        <h2 class="h2" id="learna-title" data-reveal>Courses that check your work.</h2>
-        <p class="lead" data-reveal>Learna is a structured way to learn inside Cognita. Courses in languages, coding, public speaking, UI/UX design and sales are broken into short lessons, with practice at every step and a tutor who knows exactly where you are.</p>
-        <dl class="facts">
-          <div><dt>Practice that is actually marked</dt><dd>Multiple-choice, fill-in, ordering and matching answers are checked exactly. Code tasks run against tests in your browser. Written answers are scored against a rubric.</dd></div>
-          <div><dt>A tutor that doesn't give it away</dt><dd>Ask for a hint at any point. The tutor only sees an answer after you've been shown it, and it can't change your progress.</dd></div>
-          <div><dt>Progress that means something</dt><dd>A lesson counts as mastered when you pass most of its activities without being shown the answer. Otherwise it goes back for review.</dd></div>
-        </dl>
-        <p class="side-note">Anyone with an account can browse the courses. Taking a course is part of the paid plans. <a href="#pricing">See pricing</a></p>
-      </div>
-
-      <div class="learna-win" id="learnaDemo">
-        <div class="lw-bar"><span>JavaScript Foundations</span><span class="lw-prog" aria-hidden="true"><i style="--w:56%"></i></span></div>
-        <div class="lw-body">
-          <ol class="lw-outline" aria-label="Course outline">
-            <li class="is-done"><i class="ph ph-check-circle" aria-hidden="true"></i>Variables and values</li>
-            <li class="is-now"><i class="ph ph-circle-half" aria-hidden="true"></i>Functions</li>
-            <li><i class="ph ph-circle" aria-hidden="true"></i>Conditions</li>
-            <li><i class="ph ph-circle" aria-hidden="true"></i>Arrays and loops</li>
-          </ol>
-          <form class="lw-lesson" id="lq" novalidate>
-            <ol class="phases" aria-label="Lesson phases">
-              <li class="is-past">Explanation</li><li class="is-past">Example</li><li class="is-now" aria-current="step">Guided</li><li>Attempt</li><li>Checkpoint</li>
-            </ol>
-            <fieldset>
-              <legend>What does this return?</legend>
+          <div class="demo" id="learnaDemo">
+            <div class="card-bar"><span>JavaScript Foundations · Functions</span><span class="lw-prog" aria-hidden="true"><i style="--w:56%"></i></span></div>
+            <form class="lw-lesson" id="lq" novalidate>
+              <ol class="phases" aria-label="Lesson phases">
+                <li class="is-past">Explanation</li><li class="is-past">Example</li><li class="is-now" aria-current="step">Guided</li><li>Attempt</li><li>Checkpoint</li>
+              </ol>
+              <fieldset>
+                <legend>What does this return?</legend>
 <pre class="code code--light"><code>function f(x) {
   return x + 1;
 }
 f(f(1));</code></pre>
-              <label class="choice"><input type="radio" name="lq" value="a"><span>2</span></label>
-              <label class="choice"><input type="radio" name="lq" value="b"><span>3</span></label>
-              <label class="choice"><input type="radio" name="lq" value="c"><span>4</span></label>
-            </fieldset>
-            <div class="lw-actions">
-              <button type="submit" class="btn-mini">Check answer</button>
-              <button type="button" class="btn-mini btn-mini--ghost" id="lqHint">Show a hint</button>
-            </div>
-            <p class="lw-feedback" id="lqFeedback" role="status" aria-live="polite"></p>
-          </form>
-        </div>
-        <p class="demo-caption demo-caption--in">A sample question in the style of a Learna lesson. Real courses check answers on the server.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ═════════ 5 · NOTES ═════════ -->
-  <section class="wrap notes" id="notes" aria-labelledby="notes-title">
-    <div class="intro" data-reveal>
-      <p class="kicker">Notes</p>
-      <h2 class="h2" id="notes-title">Keep what was said.</h2>
-      <p class="lead">Note Taker records a conversation and writes the transcript as it goes. Afterwards you get a summary, the tasks that came out of it, and a place to ask questions. Saved notes stay where you left them, instead of sinking down a chat history.</p>
-    </div>
-
-    <ol class="flow" aria-label="How a note develops">
-      <li><strong>Think</strong><small>The conversation happens</small></li>
-      <li><strong>Capture</strong><small>Record it, in English, Yorùbá, Hausa, Pidgin or French</small></li>
-      <li><strong>Organize</strong><small>Summary and tasks</small></li>
-      <li><strong>Return</strong><small>Saved notes, and questions answered from the transcript</small></li>
-      <li><strong>Develop</strong><small>Continue in chat and turn it into a document</small></li>
-    </ol>
-
-    <div class="note-win" id="noteDemo">
-      <div class="nw-head">
-        <div><strong>Product review</strong><small>14 September · 24 minutes · English</small></div>
-        <span class="nw-saved"><i class="ph ph-check" aria-hidden="true"></i>Saved</span>
-      </div>
-      <div class="nw-tabs" role="tablist" aria-label="Note views">
-        <button type="button" role="tab" id="nt-transcript" aria-controls="np-transcript" aria-selected="true">Transcript</button>
-        <button type="button" role="tab" id="nt-summary" aria-controls="np-summary" aria-selected="false" tabindex="-1">Summary</button>
-        <button type="button" role="tab" id="nt-ask" aria-controls="np-ask" aria-selected="false" tabindex="-1">Ask</button>
-      </div>
-      <div class="nw-panel" role="tabpanel" id="np-transcript" aria-labelledby="nt-transcript">
-        <ul class="tx">
-          <li><time>00:41</time><b>Amaka</b><p>Retention is the number I'm worried about. Churn went up again in September.</p></li>
-          <li><time>01:12</time><b>Tolu</b><p>Most of the cancellations are accounts that never finished importing their data.</p></li>
-          <li><time>02:05</time><b>Amaka</b><p>Then the import step is the first thing to fix. Can we ship a guided import by Friday?</p></li>
-          <li><time>02:19</time><b>Tolu</b><p>Yes. I'll also move the annual toggle above the plans on the pricing page.</p></li>
-        </ul>
-      </div>
-      <div class="nw-panel" role="tabpanel" id="np-summary" aria-labelledby="nt-summary" hidden>
-        <p class="sum">Churn rose again in September. Most cancellations came from accounts that never finished importing their data, so the team will ship a guided import and rearrange the pricing page.</p>
-        <p class="sum-h">Tasks</p>
-        <ul class="tasks">
-          <li><i class="ph ph-check-circle" aria-hidden="true"></i><span><strong>Tolu</strong> ships the guided import</span><small>Fri</small></li>
-          <li><i class="ph ph-circle" aria-hidden="true"></i><span><strong>Tolu</strong> moves the annual toggle above the plans</span><small>Fri</small></li>
-          <li><i class="ph ph-circle" aria-hidden="true"></i><span><strong>Amaka</strong> sends the retention brief to the client</span><small>Mon</small></li>
-        </ul>
-      </div>
-      <div class="nw-panel" role="tabpanel" id="np-ask" aria-labelledby="nt-ask" hidden>
-        <div class="qa">
-          <p class="qa-q">What did we decide about the import step?</p>
-          <p class="qa-a">Tolu will ship a guided import by Friday, because most cancellations came from accounts that never finished importing.<span class="qa-times"><time>01:12</time><time>02:05</time><time>02:19</time></span></p>
-        </div>
-        <p class="qa-note">Answers come only from the transcript, with the times they were heard.</p>
-      </div>
-      <div class="nw-foot"><span class="btn-mini btn-mini--ghost"><i class="ph ph-chat-circle-text" aria-hidden="true"></i>Continue in chat</span></div>
-    </div>
-  </section>
-
-  <!-- ═════════ 6 · CREATE ═════════ -->
-  <section class="band band--tint" id="create" aria-labelledby="create-title">
-    <div class="wrap">
-      <div class="intro" data-reveal>
-        <p class="kicker">Create</p>
-        <h2 class="h2" id="create-title">Cognita doesn't stop at the answer.</h2>
-        <p class="lead">When the work is a document, you get a document. A report, memo, letter, proposal or deck, structured and formatted, ready to open, edit and send.</p>
-      </div>
-
-      <div class="create-grid">
-        <ol class="pipe" id="pipe" aria-label="From thought to download">
-          <li><strong>Thought</strong><small>“Customers keep leaving after month two.”</small></li>
-          <li><strong>Conversation</strong><small>You describe it and attach what you have.</small></li>
-          <li><strong>Analysis</strong><small>Cognita reads the files and works out what matters.</small></li>
-          <li><strong>Structure</strong><small>Findings, evidence and a recommendation.</small></li>
-          <li><strong>Document</strong><small>A formatted page in the tone the reader expects.</small></li>
-          <li><strong>Download</strong><small>Word, PDF or PowerPoint.</small></li>
-        </ol>
-
-        <div class="doc-stage">
-          <div class="sheet" id="sheet">
-            <p class="sheet-title">Q3 Retention Brief</p>
-            <p class="sheet-meta">Prepared for the leadership team · Q3 2026</p>
-            <p class="sheet-h">Summary</p>
-            <p class="sheet-p">Churn rose from 3.1% in July to 4.6% in September. The causes are concentrated in three places: onboarding, billing and a pricing page that hides the annual plan.</p>
-            <p class="sheet-h">What we found</p>
-            <ul class="sheet-ul">
-              <li>New accounts that skip the data import are the most likely to cancel.</li>
-              <li>Setup and billing questions make up most support tickets.</li>
-              <li>Annual plans are rarely chosen because the toggle is below the fold.</li>
-            </ul>
-            <p class="sheet-h">Recommendation</p>
-            <p class="sheet-p">Contact at-risk accounts directly before offering any discount, and ship a guided import this week.</p>
+                <div class="choice-row">
+                  <label class="choice"><input type="radio" name="lq" value="a"><span>2</span></label>
+                  <label class="choice"><input type="radio" name="lq" value="b"><span>3</span></label>
+                  <label class="choice"><input type="radio" name="lq" value="c"><span>4</span></label>
+                </div>
+              </fieldset>
+              <div class="lw-actions">
+                <button type="submit" class="btn-mini">Check answer</button>
+                <button type="button" class="btn-mini btn-mini--ghost" id="lqHint">Show a hint</button>
+              </div>
+              <p class="lw-feedback" id="lqFeedback" role="status" aria-live="polite"></p>
+            </form>
+            <p class="demo-caption demo-caption--in">A sample question in the style of a Learna lesson. Real courses check answers on the server.</p>
           </div>
-          <div class="export" role="group" aria-label="Choose an export format">
-            <div class="fmt">
-              <button type="button" class="is-on" data-fmt="docx" aria-pressed="true"><i class="ph ph-file-doc" aria-hidden="true"></i>Word</button>
-              <button type="button" data-fmt="pdf" aria-pressed="false"><i class="ph ph-file-pdf" aria-hidden="true"></i>PDF</button>
-              <button type="button" data-fmt="pptx" aria-pressed="false"><i class="ph ph-file-ppt" aria-hidden="true"></i>PowerPoint</button>
+        </article>
+
+        <!-- 5 · Create -->
+        <span class="stack-anchor" id="create" style="--i:4"></span>
+        <article class="stack-card" style="--i:4" aria-labelledby="st-create">
+          <div class="card-copy">
+            <p class="kicker">Create</p>
+            <h3 class="h3" id="st-create">Finish as a file, not a chat.</h3>
+            <p>Ask for a report, memo, letter, proposal or deck and download it as Word, PDF or PowerPoint, structured and ready to open, edit and send.</p>
+            <dl class="card-facts">
+              <div><dt>For teachers</dt><dd>Choose a resource type, add the subject, class and topic, and Cognita builds lesson plans, worksheets, exams, marking schemes, rubrics, flashcards and more. The Library has ready-made collections.</dd></div>
+              <div><dt>For everyone</dt><dd>Ask for a diagram when a picture makes the point faster, or the same message in a different register.</dd></div>
+            </dl>
+          </div>
+          <div class="demo demo--plain" id="createDemo">
+            <div class="sheet">
+              <p class="sheet-title">Q3 Retention Brief</p>
+              <p class="sheet-meta">Prepared for the leadership team · Q3 2026</p>
+              <p class="sheet-h">Summary</p>
+              <p class="sheet-p">Churn rose from 3.1% in July to 4.6% in September, mostly in onboarding and billing.</p>
+              <p class="sheet-h">Recommendation</p>
+              <p class="sheet-p">Contact at-risk accounts before offering any discount, and ship a guided import this week.</p>
             </div>
-            <div class="export-file" aria-live="polite">
-              <i class="ph ph-file-doc" id="expIcon" aria-hidden="true"></i>
-              <span><strong id="expName">Q3-retention-brief.docx</strong><small id="expNote">Editable in Word or any document editor.</small></span>
-              <i class="ph ph-download-simple" aria-hidden="true"></i>
+            <div class="export" role="group" aria-label="Choose an export format">
+              <div class="fmt">
+                <button type="button" class="is-on" data-fmt="docx" aria-pressed="true"><i class="ph ph-file-doc" aria-hidden="true"></i>Word</button>
+                <button type="button" data-fmt="pdf" aria-pressed="false"><i class="ph ph-file-pdf" aria-hidden="true"></i>PDF</button>
+                <button type="button" data-fmt="pptx" aria-pressed="false"><i class="ph ph-file-ppt" aria-hidden="true"></i>PowerPoint</button>
+              </div>
+              <div class="export-file" aria-live="polite">
+                <i class="ph ph-file-doc" id="expIcon" aria-hidden="true"></i>
+                <span><strong id="expName">Q3-retention-brief.docx</strong><small id="expNote">Opens in Word and other document editors.</small></span>
+                <i class="ph ph-download-simple" aria-hidden="true"></i>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </article>
 
-      <div class="create-more">
-        <div>
-          <h3 class="h4">For teachers</h3>
-          <p>Choose a resource type, add the subject, class and topic, and Cognita builds it: lesson plans, lesson notes, worksheets, exams, quizzes, schemes of work, marking schemes, rubrics, flashcards, handouts and presentations. Browse curated collections in the Library when you'd rather start from something ready-made.</p>
-        </div>
-        <div>
-          <h3 class="h4">For everyone</h3>
-          <p>Ask for a diagram when a picture will make the point faster. Ask for the same message in a different register, so a note to your team doesn't read like a thesis and a research paper doesn't read like an advert.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+        <!-- 6 · Organize (Note Taker, reminders) -->
+        <span class="stack-anchor" id="notes" style="--i:5"></span>
+        <article class="stack-card" style="--i:5" aria-labelledby="st-organize">
+          <div class="card-copy">
+            <p class="kicker">Organize</p>
+            <h3 class="h3" id="st-organize">Keep what was said. Come back to it.</h3>
+            <p>Note Taker records a conversation and writes the transcript as it goes. Afterwards you get a summary, the tasks that came out of it, and a place to ask questions. Reminders reach you on your device or by email.</p>
+            <dl class="card-facts">
+              <div><dt>Record in your language</dt><dd>English, Yorùbá, Hausa, Pidgin or French.</dd></div>
+              <div><dt>Answers from the transcript only</dt><dd>Each answer comes with the times it was heard.</dd></div>
+            </dl>
+          </div>
+          <div class="demo" id="noteDemo">
+            <div class="nw-head">
+              <div><strong>Product review</strong><small>14 September · 24 minutes · English</small></div>
+              <span class="nw-saved"><i class="ph ph-check" aria-hidden="true"></i>Saved</span>
+            </div>
+            <div class="nw-tabs" role="tablist" aria-label="Note views">
+              <button type="button" role="tab" id="nt-transcript" aria-controls="np-transcript" aria-selected="true">Transcript</button>
+              <button type="button" role="tab" id="nt-summary" aria-controls="np-summary" aria-selected="false" tabindex="-1">Summary</button>
+              <button type="button" role="tab" id="nt-ask" aria-controls="np-ask" aria-selected="false" tabindex="-1">Ask</button>
+            </div>
+            <div class="nw-panel" role="tabpanel" id="np-transcript" aria-labelledby="nt-transcript">
+              <ul class="tx">
+                <li><time>00:41</time><b>Amaka</b><p>Retention is the number I'm worried about. Churn went up again in September.</p></li>
+                <li><time>01:12</time><b>Tolu</b><p>Most of the cancellations are accounts that never finished importing their data.</p></li>
+                <li><time>02:05</time><b>Amaka</b><p>Then the import step is the first thing to fix. Can we ship a guided import by Friday?</p></li>
+              </ul>
+            </div>
+            <div class="nw-panel" role="tabpanel" id="np-summary" aria-labelledby="nt-summary" hidden>
+              <p class="sum">Churn rose again in September. Most cancellations came from accounts that never finished importing their data, so the team will ship a guided import.</p>
+              <p class="sum-h">Tasks</p>
+              <ul class="tasks">
+                <li><i class="ph ph-check-circle" aria-hidden="true"></i><span><strong>Tolu</strong> ships the guided import</span><small>Fri</small></li>
+                <li><i class="ph ph-circle" aria-hidden="true"></i><span><strong>Amaka</strong> sends the retention brief to the client</span><small>Mon</small></li>
+              </ul>
+            </div>
+            <div class="nw-panel" role="tabpanel" id="np-ask" aria-labelledby="nt-ask" hidden>
+              <div class="qa">
+                <p class="qa-q">What did we decide about the import step?</p>
+                <p class="qa-a">Tolu will ship a guided import by Friday, because most cancellations came from accounts that never finished importing.<span class="qa-times"><time>01:12</time><time>02:05</time></span></p>
+              </div>
+            </div>
+          </div>
+        </article>
 
-  <!-- ═════════ 7 · INVESTIGATE ═════════ -->
-  <section class="ink" id="investigate" aria-labelledby="investigate-title">
-    <div class="wrap split split--ink">
-      <div class="split-copy">
-        <p class="kicker">Investigate</p>
-        <h2 class="h2" id="investigate-title">When the answer has to be worked out.</h2>
-        <p class="lead">Cognita can run Python and JavaScript for you. It opens your file, cleans it, calculates, saves the result, then reports what actually happened instead of what probably did.</p>
-        <ul class="ticks">
-          <li>The code runs in your browser, on your own device.</li>
-          <li>Python with numpy, pandas, matplotlib, scipy and openpyxl, plus JavaScript.</li>
-          <li>Results are real files you can download.</li>
-          <li>It's a contained workspace, not a full computer: no installing packages and no network access.</li>
-        </ul>
-      </div>
-
-      <div class="run" id="run">
-        <div class="run-head"><i class="ph ph-terminal-window" aria-hidden="true"></i>Cognita ran 3 steps</div>
-        <ol class="run-steps">
-          <li><i class="ph ph-check-circle" aria-hidden="true"></i><span>Read <b>support-tickets.csv</b><small>312 rows, 6 columns</small></span></li>
-          <li><i class="ph ph-check-circle" aria-hidden="true"></i><span>Group tickets by topic and month<small>pandas</small></span></li>
-          <li><i class="ph ph-check-circle" aria-hidden="true"></i><span>Save <b>monthly-ticket-summary.xlsx</b><small>openpyxl</small></span></li>
-        </ol>
-<pre class="run-code"><code>summary = (df.groupby([df.month, "topic"])
-             .size().unstack(fill_value=0))
-summary.to_excel("monthly-ticket-summary.xlsx")
-print(summary.tail(3))</code></pre>
-<pre class="run-out"><code>topic   billing  export  setup
-month
-Jul          14       8     21
-Aug          17       9     24
-Sep          21      12     29</code></pre>
-        <ul class="run-files" aria-label="Workspace files">
-          <li><i class="ph ph-file-csv" aria-hidden="true"></i>support-tickets.csv</li>
-          <li><i class="ph ph-file-xls" aria-hidden="true"></i>monthly-ticket-summary.xlsx<i class="ph ph-download-simple" aria-hidden="true"></i></li>
-        </ul>
       </div>
     </div>
   </section>
 
-  <!-- ═════════ 8 · CONNECTED ═════════ -->
+  <!-- ═════════ 3 · CONNECTED ═════════ -->
   <section class="wrap connected" id="connected" aria-labelledby="connected-title">
     <div class="connected-grid">
       <div class="connected-intro" data-reveal>
@@ -589,7 +429,7 @@ Sep          21      12     29</code></pre>
     </div>
   </section>
 
-  <!-- ═════════ 9 · TRUST ═════════ -->
+  <!-- ═════════ 4 · TRUST ═════════ -->
   <section class="wrap trust" id="trust" aria-labelledby="trust-title">
     <div class="intro" data-reveal>
       <h2 class="h2 h2--sm" id="trust-title">What happens to your work.</h2>
@@ -605,7 +445,7 @@ Sep          21      12     29</code></pre>
     <p class="trust-links"><a href="/privacy.html">Read the privacy policy</a><a href="/terms.html">Read the terms</a></p>
   </section>
 
-  <!-- ═════════ 10 · PRICING ═════════ -->
+  <!-- ═════════ 5 · PRICING ═════════ -->
   <section class="pricing-shell home-pricing" id="pricing" aria-labelledby="pricing-title">
     <div class="pricing-intro">
       <h2 id="pricing-title">Start free. Upgrade when you need more.</h2>
@@ -615,7 +455,7 @@ Sep          21      12     29</code></pre>
     <p class="pricing-note">Prices shown in Naira. Cancel anytime from your account. <a href="/pricing.html">Compare plans in full</a></p>
   </section>
 
-  <!-- ═════════ 11 · FAQ ═════════ -->
+  <!-- ═════════ 6 · FAQ ═════════ -->
   <section class="faq" id="faq" aria-labelledby="faq-title">
     <h2 class="h2 h2--sm" id="faq-title">Questions before you start</h2>
     <div class="faq-list">
@@ -647,7 +487,7 @@ Sep          21      12     29</code></pre>
     <p class="faq-contact">Something else? <a href="mailto:info@cognita.com.ng">Ask us directly</a>.</p>
   </section>
 
-  <!-- ═════════ 12 · FINAL CTA ═════════ -->
+  <!-- ═════════ 7 · FINAL CTA ═════════ -->
   <section class="final wrap" aria-labelledby="final-title">
     <h2 class="final-title" id="final-title">Bring us something you're working on.</h2>
     <p>Start free, with nothing to set up. Give Cognita a real problem and see where it gets to.</p>
