@@ -83,20 +83,10 @@ body.home {
 }
 
 .kicker {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   margin: 0 0 18px;
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-2);
-}
-.kicker::before {
-  content: "";
-  width: 20px;
-  height: 1px;
-  background: var(--accent);
-  flex-shrink: 0;
 }
 
 .h2, .h3 {
@@ -581,7 +571,6 @@ body.home.nav-open .site-nav-overlay-cta { transition-delay: 320ms; }
 /* Ink card (Investigate) */
 .stack-card--ink { background: var(--ink); border-color: var(--ink-line); color: var(--ink-text); box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.7); }
 .stack-card--ink .kicker { color: var(--ink-text-2); }
-.stack-card--ink .kicker::before { background: var(--ink-accent); }
 .stack-card--ink .h3 { color: var(--ink-text); }
 .stack-card--ink .card-copy > p:not(.kicker) { color: var(--ink-text-2); }
 .stack-card--ink .card-facts > li { position: relative; padding-left: 22px; border-color: var(--ink-line); color: var(--ink-text-2); }
@@ -732,13 +721,14 @@ pre.run-out { padding: 14px 18px; border-top: 1px solid var(--ink-line); backgro
 /* ═══════════════════════════════════════════════
    PRICING (cards come from js/pricing-cards.js and /api/plans)
 ═══════════════════════════════════════════════ */
-.home .pricing-shell { max-width: var(--wrap); padding: 0 var(--gutter) var(--section-y); }
-.home .pricing-intro { margin-bottom: 44px; text-align: left; }
-.home .pricing-intro h2 { margin-bottom: 14px; font-family: var(--font-display); font-weight: 400; font-size: clamp(2.1rem, 1.3rem + 3.2vw, 3.75rem); line-height: 1.02; letter-spacing: -0.022em; text-wrap: balance; }
-.home .pricing-intro p { max-width: 46ch; margin: 0; }
+.home .pricing-shell { max-width: 1100px; padding: 0 var(--gutter) var(--section-y); }
+.home .pricing-intro { margin-bottom: var(--space-7); text-align: center; }
+.home .pricing-intro h2 { max-width: 20ch; margin-inline: auto; margin-bottom: 14px; font-family: var(--font-display); font-weight: 400; font-size: clamp(2.1rem, 1.3rem + 3.2vw, 3.75rem); line-height: 1.02; letter-spacing: -0.022em; text-wrap: balance; }
+.home .pricing-intro p { max-width: 46ch; margin: 0 auto; }
+.home .pricing-grid { align-items: stretch; }
 /* The homepage shows each plan's headline allowances; the full list lives on /pricing. */
 .home .pricing-feature-list li:nth-child(n + 5) { display: none; }
-.home .pricing-note { margin-top: 28px; text-align: left; font-size: var(--text-sm); color: var(--meta); }
+.home .pricing-note { margin-top: var(--space-5); text-align: center; font-size: var(--text-sm); color: var(--meta); }
 
 /* ═══════════════════════════════════════════════
    FAQ
@@ -756,12 +746,14 @@ pre.run-out { padding: 14px 18px; border-top: 1px solid var(--ink-line); backgro
 .final-title { max-width: 15ch; font-family: var(--font-display); font-weight: 400; font-size: clamp(2.4rem, 1.4rem + 4.4vw, 5.25rem); line-height: 1; letter-spacing: -0.026em; text-wrap: balance; }
 .final p { max-width: 46ch; margin-top: 20px; font-size: var(--text-lg); line-height: 1.6; color: var(--text-2); }
 
-.home-footer { padding: 36px 0 52px; border-top: 1px solid var(--border); }
+.home-footer { padding: 36px 0 0; border-top: 1px solid var(--border); overflow: hidden; }
 .hf-row { display: flex; align-items: center; justify-content: space-between; gap: 20px 32px; flex-wrap: wrap; }
 .hf-links { display: flex; flex-wrap: wrap; gap: 8px 26px; font-size: var(--text-sm); color: var(--meta); }
 .hf-links a { transition: color var(--duration-fast) var(--ease); }
 .hf-links a:hover { color: var(--text-1); }
-.hf-legal { max-width: 80ch; margin-top: 26px; font-size: var(--text-xs); line-height: 1.6; color: var(--meta); }
+.hf-legal { max-width: 80ch; margin-top: 26px; margin-bottom: var(--space-6); font-size: var(--text-xs); line-height: 1.6; color: var(--meta); }
+/* Giant wordmark: same .site-footer-mark as /pricing, clipped by this box */
+.hf-mark { max-width: 1100px; margin: 0 auto; padding: 0 var(--space-6); overflow: hidden; }
 .hf-legal a { text-decoration: underline; text-underline-offset: 2px; }
 
 /* ═══════════════════════════════════════════════
@@ -787,7 +779,6 @@ pre.run-out { padding: 14px 18px; border-top: 1px solid var(--ink-line); backgro
   .connected-intro { position: static; }
   .home .faq { grid-template-columns: 1fr; gap: 28px; }
   .home .faq .faq-list, .home .faq .faq-contact { grid-column: 1; grid-row: auto; }
-  .home .pricing-grid { grid-template-columns: 1fr; max-width: 520px; }
   .trust-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
