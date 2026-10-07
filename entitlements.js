@@ -72,6 +72,13 @@ export const PLANS = {
       // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
       learnaCourses: 0,
       learnaTutorPerDay: 0,
+      // Learna speech and submissions. Speech seconds are server-side Whisper time used to mark recorded
+      // speaking tasks. Submission MB caps one recording. Video seconds caps one video task. TTS chars
+      // caps NEW neural voice synthesis per day (audio already cached in storage costs nothing).
+      learnaSpeechSecondsPerDay: 0,
+      learnaSubmissionMB: 0,
+      learnaVideoSeconds: 0,
+      learnaTtsCharsPerDay: 0,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -140,6 +147,13 @@ export const PLANS = {
       // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
       learnaCourses: 2,
       learnaTutorPerDay: 150,
+      // Learna speech and submissions. Speech seconds are server-side Whisper time used to mark recorded
+      // speaking tasks. Submission MB caps one recording. Video seconds caps one video task. TTS chars
+      // caps NEW neural voice synthesis per day (audio already cached in storage costs nothing).
+      learnaSpeechSecondsPerDay: 20 * 60,
+      learnaSubmissionMB: 8,
+      learnaVideoSeconds: 60,
+      learnaTtsCharsPerDay: 4000,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -201,6 +215,13 @@ export const PLANS = {
       // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
       learnaCourses: UNLIMITED,
       learnaTutorPerDay: 600,
+      // Learna speech and submissions. Speech seconds are server-side Whisper time used to mark recorded
+      // speaking tasks. Submission MB caps one recording. Video seconds caps one video task. TTS chars
+      // caps NEW neural voice synthesis per day (audio already cached in storage costs nothing).
+      learnaSpeechSecondsPerDay: 2 * 3600,
+      learnaSubmissionMB: 20,
+      learnaVideoSeconds: 180,
+      learnaTtsCharsPerDay: 20000,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -272,6 +293,13 @@ export const PLANS = {
       // once (enforced on the server with atomic slot records). learnaTutorPerDay = tutor replies.
       learnaCourses: UNLIMITED,
       learnaTutorPerDay: UNLIMITED,
+      // Learna speech and submissions. Speech seconds are server-side Whisper time used to mark recorded
+      // speaking tasks. Submission MB caps one recording. Video seconds caps one video task. TTS chars
+      // caps NEW neural voice synthesis per day (audio already cached in storage costs nothing).
+      learnaSpeechSecondsPerDay: UNLIMITED,
+      learnaSubmissionMB: 30,
+      learnaVideoSeconds: 180,
+      learnaTtsCharsPerDay: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0

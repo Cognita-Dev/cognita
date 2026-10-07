@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Certificate check · Cognita</title>
+<link rel="icon" href="/assets/cognita.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/certificate.css">
+</head>
+<body class="cert-page">
+<main class="cert-wrap">
+  <header class="cert-top">
+    <a href="/index.html" class="cert-logo"><img src="/assets/cognita.png" alt="Cognita" width="32" height="32"><span>Cognita Learna</span></a>
+    <button type="button" id="certPrint" class="cert-print" hidden>Print or save as PDF</button>
+  </header>
+  <p id="certStatus" class="cert-status" role="status" aria-live="polite">Checking the certificate</p>
+  <article id="certSheet" class="cert-sheet" hidden></article>
+  <p class="cert-note" id="certNote" hidden>Anyone can check a certificate here with its number. This page shows only the name, the course and the date. A certificate that was withdrawn shows as no longer valid.</p>
+</main>
+<script src="/js/certificate.js" defer></script>
+</body>
+</html>

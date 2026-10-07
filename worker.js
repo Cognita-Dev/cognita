@@ -119,6 +119,8 @@ import {
 import { runInsightsDigestScheduler } from './insights-digest.js';
 import { handleEmailUnsubscribe } from './emails/unsubscribe.js';
 import { handleLearnaRequest } from './learna-endpoint.js';
+import { handleLearnaAdminRequest } from './learna-admin-endpoint.js';
+import { runLearnaNudges } from './learna/nudges.js';
 
 function _corsPreflight(env) {
   return new Response(null, {
@@ -126,7 +128,7 @@ function _corsPreflight(env) {
     headers: {
       'Access-Control-Allow-Origin': env.APP_ORIGIN || '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language, X-Note-Context, X-Audio-Duration-Ms',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Note-Language, X-Note-Context, X-Audio-Duration-Ms, X-Learna-Lesson, X-Learna-Activity, X-Duration-Ms',
       'Access-Control-Max-Age': '86400',
     },
   });
@@ -140,6 +142,8 @@ const _app = {
 
   // Learna (courses, progress, tutor). Auth, plan and course-limit checks live in learna-endpoint.js.
   if (url.pathname.startsWith('/api/learna/')) return handleLearnaRequest(request, env);
+  // Learna admin: course editor, review queue, certificate revocation, code re-run data. Role checks live in learna-admin-endpoint.js.
+  if (url.pathname.startsWith('/api/admin/learna/')) return handleLearnaAdminRequest(request, env);
 
   if (request.method === 'GET' && url.pathname === '/api/note-quota') return handleNoteQuota(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
@@ -644,6 +648,8 @@ const _app = {
     ctx.waitUntil(runReminderScheduler(env));
     ctx.waitUntil(runSocialScheduler(env));
     ctx.waitUntil(runInsightsDigestScheduler(env));
+    // Learner reminders: once an hour is plenty. They are never sent daily (see learna/nudges.js).
+    if (new Date().getUTCMinutes() < 5) ctx.waitUntil(runLearnaNudges(env).catch((e) => console.error('[learna-nudges]', e.message)));
   },
 };
 
@@ -669,6 +675,7 @@ const MB = 1024 * 1024;
 // They are not size-capped here (they enforce their own limits / signatures).
 function _isExemptFromBodyCap(path) {
   return path === '/api/social/media' ||
+    /^\/api\/learna\/courses\/[^/]+\/assignments\/submit$/.test(path) ||
     path.startsWith('/api/note-sessions') ||
     /^\/api\/notes\/[^/]+\/audio$/.test(path); // the audio route enforces its own plan-based size cap
 }
@@ -706,7 +713,8 @@ function _isHeavyRoute(method, path) {
     path === '/api/note-summary' ||
     path === '/api/note-ask' ||
     path === '/api/note-compare' ||
-    /^\/api\/learna\/courses\/[^/]+\/(tutor|submit)$/.test(path) ||
+    /^\/api\/learna\/courses\/[^/]+\/(tutor|submit|assignments\/submit)$/.test(path) ||
+    path === '/api/learna/speech/tts' ||
     /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media' ||
     /^\/api\/resources\/[^/]+\/(regenerate|edit)$/.test(path) ||

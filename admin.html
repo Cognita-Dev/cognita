@@ -7,7 +7,7 @@
 <link rel="icon" href="/assets/cognita.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap">
 <link rel="stylesheet" href="/css/shared.css">
 <link rel="stylesheet" href="/css/app.css">
 <link rel="stylesheet" href="/css/admin.css">
@@ -43,6 +43,13 @@
       </button>
       <button class="admin-nav-item" data-section="collections">
         <i class="ph ph-folders"></i><span>Collections</span>
+      </button>
+      <div class="admin-nav-label">Learna</div>
+      <button class="admin-nav-item" data-section="courses">
+        <i class="ph ph-graduation-cap"></i><span>Courses</span>
+      </button>
+      <button class="admin-nav-item" data-section="reviews">
+        <i class="ph ph-clipboard-text"></i><span>Task reviews</span>
       </button>
       <div class="admin-nav-label" id="peopleNavLabel" hidden>Access</div>
       <button class="admin-nav-item" data-section="roles" id="rolesNavItem" hidden>
@@ -285,6 +292,11 @@
         </div>
       </section>
 
+      <!-- ══════════════════ LEARNA COURSES ══════════════════ -->
+      <section class="admin-section" id="section-courses"><div class="admin-panel" id="acRoot"><p>Loading courses</p></div></section>
+      <!-- ══════════════════ LEARNA TASK REVIEWS ══════════════════ -->
+      <section class="admin-section" id="section-reviews"><div class="admin-panel" id="arRoot"><p>Loading tasks</p></div></section>
+
       <!-- ══════════════════ ROLES ══════════════════ -->
       <section class="admin-section" id="section-roles">
         <div class="admin-panel">
@@ -425,5 +437,6 @@
 <script src="/js/resource-renderers.js"></script>
 <script type="module" src="/js/auth.js"></script>
 <script type="module" src="/js/admin.js"></script>
+<script type="module" src="/js/admin-courses.js"></script>
 </body>
 </html>
