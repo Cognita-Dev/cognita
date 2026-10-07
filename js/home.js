@@ -9,7 +9,8 @@
 //   1. Header + mobile menu ........ chrome
 //   2. Workspace preview ........... hero demo: tabs, plus a one-time scripted chat
 //   3. Journey line ................ draws once when the sequence comes into view
-//   4. Showcase .................... pinned, scroll-driven card stack. This file
+//   4. Showcase .................... pinned, scroll-driven card stack (all sizes;
+//                                    under Reduce Motion it becomes a crossfade). This file
 //                                    computes ONE number (--p) per frame and
 //                                    writes it to the section. CSS does the rest.
 //   5. Learna sample question ...... a real interaction, not a video
@@ -112,6 +113,7 @@
     var aiMsg = $('[data-step="ai"]', chat);
     var replyBox = $('[data-step="reply"]', chat);
     var docChip = $('[data-step="doc"]', chat);
+    var emptyEl = $('#demoEmpty');
 
     var PROMPT = 'Pull this into a client-ready retention brief';
     var PLACEHOLDER = '<span class="composer-placeholder">Message Cognita</span>';
@@ -128,6 +130,7 @@
       if (statusEl) statusEl.textContent = fullStatus;
       composer.innerHTML = PLACEHOLDER;
       sendBtn.classList.remove('is-ready', 'is-pressed');
+      if (emptyEl) emptyEl.classList.add('is-gone');
     }
 
     async function play() {
@@ -138,8 +141,9 @@
       [userMsg, aiMsg, replyBox, docChip].forEach(function (el) { el.classList.remove('is-in'); });
       replyEl.textContent = '';
       composer.innerHTML = PLACEHOLDER;
+      if (emptyEl) emptyEl.classList.remove('is-gone');
 
-      await wait(1300); if (!alive()) return;
+      await wait(1500); if (!alive()) return;
 
       // Type the request into the composer.
       composer.innerHTML = '<span id="demoTyped"></span><span class="caret"></span>';
@@ -156,6 +160,7 @@
       await wait(160); if (!alive()) return;
       sendBtn.classList.remove('is-pressed', 'is-ready');
       composer.innerHTML = PLACEHOLDER;
+      if (emptyEl) emptyEl.classList.add('is-gone');
       userMsg.classList.add('is-in');
       await wait(650); if (!alive()) return;
 
@@ -186,15 +191,9 @@
       if (started) finalState();
     });
 
-    if (reduceMotion || !hasIO) return;
-    var io = new IntersectionObserver(function (entries) {
-      if (entries.some(function (e) { return e.isIntersecting; }) && !started) {
-        started = true;
-        io.disconnect();
-        play();
-      }
-    }, { threshold: 0.35 });
-    io.observe(ws);
+    if (reduceMotion) return;
+    started = true;
+    play();
   })();
 
   /* ─────────────────────────────────────────────
@@ -224,13 +223,14 @@
 
     var N = $$('.stage', sec).length;
     if (N < 2) return;
-    var mq = window.matchMedia('(min-width: 900px) and (min-height: 640px) and (prefers-reduced-motion: no-preference)');
+    var frame = $('#showcaseFrame');
+    var mq = window.matchMedia('(min-height: 600px)');
     var pinned = false;
     var visible = false;
     var tick = false;
     var io = null;
 
-    function range() { return track.offsetHeight - window.innerHeight; }
+    function range() { return track.offsetHeight - (frame ? frame.offsetHeight : window.innerHeight); }
 
     function update() {
       tick = false;
@@ -405,6 +405,65 @@
         io2.observe(run);
       }
     }
+  })();
+
+  /* ─────────────────────────────────────────────
+     6d · Reveals and gentle parallax
+     Classes are added here (not in the HTML) so that nothing is ever hidden
+     unless this script is running.
+  ───────────────────────────────────────────── */
+  (function motion() {
+    var groups = [
+      '.facts > div', '.learna-win', '.flow li', '.note-win', '.pipe li', '.sheet#sheet', '.export',
+      '.create-more > div', '.run', '.ticks li', '.ledger li', '.trust-list > div', '.trust-links',
+      '.home-pricing .pricing-card', '.faq-item', '.final-title', '.final p', '.final .btn-primary'
+    ];
+    var seen = [];
+    function tag(sel) {
+      $$(sel).forEach(function (el, i) {
+        if (seen.indexOf(el) !== -1) return;
+        seen.push(el);
+        el.classList.add('rv');
+        el.style.setProperty('--rv', String(Math.min(i, 6)));
+      });
+    }
+    groups.forEach(tag);
+    var items = $$('.rv');
+    if (!hasIO) { items.forEach(function (el) { el.classList.add('in'); }); }
+    else {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { threshold: 0.12, rootMargin: '0px 0px -6% 0px' });
+      items.forEach(function (el) { io.observe(el); });
+    }
+    // Pricing cards are rendered after load by pricing-cards.js.
+    var grid = $('#pricingGrid');
+    if (grid && 'MutationObserver' in window) {
+      new MutationObserver(function () { tag('.home-pricing .pricing-card'); $$('.home-pricing .pricing-card:not(.in)').forEach(function (el) { if (hasIO) io.observe(el); else el.classList.add('in'); }); }).observe(grid, { childList: true });
+    }
+
+    if (reduceMotion) return;
+    var par = [
+      ['.learna-win', -26], ['.note-win', -22], ['.doc-stage', -34], ['.pipe', 14], ['.run', -26], ['.ledger', 12]
+    ].map(function (pair) {
+      var el = $(pair[0]);
+      if (el) { el.setAttribute('data-par', ''); el.style.setProperty('--amp', String(pair[1])); }
+      return el;
+    }).filter(Boolean);
+    var tick = false;
+    function updatePar() {
+      tick = false;
+      var vh = window.innerHeight;
+      par.forEach(function (el) {
+        var r = el.getBoundingClientRect();
+        if (r.bottom < -200 || r.top > vh + 200) return;
+        var c = (r.top + r.height / 2 - vh / 2) / (vh / 2 + r.height / 2);
+        el.style.setProperty('--par', clamp(c, -1, 1).toFixed(3));
+      });
+    }
+    window.addEventListener('scroll', function () { if (!tick) { tick = true; requestAnimationFrame(updatePar); } }, { passive: true });
+    window.addEventListener('resize', updatePar);
+    updatePar();
   })();
 
   /* ─────────────────────────────────────────────
