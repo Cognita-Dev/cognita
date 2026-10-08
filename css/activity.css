@@ -268,3 +268,86 @@ button.act-toggle { min-height: 44px; margin: -10px 0; padding: 10px 0; }
 .gen-media-btn i { font-size: 15px; color: var(--text-2); }
 .gen-media-btn:hover { border-color: var(--text-3); }
 .gen-media-btn:disabled { opacity: 0.55; cursor: progress; }
+
+/* ── Design requirements card (create_design) ──
+   Asks only for what a design truly needs: text details and the person's own
+   logo / photo. Reuses the approval card's buttons; separate from it. */
+.dreq {
+  margin: var(--space-3) 0 2px; padding: var(--space-5);
+  max-width: 520px;
+  background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; gap: var(--space-4);
+}
+.dreq-top { display: flex; align-items: center; gap: 10px; }
+.dreq-tile {
+  width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); background: var(--accent-subtle); color: var(--accent); font-size: 18px;
+}
+.dreq-who { display: flex; flex-direction: column; min-width: 0; }
+.dreq-over { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2); }
+.dreq-kind { font-size: 13px; color: var(--text-1); }
+.dreq-title { font-size: 18px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.dreq-intro { margin: -6px 0 0; font-size: 14px; line-height: 1.5; color: var(--text-2); }
+.dreq-fields { display: flex; flex-direction: column; gap: var(--space-4); }
+.dreq-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dreq-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.dreq-label { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.dreq-opt { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
+.dreq-hint { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
+.dreq-input {
+  width: 100%; min-height: 46px; padding: 0 14px; box-sizing: border-box;
+  font: inherit; font-size: 15px; color: var(--text-1);
+  background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
+}
+.dreq-input::placeholder { color: var(--text-2); opacity: .75; }
+.dreq-input:hover { border-color: var(--text-2); }
+.dreq-input:focus-visible, .dreq-pick:focus-visible, .dreq-remove:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent);
+}
+.dreq-upload { display: block; }
+.dreq-pick {
+  width: 100%; min-height: 64px; padding: 12px 14px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+  font: inherit; color: var(--text-1);
+  background: var(--bg-base); border: 1.5px dashed var(--border-strong); border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+.dreq-pick[hidden], .dreq-chosen[hidden] { display: none; }
+.dreq-pick:hover { border-color: var(--accent); background: var(--accent-subtle); }
+.dreq-pick .ph { font-size: 22px; color: var(--accent); flex-shrink: 0; }
+.dreq-pick-text { display: flex; flex-direction: column; gap: 1px; }
+.dreq-pick-text strong { font-size: 14px; font-weight: 600; }
+.dreq-pick-text small { font-size: 12px; color: var(--text-2); }
+.dreq-upload[data-state="busy"] .dreq-pick { opacity: .55; pointer-events: none; }
+.dreq-chosen {
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px;
+  background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+}
+.dreq-thumb {
+  width: 52px; height: 52px; flex-shrink: 0; object-fit: contain; border-radius: var(--radius-sm);
+  background: repeating-conic-gradient(var(--bg-subtle) 0% 25%, var(--bg-base) 0% 50%) 50% / 12px 12px;
+  border: 1px solid var(--border);
+}
+.dreq-fname { flex: 1; min-width: 0; font-size: 13px; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dreq-remove {
+  min-height: 44px; padding: 0 8px; background: none; border: 0; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--text-2); text-decoration: underline;
+}
+.dreq-remove:hover { color: var(--text-1); }
+.dreq-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.dreq-note { margin: 0; font-size: 12px; color: var(--text-2); }
+.dreq--done {
+  max-width: none; flex-direction: row; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: var(--radius-full); width: fit-content;
+  background: var(--bg-subtle); border-color: var(--border); font-size: 13px; color: var(--text-2);
+}
+.dreq--done .ph { font-size: 16px; color: var(--accent); flex-shrink: 0; }
+
+@media (max-width: 480px) {
+  .dreq { padding: var(--space-4); max-width: none; }
+  .dreq-actions .appr-btn { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dreq-input, .dreq-pick { transition: none; }
+}
