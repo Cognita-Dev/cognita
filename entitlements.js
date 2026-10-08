@@ -4,12 +4,12 @@
 // or a price. Frontend pages fetch this via /api/plans; the Worker imports
 // it directly for enforcement.
 
-// Workers AI's free vision-capable model, used for image understanding.
+// Workers AI's free vision-capable model (Gemma 3 12B, no licence prompt), used for image understanding.
 // It's on the Workers AI free tier (10,000 neurons/day), so it never
 // touches the paid Groq/OpenRouter usage the rest of this app relies on —
 // it's gated by plan (models.vision) and metered separately
 // (limits.visionPerDay) below.
-export const VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
+export const VISION_MODEL = '@cf/google/gemma-3-12b-it';
 
 // Sentinel used for staff limits that are functionally unlimited. Kept
 // as a real (large) number rather than Infinity so it survives

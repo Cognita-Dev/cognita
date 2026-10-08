@@ -246,9 +246,32 @@ export async function callVisionModel(model, messages, images, env) {
     (historyText ? historyText + '\n' : '') +
     'User: ' + (lastUserMsg ? lastUserMsg.content : '');
 
-  if (images.length > 1) {
+  if (/llama-3\.2/.test(model) && images.length > 1) {
     prompt += '\n\n[Note: the user attached ' + images.length + ' images. ' +
       'Only the first could be processed — mention that the rest were not reviewed if it matters to your answer.]';
+  }
+
+  // Gemma 3 and other chat-style vision models take a normal messages array
+  // with the images as data URIs inside the last user turn, and can see
+  // every attached image.
+  if (!/llama-3\.2/.test(model)) {
+    const chat = conversational.map((m, i) => {
+      const role = m.role === 'assistant' ? 'assistant' : 'user';
+      if (i !== conversational.length - 1 || role !== 'user') return { role, content: String(m.content || '') };
+      const parts = [{ type: 'text', text: String(m.content || '') }];
+      for (const img of images.slice(0, 4)) {
+        parts.push({ type: 'image_url', image_url: { url: 'data:' + (img.mimeType || 'image/jpeg') + ';base64,' + img.base64 } });
+      }
+      return { role, content: parts };
+    });
+    if (systemMsg) chat.unshift({ role: 'system', content: String(systemMsg.content || '') });
+    const out = await env.AI.run(model, { messages: chat, max_tokens: 1024 });
+    const txt = typeof out?.response === 'string'
+      ? out.response.trim()
+      : (out?.choices && out.choices[0] && out.choices[0].message && typeof out.choices[0].message.content === 'string'
+        ? out.choices[0].message.content.trim() : '');
+    if (!txt) throw new Error('workersai_vision_empty');
+    return { text: txt, finishReason: 'stop', reasoning: null };
   }
 
   const primaryImage = images[0];
