@@ -24,7 +24,7 @@
 // model would fix).
 
 import { checkAndIncrement } from './usage.js';
-import { deriveDesignDirection, DESIGN_LAYOUTS, pickKeyFact } from './design-direction.js';
+import { deriveDesignDirection, DESIGN_LAYOUTS, KEY_FACT_RX, pickKeyFact } from './design-direction.js';
 
 export const MEDIA_TOOL_NAMES = new Set(['generate_image', 'create_design']);
 export const MAX_MEDIA_CALLS_PER_TURN = 3;
@@ -79,7 +79,7 @@ export const TOOLS = [
   _fn('create_design',
     'Make a finished graphic design (flyer, poster, invitation, social media post, story or banner) from the text you supply. ' +
     'Layout, spacing and colours are handled for you. The design is shown to the user automatically with PNG and SVG downloads. ' +
-    'Write the headline, tagline and call to action yourself and keep text short and punchy. Use ONLY facts the person gave for names, dates, venues, prices, phone numbers, emails, websites and addresses; never invent them. If something essential is missing, still call this tool: the app asks the person for it before the design is made.',
+    'Write the headline, tagline and call to action yourself and keep text short and punchy. Use ONLY facts the person gave for names, dates, venues, prices, phone numbers, emails, websites and addresses; never invent them. Never use placeholders such as [product name] or [MM/DD/YYYY]: omit any field you have no real value for. If something essential is missing, still call this tool: the app asks the person for it before the design is made.',
     {
       kind: { type: 'string', description: 'One of: ' + DESIGN_KINDS.join(', ') + '.' },
       headline: { type: 'string', description: 'Main title, 2 to 8 words.' },
@@ -91,10 +91,10 @@ export const TOOLS = [
       cta: { type: 'string', description: 'Optional call to action button text, e.g. "Register today".' },
       footer: { type: 'string', description: 'Optional small line at the bottom, e.g. website or organiser name.' },
       theme: { type: 'string', description: 'Colour theme: ' + THEME_NAMES.join(', ') + '. Choose to suit the subject.' },
-      layout: { type: 'string', description: 'Leave this out unless the person asked for a specific look: the art direction (composition, type, picture placement) is chosen automatically from what the design is for. One of: stack (picture or colour block on top, solid type block below), bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
+      layout: { type: 'string', description: 'Leave this out unless the person asked for a specific look: the art direction (composition, type, picture placement) is chosen automatically from what the design is for. One of: frame (rounded picture frame over a colour band with a price badge, then type on paper), stack (picture or colour block on top, solid type block below), bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
       primary_color: { type: 'string', description: 'Optional hex colour like #0F766E to override the theme background colour.' },
       accent_color: { type: 'string', description: 'Optional hex colour like #F59E0B to override the theme accent colour.' },
-      image_prompt: { type: 'string', description: 'Optional English description of a photograph to place in the design (no text in it). Describe one clear subject, mood and lighting; calm negative space is added automatically. Leave out for a clean colour design.' },
+      image_prompt: { type: 'string', description: 'English description of a real photograph for the design (no text in it). Include it for almost every design. Describe one concrete, recognisable subject in a real setting, with mood and lighting: people using the product or service, hands holding a phone, a laptop on a tidy desk, the dish, the venue, the crowd. For software or apps show a person using it, never abstract grids, glowing lines or empty rooms. Leave out only for quotes, notices and certificates.' },
     }, ['headline']),
 ];
 
@@ -592,6 +592,49 @@ export function sanitizeDesignInputs(body) {
   return { assets, facts, skipped, resume };
 }
 
+// ── Design: copy hygiene ────────────────────────────────────────────────
+// The model sometimes leaves template placeholders ("[product category]",
+// "[MM/DD/YYYY]") or repeats a fact under two labels. Anything like that is
+// removed so it can never be printed on a design.
+const PLACEHOLDER_RX = /\[[^\]]*\]|\{[^}]*\}|<[^>]{1,40}>|\blorem ipsum\b|\byour (?:name|company|brand|product|text|headline|website|email|phone|logo)(?: here)?\b|\binsert [a-z ]{2,30}\b|\b(?:MM|DD|YYYY)\b|\bxxx+\b|\btb[ad]\b/i;
+const _hasPh = (v) => PLACEHOLDER_RX.test(String(v == null ? '' : v));
+
+export function cleanDesignArgs(args) {
+  const a = { ...(args || {}) };
+  // Single-line fields: the whole line goes when it carries a placeholder.
+  for (const k of ['tagline', 'subheadline', 'body', 'cta', 'footer']) {
+    if (typeof a[k] === 'string' && _hasPh(a[k])) a[k] = '';
+  }
+  // The headline must exist, so only the bracketed bit is cut out of it.
+  if (typeof a.headline === 'string' && _hasPh(a.headline)) {
+    a.headline = a.headline.replace(/\[[^\]]*\]|\{[^}]*\}/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x == null ? '' : x).trim()).filter((x) => x && !_hasPh(x));
+  a.bullets = list(a.bullets);
+  let details = list(a.details);
+  // One fact, one line: a repeated label (Date, Date) keeps the first, and a
+  // value that already appears on another line is dropped.
+  const seenLabel = new Set();
+  const seenValue = new Set();
+  details = details.filter((d) => {
+    const m = d.match(/^([^:]{1,22}):\s*(.+)$/);
+    const label = m ? m[1].trim().toLowerCase() : '';
+    const value = (m ? m[2] : d).trim().toLowerCase();
+    if (label && seenLabel.has(label)) return false;
+    if (seenValue.has(value)) return false;
+    if (label) seenLabel.add(label);
+    seenValue.add(value);
+    return true;
+  });
+  // A bare number on a price line reads as a price: 10000 becomes 10,000.
+  details = details.map((d) => {
+    const m = d.match(/^([^:]{1,22}):\s*(\d{4,})$/);
+    return m && KEY_FACT_RX.price.test(m[1].trim()) ? m[1].trim() + ': ' + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',') : d;
+  });
+  a.details = details;
+  return a;
+}
+
 // ── Design: spec cleanup ────────────────────────────────────────────────
 // Themes carry a colour story AND a type personality (font: serif|sans) so
 // the same layout feels different for a wedding than for a tech launch.
@@ -682,7 +725,8 @@ function _autoLayout(kind, hasImage, a) {
   return hasImage ? 'poster' : 'bold';
 }
 
-export function normalizeDesignSpec(a, opts) {
+export function normalizeDesignSpec(a0, opts) {
+  const a = cleanDesignArgs(a0);
   const hasPhoto = !!(opts && opts.hasPhoto);
   const kind = DESIGN_KINDS.includes(a.kind) ? a.kind : 'flyer';
   const theme = THEMES[String(a.theme || '').toLowerCase()] || THEMES.royal;
@@ -713,7 +757,7 @@ export function normalizeDesignSpec(a, opts) {
     : (LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg || hasPhoto, { bullets, details, body }));
   const room = direction && direction.image && direction.image.brief ? direction.image.brief : 'uncluttered composition with calm negative space';
   const imagePrompt = rawImg && !hasPhoto
-    ? rawImg + ', ' + room + ', professional editorial photography, soft natural light, shallow depth of field, no text, no lettering, no logos, no watermark'
+    ? rawImg + ', ' + room + ', professional commercial photography, vibrant natural colour, crisp focus on one clear real-world subject, soft natural light, not an abstract background, not an empty scene, no text, no lettering, no logos, no watermark'
     : '';
   return {
     kind,
@@ -763,7 +807,7 @@ function _tw(text, size, f, sp) {
     else if ('mwMW@%'.includes(ch)) u += 0.84;
     else if (ch >= 'A' && ch <= 'Z') u += 0.67;
     else if (ch >= '0' && ch <= '9') u += 0.56;
-    else u += 0.53;
+    else u += 0.55;
   }
   return u * size * (f || 1) + (sp || 0) * t.length;
 }
@@ -825,15 +869,34 @@ function _lines(lines, x, top, size, o) {
 }
 
 export function buildDesignSvg(spec, bg, extras) {
-  // Type steps down gently until the whole design fits the page.
-  let scale = 1;
-  let built = null;
-  for (let i = 0; i < 9; i++) {
-    built = _compose(spec, bg, scale, extras || {});
-    if (built.fits) break;
-    scale *= 0.93;
+  const ex = extras || {};
+  // The fit test does not depend on picture pixels, so it runs with an empty
+  // picture and only the final build carries the real image data.
+  const probeBg = bg ? Object.assign({}, bg, { base64: '' }) : null;
+  const trims = [
+    (x) => x,
+    (x) => Object.assign({}, x, { body: '' }),
+    (x) => Object.assign({}, x, { body: '', bullets: x.bullets.slice(0, 3) }),
+    (x) => Object.assign({}, x, { body: '', bullets: x.bullets.slice(0, 3), subheadline: '' }),
+    (x) => Object.assign({}, x, { body: '', bullets: [], subheadline: '' }),
+  ];
+  const alt = spec.layout === 'frame' ? ['stack', 'split', 'bold'] : ['split', 'bold'];
+  const layouts = [spec.layout].concat(alt.filter((l) => l !== spec.layout));
+  let last = null;
+  for (const layout of layouts) {
+    for (const trim of trims) {
+      let scale = 1;
+      for (let i = 0; i < 9; i++) {
+        const cand = Object.assign({}, trim(spec), { layout });
+        const probe = _compose(cand, probeBg, scale, ex);
+        last = { cand, scale };
+        if (probe.fits) return _compose(cand, bg, scale, ex);
+        scale *= 0.93;
+      }
+    }
   }
-  return built;
+  // Nothing fitted: use the tightest version rather than failing.
+  return _compose(last.cand, bg, last.scale, ex);
 }
 
 function _stack(blocks, y0, avail, stretch, gk) {
@@ -877,7 +940,7 @@ function _compose(spec, bg, scale, extras) {
   const hasD = !!spec.direction;
   const D = Object.assign({ voice: null, headScale: 1, textScale: 1, space: 'balanced', inset: 0, measure: 1, vAnchor: null, tagStyle: null, ruleStyle: null, keyFact: 'none', scheme: 'field', graphic: null, emphasis: null, focal: 'headline', energy: 'balanced' }, spec.direction || {});
   const IM = Object.assign({ radius: 'soft', bleed: 'none', first: false, share: 0.36, treatment: 'natural', zoom: 1, fx: 'Mid', fy: 'Mid' }, D.image || {});
-  const voice = centered ? 'serif' : (hasD && D.voice ? D.voice : (layout === 'editorial' || c.font === 'serif' ? 'serif' : 'grotesque'));
+  const voice = centered ? 'serif' : (hasD && D.voice ? D.voice : (layout === 'editorial' || layout === 'frame' || c.font === 'serif' ? 'serif' : 'grotesque'));
   const serif = voice === 'serif';
   const airy = D.space === 'airy';
   const GK = airy ? 1.28 : 1;
@@ -912,7 +975,7 @@ function _compose(spec, bg, scale, extras) {
   const clean = voice === 'clean';
   const dFam = serif ? FONT_SERIF : (clean ? FONT_BODY : FONT_HEAD);
   const dWeight = serif ? 700 : (clean ? 800 : 900);
-  const dF = serif ? 1.0 : (clean ? 1.1 : 1.2);
+  const dF = serif ? 1.12 : (clean ? 1.14 : 1.22);
   const dSpR = serif ? -0.008 : (clean ? -0.018 : -0.012);
   const dLH = serif ? 1.08 : (clean ? 1.06 : 1.03);
   const dCase = (t) => (serif || clean ? t : t.toUpperCase());
@@ -937,7 +1000,7 @@ function _compose(spec, bg, scale, extras) {
 
   // Promoted key fact (the date or the price), set large as a second focal point.
   const kfWhich = hasD && D.keyFact !== 'none' ? D.keyFact : null;
-  const keyFact = kfWhich ? pickKeyFact(spec.details, kfWhich) : null;
+  let keyFact = kfWhich ? pickKeyFact(spec.details, kfWhich) : null;
   const detailsList = keyFact ? spec.details.filter((_, i) => i !== keyFact.index) : spec.details;
   // Deterministic variety: the same brief always looks the same, different briefs differ.
   const seed = _hash(spec.headline + '|' + spec.kind) % 3;
@@ -986,7 +1049,7 @@ function _compose(spec, bg, scale, extras) {
   }
 
   function bHead(tone, startSize, maxLines, twoTone) {
-    const hs = Math.round(S(startSize) * hsc * (0.55 + 0.45 * scale));
+    const hs = Math.round(S(startSize) * hsc * (0.4 + 0.6 * scale));
     const head = _fit(dCase(spec.headline), hs, S(40), w, maxLines, dF, dSpR, true);
     return {
       h: Math.round(head.lines.length * head.size * dLH), gap: S(wide ? 24 : 38), size: head.size,
@@ -1184,7 +1247,7 @@ function _compose(spec, bg, scale, extras) {
     const big = D.focal === 'date' || D.focal === 'offer';
     const ls = Math.round(S(wide ? 15 : 19) * Math.max(scale, 0.8));
     const lsp = ls * 0.2;
-    const vs = Math.round(S(wide ? (big ? 56 : 40) : (big ? 92 : 64)) * (0.55 + 0.45 * scale));
+    const vs = Math.round(S(wide ? (big ? 56 : 40) : (big ? 80 : 60)) * (0.4 + 0.6 * scale));
     const val = _fit(dCase(keyFact.value), vs, S(28), w, 2, dF, dSpR, true);
     const labH = Math.round(ls * 1.3 + S(10));
     return {
@@ -1250,14 +1313,44 @@ function _compose(spec, bg, scale, extras) {
   // Picture window for the editorial layout. Radius, bleed to a page edge and
   // crop follow the direction. Without a photo it becomes a single flat shape
   // on a solid field: one idea, no extra ornament.
-  function bWindow(wh) {
-    const r = IM.radius === 'sharp' ? 0 : S(30);
+  function bWindow(wh, badge) {
+    const framed = layout === 'frame';
+    const r = framed ? S(40) : (IM.radius === 'sharp' ? 0 : S(30));
     let ox = left, ww = w;
-    if (IM.bleed === 'right') ww = W - left + r;
-    else if (IM.bleed === 'left') { ox = -r; ww = left + w + r; }
+    if (!framed && IM.bleed === 'right') ww = W - left + r;
+    else if (!framed && IM.bleed === 'left') { ox = -r; ww = left + w + r; }
+    // Framed: a colour band sits behind the upper part of the picture, the
+    // picture has a paper-coloured edge, and a price badge overlaps its corner.
+    const frameExtras = (y) => {
+      let out = '';
+      if (badge) {
+        const br = S(92), bx = Math.round(ox + ww - S(30)), by = Math.round(y + S(30));
+        const ls = S(17);
+        const val = _fit(badge.value, S(48), S(20), Math.round(br * 1.5), 1, 1.1, 0, false);
+        const ink = _onColor(c.accent);
+        out += '<g transform="rotate(-8 ' + bx + ' ' + by + ')">' +
+          '<circle cx="' + bx + '" cy="' + by + '" r="' + (br + S(8)) + '" fill="' + c.light + '"/>' +
+          '<circle cx="' + bx + '" cy="' + by + '" r="' + br + '" fill="' + c.accent + '"/>' +
+          _lines([badge.label], bx, Math.round(by - br * 0.52), ls, { family: FONT_BODY, weight: 800, fill: ink, anchor: 'middle', spacing: ls * 0.16, lh: 1.2, opacity: 0.85 }) +
+          _lines(val.lines, bx, Math.round(by - val.size * 0.5 + S(6)), val.size, { family: FONT_HEAD, weight: 900, fill: ink, anchor: 'middle', lh: 1.1 }) +
+          '</g>';
+      }
+      return out;
+    };
     return {
       h: wh, gap: S(40),
       draw: (y) => {
+        if (framed) {
+          let out = '<rect x="0" y="0" width="' + W + '" height="' + Math.round(y + wh * 0.58) + '" fill="' + c.primary + '"/>' +
+            '<rect x="0" y="' + Math.round(y + wh * 0.58 - S(10)) + '" width="' + W + '" height="' + S(10) + '" fill="' + c.accent + '"/>';
+          if (bg) {
+            out += pic('win', ox, y, ww, wh, r);
+          } else {
+            out += '<clipPath id="win"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" rx="' + r + '"/></clipPath><g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="' + c.deep + '"/><circle cx="' + Math.round(ox + ww * 0.68) + '" cy="' + Math.round(y + wh * 0.5) + '" r="' + Math.round(wh * 0.32) + '" fill="' + c.accent + '"/></g>';
+          }
+          out += '<rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" rx="' + r + '" fill="none" stroke="' + c.light + '" stroke-width="' + S(8) + '"/>';
+          return out + frameExtras(y);
+        }
         if (bg) return pic('win', ox, y, ww, wh, r);
         let out = '<clipPath id="win"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" rx="' + r + '"/></clipPath>';
         out += '<g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="' + c.primary + '"/>';
@@ -1276,18 +1369,20 @@ function _compose(spec, bg, scale, extras) {
   function bLogo(onDark) {
     const lg = extras && extras.logo;
     if (!lg) return null;
-    const maxW = S(wide ? 210 : 290), maxH = S(wide ? 76 : 108);
+    const maxW = S(wide ? 190 : 250), maxH = S(wide ? 64 : 88);
     const ratio = lg.w > 0 && lg.h > 0 ? lg.w / lg.h : 1;
     const bw = Math.round(Math.min(maxW, maxH * ratio));
     const bh = Math.round(bw / ratio);
-    const pad = onDark ? S(16) : 0;
+    const pad = S(14);
     const pw = bw + pad * 2, ph = bh + pad * 2;
     const src = 'data:' + lg.mime + ';base64,' + lg.base64;
     return {
       h: ph, gap: S(wide ? 24 : 40),
       draw: (y) => {
         const px = align(pw);
-        return (onDark ? '<rect x="' + px + '" y="' + y + '" width="' + pw + '" height="' + ph + '" rx="' + S(14) + '" fill="' + c.light + '"/>' : '') +
+        // Always on a clean plate, so a logo with its own background or a
+        // dark logo never looks pasted on.
+        return '<rect x="' + px + '" y="' + y + '" width="' + pw + '" height="' + ph + '" rx="' + S(16) + '" fill="' + (onDark ? c.light : '#FFFFFF') + '"' + (onDark ? '' : ' stroke="#000000" stroke-opacity="0.08" stroke-width="' + Math.max(1, S(2)) + '"') + '/>' +
           '<image href="' + src + '" x="' + (px + pad) + '" y="' + (y + pad) + '" width="' + bw + '" height="' + bh + '" preserveAspectRatio="xMidYMid meet"/>';
       },
     };
@@ -1306,7 +1401,7 @@ function _compose(spec, bg, scale, extras) {
   const inverse = hasD && D.scheme === 'inverse' && !centered && !wide;
   const paperBold = inverse && layout === 'bold' && !bg;
   const paperStack = inverse && layout === 'stack';
-  const bodyTone = layout === 'split' || layout === 'editorial' || paperBold || paperStack ? light : dark;
+  const bodyTone = layout === 'split' || layout === 'editorial' || layout === 'frame' || paperBold || paperStack ? light : dark;
   const footer = bFooter(bodyTone);
   const footTop = H - padBot - (footer ? footer.h : 0);
   const limit = footer ? footTop - S(40) : H - padBot;
@@ -1383,21 +1478,29 @@ function _compose(spec, bg, scale, extras) {
     const res = stack(lower, ly, limit - ly, true);
     content += res.svg;
     fits = hy + heroContent <= heroH - S(60) && ly + res.h <= limit;
-  } else if (layout === 'editorial') {
-    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/><rect width="' + W + '" height="' + S(14) + '" fill="' + c.primary + '"/>';
-    const y0 = Math.round(padTop * 0.9);
+  } else if (layout === 'editorial' || layout === 'frame') {
+    const framed = layout === 'frame';
+    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/>' + (framed ? '' : '<rect width="' + W + '" height="' + S(14) + '" fill="' + c.primary + '"/>');
+    const y0 = Math.round(padTop * (framed ? 0.75 : 0.9));
+    let badge = null;
+    if (framed && keyFact && /price|cost|offer|fee|ticket|entry|admission/i.test(keyFact.label) && keyFact.value.length <= 12) {
+      badge = { label: keyFact.label, value: keyFact.value };
+      keyFact = null;
+    }
     const lg = bLogo(false);
-    const head = [bTag(light, tagMode('rule')), bHead(light, 104, 4, false), bRule(ruleMode('hair'), light)];
+    const head = [bTag(light, tagMode('rule')), bHead(light, framed ? 96 : 104, 4, false), bRule(ruleMode('hair'), light)];
     const post = [bKey(light), bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
     const headBl = head.filter(Boolean);
     const lastGap = headBl.length ? Math.round(headBl[headBl.length - 1].gap * GK) : 0;
     const others = total([lg, ...head]) + lastGap + total(post) + S(40);
-    const wh = Math.min(Math.round(H * IM.share), Math.round(limit - y0 - others));
-    const winH = Math.max(wh, S(150));
-    const win = bWindow(winH);
-    const res = stack(IM.first ? [lg, win, ...head, ...post] : [lg, ...head, win, ...post], y0, limit - y0, true);
+    const minWin = S(framed ? 300 : 230);
+    const wh = Math.min(Math.round(H * (framed ? Math.max(IM.share, 0.4) : IM.share)), Math.round(limit - y0 - others));
+    const winH = Math.max(wh, minWin);
+    const win = bWindow(winH, badge);
+    const order = framed ? [win, lg, ...head, ...post] : (IM.first ? [lg, win, ...head, ...post] : [lg, ...head, win, ...post]);
+    const res = stack(order, y0, limit - y0, true);
     content += res.svg;
-    fits = wh >= S(150) && y0 + res.h <= limit;
+    fits = wh >= minWin && y0 + res.h <= limit;
   } else if (layout === 'stack') {
     // A picture (or one colour block with one graphic) over a solid type block.
     const tone = paperStack ? light : dark;

@@ -29,7 +29,7 @@
 // keeps its composition, while a different brief gets a different one. If
 // anything in here throws, media-tools.js falls back to the classic renderer.
 
-export const DESIGN_LAYOUTS = ['bold', 'split', 'centered', 'editorial', 'poster', 'stack'];
+export const DESIGN_LAYOUTS = ['bold', 'split', 'centered', 'editorial', 'poster', 'stack', 'frame'];
 const DESIGN_KINDS = ['flyer', 'poster', 'invitation', 'social_post', 'story', 'banner'];
 
 // Detail lines look like "Date: Saturday 12 July". These decide which label
@@ -218,6 +218,7 @@ function _promo(T) {
     return v;
   }
   if (img) {
+    v.push({ layout: 'frame', voice: 'grotesque', tagStyle: 'pill', ruleStyle: 'bar', keyFact, emphasis: 'lastline', img: { share: 0.42, zoom: 1.04 } });
     v.push({ layout: 'stack', voice: 'grotesque', tagStyle: 'pill', ruleStyle: 'bar', keyFact, scheme: T.inv, img: { share: 0.5, zoom: 1.1 } });
     v.push({ layout: 'poster', voice: 'grotesque', headScale: 1.04, tagStyle: 'pill', ruleStyle: 'bar', keyFact, img: { zoom: 1.08 } });
   } else {
@@ -256,6 +257,7 @@ function _event(T) {
     return v;
   }
   if (img) {
+    v.push({ layout: 'frame', voice: 'grotesque', tagStyle: 'pill', ruleStyle: 'bar', keyFact, emphasis: 'lastline', img: { share: 0.42, zoom: 1.04 } });
     v.push({ layout: 'poster', voice: 'grotesque', headScale: 1.1, tagStyle: 'pill', ruleStyle: 'bar', keyFact, img: { zoom: 1.12 } });
     v.push({ layout: 'stack', voice: 'grotesque', tagStyle: 'pill', ruleStyle: 'bar', keyFact, scheme: T.inv, img: { share: 0.5, zoom: 1.1 } });
   } else {
@@ -388,7 +390,7 @@ function _applyTone(d, T) {
 
 function _layoutFit(layout, f) {
   if (f.wide) return layout === 'centered' ? 'centered' : 'bold';
-  if (f.square && (layout === 'split' || layout === 'editorial')) return f.hasImage ? 'stack' : 'bold';
+  if (f.square && (layout === 'split' || layout === 'editorial' || layout === 'frame')) return f.hasImage ? 'stack' : 'bold';
   return layout;
 }
 

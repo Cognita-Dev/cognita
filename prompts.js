@@ -206,7 +206,7 @@ const MEDIA_RULES =
   'the person actually gave you (date, time, venue, phone, price). Never invent names, dates, venues, ' +
   'prices, phone numbers, emails or websites; if something essential is missing, still call ' +
   'create_design and the app will ask the person for it before the design is made. Pick a theme and layout that suit the subject, and ' +
-  'add image_prompt only when a background picture would genuinely help. Image models cannot ' +
+  'include image_prompt for almost every flyer, poster, social post, story and banner, because real photography is what makes a design look finished; leave it out only for quotes, notices, certificates and solemn pieces. Never write placeholders in square brackets or curly braces in any field: leave a field out when you do not have a real value for it. Image models cannot ' +
   'spell, so never ask a picture to contain words; put words in create_design. If the person ' +
   'gave exact wording, use it exactly. Do the work straight away instead of asking questions ' +
   'you can answer with sensible choices. After the result, reply in one or two plain ' +
