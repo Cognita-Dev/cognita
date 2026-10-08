@@ -1830,6 +1830,8 @@ async function runStreamedTurn(payload, resume) {
       onStep: (step) => live.addStep(step),
       onMedia: (m) => { if (m && turn.media.length < 6) turn.media.push(m); },
       onUi: (d) => { if (d && Array.isArray(d.ui)) live.showUi(d.ui, d.pending); },
+      onText: (d) => { if (d && typeof d.t === 'string') live.showText(d.t); },
+      onTextReset: () => live.resetStream(),
       onSandboxCall: (c) => live.addPendingRow(c && c.summary),
       onDone: (data) => {
         if (data && data.pendingSandboxCall) { paused = data; return; }
@@ -1985,6 +1987,8 @@ async function streamChatSSE(url, options, handlers) {
     else if (eventName === 'sandbox_call') handlers.onSandboxCall && handlers.onSandboxCall(data);
     else if (eventName === 'media') handlers.onMedia && handlers.onMedia(data);
     else if (eventName === 'ui') handlers.onUi && handlers.onUi(data);
+    else if (eventName === 'text') handlers.onText && handlers.onText(data);
+    else if (eventName === 'text_reset') handlers.onTextReset && handlers.onTextReset(data);
     else if (eventName === 'error') handlers.onError && handlers.onError(data);
     else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
     // Unknown event names are ignored rather than treated as fatal, so a
@@ -2238,7 +2242,32 @@ function createLiveTurnIndicator() {
     scrollToBottom();
   }
 
-  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, remove };
+  // Real model text as it arrives (SSE `text` frames). Plain text only, never
+  // HTML. The final message (`done`) replaces this preview, so nothing is
+  // duplicated. `text_reset` drops a model turn that was not the final answer.
+  let liveTextEl = null;
+  function showText(t) {
+    const body = el.querySelector('.message-body');
+    if (!body || !t) return;
+    const idle = el.querySelector('[data-role="idle-indicator"]');
+    if (idle) idle.hidden = true;
+    if (!liveTextEl || !liveTextEl.isConnected) {
+      liveTextEl = document.createElement('div');
+      liveTextEl.className = 'live-stream-text';
+      liveTextEl.style.whiteSpace = 'pre-wrap';
+      const liveUi = body.querySelector('[data-cui-live]');
+      if (liveUi) body.insertBefore(liveTextEl, liveUi); else body.appendChild(liveTextEl);
+    }
+    liveTextEl.textContent += t;
+    scrollToBottom();
+  }
+  function resetStream() {
+    if (liveTextEl) { liveTextEl.remove(); liveTextEl = null; }
+    const liveUi = el.querySelector('[data-cui-live]');
+    if (liveUi) liveUi.remove();
+  }
+
+  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream, remove };
 }
 
 /* ── Files the person can take away ───────────────────────────────────
