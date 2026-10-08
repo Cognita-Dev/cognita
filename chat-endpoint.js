@@ -1325,11 +1325,13 @@ export async function handleChatRequest(request, env) {
   // browser validates it again before drawing anything. A paused turn
   // (confirmation, design questions, sandbox hand-off) never carries UI.
   let ui = [];
+  let uiPatches = [];
   if (!pendingToolCall && !pendingDesignRequest && !pendingSandboxCall) {
     const extracted = extractUiBlocks(reply);
     ui = extracted.ui;
+    uiPatches = extracted.patches || [];
     reply = extracted.text;
-    if (ui.length && !reply.trim()) reply = (ui[0].props && ui[0].props.title) || 'Here you go.';
+    if ((ui.length || uiPatches.length) && !reply.trim()) reply = (ui[0] && ui[0].props && ui[0].props.title) || 'Done.';
   } else {
     reply = extractUiBlocks(reply).text;
   }
@@ -1337,6 +1339,8 @@ export async function handleChatRequest(request, env) {
   return {
     reply,
     ui,
+    // Controlled updates to components shown earlier (validated; see ui-schema.js).
+    uiPatches,
     // `thinking` is only ever the sanitized, first-person-normalized
     // version of the model's real reasoning (see
     // _cleanReasoningForDisplay) — never the raw text. `thinkingHeading`
