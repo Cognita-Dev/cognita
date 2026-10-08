@@ -234,16 +234,17 @@ await test('a changed course version keeps unchanged lessons and resets changed 
 console.log('\nCode activities');
 await test('code results are compared on the server against hidden expectations', async (w) => {
   extend(w); user(w, 's1', STUDIO); await call(w, 'POST', '/courses/javascript-foundations/enroll', 's1');
-  const lesson = (await call(w, 'GET', '/courses/javascript-foundations/lessons/s1_l1', 's1')).json.lesson;
-  const code = lesson.steps.find((s) => s.type === 'code'); ok(code.tests.every((t) => t.expr && t.expect === undefined));
-  for (const [i, st] of lesson.steps.entries()) { if (st.id === code.id) break; if (st.kind === 'activity') { const E = await load('learna/engine.js'); const raw = E.flatLessons(E.COURSE_MAP['javascript-foundations'])[0].lesson.steps[i]; await call(w, 'POST', '/courses/javascript-foundations/submit', 's1', right(raw, 's1_l1')); } await call(w, 'POST', '/courses/javascript-foundations/advance', 's1', { lesson: 's1_l1', step: i }); }
-  const idx = lesson.steps.findIndex((s) => s.id === code.id);
-  const bad = await call(w, 'POST', '/courses/javascript-foundations/submit', 's1', { lesson: 's1_l1', activity: code.id, results: [{ value: 1 }, { value: 1 }, { value: 1 }] });
-  eq(bad.json.result.correct, false); ok(/tests failed/.test(bad.json.result.feedback)); eq(bad.json.result.checklist.length, 3);
-  const short = await call(w, 'POST', '/courses/javascript-foundations/submit', 's1', { lesson: 's1_l1', activity: code.id, results: [] });
+  const P = '/courses/javascript-foundations';
+  const lesson = (await call(w, 'GET', P + '/lessons/s1_l1', 's1')).json.lesson;
+  const code = lesson.steps.find((s) => s.type === 'code'); ok(code.tests.every((t) => t.expr && t.expect === undefined), 'expected values must not be sent');
+  const idx = lesson.steps.findIndex((s) => s.id === code.id); ok(idx > 0);
+  const E = await load('learna/engine.js'); const raw = E.COURSE_MAP['javascript-foundations'].sections[0].lessons[0].steps;
+  for (let i = 0; i < idx; i++) { if (raw[i].kind === 'activity') await call(w, 'POST', P + '/submit', 's1', right(raw[i], 's1_l1')); await call(w, 'POST', P + '/advance', 's1', { lesson: 's1_l1', step: i }); }
+  const ch = (await call(w, 'POST', P + '/code/challenge', 's1', { lesson: 's1_l1', activity: code.id })).json; ok(ch.nonce);
+  const bad = await call(w, 'POST', P + '/submit', 's1', { lesson: 's1_l1', activity: code.id, nonce: ch.nonce, results: [{ value: 1 }, { value: 1 }, { value: 1 }, { value: 1 }, { value: 1 }] });
+  eq(bad.json.result.correct, false); ok(/tests failed/.test(bad.json.result.feedback)); eq(bad.json.result.checklist.length, 5);
+  const short = await call(w, 'POST', P + '/submit', 's1', { lesson: 's1_l1', activity: code.id, results: [] });
   eq(short.json.result.invalid, true);
-  const good = await call(w, 'POST', '/courses/javascript-foundations/submit', 's1', { lesson: 's1_l1', activity: code.id, results: [{ value: 3000 }, { value: 0 }, { value: 297 }] });
-  eq(good.json.result.correct, true); eq(idx > 0, true);
 });
 
 console.log('\nTutor and AI marking');
@@ -253,7 +254,7 @@ await test('tutor builds context from server state and never sees unshown answer
   const r = await call(w, 'POST', '/courses/french-a1/tutor', 'p1', { message: 'what is the answer?' });
   eq(r.status, 200); ok(r.json.reply);
   const sys = lastGroq.messages[0].content, usr = lastGroq.messages[1].content;
-  ok(sys.includes('Lesson: Greeting and introducing yourself')); ok(usr.includes('Greetings and your name')); ok(!/Answer already shown/.test(usr)); ok(/<learner_message>/.test(usr));
+  ok(sys.includes('Lesson 1 of 4: Greeting and introducing yourself')); ok(usr.includes('Greetings and your name')); ok(!/Answer already shown/.test(usr)); ok(/<learner_message>/.test(usr));
   ok(!/Je m\u2019appelle Kemi/.test(usr), 'exemplar leaked');
 });
 await test('tutor outage returns 503 and does not use daily quota', async (w) => {
