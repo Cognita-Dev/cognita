@@ -16,7 +16,8 @@ Structured, course-aware learning inside Cognita. Route: `/app.html?view=learna`
 | `learna/course-store.js` | Built-in plus admin-edited courses (Firestore `learna_courses`), drafts, publish, unpublish, automatic revisions. |
 | `learna/certificates.js`, `learna/certificates-endpoint.js` | Eligibility rules, claiming, public verification. |
 | `learna/assignments.js` | Task submissions: written, voice, video, code. Server-side transcription and review states. |
-| `learna/speech.js` | Premium text to speech (Azure F0 free tier, cached) and Whisper transcription. |
+| `learna/speech.js` | Text to speech (free Edge voices, cached in B2) and Whisper transcription. |
+| `learna/edge-tts.js` | The Worker's connection to the free Edge "Read Aloud" voice service. No key, no account. |
 | `learna/nudges.js` | Learner notifications over the existing web push. |
 | `learna/http.js` | Shared helpers. |
 | `learna-endpoint.js` | The `/api/learna/*` handler. |
@@ -52,14 +53,16 @@ What is still true: a learner who solves the task somewhere else and pastes the 
 
 ## Speech
 
-- **Listening.** Premium voices come from Azure AI Speech, Free (F0) tier: 0.5 million neural characters a month at no charge. English uses `en-NG-EzinneNeural` (shown as "Ezinne", the default) and `en-NG-AbeoNeural` ("Abeo"). French uses Denise and Henri. Cost control: every phrase is synthesised once and stored in B2; the browser never sends text (it names course, lesson, step and part, and the server finds the text); a monthly cap (`LEARNA_TTS_MONTHLY_CAP`, default 400000) stops synthesis before the free allowance ends; each plan has a daily character limit.
-- **Fallback.** With no key, free plan, budget used, offline or any error, the browser's own voice is used, preferring `en-NG`, then `en-GB`, then any English; for French and other languages the best installed voice for that language. If the device has no voice for the language, the learner is told.
+- **Listening.** Same design as Vertex, no account and no key. The Worker connects to the free Microsoft Edge "Read Aloud" voice service (`learna/edge-tts.js`) and returns MP3. English uses Ezinne (default) and Abeo, French uses Denise (default) and Henri. French has no Nigerian variant, so `fr-FR` is the right neighbour. Cost and abuse control: every phrase is synthesised once and stored in B2; the browser never sends text (it names course, lesson, step and part, and the server finds the text); each plan has a daily character limit that is returned if synthesis fails.
+- **Voice order in the browser.** First that works wins: (1) the same voice built into the browser, if it has it (Microsoft Edge ships all four), which is instant and costs the server nothing; (2) the Worker voice; (3) any device voice, preferring `en-NG`, then `en-GB`, then any English, and for French and other languages the best installed voice for that language. If the device has no voice for the language, the learner is told. After a failure the Worker voice is rested for two minutes; a plan or switch-off answer stops requests until the page is reloaded.
+- **Fallback.** Free plan, daily limit, offline, a blocked or slow service, or any error: the device voice is used. Nothing is ever billed.
+- **The service is unofficial.** Microsoft can change or block it at any time. When it does, learners hear device voices and nothing else breaks. The connection values in `learna/edge-tts.js` (`EDGE_CHROMIUM`, `EDGE_TTS_TOKEN`) follow the open source `edge-tts` package; update them from its `constants.py` if the service starts refusing connections.
 - **Web Audio.** Used for the recording cue sounds and a pace guide for public speaking. Web Audio cannot make speech, so it is not a voice.
 - **Per word.** In course text, `[[word]]` shows the word with a small speaker button that pronounces only that word. In language courses every example line has one too.
 - **Dictation.** Browser speech recognition (free) where saying beats typing: written answers marked `voice`, and say-it-aloud practice.
 - **Honesty about pronunciation.** Say-it-aloud compares what a speech recogniser heard with the target text and says so. It is not an accent or pronunciation score and the screen says that.
 - **Recorded tasks.** The server transcribes the recording itself (Whisper), measures pace and filler words from that transcript, and marks the checklist from it. The learner cannot supply measurements.
-- **Other languages at $0.** The same path: Azure F0 voices for the language (cached), then the browser voice. Add a voice in `learna/speech.js` `VOICES`.
+- **Other languages at $0.** The same path: the Edge neural voice for the language (cached), then the browser voice. Add a voice in `learna/speech.js` `VOICES` (`neural` is the Edge voice id, for example `es-ES-ElviraNeural`) and its name pattern in `NEURAL_NAMES` in `js/learna-speech.js`.
 
 ## Tasks, reviews and video
 
@@ -83,7 +86,7 @@ In the admin Courses screen, or in code: create `learna/courses-<name>.js`, add 
 
 ## Setup for the new features
 
-- Worker secrets (optional): `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` for premium voices; optional `LEARNA_TTS_MONTHLY_CAP`. Without them everything still works with browser voices.
+- Voices need no secrets. Optional Worker variable: `LEARNA_TTS_DISABLED=1` switches the Worker voice off without a deploy (learners then hear device voices). `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` and `LEARNA_TTS_MONTHLY_CAP` are no longer used and can be deleted from the Worker.
 - Needs the existing `AI` binding (Whisper), B2 secrets and the `COGNITA_REMINDERS` KV.
 - Deploy `vercel.json` (camera permission) with the front end.
 - Run `node tests/learna.test.mjs`, `node tests/learna-v2.test.mjs`.
