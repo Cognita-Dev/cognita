@@ -249,10 +249,9 @@ async function refreshAccount() {
 function updateImageAttachAvailability() {
   const illustrationItem = document.getElementById('attachIllustrationItem');
   if (illustrationItem) {
-    illustrationItem.classList.toggle('is-locked', !currentAccountHasVision);
-    illustrationItem.title = currentAccountHasVision
-      ? 'Generate a realistic illustration'
-      : 'Realistic illustrations are available on Cognita Plus and above';
+    // Picture generation is open to every plan (the daily limit still applies).
+    illustrationItem.classList.remove('is-locked');
+    illustrationItem.title = 'Generate a realistic illustration';
   }
 }
 
@@ -327,6 +326,17 @@ function showUsageUnavailable() {
 /* True when this chat has already run code. The Worker then keeps offering the
  * sandbox tools, so a follow-up such as "now put that in a file" works even
  * though the message itself says nothing about code. */
+// True when one of the last few replies in this chat holds a generated picture
+// or design, so a follow-up like "make it blue" keeps the picture tools on.
+function conversationHasMedia() {
+  const from = Math.max(0, conversationMeta.length - 6);
+  for (let i = from; i < conversationMeta.length; i++) {
+    const m = conversationMeta[i];
+    if (m && Array.isArray(m.media) && m.media.length) return true;
+  }
+  return false;
+}
+
 function conversationHasSandbox() {
   return conversationMeta.some((m) => m && Array.isArray(m.steps) && m.steps.some((s) => s && s.type === 'sandbox')) ||
     conversation.some((m) => m && Array.isArray(m.attachments) && m.attachments.some((a) => a && a.kind === 'workspace'));
@@ -1676,6 +1686,7 @@ async function sendMessage(text) {
     quality: currentQuality,
     approvals: conversationApprovals,
     sandboxHint: sendingDataFile || conversationHasSandbox(),
+    mediaHint: conversationHasMedia(),
   };
   if (outgoingImages.length > 0) payload.images = outgoingImages;
 
@@ -1696,7 +1707,8 @@ async function runStreamedTurn(payload, resume) {
   // browser could run code (see continueAfterSandbox). It carries the live
   // indicator, the start time and the steps already finished, so the person
   // sees one unbroken turn instead of several.
-  const turn = resume || { live: createLiveTurnIndicator(), startedAt: performance.now(), carry: [] };
+  const turn = resume || { live: createLiveTurnIndicator(), startedAt: performance.now(), carry: [], media: [] };
+  if (!Array.isArray(turn.media)) turn.media = [];
   const live = turn.live;
   const startedAt = turn.startedAt;
   payload.conversationId = payload.conversationId || ensureConversationId();
@@ -1737,6 +1749,8 @@ async function runStreamedTurn(payload, resume) {
       // Files from the workspace the person can download, shown under the
       // answer (see renderDeliverablesHtml). Only path, title and size are kept.
       deliverables: cleanDeliverables(data.deliverables),
+      // Pictures and designs made this turn (each arrived as a `media` event).
+      media: cleanMedia(turn.media),
       // `steps` is the full recorded action chain for this turn (Bug 2) —
       // may contain several entries (read → write → verify, etc.), not
       // just one. Falls back to the legacy single-object `toolExecuted`
@@ -1763,6 +1777,7 @@ async function runStreamedTurn(payload, resume) {
       onRound: () => live.addPendingRow(),
       onStepStart: (m) => live.addStepStart(m),
       onStep: (step) => live.addStep(step),
+      onMedia: (m) => { if (m && turn.media.length < 6) turn.media.push(m); },
       onSandboxCall: (c) => live.addPendingRow(c && c.summary),
       onDone: (data) => {
         if (data && data.pendingSandboxCall) { paused = data; return; }
@@ -1828,6 +1843,8 @@ async function continueAfterSandbox(payload, paused, turn) {
     quality: payload.quality,
     approvals: conversationApprovals,
     conversationId: payload.conversationId,
+    sandboxHint: payload.sandboxHint,
+    mediaHint: payload.mediaHint,
     sandboxResume: {
       // Long string arguments (such as imported file text) are not sent back;
       // the server only needs the tool name for its log and the trace.
@@ -1914,6 +1931,7 @@ async function streamChatSSE(url, options, handlers) {
     else if (eventName === 'step') handlers.onStep && handlers.onStep(data);
     else if (eventName === 'step_start') handlers.onStepStart && handlers.onStepStart(data);
     else if (eventName === 'sandbox_call') handlers.onSandboxCall && handlers.onSandboxCall(data);
+    else if (eventName === 'media') handlers.onMedia && handlers.onMedia(data);
     else if (eventName === 'error') handlers.onError && handlers.onError(data);
     else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
     // Unknown event names are ignored rather than treated as fatal, so a
@@ -2312,6 +2330,161 @@ function renderFigureGridHtml(meta) {
   });
   const list = Array.from(byPath.values()).slice(-6);
   return list.length ? '<div class="fig-grid">' + list.map(figureHtml).join('') + '</div>' : '';
+}
+
+
+/* ── Pictures and designs the assistant made ───────────────────────────
+ * The Worker creates them (media-tools.js) and sends each one as a `media`
+ * event. They are kept on the reply's meta (meta.media) so they survive
+ * reloads and syncing, and are shown right under the answer with download
+ * buttons. A picture is a base64 image; a design is an SVG the browser can
+ * save as PNG, PDF or SVG. */
+const MEDIA_MIME_RE = /^image\/(png|jpeg|webp)$/;
+
+function cleanMedia(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  list.slice(0, 6).forEach((m) => {
+    if (!m || typeof m !== 'object') return;
+    if (m.kind === 'image' && typeof m.content === 'string' && /^[A-Za-z0-9+/=]+$/.test(m.content) && MEDIA_MIME_RE.test(m.mime || 'image/jpeg')) {
+      out.push({ kind: 'image', mime: m.mime || 'image/jpeg', content: m.content, alt: String(m.alt || 'Generated image').slice(0, 200) });
+    } else if (m.kind === 'design' && typeof m.svg === 'string' && m.svg.startsWith('<svg') && !/<script/i.test(m.svg) && m.width > 0 && m.height > 0) {
+      out.push({ kind: 'design', svg: m.svg, width: Math.round(m.width), height: Math.round(m.height), title: String(m.title || 'Design').slice(0, 120), alt: String(m.alt || m.title || 'Generated design').slice(0, 200) });
+    }
+  });
+  return out;
+}
+
+function _svgDataUrl(svg) {
+  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+}
+
+function renderMediaHtml(meta, msgIndex) {
+  const list = Array.isArray(meta && meta.media) ? meta.media : [];
+  if (!list.length) return '';
+  return '<div class="gen-media-list">' + list.map((m, i) => {
+    const attrs = 'data-msg-index="' + msgIndex + '" data-media-index="' + i + '"';
+    if (m.kind === 'design') {
+      return '<figure class="gen-media gen-media--design">' +
+        '<img src="' + _svgDataUrl(m.svg) + '" alt="' + escapeHtml(m.alt || 'Generated design') + '" width="' + m.width + '" height="' + m.height + '" loading="lazy">' +
+        '<figcaption class="gen-media-actions">' +
+          '<button type="button" class="gen-media-btn" ' + attrs + ' data-fmt="png"><i class="ph ph-download-simple" aria-hidden="true"></i> PNG</button>' +
+          '<button type="button" class="gen-media-btn" ' + attrs + ' data-fmt="pdf"><i class="ph ph-file-pdf" aria-hidden="true"></i> PDF</button>' +
+          '<button type="button" class="gen-media-btn" ' + attrs + ' data-fmt="svg"><i class="ph ph-file-svg" aria-hidden="true"></i> SVG</button>' +
+        '</figcaption></figure>';
+    }
+    return '<figure class="gen-media">' +
+      '<img src="data:' + escapeHtml(m.mime) + ';base64,' + escapeHtml(m.content) + '" alt="' + escapeHtml(m.alt || 'Generated image') + '" loading="lazy">' +
+      '<figcaption class="gen-media-actions">' +
+        '<button type="button" class="gen-media-btn" ' + attrs + ' data-fmt="image"><i class="ph ph-download-simple" aria-hidden="true"></i> Download</button>' +
+      '</figcaption></figure>';
+  }).join('') + '</div>';
+}
+
+function _saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function _base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function _mediaFileStem(m) {
+  const base = String(m.title || m.alt || 'cognita').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return 'cognita-' + (base || 'design');
+}
+
+// Draws the SVG onto a canvas and returns it. The design embeds its own
+// picture as a data: address, so the canvas is never blocked as cross-origin.
+function _renderDesignToCanvas(m, scale) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(m.width * scale);
+      canvas.height = Math.round(m.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas);
+    };
+    img.onerror = () => reject(new Error('Could not draw the design.'));
+    img.src = _svgDataUrl(m.svg);
+  });
+}
+
+function _canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not save the image.'))), type, quality);
+  });
+}
+
+// One-page PDF holding the design as a picture, sized like an A4 page for
+// flyers and posters. Hand-written so no library is needed.
+async function _designToPdfBlob(m) {
+  const canvas = await _renderDesignToCanvas(m, 1);
+  const jpeg = new Uint8Array(await (await _canvasToBlob(canvas, 'image/jpeg', 0.93)).arrayBuffer());
+  const pw = 595;
+  const ph = Math.round(pw * m.height / m.width);
+  const enc = new TextEncoder();
+  const parts = [];
+  const offsets = [];
+  let length = 0;
+  const push = (chunk) => { const b = typeof chunk === 'string' ? enc.encode(chunk) : chunk; parts.push(b); length += b.length; };
+  const obj = (n, body) => { offsets[n] = length; push(n + ' 0 obj\n'); push(body); push('\nendobj\n'); };
+  push('%PDF-1.4\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + pw + ' ' + ph + '] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>');
+  const content = 'q ' + pw + ' 0 0 ' + ph + ' 0 0 cm /Im0 Do Q';
+  obj(4, '<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream');
+  offsets[5] = length;
+  push('5 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + canvas.width + ' /Height ' + canvas.height +
+    ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpeg.length + ' >>\nstream\n');
+  push(jpeg);
+  push('\nendstream\nendobj\n');
+  const xref = length;
+  let table = 'xref\n0 6\n0000000000 65535 f \n';
+  for (let n = 1; n <= 5; n++) table += String(offsets[n]).padStart(10, '0') + ' 00000 n \n';
+  push(table + 'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+  return new Blob(parts, { type: 'application/pdf' });
+}
+
+async function downloadGeneratedMedia(btn) {
+  const meta = conversationMeta[parseInt(btn.dataset.msgIndex, 10)];
+  const m = meta && Array.isArray(meta.media) ? meta.media[parseInt(btn.dataset.mediaIndex, 10)] : null;
+  if (!m || btn.disabled) return;
+  const fmt = btn.dataset.fmt;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    if (m.kind === 'image') {
+      const ext = m.mime === 'image/png' ? 'png' : (m.mime === 'image/webp' ? 'webp' : 'jpg');
+      _saveBlob(new Blob([_base64ToBytes(m.content)], { type: m.mime }), _mediaFileStem(m) + '.' + ext);
+    } else if (fmt === 'svg') {
+      _saveBlob(new Blob([m.svg], { type: 'image/svg+xml' }), _mediaFileStem(m) + '.svg');
+    } else if (fmt === 'pdf') {
+      _saveBlob(await _designToPdfBlob(m), _mediaFileStem(m) + '.pdf');
+    } else {
+      const canvas = await _renderDesignToCanvas(m, 1);
+      _saveBlob(await _canvasToBlob(canvas, 'image/png'), _mediaFileStem(m) + '.png');
+    }
+  } catch (e) {
+    console.error('[app] media download failed:', e && e.message);
+    showToast('Could not save that. Please try again, or download the SVG instead.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
+  }
 }
 
 let figureUrls = [];          // blob: addresses made for the current screen
@@ -3235,6 +3408,7 @@ function renderMessage(msg, index) {
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
+        (!isUser ? renderMediaHtml(meta, index) : '') +
         documentFileHtml +
         (!isUser ? renderDeliverablesHtml(meta, index) : '') +
         sourcesHtml +
@@ -3339,6 +3513,9 @@ function wireMessageActionButtons() {
       if (!ok) showToast('That file is no longer on this device. Ask Cognita to make it again.');
     });
   });
+  document.querySelectorAll('.gen-media-btn').forEach((btn) => {
+    btn.addEventListener('click', () => downloadGeneratedMedia(btn));
+  });
   document.querySelectorAll('.sbx-save, .deliv-save').forEach((btn) => {
     btn.addEventListener('click', () => saveFileToCognita(btn));
   });
@@ -3381,6 +3558,7 @@ async function resolvePendingToolCall(index, approved) {
     confirmToolCall: { name: ptc.name, args: ptc.args },
     approvals: conversationApprovals,
     sandboxHint: conversationHasSandbox(),
+    mediaHint: conversationHasMedia(),
   });
 }
 
@@ -4001,11 +4179,6 @@ function renderMarkdownLite(text, sources, idPrefix) {
 ════════════════════════════════════════════════════════ */
 
 function openVisualModal(presetKind) {
-  if (presetKind === 'illustration' && !currentAccountHasVision) {
-    showToast('Realistic illustrations are available on Cognita Plus and above. Upgrade to generate one.');
-    return;
-  }
-
   const modal = document.getElementById('visualModal');
   const promptInput = document.getElementById('visualPromptInput');
   const typeOptions = document.querySelectorAll('#visualModal .visual-type-option');
@@ -4030,10 +4203,6 @@ function wireVisualModal() {
 
   typeOptions.forEach((btn) => {
     btn.addEventListener('click', () => {
-      if (btn.dataset.kind === 'illustration' && !currentAccountHasVision) {
-        showToast('Realistic illustrations are available on Cognita Plus and above.');
-        return;
-      }
       typeOptions.forEach((b) => b.classList.remove('is-active'));
       btn.classList.add('is-active');
       visualKind = btn.dataset.kind;
