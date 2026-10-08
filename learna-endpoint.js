@@ -40,7 +40,7 @@ import { ok, fail, progressPath, slotPath, planInfo, loadProgress, saveProgress 
 import { submitAssignment, listMine, getMedia } from './learna/assignments.js';
 import { handleCertificate, verifyCertificate } from './learna/certificates-endpoint.js';
 import { evaluateEligibility } from './learna/certificates.js';
-import { VOICES, pickVoice, defaultLangFor, textForPart, synthesize, premiumAvailable, monthlyUsed, monthlyCap } from './learna/speech.js';
+import { VOICES, pickVoice, defaultLangFor, textForPart, synthesize, premiumAvailable } from './learna/speech.js';
 import { noteActivity, getPrefs, savePrefs } from './learna/nudges.js';
 
 const TUTOR_USAGE = 'learnaTutor';
@@ -388,15 +388,14 @@ async function ttsRoute(env, uid, account, body) {
   const r = await synthesize(env, voice, rate, text, charge);
   if (!r.ok) {
     if (reservation && r.refund) await adjustUsage(uid, TTS_USAGE, -r.refund, reservation.day, env).catch(() => {});
-    const msg = { TTS_NOT_CONFIGURED: 'Premium voices are not switched on. Your browser voice is used instead.', TTS_BUDGET: 'The premium voice allowance for this month is used up. Your browser voice is used instead.', DAILY_LIMIT: 'You have used today\u2019s premium listening. Your browser voice is used instead.', TTS_FAILED: 'The premium voice is not available right now. Your browser voice is used instead.' }[r.code] || 'Premium voice unavailable.';
+    const msg = { TTS_NOT_CONFIGURED: 'Premium voices are switched off. Your browser voice is used instead.', DAILY_LIMIT: 'You have used today\u2019s premium listening. Your browser voice is used instead.', TTS_FAILED: 'The premium voice is not available right now. Your browser voice is used instead.' }[r.code] || 'Premium voice unavailable.';
     return fail(msg, r.code === 'DAILY_LIMIT' ? 429 : 503, env, r.code);
   }
   return new Response(r.bytes, { status: 200, headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=86400', 'Access-Control-Allow-Origin': env?.APP_ORIGIN || '*', 'X-Learna-Voice': voice.name, 'X-Learna-Cache': r.cached ? 'hit' : 'miss', 'Access-Control-Expose-Headers': 'X-Learna-Voice,X-Learna-Cache' } });
 }
 
 async function speechStatus(env) {
-  const used = await monthlyUsed(env).catch(() => 0);
-  return { premium: premiumAvailable(env) && used < monthlyCap(env), voices: VOICES.map((v) => ({ id: v.id, name: v.name, gender: v.gender, lang: v.lang, default: !!v.default })) };
+  return { premium: premiumAvailable(env), voices: VOICES.map((v) => ({ id: v.id, name: v.name, gender: v.gender, lang: v.lang, default: !!v.default })) };
 }
 
 // ── Router ──────────────────────────────────────────────────────────────
