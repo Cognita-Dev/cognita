@@ -1,10 +1,11 @@
 // js/learna-speech.js
 // Speech for Learna, in the browser. Four parts, each used only where it helps learning:
 //
-//   Voice    Listen to a word, line or paragraph. First choice is the premium neural voice from the Worker (Ezinne and Abeo for
-//            English, Denise and Henri for French). If that is unavailable (no key, free plan, budget used, offline) the browser's
-//            own speech voice is used, preferring Nigerian English, then British English, then any English voice. For other
-//            languages it picks the best installed voice for that language.
+//   Voice    Listen to a word, line or paragraph. Same order as Vertex, first that works wins:
+//              1. The voice built into this browser (Microsoft Edge ships Ezinne and Abeo for Nigerian English, Denise and Henri for French).
+//              2. The same voice streamed from the Worker (free, needs internet).
+//              3. Any other voice on the device: Nigerian English, then British English, then any English voice; for other languages
+//                 the best installed voice for that language.
 //   Dictation  Speech to text with the browser's SpeechRecognition (free). Used for answers that are better said than typed,
 //            and for the "say it aloud" practice. It is a recognition match, never an accent score.
 //   Recorder Records audio or video with MediaRecorder for tasks that are submitted. The server checks the recording itself.
@@ -20,41 +21,113 @@ export const prefs = {
 };
 
 // ── Voice (text to speech) ───────────────────────────────────────────────
-let audioEl = null, speakToken = 0, premiumOff = false, voices = [];
+let audioEl = null, audioDone = null, speakToken = 0, voices = [];
+let premiumOff = false;                  // the plan or the server says no premium voice at all: stop asking for this page session
+let premiumDownUntil = 0;                // the voice service just failed: use device voices until this time, then try again
+const PREMIUM_COOLDOWN_MS = 120000, PREMIUM_TIMEOUT_MS = 14000;
 const blobCache = new Map();             // request key -> object URL, so a repeat press plays instantly
 
 function refreshVoices() { try { voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; } catch (_) { voices = []; } }
 if (typeof window !== 'undefined' && window.speechSynthesis) { refreshVoices(); window.speechSynthesis.addEventListener && window.speechSynthesis.addEventListener('voiceschanged', refreshVoices); }
 
-export function browserVoiceFor(lang) {
+const normLang = (l) => String(l || '').toLowerCase().replace(/_/g, '-');
+// The neural voices as Edge names them in the browser, for example "Microsoft Denise Online (Natural) - French (France)".
+// First entry is the default voice, second is the "alt" voice. Same order as VOICES on the server.
+const NEURAL_NAMES = { en: [/ezinne/i, /abeo/i], fr: [/denise/i, /henri/i] };
+const baseOf = (lang) => normLang(lang).split('-')[0];
+
+/** The built-in neural voice the learner asked for (default or alt), if this browser has it. */
+function nativeNeural(lang, want) {
   if (!voices.length) refreshVoices();
-  const l = String(lang || 'en-NG').toLowerCase(), base = l.split('-')[0];
-  const exact = voices.find((v) => v.lang.toLowerCase().replace('_', '-') === l);
+  const names = NEURAL_NAMES[baseOf(lang)]; if (!names) return null;
+  const re = want === 'alt' ? names[1] : names[0];
+  return voices.find((v) => baseOf(v.lang) === baseOf(lang) && re.test(v.name || '')) || null;
+}
+
+export function browserVoiceFor(lang, want) {
+  if (!voices.length) refreshVoices();
+  const l = normLang(lang || 'en-NG'), base = l.split('-')[0];
+  // Prefer the neural pair if the device has it, the one asked for first.
+  const names = NEURAL_NAMES[base];
+  if (names) {
+    const order = want === 'alt' ? [names[1], names[0]] : [names[0], names[1]];
+    for (const re of order) { const m = voices.find((v) => baseOf(v.lang) === base && re.test(v.name || '')); if (m) return m; }
+  }
+  const exact = voices.find((v) => normLang(v.lang) === l);
   if (exact) return exact;
-  if (base === 'en') return voices.find((v) => /^en[-_]ng/i.test(v.lang)) || voices.find((v) => /^en[-_]gb/i.test(v.lang)) || voices.find((v) => /^en[-_]/i.test(v.lang)) || null;
-  return voices.find((v) => v.lang.toLowerCase().startsWith(base)) || null;
+  if (base === 'en') return voices.find((v) => /^en-ng/i.test(normLang(v.lang))) || voices.find((v) => /^en-gb/i.test(normLang(v.lang))) || voices.find((v) => /^en-/i.test(normLang(v.lang))) || null;
+  return voices.find((v) => normLang(v.lang).startsWith(base)) || null;
 }
 
 export function ttsSupported() { return !!(window.speechSynthesis && window.SpeechSynthesisUtterance); }
 
+const premiumUsable = () => !premiumOff && Date.now() >= premiumDownUntil && typeof Audio !== 'undefined' && navigator.onLine !== false;
+
+// One shared <audio> element. Phones only let a page play audio after a tap, and the premium voice starts after a network wait,
+// so the element is "unlocked" with a short silent clip inside the first tap. A blob URL keeps this inside the page's media-src policy.
+let audioPrimed = false, silentUrl = null;
+function sharedAudio() { if (!audioEl) { audioEl = new Audio(); audioEl.preload = 'auto'; } return audioEl; }
+function primeAudio() {
+  if (audioPrimed || !premiumUsable()) return;
+  audioPrimed = true;
+  try {
+    if (!silentUrl) { const bin = atob('UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAABErAAABAAgAZGF0YQAAAAA='); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); silentUrl = URL.createObjectURL(new Blob([u8], { type: 'audio/wav' })); }
+    const a = sharedAudio(); a.dataset.primer = '1'; a.src = silentUrl;
+    const pr = a.play(); if (pr && pr.catch) pr.catch((e) => { if (e && e.name === 'NotAllowedError') audioPrimed = false; });   // an AbortError just means the real clip replaced it
+  } catch (_) { audioPrimed = false; }
+}
+
 export function stopSpeaking() {
   speakToken++;
-  if (audioEl) { try { audioEl.pause(); } catch (_) { /* already stopped */ } audioEl = null; }
+  if (audioEl) { audioEl.onended = null; audioEl.onerror = null; try { audioEl.pause(); } catch (_) { /* already stopped */ } }
+  if (audioDone) { const d = audioDone; audioDone = null; d(); }   // let a waiting speak() finish instead of hanging
   try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (_) { /* nothing playing */ }
 }
 
-function speakWithBrowser(text, lang, rate, token, hooks) {
-  return new Promise((resolve) => {
-    if (!ttsSupported()) { resolve({ ok: false, reason: 'unsupported' }); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    const v = browserVoiceFor(lang);
-    u.lang = v ? v.lang : lang; if (v) { try { u.voice = v; } catch (_) { /* some engines reject a stale voice object: the language alone still selects a voice */ } } u.rate = rate || 1;
-    u.onstart = () => { if (token === speakToken && hooks.onStart) hooks.onStart({ source: 'browser', voice: v ? v.name : 'your device voice', exact: !!v }); };
-    u.onend = () => resolve({ ok: true, source: 'browser' });
-    u.onerror = (e) => resolve({ ok: false, reason: e && e.error ? e.error : 'error' });
-    try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (_) { resolve({ ok: false, reason: 'error' }); }
-  });
+// Device voices cut off long text after about 15 seconds in Chrome and Edge, so read in sentence sized pieces.
+function chunkText(text, max = 180) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t ? [t] : [];
+  const out = []; let cur = '';
+  for (const raw of t.match(/[^.!?]+[.!?]*/g) || [t]) {
+    const sent = raw.trim(); if (!sent) continue;
+    if ((cur + ' ' + sent).trim().length <= max) { cur = (cur + ' ' + sent).trim(); continue; }
+    if (cur) { out.push(cur); cur = ''; }
+    if (sent.length <= max) { cur = sent; continue; }
+    let w = '';
+    for (const word of sent.split(' ')) { if ((w + ' ' + word).trim().length <= max) w = (w + ' ' + word).trim(); else { if (w) out.push(w); w = word; } }
+    cur = w;
+  }
+  if (cur) out.push(cur);
+  return out;
 }
+
+async function speakWithBrowser(text, lang, rate, token, hooks, want) {
+  if (!ttsSupported()) return { ok: false, reason: 'unsupported' };
+  const v = browserVoiceFor(lang, want);
+  const pieces = chunkText(text); if (!pieces.length) return { ok: false, reason: 'error' };
+  try { window.speechSynthesis.cancel(); } catch (_) { /* nothing playing */ }
+  for (let i = 0; i < pieces.length; i++) {
+    if (token !== speakToken) return { ok: false, cancelled: true };
+    const r = await new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(pieces[i]);
+      u.lang = v ? v.lang : lang; if (v) { try { u.voice = v; } catch (_) { /* some engines reject a stale voice object: the language alone still selects a voice */ } } u.rate = rate || 1;
+      let watchdog = null; const done = (x) => { if (watchdog) clearInterval(watchdog); resolve(x); };
+      u.onstart = () => { if (i === 0 && token === speakToken && hooks.onStart) hooks.onStart({ source: 'browser', voice: v ? v.name : 'your device voice', exact: !!v }); };
+      u.onend = () => done({ ok: true });
+      u.onerror = (e) => done({ ok: false, reason: e && e.error ? e.error : 'error' });
+      try {
+        window.speechSynthesis.speak(u);
+        watchdog = setInterval(() => { const ss = window.speechSynthesis; if (ss.speaking && !ss.paused) { ss.pause(); ss.resume(); } }, 10000);   // keeps Chrome from stalling mid-passage
+      } catch (_) { done({ ok: false, reason: 'error' }); }
+    });
+    if (token !== speakToken) return { ok: false, cancelled: true };
+    if (!r.ok) return { ...r, source: 'browser' };
+  }
+  return { ok: true, source: 'browser' };
+}
+
+const withTimeout = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error('timeout')), ms); p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
 
 /**
  * Speaks one part of a lesson. `ref` = { course, lesson, step, part, word?, lang?, voice? }, `text` is the same text, used only
@@ -63,26 +136,49 @@ function speakWithBrowser(text, lang, rate, token, hooks) {
  */
 export async function speak(ref, text, api, hooks = {}) {
   stopSpeaking(); const token = ++speakToken;
-  const p = prefs.get(); const lang = ref.lang || 'en-NG';
-  if (!premiumOff) {
-    const rate = ref.rate || p.rate; const body = { course: ref.course, lesson: ref.lesson, step: ref.step, part: ref.part, word: ref.word, lang: ref.lang, voice: ref.voice || p.voice, rate };
+  primeAudio();   // still inside the learner's tap, so phones allow the audio that follows
+  const p = prefs.get(); const lang = ref.lang || 'en-NG'; const want = ref.voice || p.voice; const rate = ref.rate || p.rate;
+
+  // 1. The built-in neural voice, when the browser has it. Instant, and it costs the server nothing.
+  if (nativeNeural(lang, want)) {
+    const r0 = await speakWithBrowser(text, lang, rate, token, hooks, want);
+    if (r0.cancelled) return r0;
+    if (r0.ok) return { ...r0, note: '' };
+    // an online device voice can fail without a connection: carry on with the Worker voice or another device voice
+  }
+
+  // 2. The same voice from the Worker.
+  if (premiumUsable()) {
+    const body = { course: ref.course, lesson: ref.lesson, step: ref.step, part: ref.part, word: ref.word, lang: ref.lang, voice: want, rate };
     const key = JSON.stringify(body);
     try {
       let url = blobCache.get(key);
       if (!url) {
-        const res = await api.blob('/speech/tts', body);
+        const res = await withTimeout(api.blob('/speech/tts', body), PREMIUM_TIMEOUT_MS);
         if (token !== speakToken) return { ok: false, cancelled: true };
-        if (!res.ok) { const code = res.code; if (code === 'TTS_NOT_CONFIGURED' || code === 'PLAN_REQUIRED' || code === 'TTS_BUDGET') premiumOff = true; throw new Error(code || 'tts'); }
+        if (!res.ok) { const code = res.code; if (code === 'TTS_NOT_CONFIGURED' || code === 'PLAN_REQUIRED') premiumOff = true; else if (code === 'TTS_FAILED') premiumDownUntil = Date.now() + PREMIUM_COOLDOWN_MS; throw new Error(code || 'tts'); }
         url = URL.createObjectURL(res.blob); blobCache.set(key, url);
         if (blobCache.size > 40) { const first = blobCache.keys().next().value; URL.revokeObjectURL(blobCache.get(first)); blobCache.delete(first); }
       }
-      audioEl = new Audio(url);
-      await new Promise((resolve, reject) => { audioEl.onended = resolve; audioEl.onerror = () => reject(new Error('play')); audioEl.play().then(() => { if (hooks.onStart) hooks.onStart({ source: 'premium', voice: ref.voice === 'alt' ? 'second voice' : 'premium voice' }); }).catch(reject); });
+      const a = sharedAudio();
+      await new Promise((resolve, reject) => {
+        audioDone = resolve; a.onended = () => { audioDone = null; resolve(); }; a.onerror = () => { audioDone = null; reject(new Error('play')); };
+        delete a.dataset.primer; a.src = url;
+        a.play().then(() => { if (hooks.onStart) hooks.onStart({ source: 'premium', voice: want === 'alt' ? 'second voice' : 'premium voice' }); }).catch((e) => { audioDone = null; reject(e); });
+      });
+      if (token !== speakToken) return { ok: false, cancelled: true };
       return { ok: true, source: 'premium' };
-    } catch (e) { if (token !== speakToken) return { ok: false, cancelled: true }; /* fall through to the browser voice */ }
+    } catch (e) {
+      if (token !== speakToken) return { ok: false, cancelled: true };
+      if (e && (e.message === 'timeout' || e.message === 'play' || e.name === 'NotAllowedError' || e.name === 'TypeError')) premiumDownUntil = Date.now() + PREMIUM_COOLDOWN_MS;   // network, timeout or playback trouble: rest the Worker voice for a while
+      /* fall through to a device voice */
+    }
   }
-  const r = await speakWithBrowser(text, lang, ref.rate || p.rate, token, hooks);
-  if (r.ok) return { ...r, note: browserVoiceFor(lang) ? '' : 'Your device has no ' + lang + ' voice installed, so a default voice was used. It may not sound right.' };
+
+  // 3. Any device voice.
+  const r = await speakWithBrowser(text, lang, rate, token, hooks, want);
+  if (r.cancelled) return r;
+  if (r.ok) return { ...r, note: browserVoiceFor(lang, want) ? '' : 'Your device has no ' + lang + ' voice installed, so a default voice was used. It may not sound right.' };
   return { ok: false, reason: r.reason, note: ttsSupported() ? 'Your device could not play speech.' : 'This browser cannot read text aloud. Use Chrome, Edge or Safari for listening.' };
 }
 
