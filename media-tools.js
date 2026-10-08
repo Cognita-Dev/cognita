@@ -24,6 +24,7 @@
 // model would fix).
 
 import { checkAndIncrement } from './usage.js';
+import { deriveDesignDirection, DESIGN_LAYOUTS, pickKeyFact } from './design-direction.js';
 
 export const MEDIA_TOOL_NAMES = new Set(['generate_image', 'create_design']);
 export const MAX_MEDIA_CALLS_PER_TURN = 3;
@@ -55,7 +56,7 @@ export function shouldOfferMedia({ text, hint } = {}) {
 
 const DESIGN_KINDS = ['flyer', 'poster', 'invitation', 'social_post', 'story', 'banner'];
 const THEME_NAMES = ['royal', 'sunset', 'forest', 'midnight', 'coral', 'mono', 'gold', 'ocean', 'purple', 'terracotta', 'blush', 'slate', 'emerald'];
-const LAYOUTS = ['bold', 'split', 'centered', 'editorial', 'poster'];
+const LAYOUTS = DESIGN_LAYOUTS;
 
 function _fn(name, description, properties, required) {
   return {
@@ -90,7 +91,7 @@ export const TOOLS = [
       cta: { type: 'string', description: 'Optional call to action button text, e.g. "Register today".' },
       footer: { type: 'string', description: 'Optional small line at the bottom, e.g. website or organiser name.' },
       theme: { type: 'string', description: 'Colour theme: ' + THEME_NAMES.join(', ') + '. Choose to suit the subject.' },
-      layout: { type: 'string', description: 'Optional; chosen automatically from the content if left out. One of: bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
+      layout: { type: 'string', description: 'Leave this out unless the person asked for a specific look: the art direction (composition, type, picture placement) is chosen automatically from what the design is for. One of: stack (picture or colour block on top, solid type block below), bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
       primary_color: { type: 'string', description: 'Optional hex colour like #0F766E to override the theme background colour.' },
       accent_color: { type: 'string', description: 'Optional hex colour like #F59E0B to override the theme accent colour.' },
       image_prompt: { type: 'string', description: 'Optional English description of a photograph to place in the design (no text in it). Describe one clear subject, mood and lighting; calm negative space is added automatically. Leave out for a clean colour design.' },
@@ -309,7 +310,7 @@ export async function execute(name, args, ctx) {
     const assets = ctx.assets || {};
     const userPhoto = assets.photo || assets.artwork || null;
     const said = String(ctx.userText || '') + ' ' + Object.values(ctx.facts || {}).join(' ');
-    const spec = normalizeDesignSpec(scrubInventedFacts(a, said), { hasPhoto: !!userPhoto });
+    const spec = normalizeDesignSpec(scrubInventedFacts(a, said), { hasPhoto: !!userPhoto, userText: ctx.userText, hasLogo: !!assets.logo });
     let bg = userPhoto ? { mime: userPhoto.mime, base64: userPhoto.base64, user: true } : null;
     let bgNote = '';
     if (spec.imagePrompt) {
@@ -329,7 +330,7 @@ export async function execute(name, args, ctx) {
     }
     try {
       const built = buildDesignSvg(spec, bg, { logo: assets.logo || null });
-      console.log('[media] create_design ok kind=' + spec.kind + ' layout=' + spec.layout + ' bg=' + !!bg);
+      console.log('[media] create_design ok kind=' + spec.kind + ' layout=' + spec.layout + ' bg=' + !!bg + (spec.direction ? ' direction: ' + spec.direction.summary : ''));
       return {
         ok: true,
         modelResult: 'The design was created successfully.' + bgNote + SHOWN_NOTE,
@@ -697,14 +698,27 @@ export function normalizeDesignSpec(a, opts) {
   // Photography briefs get art-direction appended so backgrounds are calm
   // and leave room for type instead of fighting it.
   const rawImg = _clean(a.image_prompt, 300);
-  const imagePrompt = rawImg && !hasPhoto
-    ? rawImg + ', professional editorial photography, soft natural light, uncluttered composition with calm negative space, shallow depth of field, no text, no lettering, no logos, no watermark'
-    : '';
+  // The art direction decides composition, type, picture placement and colour
+  // relationship from the whole request. If it ever fails, the classic
+  // content-length rules below still produce a clean design.
+  let direction = null;
+  try {
+    direction = deriveDesignDirection(a, { userText: opts && opts.userText, userImage: hasPhoto, hasLogo: !!(opts && opts.hasLogo) });
+  } catch (e) {
+    console.warn('[media] design direction failed, using classic layout:', e && e.message);
+  }
   const layoutRaw = String(a.layout || '').toLowerCase();
-  const layout = LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg || hasPhoto, { bullets, details, body });
+  const layout = direction && LAYOUTS.includes(direction.layout)
+    ? direction.layout
+    : (LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg || hasPhoto, { bullets, details, body }));
+  const room = direction && direction.image && direction.image.brief ? direction.image.brief : 'uncluttered composition with calm negative space';
+  const imagePrompt = rawImg && !hasPhoto
+    ? rawImg + ', ' + room + ', professional editorial photography, soft natural light, shallow depth of field, no text, no lettering, no logos, no watermark'
+    : '';
   return {
     kind,
     layout,
+    direction,
     headline: _clean(a.headline, 90) || 'Your headline',
     tagline: _clean(a.tagline, 40),
     subheadline: _clean(a.subheadline, 120),
@@ -822,9 +836,9 @@ export function buildDesignSvg(spec, bg, extras) {
   return built;
 }
 
-function _stack(blocks, y0, avail, stretch) {
+function _stack(blocks, y0, avail, stretch, gk) {
   const bl = blocks.filter(Boolean);
-  const gaps = bl.map((b, i) => (i < bl.length - 1 ? (b.gap || 0) : 0));
+  const gaps = bl.map((b, i) => (i < bl.length - 1 ? Math.round((b.gap || 0) * (gk || 1)) : 0));
   const total = bl.reduce((s, b) => s + b.h, 0) + gaps.reduce((s, g) => s + g, 0);
   let k = 1;
   const gs = gaps.reduce((s, g) => s + g, 0);
@@ -837,9 +851,9 @@ function _stack(blocks, y0, avail, stretch) {
   return { svg, h: total };
 }
 
-function _total(blocks) {
+function _total(blocks, gk) {
   const bl = blocks.filter(Boolean);
-  return bl.reduce((s, b, i) => s + b.h + (i < bl.length - 1 ? (b.gap || 0) : 0), 0);
+  return bl.reduce((s, b, i) => s + b.h + (i < bl.length - 1 ? Math.round((b.gap || 0) * (gk || 1)) : 0), 0);
 }
 
 function _hash(str) {
@@ -857,15 +871,32 @@ function _compose(spec, bg, scale, extras) {
   let layout = spec.layout;
   if (wide && layout !== 'centered') layout = 'bold';   // banners are always text-left, picture-right
   const centered = layout === 'centered';
-  const serif = centered || layout === 'editorial' || c.font === 'serif';
+
+  // The art direction (design-direction.js) decides how the type, space and
+  // picture are handled. Without it every value falls back to the classic look.
+  const hasD = !!spec.direction;
+  const D = Object.assign({ voice: null, headScale: 1, textScale: 1, space: 'balanced', inset: 0, measure: 1, vAnchor: null, tagStyle: null, ruleStyle: null, keyFact: 'none', scheme: 'field', graphic: null, emphasis: null, focal: 'headline', energy: 'balanced' }, spec.direction || {});
+  const IM = Object.assign({ radius: 'soft', bleed: 'none', first: false, share: 0.36, treatment: 'natural', zoom: 1, fx: 'Mid', fy: 'Mid' }, D.image || {});
+  const voice = centered ? 'serif' : (hasD && D.voice ? D.voice : (layout === 'editorial' || c.font === 'serif' ? 'serif' : 'grotesque'));
+  const serif = voice === 'serif';
+  const airy = D.space === 'airy';
+  const GK = airy ? 1.28 : 1;
+  const stack = (b, y, av, st) => _stack(b, y, av, st, GK);
+  const total = (b) => _total(b, GK);
+  const hsc = D.headScale;
+  const tsc = D.textScale;
+  const tagMode = (d0) => D.tagStyle || d0;
+  const ruleMode = (d0) => D.ruleStyle || d0;
+  const emph = (d0) => (hasD ? D.emphasis === 'lastline' : d0);
   const anchor = centered ? 'middle' : 'start';
 
   // Margins follow an 8% grid; stories keep clear of the app UI at top and bottom.
-  const margin = S(centered ? 130 : (wide ? 76 : 84));
+  // Airy directions get wider margins; `inset` pushes the text column in from the left.
+  const margin = Math.round(S(centered ? 130 : (wide ? 76 : 84)) * (airy ? 1.1 : 1) + (centered || wide ? 0 : W * D.inset));
   const padTop = S(story ? 240 : centered ? 150 : wide ? 62 : 100);
   const padBot = S(story ? 280 : centered ? 150 : wide ? 54 : 76);
   const panelX = wide && !centered ? Math.round(W * 0.6) : W;
-  const w = wide && !centered ? panelX - margin - S(48) : W - margin * 2;
+  const w = Math.round((wide && !centered ? panelX - margin - S(48) : W - margin * 2) * (wide ? 1 : D.measure));
   const x0 = centered ? Math.round(W / 2) : margin;
   const left = centered ? Math.round(x0 - w / 2) : x0;
   const align = (bw) => (centered ? Math.round(x0 - bw / 2) : x0);
@@ -878,29 +909,55 @@ function _compose(spec, bg, scale, extras) {
   const light = { ink: c.ink, label: lightPrimary, sub: lightPrimary, hair: c.ink, btn: c.primary, btnInk: _onColor(c.primary) };
 
   // Display type: heavy grotesque in caps, or a bold serif in sentence case.
-  const dFam = serif ? FONT_SERIF : FONT_HEAD;
-  const dWeight = serif ? 700 : 900;
-  const dF = serif ? 1.0 : 1.2;
-  const dSpR = serif ? -0.008 : -0.012;
-  const dLH = serif ? 1.08 : 1.03;
-  const dCase = (t) => (serif ? t : t.toUpperCase());
+  const clean = voice === 'clean';
+  const dFam = serif ? FONT_SERIF : (clean ? FONT_BODY : FONT_HEAD);
+  const dWeight = serif ? 700 : (clean ? 800 : 900);
+  const dF = serif ? 1.0 : (clean ? 1.1 : 1.2);
+  const dSpR = serif ? -0.008 : (clean ? -0.018 : -0.012);
+  const dLH = serif ? 1.08 : (clean ? 1.06 : 1.03);
+  const dCase = (t) => (serif || clean ? t : t.toUpperCase());
 
   const hair = (x, y, ww, tone, op) => '<rect x="' + Math.round(x) + '" y="' + Math.round(y) + '" width="' + Math.round(ww) + '" height="' + Math.max(1, S(2)) + '" fill="' + tone.hair + '" fill-opacity="' + (op || 0.25) + '"/>';
   const href = bg ? 'data:' + bg.mime + ';base64,' + bg.base64 : '';
-  // The person's own photos keep their top (faces) when cropped; generated ones centre.
-  const pAR = bg && bg.user ? 'xMidYMin slice' : 'xMidYMid slice';
+  // The person's own photos keep their top (faces) when cropped and are never recoloured;
+  // generated ones follow the direction (which part to keep, zoom, muted or natural).
+  const userPic = !!(bg && bg.user);
+  const pAR = userPic ? 'xMidYMin slice' : 'x' + IM.fx + 'Y' + IM.fy + ' slice';
+  const imZoom = userPic ? 1 : IM.zoom;
+  const imMute = !userPic && IM.treatment === 'muted';
+  const FR = { Min: 0, Mid: 0.5, Max: 1 };
+  // A picture cropped to a box (optionally rounded), zoomed around the kept point.
+  const pic = (id, x, y, ww, hh, rx) => {
+    const iw = Math.round(ww * imZoom), ih = Math.round(hh * imZoom);
+    const ix = Math.round(x - (iw - ww) * (userPic ? 0.5 : FR[IM.fx] == null ? 0.5 : FR[IM.fx]));
+    const iy = Math.round(y - (ih - hh) * (userPic ? 0 : FR[IM.fy] == null ? 0.5 : FR[IM.fy]));
+    return '<clipPath id="' + id + '"><rect x="' + Math.round(x) + '" y="' + Math.round(y) + '" width="' + Math.round(ww) + '" height="' + Math.round(hh) + '"' + (rx ? ' rx="' + rx + '"' : '') + '/></clipPath>' +
+      '<image href="' + href + '" x="' + ix + '" y="' + iy + '" width="' + iw + '" height="' + ih + '" preserveAspectRatio="' + pAR + '" clip-path="url(#' + id + ')"' + (imMute ? ' filter="url(#mute)"' : '') + '/>';
+  };
+
+  // Promoted key fact (the date or the price), set large as a second focal point.
+  const kfWhich = hasD && D.keyFact !== 'none' ? D.keyFact : null;
+  const keyFact = kfWhich ? pickKeyFact(spec.details, kfWhich) : null;
+  const detailsList = keyFact ? spec.details.filter((_, i) => i !== keyFact.index) : spec.details;
   // Deterministic variety: the same brief always looks the same, different briefs differ.
   const seed = _hash(spec.headline + '|' + spec.kind) % 3;
 
   // ── Blocks ──────────────────────────────────────────────────────────
 
-  function bTag(tone, pill) {
+  function bTag(tone, mode) {
     if (!spec.tagline) return null;
+    const pill = mode === 'pill';
     const ts = S(wide ? 19 : 24);
     const label = spec.tagline.toUpperCase();
     const sp = ts * 0.2;
     const tw = _tw(label, ts, 1.08, sp);
     const gap = S(wide ? 26 : 44);
+    if (mode === 'plain') {
+      return {
+        h: Math.round(ts * 1.3), gap,
+        draw: (y) => _lines([label], Math.round(x0 + (centered ? sp / 2 : 0)), y, ts, { family: FONT_BODY, weight: 700, fill: tone.label, spacing: sp, lh: 1.3, anchor }),
+      };
+    }
     if (pill) {
       const pw = Math.min(w, Math.round(tw + S(52)));
       const ph = Math.round(ts * 2.1);
@@ -929,7 +986,7 @@ function _compose(spec, bg, scale, extras) {
   }
 
   function bHead(tone, startSize, maxLines, twoTone) {
-    const hs = Math.round(S(startSize) * (0.55 + 0.45 * scale));
+    const hs = Math.round(S(startSize) * hsc * (0.55 + 0.45 * scale));
     const head = _fit(dCase(spec.headline), hs, S(40), w, maxLines, dF, dSpR, true);
     return {
       h: Math.round(head.lines.length * head.size * dLH), gap: S(wide ? 24 : 38), size: head.size,
@@ -941,6 +998,8 @@ function _compose(spec, bg, scale, extras) {
   }
 
   function bRule(style, tone) {
+    if (style === 'none') return null;
+    if (centered && style !== 'orn') style = 'orn';
     if (style === 'orn') {
       const seg = S(86), d = S(8);
       return {
@@ -967,7 +1026,7 @@ function _compose(spec, bg, scale, extras) {
 
   function bSub(tone) {
     if (!spec.subheadline) return null;
-    const ss = Math.round(S(wide ? 29 : 40) * scale);
+    const ss = Math.round(S(wide ? 29 : 40) * scale * tsc);
     const sub = _fit(spec.subheadline, ss, S(22), w, 3, 1.0, 0, true);
     return {
       h: Math.round(sub.lines.length * sub.size * 1.25), gap: S(wide ? 18 : 28),
@@ -980,7 +1039,7 @@ function _compose(spec, bg, scale, extras) {
 
   function bBody(tone) {
     if (!spec.body) return null;
-    const bs = Math.round(S(wide ? 24 : 30) * scale);
+    const bs = Math.round(S(wide ? 24 : 30) * scale * tsc);
     const measure = Math.min(w, S(centered ? 680 : 760));
     const lines = centered ? _balance(spec.body, bs, measure, 1.0, 0) : _wrap(spec.body, bs, measure, 1.0, 0);
     return {
@@ -991,7 +1050,7 @@ function _compose(spec, bg, scale, extras) {
 
   function bBullets(tone) {
     if (!spec.bullets.length) return null;
-    const bs = Math.round(S(wide ? 27 : 34) * scale);
+    const bs = Math.round(S(wide ? 27 : 34) * scale * tsc);
     const lh = 1.3;
     const padY = S(wide ? 11 : 17);
     const ind = centered ? 0 : S(42);
@@ -1048,11 +1107,11 @@ function _compose(spec, bg, scale, extras) {
   }
 
   function bDetails(tone) {
-    if (!spec.details.length) return null;
-    const ds = Math.round(S(wide ? 25 : 33) * scale);
+    if (!detailsList.length) return null;
+    const ds = Math.round(S(wide ? 25 : 33) * scale * tsc);
     const ls = Math.round(S(wide ? 15 : 19) * Math.max(scale, 0.8));
     const lsp = ls * 0.16;
-    const rows = spec.details.map((d) => {
+    const rows = detailsList.map((d) => {
       const m = d.match(/^([^:]{1,22}):\s*(.+)$/);
       return m ? { label: m[1].trim().toUpperCase(), value: m[2].trim() } : { label: '', value: d };
     });
@@ -1120,6 +1179,21 @@ function _compose(spec, bg, scale, extras) {
     };
   }
 
+  function bKey(tone) {
+    if (!keyFact) return null;
+    const big = D.focal === 'date' || D.focal === 'offer';
+    const ls = Math.round(S(wide ? 15 : 19) * Math.max(scale, 0.8));
+    const lsp = ls * 0.2;
+    const vs = Math.round(S(wide ? (big ? 56 : 40) : (big ? 92 : 64)) * (0.55 + 0.45 * scale));
+    const val = _fit(dCase(keyFact.value), vs, S(28), w, 2, dF, dSpR, true);
+    const labH = Math.round(ls * 1.3 + S(10));
+    return {
+      h: Math.round(labH + val.lines.length * val.size * dLH), gap: S(wide ? 22 : 40),
+      draw: (y) => _lines([keyFact.label], Math.round(x0 + (centered ? lsp / 2 : 0)), y, ls, { family: FONT_BODY, weight: 800, fill: tone.label, anchor, spacing: lsp, lh: 1.3 }) +
+        _lines(val.lines, x0, y + labH, val.size, { family: dFam, weight: dWeight, anchor, lh: dLH, spacing: val.size * dSpR, fill: big ? tone.sub : tone.ink }),
+    };
+  }
+
   function bCta(tone) {
     if (!spec.cta) return null;
     const label = spec.cta.toUpperCase();
@@ -1173,26 +1247,26 @@ function _compose(spec, bg, scale, extras) {
     };
   }
 
-  // Picture window for the editorial layout. Without a photo it becomes a
-  // single flat shape on a solid field: one idea, no extra ornament.
+  // Picture window for the editorial layout. Radius, bleed to a page edge and
+  // crop follow the direction. Without a photo it becomes a single flat shape
+  // on a solid field: one idea, no extra ornament.
   function bWindow(wh) {
+    const r = IM.radius === 'sharp' ? 0 : S(30);
+    let ox = left, ww = w;
+    if (IM.bleed === 'right') ww = W - left + r;
+    else if (IM.bleed === 'left') { ox = -r; ww = left + w + r; }
     return {
       h: wh, gap: S(40),
       draw: (y) => {
-        const r = S(30), ox = left, ww = w;
+        if (bg) return pic('win', ox, y, ww, wh, r);
         let out = '<clipPath id="win"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" rx="' + r + '"/></clipPath>';
-        if (bg) {
-          out += '<image href="' + href + '" x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" preserveAspectRatio="' + pAR + '" clip-path="url(#win)"/>';
-        } else {
-          out += '<g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="' + c.primary + '"/>';
-          if (seed === 0) out += '<circle cx="' + Math.round(ox + ww * 0.7) + '" cy="' + Math.round(y + wh * 0.5) + '" r="' + Math.round(wh * 0.34) + '" fill="' + c.accent + '"/>';
-          else if (seed === 1) {
-            const aw = Math.round(wh * 0.52), ax = Math.round(ox + ww * 0.62), ah = Math.round(wh * 0.74), ay = y + wh - ah;
-            out += '<path d="M' + ax + ' ' + (y + wh) + ' V' + (ay + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ay + aw / 2) + ' V' + (y + wh) + ' Z" fill="' + c.accent + '"/>';
-          } else out += '<circle cx="' + Math.round(ox + ww * 0.5) + '" cy="' + (y + wh) + '" r="' + Math.round(wh * 0.52) + '" fill="' + c.accent + '"/>';
-          out += '</g>';
-        }
-        return out;
+        out += '<g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="' + c.primary + '"/>';
+        if (seed === 0) out += '<circle cx="' + Math.round(ox + ww * 0.7) + '" cy="' + Math.round(y + wh * 0.5) + '" r="' + Math.round(wh * 0.34) + '" fill="' + c.accent + '"/>';
+        else if (seed === 1) {
+          const aw = Math.round(wh * 0.52), ax = Math.round(ox + ww * 0.62), ah = Math.round(wh * 0.74), ay = y + wh - ah;
+          out += '<path d="M' + ax + ' ' + (y + wh) + ' V' + (ay + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ay + aw / 2) + ' V' + (y + wh) + ' Z" fill="' + c.accent + '"/>';
+        } else out += '<circle cx="' + Math.round(ox + ww * 0.5) + '" cy="' + (y + wh) + '" r="' + Math.round(wh * 0.52) + '" fill="' + c.accent + '"/>';
+        return out + '</g>';
       },
     };
   }
@@ -1228,7 +1302,11 @@ function _compose(spec, bg, scale, extras) {
   let content = '';
   let fits = true;
 
-  const bodyTone = layout === 'split' || layout === 'editorial' ? light : dark;
+  // "inverse" puts the type on paper instead of the brand colour (bold and stack only).
+  const inverse = hasD && D.scheme === 'inverse' && !centered && !wide;
+  const paperBold = inverse && layout === 'bold' && !bg;
+  const paperStack = inverse && layout === 'stack';
+  const bodyTone = layout === 'split' || layout === 'editorial' || paperBold || paperStack ? light : dark;
   const footer = bFooter(bodyTone);
   const footTop = H - padBot - (footer ? footer.h : 0);
   const limit = footer ? footTop - S(40) : H - padBot;
@@ -1244,104 +1322,186 @@ function _compose(spec, bg, scale, extras) {
   defs.push('<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.22"/><stop offset="0.4" stop-color="' + c.deep + '" stop-opacity="0.06"/><stop offset="0.68" stop-color="' + c.deep + '" stop-opacity="0.86"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.97"/></linearGradient>');
   defs.push('<linearGradient id="side" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + c.primary + '"/><stop offset="1" stop-color="' + c.primary + '" stop-opacity="0"/></linearGradient>');
 
+  // Muted pictures lose some saturation so the type and colour lead.
+  if (bg && imMute) defs.push('<filter id="mute"><feColorMatrix type="saturate" values="0.62"/></filter>');
+
+  // One graphic idea, drawn only inside a free band [top, bot] of the page so it
+  // never sits behind type. `shape` is a solid colour; `tonalCol` the quiet colour for the big letter.
+  function graphicIn(kind, top, bot, shape, tonalCol) {
+    const bh = bot - top;
+    if (!kind || kind === 'none') return '';
+    if (kind === 'bar') return '<rect width="' + S(22) + '" height="' + H + '" fill="' + c.accent + '"/>';
+    if (kind === 'letter') {
+      const size = Math.round(Math.min(W * 0.92, Math.max(bh, S(300)) * 1.3));
+      return letter(W + S(30), Math.round(Math.min(H * 0.97, bot + size * 0.12)), size, tonalCol);
+    }
+    if (kind === 'quote') {
+      if (bh < S(170)) return '';
+      const F = Math.min(S(420), Math.round(bh * 1.6));
+      return '<text x="' + left + '" y="' + Math.round(bot - S(18) + F * 0.42) + '" font-size="' + F + '" font-family="' + FONT_SERIF + '" font-weight="700" fill="' + shape + '">\u201C</text>';
+    }
+    if (bh < S(250)) return '';
+    if (kind === 'circle') {
+      const r = Math.round(Math.min(W * 0.3, bh * 0.44));
+      return '<circle cx="' + Math.round(W - margin - r * 0.8) + '" cy="' + Math.round(top + bh / 2) + '" r="' + r + '" fill="' + shape + '"/>';
+    }
+    if (kind === 'arch') {
+      const aw = Math.round(Math.min(W * 0.46, bh * 0.72)), ah = Math.round(Math.min(bh * 0.96, aw * 1.6));
+      const ax = W - margin - aw, by = Math.round(bot), ty = by - ah;
+      return '<path d="M' + ax + ' ' + by + ' V' + (ty + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ty + aw / 2) + ' V' + by + ' Z" fill="' + shape + '"/>';
+    }
+    if (kind === 'block') {
+      const x = Math.round(W * 0.58);
+      return '<rect x="' + x + '" y="' + Math.round(top) + '" width="' + (W - x) + '" height="' + Math.round(bh * 0.88) + '" fill="' + shape + '"/>';
+    }
+    return '';
+  }
+
+  // The larger empty band above or below the text block.
+  function freeBand(textTop, textBot, lowTop, minTop) {
+    const up = [minTop || 0, textTop - S(36)];
+    const lo = [textBot + S(36), (lowTop == null ? limit : lowTop) - S(36)];
+    return (up[1] - up[0]) >= (lo[1] - lo[0]) ? up : lo;
+  }
+
   if (layout === 'split') {
-    const hero = [bLogo(true), bTag(dark, false), bHead(dark, 112, 4, true), bRule('bar', dark)];
-    const heroContent = _total(hero);
+    const hero = [bLogo(true), bTag(dark, tagMode('rule')), bHead(dark, 112, 4, emph(true)), bRule(ruleMode('bar'), dark)];
+    const heroContent = total(hero);
     const minHero = Math.round(H * (bg ? 0.46 : 0.36));
     const heroH = Math.min(Math.round(H * 0.62), Math.max(minHero, heroContent + Math.round(padTop * 0.7) + S(78)));
     back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/><clipPath id="hclip"><rect width="' + W + '" height="' + heroH + '"/></clipPath>';
     if (bg) {
-      back += '<image href="' + href + '" width="' + W + '" height="' + heroH + '" preserveAspectRatio="' + pAR + '" clip-path="url(#hclip)"/><rect width="' + W + '" height="' + heroH + '" fill="url(#hshade)"/>';
+      back += pic('hpic', 0, 0, W, heroH, 0) + '<rect width="' + W + '" height="' + heroH + '" fill="url(#hshade)"/>';
     } else {
       back += '<rect width="' + W + '" height="' + heroH + '" fill="' + c.primary + '"/><g clip-path="url(#hclip)">' + letter(W + S(24), Math.round(heroH + heroH * 0.14), Math.round(heroH * 1.25), tonal) + '</g>';
     }
     back += '<rect y="' + (heroH - S(12)) + '" width="' + W + '" height="' + S(12) + '" fill="' + c.accent + '"/>';
     const hy = Math.max(Math.round(padTop * 0.6), heroH - S(78) - heroContent);
-    content += _stack(hero, hy, 0, false).svg;
-    const lower = [bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
+    content += stack(hero, hy, 0, false).svg;
+    const lower = [bKey(light), bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
     const ly = heroH + S(66);
-    const res = _stack(lower, ly, limit - ly, true);
+    const res = stack(lower, ly, limit - ly, true);
     content += res.svg;
     fits = hy + heroContent <= heroH - S(60) && ly + res.h <= limit;
   } else if (layout === 'editorial') {
     back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/><rect width="' + W + '" height="' + S(14) + '" fill="' + c.primary + '"/>';
     const y0 = Math.round(padTop * 0.9);
-    const pre = [bLogo(false), bTag(light, false), bHead(light, 104, 4, false), bRule('hair', light)];
-    const post = [bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
-    const others = _total(pre) + (pre.filter(Boolean).length ? pre.filter(Boolean).slice(-1)[0].gap : 0) + _total(post) + S(40);
-    const wh = Math.min(Math.round(H * 0.36), Math.round(limit - y0 - others));
+    const lg = bLogo(false);
+    const head = [bTag(light, tagMode('rule')), bHead(light, 104, 4, false), bRule(ruleMode('hair'), light)];
+    const post = [bKey(light), bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
+    const headBl = head.filter(Boolean);
+    const lastGap = headBl.length ? Math.round(headBl[headBl.length - 1].gap * GK) : 0;
+    const others = total([lg, ...head]) + lastGap + total(post) + S(40);
+    const wh = Math.min(Math.round(H * IM.share), Math.round(limit - y0 - others));
     const winH = Math.max(wh, S(150));
-    const res = _stack([...pre, bWindow(winH), ...post], y0, limit - y0, true);
+    const win = bWindow(winH);
+    const res = stack(IM.first ? [lg, win, ...head, ...post] : [lg, ...head, win, ...post], y0, limit - y0, true);
     content += res.svg;
     fits = wh >= S(150) && y0 + res.h <= limit;
+  } else if (layout === 'stack') {
+    // A picture (or one colour block with one graphic) over a solid type block.
+    const tone = paperStack ? light : dark;
+    const blockFill = paperStack ? c.primary : c.accent;
+    const shapeCol = paperStack ? c.accent : c.primary;
+    const items = [bLogo(!paperStack), bTag(tone, tagMode('rule')), bHead(tone, 108, 4, emph(true)), bRule(ruleMode('bar'), tone), bKey(tone), bSub(tone), bBody(tone), bBullets(tone), bDetails(tone), bCta(tone)];
+    const gh = total(items);
+    const pad = S(60);
+    const minTop = Math.round(H * 0.24);
+    const want = Math.min(Math.round(H * IM.share), Math.round(limit - pad - gh));
+    const topH = Math.max(want, minTop);
+    back += paperStack ? '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/>' : solid;
+    if (bg) {
+      back += pic('spic', 0, 0, W, topH, 0);
+      if (D.energy !== 'calm') back += '<rect y="' + topH + '" width="' + W + '" height="' + S(10) + '" fill="' + c.accent + '"/>';
+    } else {
+      back += '<rect width="' + W + '" height="' + topH + '" fill="' + blockFill + '"/>';
+      const g = D.graphic;
+      const gk = ['circle', 'arch', 'letter', 'quote'].includes(g) ? g : (g === 'block' ? 'circle' : (g === 'none' || g === 'bar' ? null : ['circle', 'arch', 'letter'][seed]));
+      if (gk) back += '<clipPath id="sclip"><rect width="' + W + '" height="' + topH + '"/></clipPath><g clip-path="url(#sclip)">' + graphicIn(gk, 0, topH, shapeCol, _mix(blockFill, shapeCol, 0.16)) + '</g>';
+    }
+    const sy = topH + pad;
+    content += stack(items, sy, limit - sy, true).svg;
+    fits = want >= minTop;
   } else {
     // Single-surface layouts: bold, poster, centered, and the banner variant of bold.
+    const tone = paperBold ? light : dark;
     if (layout === 'centered') {
       const o = S(52);
       back += '<rect width="' + W + '" height="' + H + '" fill="' + c.primary + '"/>' +
         '<rect x="' + o + '" y="' + o + '" width="' + (W - o * 2) + '" height="' + (H - o * 2) + '" fill="none" stroke="' + c.accent + '" stroke-width="' + S(2.5) + '"/>';
     } else if (layout === 'poster') {
       if (bg) {
-        back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="' + pAR + '"/><rect width="' + W + '" height="' + H + '" fill="url(#fade)"/>';
+        back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/>' + pic('pbg', 0, 0, W, H, 0) + '<rect width="' + W + '" height="' + H + '" fill="url(#fade)"/>';
       } else {
         back += solid;
-        if (seed === 0) back += '<circle cx="' + Math.round(W * 0.66) + '" cy="' + Math.round(H * 0.3) + '" r="' + Math.round(W * 0.29) + '" fill="' + c.accent + '"/>';
-        else if (seed === 1) {
-          const aw = Math.round(W * 0.5), ax = W - margin - aw, ay = Math.round(H * 0.1), ah = Math.round(H * 0.44);
-          back += '<path d="M' + ax + ' ' + (ay + ah) + ' V' + (ay + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ay + aw / 2) + ' V' + (ay + ah) + ' Z" fill="' + c.accent + '"/>';
-        } else back += letter(W + S(12), Math.round(H * 0.52), Math.round(W * 1.1), tonal);
       }
     } else if (bg && !wide) {
-      back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="' + pAR + '"/><rect width="' + W + '" height="' + H + '" fill="url(#shade)"/>';
+      back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/>' + pic('bbg', 0, 0, W, H, 0) + '<rect width="' + W + '" height="' + H + '" fill="url(#shade)"/>';
     } else {
-      back += solid;
+      back += paperBold ? '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/>' : solid;
       if (wide) {
         if (bg) {
-          back += '<clipPath id="pclip"><rect x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '"/></clipPath><image href="' + href + '" x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '" preserveAspectRatio="' + pAR + '" clip-path="url(#pclip)"/>' +
+          back += '<clipPath id="pclip"><rect x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '"/></clipPath><image href="' + href + '" x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '" preserveAspectRatio="' + pAR + '" clip-path="url(#pclip)"' + (imMute ? ' filter="url(#mute)"' : '') + '/>' +
             '<rect x="' + (panelX - 1) + '" width="' + S(260) + '" height="' + H + '" fill="url(#side)"/>';
         } else {
           back += '<circle cx="' + Math.round(W * 0.8) + '" cy="' + Math.round(H * 0.5) + '" r="' + Math.round(H * 0.32) + '" fill="' + c.accent + '"/>';
         }
-      } else if (seed === 0) back += '<g>' + letter(W + S(30), Math.round(H * 0.97), Math.round(W * 0.92), tonal) + '</g>';
-      else if (seed === 1) back += '<rect width="' + S(22) + '" height="' + H + '" fill="' + c.accent + '"/>';
-      else back += '<circle cx="' + Math.round(W * 0.92) + '" cy="' + Math.round(H * 0.93) + '" r="' + Math.round(W * 0.42) + '" fill="' + tonal + '"/>';
+      }
     }
 
-    const tagPill = layout === 'bold' || layout === 'poster';
-    const tag = bTag(dark, tagPill && !centered);
+    const tagDefault = centered ? 'rule' : (layout === 'bold' || layout === 'poster' ? 'pill' : 'rule');
+    const tag = bTag(tone, tagMode(tagDefault));
     if (layout === 'centered') {
-      const group = [bLogo(true), bMedallion(), tag, bHead(dark, 92, 4, false), bRule('orn', dark), bSub(dark), bBody(dark)];
+      const group = [bLogo(true), bMedallion(), tag, bHead(dark, 92, 4, false), bRule(ruleMode('orn'), dark), bKey(dark), bSub(dark), bBody(dark)];
       const lower = [bBullets(dark), bDetails(dark), bCta(dark)];
       const all = lower.some(Boolean) ? [...group, spacer(S(26)), ...lower] : group;
-      const gh = _total(all);
+      const gh = total(all);
       const y = padTop + Math.max(0, (limit - padTop - gh) * 0.46);
-      content += _stack(all, y, 0, false).svg;
+      content += stack(all, y, 0, false).svg;
       fits = gh <= limit - padTop;
     } else if (layout === 'poster') {
-      const hero = [bHead(dark, 150, 4, true), bRule('bar', dark), bSub(dark), bBody(dark)];
+      const hero = [bHead(dark, 150, 4, emph(true)), bRule(ruleMode('bar'), dark), bKey(dark), bSub(dark), bBody(dark)];
       const lower = [bBullets(dark), bDetails(dark), bCta(dark)];
       const all = lower.some(Boolean) ? [...hero, spacer(S(18)), ...lower] : hero;
-      const gh = _total(all);
+      const gh = total(all);
       const y = limit - gh;
       const topB = [bLogo(true), tag];
-      content += _stack(topB, padTop, 0, false).svg;
-      content += _stack(all, y, 0, false).svg;
-      const topH = topB.some(Boolean) ? _total(topB) + S(60) : 0;
+      content += stack(topB, padTop, 0, false).svg;
+      content += stack(all, y, 0, false).svg;
+      const topH = topB.some(Boolean) ? total(topB) + S(60) : 0;
       fits = y >= padTop + topH + Math.round(H * (story ? 0.2 : 0.26));
+      if (!bg) {
+        const g = D.graphic;
+        const kind = g === 'none' ? null : (g || ['circle', 'arch', 'letter'][seed]);
+        const bandTop = topB.some(Boolean) ? padTop + total(topB) + S(30) : 0;
+        back += graphicIn(kind, bandTop, y - S(36), c.accent, tonal);
+      }
     } else {
-      const hero = [bLogo(true), tag, bHead(dark, wide ? 84 : (story ? 128 : 124), wide ? 3 : 4, true), bRule('bar', dark), bSub(dark), bBody(dark)];
-      const lower = [bBullets(dark), bDetails(dark), bCta(dark)];
-      const hh = _total(hero);
+      const hero = [bLogo(!paperBold), tag, bHead(tone, wide ? 84 : (story ? 128 : 124), wide ? 3 : 4, emph(true)), bRule(ruleMode('bar'), tone), bKey(tone), bSub(tone), bBody(tone)];
+      const lower = [bBullets(tone), bDetails(tone), bCta(tone)];
+      const hh = total(hero);
+      const gapMid = S(wide ? 24 : 50);
+      const va = D.vAnchor;
+      let heroTop, lowTop = null;
       if (!lower.some(Boolean)) {
-        const y = padTop + Math.max(0, (limit - padTop - hh) * 0.34);
-        content += _stack(hero, y, 0, false).svg;
+        const frac = va === 'middle' ? 0.5 : (va === 'bottom' ? 1 : (hasD ? 0.2 : 0.34));
+        heroTop = Math.round(padTop + Math.max(0, (limit - padTop - hh) * frac));
+        content += stack(hero, heroTop, 0, false).svg;
         fits = hh <= limit - padTop;
       } else {
-        const lh = _total(lower);
-        const ly = limit - lh;
-        content += _stack(hero, padTop, 0, false).svg;
-        content += _stack(lower, ly, 0, false).svg;
-        fits = padTop + hh + S(wide ? 24 : 50) <= ly;
+        lowTop = limit - total(lower);
+        const room = lowTop - gapMid - padTop - hh;
+        heroTop = Math.round(padTop + Math.max(0, room) * (va === 'middle' ? 0.5 : (va === 'bottom' ? 1 : 0)));
+        content += stack(hero, heroTop, 0, false).svg;
+        content += stack(lower, lowTop, 0, false).svg;
+        fits = room >= 0;
+      }
+      if (!bg && !wide) {
+        // Keep the graphic out of the type: it lives in the larger free band.
+        const g = D.graphic;
+        const kind = g === 'none' ? null : (g || (hasD ? null : ['letter', 'bar', 'letter'][seed]));
+        const band = freeBand(heroTop, heroTop + hh, lowTop, 0);
+        back += graphicIn(kind, band[0], band[1], paperBold ? c.primary : c.accent, paperBold ? _mix(c.light, c.primary, 0.08) : tonal);
       }
     }
   }
