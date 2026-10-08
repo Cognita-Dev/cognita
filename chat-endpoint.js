@@ -13,6 +13,7 @@ import {
 } from './connector-tools.js';
 import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
+import * as mediaTools from './media-tools.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Agent loop bounds (see Bug 2 in the audit doc). A user request can
@@ -579,6 +580,21 @@ export async function handleChatRequest(request, env) {
   const sandboxEnabled = planAllowsSandbox && gate.offer;
   console.log('[chat][sandbox] gate=' + (sandboxEnabled ? 'offered' : 'skipped') + ' reason=' + gate.reason);
 
+  // Picture and design tools (media-tools.js) run inside the Worker and need no
+  // connected app or sandbox, so every plan can use them (the daily picture
+  // allowance is imageGenPerDay). Like the sandbox they are only offered when
+  // the message asks for something visual, so ordinary chats pay no extra
+  // tokens. `mediaHint` is sent by the browser when this chat already
+  // contains a generated picture, so "make it bluer" keeps working.
+  const mediaGate = !hasImages
+    ? mediaTools.shouldOfferMedia({
+        text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
+        hint: body.mediaHint === true,
+      })
+    : { offer: false, reason: 'images' };
+  const mediaEnabled = mediaGate.offer;
+  console.log('[chat][media] gate=' + (mediaEnabled ? 'offered' : 'skipped') + ' reason=' + mediaGate.reason);
+
   // Diagnostics for the connector tool-calling pipeline (see project
   // notes on issue 5c — "connected tools aren't used in chat"). Never
   // logs tokens, message content, or tool arguments — only enough to
@@ -651,7 +667,7 @@ export async function handleChatRequest(request, env) {
   try {
     if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
-    } else if (connectorToolsEnabled || sandboxEnabled) {
+    } else if (connectorToolsEnabled || sandboxEnabled || mediaEnabled) {
       // Only used by getAvailableTools' router, and only once a user's
       // connected-tool count actually crosses ROUTER_THRESHOLD — see
       // connector-tools.js. Below that, this is computed but ignored, so
@@ -677,7 +693,8 @@ export async function handleChatRequest(request, env) {
           sandboxToolSchemas = getSandboxToolSchemas(sandboxProvider.capabilities);
         }
       }
-      const tools = connectorTools.concat(sandboxToolSchemas);
+      const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas() : [];
+      const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas);
       if (tools.length > 0 || sandboxLimitNote) {
         // The tools variant starts with the exact same text as the normal
         // chat prompt and adds the connected-app / sandbox rules after it,
@@ -688,12 +705,14 @@ export async function handleChatRequest(request, env) {
             firstName: userFirstName,
             hasTools: connectorTools.length > 0,
             hasSandbox: sandboxToolSchemas.length > 0,
+            hasMedia: mediaToolSchemas.length > 0,
           }) + sandboxLimitNote,
         };
       }
       const maxRounds = sandboxToolSchemas.length > 0 ? MAX_AGENT_ROUNDS_SANDBOX : MAX_AGENT_ROUNDS;
+      let mediaCallsThisTurn = 0;
       console.log(
-        '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name)))].join(',') +
+        '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name) || (mediaTools.isMediaTool(t.function.name) ? 'media' : 'unknown')))].join(',') +
         ' toolCount=' + tools.length +
         ' tier=' + actualTier + ' provider=' + tierConfig.provider + ' model=' + tierConfig.model +
         ' resuming=' + !!confirmToolCall + ' sandboxResume=' + !!sandboxResume +
@@ -881,6 +900,60 @@ export async function handleChatRequest(request, env) {
                 continue;
               }
               break;
+            }
+
+            // Picture and design tools (media-tools.js). They run right here in
+            // the Worker, need no connected app and no confirmation, and hand
+            // the finished picture to the browser as a `media` event. The model
+            // only ever sees a short plain-text result.
+            if (mediaTools.isMediaTool(call.name)) {
+              const mv = mediaTools.validateArgs(call.name, call.args);
+              if (!mv.ok || mediaCallsThisTurn >= mediaTools.MAX_MEDIA_CALLS_PER_TURN) {
+                invalidArgAttempts[call.name] = (invalidArgAttempts[call.name] || 0) + 1;
+                const tooMany = mediaCallsThisTurn >= mediaTools.MAX_MEDIA_CALLS_PER_TURN;
+                if (tooMany || invalidArgAttempts[call.name] > MAX_INVALID_ARG_RETRIES_PER_TOOL) {
+                  result = {
+                    text: tooMany
+                      ? 'I\'ve made a few pictures already in this message. Tell me what to change and I\'ll make the next one.'
+                      : 'I need a little more detail to make that. What should it show?',
+                    reasoning: result.reasoning || null,
+                    toolCalls: null,
+                  };
+                  break;
+                }
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: 'Attempting ' + call.name + '.' },
+                  { role: 'user', content: 'That call was missing required field(s): ' + mv.missing.join(', ') + '. Retry with them filled in, written out in full.' },
+                ]);
+                result = null;
+                round++;
+                continue;
+              }
+              mediaCallsThisTurn++;
+              const mediaMeta = { providerLabel: mediaTools.providerLabelFor(call.name), kind: 'run' };
+              const mediaSummary = mediaTools.describe(call.name, call.args);
+              emit('step_start', { name: call.name, provider: 'media', ...mediaMeta, summary: mediaSummary });
+              const mediaT0 = Date.now();
+              let mediaOutcome;
+              try {
+                mediaOutcome = await mediaTools.execute(call.name, call.args, { uid: identity.uid, plan, env });
+              } catch (e) {
+                console.error('[chat][media] execute threw:', e && e.message);
+                mediaOutcome = { ok: false, modelResult: 'Error: this could not be made right now. Tell the user plainly and suggest trying again shortly.' };
+              }
+              steps.push({ type: 'executed', name: call.name, provider: 'media', ...mediaMeta, ms: Date.now() - mediaT0, ok: !!mediaOutcome.ok, summary: mediaSummary });
+              emit('step', steps[steps.length - 1]);
+              if (mediaOutcome.ok && mediaOutcome.media) emit('media', mediaOutcome.media);
+              console.log('[chat][media] tool=' + call.name + ' ok=' + !!mediaOutcome.ok);
+              const mediaEntry = sandboxTools.makeTraceEntry({
+                n: ++stepNo, kind: 'tool', assistantText: (result.text && result.text.trim()) ? result.text : '',
+                description: mediaSummary, resultText: mediaOutcome.modelResult,
+              });
+              turnTrace.push(mediaEntry);
+              workingMessages = sandboxTools.appendExchange(workingMessages, mediaEntry);
+              result = null;
+              round++;
+              continue;
             }
 
             // Bug 3: validate required args BEFORE describeTool() ever

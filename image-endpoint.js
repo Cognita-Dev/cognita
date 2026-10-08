@@ -6,6 +6,7 @@ import { checkAndIncrement } from './usage.js';
 import { getPlan } from './entitlements.js';
 import { callWithFallback } from './providers.js';
 import { MODEL_TIERS } from './entitlements.js';
+import { generateImage, isImageSafetyError as _isSafety } from './media-tools.js';
 
 const DIAGRAM_SYSTEM_PROMPT =
   'You are an expert diagram creator. Generate clean, accurate, well-labelled ' +
@@ -56,13 +57,9 @@ export async function handleImageRequest(request, env) {
     return _generateDiagram(prompt, env);
   }
 
-  if (!plan.models.vision) {
-    return _jsonError(
-      'Realistic image generation requires the Cognita Plus plan or higher.',
-      403, env
-    );
-  }
-
+  // Picture generation is open to every plan (it runs on Workers AI's free
+  // allowance); the daily imageGenPerDay limit below is the only cap. Before
+  // this change it was limited to Plus and above.
   const quota = await checkAndIncrement(identity.uid, 'imageGen', plan.limits.imageGenPerDay, env);
   if (!quota.allowed) {
     return _jsonError(
@@ -98,15 +95,18 @@ async function _generateIllustration(prompt, env) {
   if (!env.AI) return _jsonError('Image generation is temporarily unavailable.', 503, env);
 
   try {
-    const base64 = await generateIllustrationBase64(prompt, env);
-    if (!base64) throw new Error('Could not extract image from provider response.');
+    const img = await generateImage(prompt, env);
+    if (!img || !img.base64) throw new Error('Could not extract image from provider response.');
 
-    return new Response(JSON.stringify({ type: 'image', content: base64 }), {
+    return new Response(JSON.stringify({ type: 'image', content: img.base64, mime: img.mime }), {
       status: 200,
       headers: _corsJsonHeaders(env),
     });
   } catch (e) {
     console.error('[image] illustration generation failed:', e.message);
+    if (isImageSafetyError(e)) {
+      return _jsonError('That description was blocked by the safety filter. Try wording it differently.', 422, env);
+    }
     return _jsonError('Could not generate the image. Please try again.', 503, env);
   }
 }
@@ -118,30 +118,16 @@ async function _generateIllustration(prompt, env) {
 // resources-endpoint.js just skips that one card rather than failing the
 // whole deck).
 export async function generateIllustrationBase64(prompt, env, opts = {}) {
-  if (!env.AI) throw new Error('Workers AI is not bound.');
-
-  // `classroomSafe` is used for flashcard images. Cloudflare's image model
-  // runs an automatic safety filter that sometimes blocks harmless school
-  // topics (anatomy, biology, history...). Framing the request as a plain
-  // textbook illustration greatly reduces those false alarms.
-  const finalPrompt = opts.classroomSafe
-    ? 'A clean, simple, family-friendly educational textbook illustration suitable for a school classroom: ' +
-      prompt + '. Fully clothed people only if any, no nudity, no violence. No text overlays.'
-    : 'A clean, professional, realistic illustration: ' + prompt + '. No text overlays. No cartoon style.';
-
-  const response = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-    prompt: finalPrompt,
-    steps: 4,
-  });
-
-  return _extractImageBase64(response);
+  // Tries each Workers AI image model in turn (see media-tools.js). The
+  // classroomSafe wording for flashcards lives there too.
+  const img = await generateImage(prompt, env, { classroomSafe: !!opts.classroomSafe });
+  return img.base64;
 }
 
 // True when the error came from Workers AI's content-safety filter
 // (error code 8007, "Input prompt contains NSFW content").
 export function isImageSafetyError(e) {
-  const msg = e && e.message ? String(e.message) : '';
-  return /\b8007\b|NSFW/i.test(msg);
+  return !!(e && e.safety) || _isSafety(e);
 }
 
 function _extractSvg(text) {
@@ -151,29 +137,6 @@ function _extractSvg(text) {
   const end = clean.lastIndexOf('</svg>');
   if (start === -1 || end === -1) return null;
   return clean.slice(start, end + 6);
-}
-
-async function _extractImageBase64(response) {
-  if (response && typeof response.image === 'string' && response.image.length > 0) {
-    return response.image;
-  }
-  if (response && response.image instanceof ReadableStream) {
-    const reader = response.image.getReader();
-    const chunks = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-    const total = chunks.reduce((acc, c) => acc + c.length, 0);
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
-    let binary = '';
-    for (let i = 0; i < merged.length; i++) binary += String.fromCharCode(merged[i]);
-    return btoa(binary);
-  }
-  return null;
 }
 
 function _corsJsonHeaders(env) {

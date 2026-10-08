@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-04.1';
+export const PROMPT_VERSION = '2026-10-08.1';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -69,16 +69,21 @@ const KNOWLEDGE =
   'suggest checking a current source to confirm. Never simply refuse to ' +
   'answer or claim you have no way to know.';
 
-// Send people to the + menu for real files and pictures.
+// Files and pictures. What you do depends on which tools this turn has, and the
+// tool rules further down (SANDBOX_RULES, MEDIA_RULES) say how. The + menu is
+// only the fallback for a turn that has no way to make the thing itself.
 const REDIRECTS =
-  'If the user asks you to produce a downloadable Word document, letter, ' +
-  'report, essay, or memo file, you do NOT generate the file yourself — ' +
-  'tell them to use the "Create a document" option in the + menu next to ' +
-  'the message box, which builds and downloads a real .docx for them. Do ' +
-  'not claim you have no way to help with documents; point them to that ' +
-  'menu instead. Likewise for diagrams or illustrations, point them to ' +
-  'the matching options in that same + menu rather than describing an ' +
-  'image in text.';
+  'If the user asks for a file (Word document, letter, report, essay, memo, CV, ' +
+  'spreadsheet, PDF, CSV, text file) and you have a way to run code in this ' +
+  'conversation (described further below), make the file yourself and give it ' +
+  'to them. Only when you have no such way, tell them to use the \"Create a ' +
+  'document\" option in the + menu next to the message box, which builds and ' +
+  'downloads a real .docx, PDF or PowerPoint. PowerPoint files always come from ' +
+  'that menu. If the user asks for a picture, illustration, logo, flyer, poster ' +
+  'or other graphic and you have a way to create one in this conversation ' +
+  '(described further below), create it yourself; otherwise point them to the ' +
+  'matching option in the + menu. Never claim you cannot help with documents or ' +
+  'pictures, and never describe a picture in words as a substitute for making it.';
 
 // Text chat only: the reasoning models keep a private "thinking" channel,
 // and this keeps it from talking about the instructions themselves.
@@ -178,8 +183,33 @@ const SANDBOX_RULES =
   'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
   'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
   'File contents must be in the file\'s own format, with no markdown fences. ' +
+  'You can make real Word and PDF files. A ready-made helper is installed: ' +
+  '`from cognita_docs import docx, pdf`, then `docx(\"/workspace/letter.docx\", blocks)` or ' +
+  '`pdf(\"/workspace/letter.pdf\", blocks)`. blocks is a list such as ' +
+  '[(\"title\", \"Heading\"), (\"h1\", \"Section\"), (\"p\", \"Text with **bold** and *italic*.\"), ' +
+  '(\"bullets\", [\"a\", \"b\"]), (\"numbered\", [\"x\", \"y\"]), (\"table\", [[\"Col A\", \"Col B\"], [\"1\", \"2\"]]), ' +
+  '(\"p\", \"Centered\", {\"align\": \"center\"}), (\"pagebreak\",)]. Use \\n inside a paragraph for a line break. ' +
+  'Write the full, finished content yourself; never leave placeholders. ' +
+  'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
+  'PowerPoint is not available here (point to the \"Create a document\" option in the + menu). ' +
+  'Offer each finished file with sandbox_offer_file. ' +
   'Say what you did and found in plain words, name files by file name only, and ' +
   'do not mention tools, sandboxes or workspaces.';
+
+// Only sent when the picture and design tools are offered (media-tools.js).
+const MEDIA_RULES =
+  'You can create pictures and graphic designs yourself. For any request for an image, photo, ' +
+  'illustration, painting, logo artwork, wallpaper or character, call generate_image with a ' +
+  'detailed English prompt (subject, setting, lighting, colours, style). For flyers, posters, ' +
+  'invitations, social media posts, stories and banners, call create_design and write all the ' +
+  'real copy yourself: a short strong headline, a tagline, key details such as date, time, ' +
+  'venue and phone, and a call to action. Pick a theme and layout that suit the subject, and ' +
+  'add image_prompt only when a background picture would genuinely help. Image models cannot ' +
+  'spell, so never ask a picture to contain words; put words in create_design. If the person ' +
+  'gave exact wording, use it exactly. Do the work straight away instead of asking questions ' +
+  'you can answer with sensible choices. After the result, reply in one or two plain ' +
+  'sentences and offer one specific tweak (a different colour, layout or wording). Never ' +
+  'paste image data or links, and never say you cannot make pictures.';
 
 // Image questions only (the vision model).
 const IMAGE_RULES =
@@ -204,10 +234,17 @@ const CHAT_WITH_TOOLS = join([CHAT_CORE, TOOL_USE_RULES, TOOL_OUTPUT_FORMATTING]
 const CHAT_WITH_SANDBOX = join([CHAT_CORE, SANDBOX_RULES]);
 const CHAT_WITH_TOOLS_AND_SANDBOX = join([CHAT_WITH_TOOLS, SANDBOX_RULES]);
 
-function _staticFor(hasTools, hasSandbox) {
+function _baseFor(hasTools, hasSandbox) {
   if (hasTools && hasSandbox) return CHAT_WITH_TOOLS_AND_SANDBOX;
   if (hasSandbox) return CHAT_WITH_SANDBOX;
   return hasTools ? CHAT_WITH_TOOLS : CHAT_CORE;
+}
+
+// The picture/design rules are always appended LAST, so every variant still
+// starts with exactly the same text as the one without them.
+function _staticFor(hasTools, hasSandbox, hasMedia) {
+  const base = _baseFor(hasTools, hasSandbox);
+  return hasMedia ? base + '\n\n' + MEDIA_RULES : base;
 }
 
 // Image questions: its own slim prompt (no reasoning rules, no tool rules).
@@ -251,10 +288,12 @@ function buildSessionBlock(firstName, now) {
  *   being offered to the model on THIS turn
  * @param {boolean} [opts.hasSandbox] - true only when the agent sandbox tools
  *   are being offered on THIS turn
+ * @param {boolean} [opts.hasMedia] - true only when the picture/design tools
+ *   (media-tools.js) are being offered on THIS turn
  * @param {Date} [opts.now] - injectable for tests
  */
-export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, now } = {}) {
-  return _staticFor(hasTools, hasSandbox) + '\n\n' + buildSessionBlock(firstName, now);
+export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, hasMedia = false, now } = {}) {
+  return _staticFor(hasTools, hasSandbox, hasMedia) + '\n\n' + buildSessionBlock(firstName, now);
 }
 
 /** System prompt for a turn where the user attached images (vision model). */
@@ -285,11 +324,11 @@ export function approxTokens(text) {
  * Logged once per request: if `fingerprint` changes between requests that
  * should be identical, something dynamic has leaked into the static part.
  */
-export function chatPromptInfo({ hasTools = false, hasSandbox = false, vision = false } = {}) {
-  const staticPart = vision ? VISION_CORE : _staticFor(hasTools, hasSandbox);
+export function chatPromptInfo({ hasTools = false, hasSandbox = false, hasMedia = false, vision = false } = {}) {
+  const staticPart = vision ? VISION_CORE : _staticFor(hasTools, hasSandbox, hasMedia);
   return {
     version: PROMPT_VERSION,
-    variant: vision ? 'vision' : (hasTools && hasSandbox ? 'chat+tools+sandbox' : hasSandbox ? 'chat+sandbox' : hasTools ? 'chat+tools' : 'chat'),
+    variant: vision ? 'vision' : ((hasTools && hasSandbox ? 'chat+tools+sandbox' : hasSandbox ? 'chat+sandbox' : hasTools ? 'chat+tools' : 'chat') + (hasMedia ? '+media' : '')),
     fingerprint: fingerprint(staticPart),
     approxTokens: approxTokens(staticPart),
   };

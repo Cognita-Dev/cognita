@@ -29,6 +29,12 @@ export const SANDBOX_INTENT_PATTERNS = [
   { name: 'code-fence', re: /```/ },
   { name: 'number-list', re: /(?:^|[^\w.])-?\d+(?:[.,]\d+)?(?:\s*(?:,|;|\band\b|\s)\s*-?\d+(?:[.,]\d+)?){2,}(?![\w.])/ },
   { name: 'file-format', re: /\b(?:as|into|to) (?:an? )?(?:excel|xlsx|csv|spreadsheet)\b/i },
+  // Someone asking for a document they can download. Without these the
+  // assistant would only ever send them to the + menu, even though it can
+  // build Word and PDF files itself (see cognita_docs in sandbox-frame.html).
+  { name: 'document-file', re: /\b(?:word (?:doc(?:ument)?s?|files?)|ms word|microsoft word|docx|pdf)\b/i },
+  { name: 'make-document', re: /\b(?:write|draft|create|make|prepare|generate|produce|compose|build|give me|put together|turn (?:this|it|that) into)\b[^.?!\n]{0,40}\b(?:document|doc|downloadable|printable)\b/i },
+  { name: 'downloadable', re: /\b(?:downloadable|printable|download (?:it|this|that|link))\b/i },
   { name: 'file-request', re: /\b(?:make|create|generate|produce|build|give me|put .{0,40} in|save .{0,40} (?:as|to|in)) (?:me )?(?:a |an |the )?(?:\w+ )?(?:file|csv|spreadsheet|xlsx|report file|txt|text file|download|excel file|word file|pdf)\b/i },
 ];
 
