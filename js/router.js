@@ -1,5 +1,5 @@
 // js/router.js
-// Switches between the chat / resources / library / learna / reminders / account /
+// Switches between the chat / learna / reminders / account /
 // scheduler / inbox / insights views inside app.html
 // without a full page navigation. Uses a `?view=` query param on the
 // one real file (not a fake path) so refresh, back/forward and shared
@@ -11,14 +11,6 @@ const VIEWS = {
   chat: {
     containerId: 'view-chat',
     load: () => import('./app.js'),
-  },
-  resources: {
-    containerId: 'view-resources',
-    load: () => import('./resources.js'),
-  },
-  library: {
-    containerId: 'view-library',
-    load: () => import('./library.js'),
   },
   learna: {
     containerId: 'view-learna',
@@ -65,9 +57,7 @@ function setActiveNav(view) {
 
 function setActiveUsageWidget(view) {
   const chatWidget = document.getElementById('usageWidgetChat');
-  const resourcesWidget = document.getElementById('usageWidgetResources');
   if (chatWidget) chatWidget.hidden = view !== 'chat';
-  if (resourcesWidget) resourcesWidget.hidden = view !== 'resources';
   // Code runs belong to the chat view and appear only once there is something to show (see refreshUsage in app.js).
   const sandboxWidget = document.getElementById('usageWidgetSandbox');
   if (sandboxWidget) sandboxWidget.hidden = view !== 'chat' || sandboxWidget.dataset.active !== '1';

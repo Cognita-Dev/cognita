@@ -1,6 +1,6 @@
 // js/shell.js
 // Single owner of the chrome shared by every workspace view (chat,
-// resources, library): sidebar collapse/mobile-open, the account menu,
+// reminders, scheduler, inbox, and the other views): sidebar collapse/mobile-open, the account menu,
 // sign-out, toasts and HTML-escaping. Wired exactly once by the shell
 // itself, before any view module mounts, so it never gets bound twice.
 

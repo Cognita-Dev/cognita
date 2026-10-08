@@ -277,7 +277,6 @@ const USAGE_ICONS = {
   advancedModel: 'ph-brain',
   imageGen: 'ph-image',
   documentGen: 'ph-file-text',
-  resourceGen: 'ph-graduation-cap',
   sandboxRuns: 'ph-terminal-window',
 };
 const USAGE_LABELS = {
@@ -285,7 +284,6 @@ const USAGE_LABELS = {
   advancedModel: 'Advanced model',
   imageGen: 'Images',
   documentGen: 'Documents',
-  resourceGen: 'Generated resources',
   sandboxRuns: 'Code runs',
 };
 
@@ -384,14 +382,9 @@ async function loadUsage() {
       usageRow('documentGen', u.documentGen.used, u.documentGen.limit) +
       (u.sandboxRuns ? usageRow('sandboxRuns', u.sandboxRuns.used, u.sandboxRuns.limit) : '');
 
-    // Resources usage lives in its own grouped section so it reads as
-    // a distinct category rather than being mixed in with chat usage.
-    document.getElementById('usageResourcesGrid').innerHTML =
-      usageRow('resourceGen', u.resourceGen.used, u.resourceGen.limit);
   } catch (e) {
     const errorHtml = '<p style="color:var(--text-3); padding: var(--space-4);">Could not load usage details.</p>';
     document.getElementById('usageDetailGrid').innerHTML = errorHtml;
-    document.getElementById('usageResourcesGrid').innerHTML = errorHtml;
     console.error('[account] ' + e.message);
   }
 }

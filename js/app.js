@@ -11,6 +11,8 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
+import { renderUiHtml, wireUi } from './ui-render.js';
+import { validateUi } from '../ui-schema.js';
 import { shouldOfferSandbox } from '../sandbox-intent.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
@@ -1763,6 +1765,8 @@ async function runStreamedTurn(payload, resume) {
       // Files from the workspace the person can download, shown under the
       // answer (see renderDeliverablesHtml). Only path, title and size are kept.
       deliverables: cleanDeliverables(data.deliverables),
+      // Structured components the model chose for this answer (see ui-schema.js). Validated again here and again at render time.
+      ui: validateUi(data.ui),
       // Pictures and designs made this turn (each arrived as a `media` event).
       media: cleanMedia(turn.media),
       // `steps` is the full recorded action chain for this turn (Bug 2) —
@@ -3032,6 +3036,7 @@ function renderConversation() {
   wireMessageActionButtons();
   wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
+  wireUi(list, { send: (t) => sendMessage(t), busy: () => isSending, notify: showToast });
   hydrateFigures(list);
   collapseFreshActivity(list);
   announceApprovals();
@@ -3421,6 +3426,7 @@ function renderMessage(msg, index) {
         // full text before the typing animation takes over.
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
+        (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui) : '') +
         (!isUser ? renderDesignRequestHtml(meta, index) : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
         (!isUser ? renderMediaHtml(meta, index) : '') +
