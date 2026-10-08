@@ -261,6 +261,49 @@ function node(n, ctx) {
 
 function nodesHtml(blocks) { return blocks.map((b) => node(b, {})).join(''); }
 
+// ── Placeholders (decorative only, static markup built here) ───────────
+// Shaped like the thing that is about to appear, so the layout does not jump
+// when the real output arrives. Used for pending components and for media.
+const bar = (w, c) => '<i class="sk-bar' + (c ? ' ' + c : '') + '" style="width:' + w + '%"></i>';
+const SK = {
+  table: () => '<div class="sk-row sk-head">' + bar(22) + bar(30) + bar(18) + '</div>' + [0, 1, 2, 3].map(() => '<div class="sk-row">' + bar(22) + bar(30) + bar(18) + '</div>').join(''),
+  bar_chart: () => '<div class="sk-bars">' + [45, 70, 55, 85, 40, 65].map((h2) => '<i class="sk-col" style="height:' + h2 + '%"></i>').join('') + '</div>',
+  line_chart: () => '<svg class="sk-svg" viewBox="0 0 200 70" preserveAspectRatio="none"><polyline class="sk-line" fill="none" points="0,55 30,40 60,46 95,22 130,30 165,10 200,18"/></svg>',
+  pie_chart: () => '<div class="sk-pie"><i class="sk-disc"></i><div class="sk-legend">' + bar(70) + bar(55) + bar(62) + '</div></div>',
+  stat: () => bar(30) + '<i class="sk-bar sk-big" style="width:46%"></i>' + bar(60),
+  list: () => [0, 1, 2, 3].map((i) => '<div class="sk-item"><i class="sk-dot"></i>' + bar(70 - i * 8) + '</div>').join(''),
+  checklist: () => [0, 1, 2, 3].map((i) => '<div class="sk-item"><i class="sk-box"></i>' + bar(72 - i * 9) + '</div>').join(''),
+  steps: () => [0, 1, 2].map((i) => '<div class="sk-item"><i class="sk-dot sk-num"></i><div class="sk-stack">' + bar(50 - i * 6) + bar(78) + '</div></div>').join(''),
+  timeline: () => [0, 1, 2].map((i) => '<div class="sk-item"><i class="sk-dot"></i><div class="sk-stack">' + bar(24) + bar(60 - i * 6) + '</div></div>').join(''),
+  plan: () => bar(40) + [0, 1, 2].map((i) => '<div class="sk-item"><i class="sk-box"></i>' + bar(70 - i * 10) + '</div>').join('') + bar(34),
+  tabs: () => '<div class="sk-tabs">' + bar(18, 'sk-pill') + bar(18, 'sk-pill') + bar(18, 'sk-pill') + '</div>' + bar(90) + bar(75) + bar(82),
+  accordion: () => [0, 1, 2].map(() => '<div class="sk-row sk-head">' + bar(50) + '</div>').join(''),
+  form: () => [0, 1, 2].map(() => '<div class="sk-stack">' + bar(24) + '<i class="sk-input"></i></div>').join('') + '<i class="sk-bar sk-btn" style="width:28%"></i>',
+  callout: () => '<div class="sk-item"><i class="sk-dot"></i><div class="sk-stack">' + bar(35) + bar(80) + '</div></div>',
+  code: () => [60, 82, 44, 70, 38].map((w) => bar(w, 'sk-code')).join(''),
+  data_summary: () => '<div class="sk-metrics"><i class="sk-metric"></i><i class="sk-metric"></i><i class="sk-metric"></i></div>' + bar(88) + bar(70),
+  source_list: () => [0, 1, 2].map(() => '<div class="sk-stack">' + bar(45) + bar(80) + '</div>').join(''),
+  card: () => bar(40) + bar(90) + bar(72),
+};
+const SK_FALLBACK = (SK.card);
+
+/** One placeholder card for a component type that is expected but not complete yet. */
+export function skeletonNodeHtml(type) {
+  return '<section class="cui-node cui-skel" aria-hidden="true" data-skel="' + h(type) + '">' + (SK[type] || SK_FALLBACK)() + '</section>';
+}
+
+/** Placeholder for a picture or design being made: the frame it will fill. */
+export function skeletonHtml(kind) {
+  if (kind === 'design') {
+    return '<div class="media-skel media-skel--design" role="status" aria-label="Laying out your design"><div class="media-skel-canvas">' +
+      '<i class="sk-bar sk-big" style="width:62%"></i>' + bar(40) +
+      '<i class="sk-hero"></i><div class="sk-stack">' + bar(88) + bar(74) + bar(80) + '</div><i class="sk-bar sk-btn" style="width:30%"></i>' +
+      '</div><div class="media-skel-cap">Laying out your design…</div></div>';
+  }
+  return '<div class="media-skel media-skel--image" role="status" aria-label="Creating your image"><div class="media-skel-canvas media-skel-canvas--image">' +
+    '<i class="ph ph-image media-skel-icon" aria-hidden="true"></i></div><div class="media-skel-cap">Creating your image…</div></div>';
+}
+
 /**
  * Returns the HTML for a message's UI blocks ('' when there are none or none
  * are valid). `msgIndex` ties the root to its message so state can be saved;
@@ -270,6 +313,37 @@ export function renderUiHtml(blocks, msgIndex, fresh) {
   const safe = validateUi(blocks);
   if (!safe.length) return '';
   return '<div class="cui' + (fresh ? ' cui--fresh' : '') + '" data-cui-root' + (Number.isInteger(msgIndex) ? ' data-cui-msg="' + msgIndex + '"' : '') + '>' + nodesHtml(safe) + '</div>';
+}
+
+/**
+ * Live preview while a reply is still arriving. Adds new components and
+ * replaces only the ones whose data changed, so earlier ones never flicker.
+ * Not interactive; the finished message is wired normally.
+ */
+export function liveUiUpdate(container, blocks, pending) {
+  const safe = validateUi(blocks);
+  if (!container || (!safe.length && !(pending && pending.length))) return;
+  let root = container.querySelector('[data-cui-live]');
+  if (!root) {
+    container.insertAdjacentHTML('beforeend', '<div class="cui cui--live" data-cui-live aria-busy="true"></div>');
+    root = container.querySelector('[data-cui-live]');
+    root._sig = [];
+  }
+  safe.forEach((b, i) => {
+    const sig = JSON.stringify(b);
+    if (root._sig[i] === sig) return;
+    root._sig[i] = sig;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = node(b, {});
+    const el = tmp.firstElementChild;
+    if (!el) return;
+    const old = root.children[i];
+    if (old && !old.classList.contains('cui-skel')) root.replaceChild(el, old);
+    else { el.classList.add('cui-enter'); root.appendChild(el); }
+  });
+  // Placeholders for components the model has started but not finished.
+  root.querySelectorAll('.cui-skel').forEach((x) => x.remove());
+  (pending || []).slice(0, 3).forEach((t) => root.insertAdjacentHTML('beforeend', skeletonNodeHtml(t)));
 }
 
 /** Re-draws one message's UI in place (after a patch). Returns true when drawn. */

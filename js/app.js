@@ -11,7 +11,7 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
-import { renderUiHtml, wireUi, refreshUi } from './ui-render.js';
+import { renderUiHtml, wireUi, refreshUi, liveUiUpdate, skeletonHtml } from './ui-render.js';
 import { validateUi, applyPatches, findUiNode } from '../ui-schema.js';
 import { shouldOfferSandbox } from '../sandbox-intent.js';
 
@@ -1829,6 +1829,7 @@ async function runStreamedTurn(payload, resume) {
       onStepStart: (m) => live.addStepStart(m),
       onStep: (step) => live.addStep(step),
       onMedia: (m) => { if (m && turn.media.length < 6) turn.media.push(m); },
+      onUi: (d) => { if (d && Array.isArray(d.ui)) live.showUi(d.ui, d.pending); },
       onSandboxCall: (c) => live.addPendingRow(c && c.summary),
       onDone: (data) => {
         if (data && data.pendingSandboxCall) { paused = data; return; }
@@ -1983,6 +1984,7 @@ async function streamChatSSE(url, options, handlers) {
     else if (eventName === 'step_start') handlers.onStepStart && handlers.onStepStart(data);
     else if (eventName === 'sandbox_call') handlers.onSandboxCall && handlers.onSandboxCall(data);
     else if (eventName === 'media') handlers.onMedia && handlers.onMedia(data);
+    else if (eventName === 'ui') handlers.onUi && handlers.onUi(data);
     else if (eventName === 'error') handlers.onError && handlers.onError(data);
     else if (eventName === 'done') handlers.onDone && handlers.onDone(data);
     // Unknown event names are ignored rather than treated as fatal, so a
@@ -2124,10 +2126,27 @@ function createLiveTurnIndicator() {
     if (!text && workStartedAt === null) return;
     putPending(text, '');
   }
-  function addStepStart(m) { if (m) putPending(m.summary, m.providerLabel); }
+  // Placeholder shaped like the picture/design being made; swapped for the real
+  // result when the message arrives.
+  let skelEl = null;
+  function showSkeleton(kind) {
+    if (skelEl) return;
+    skelEl = htmlToElement(skeletonHtml(kind));
+    el.querySelector('.message-body').appendChild(skelEl);
+    scrollToBottom();
+  }
+  function clearSkeleton() { if (skelEl) { skelEl.remove(); skelEl = null; } }
+
+  function addStepStart(m) {
+    if (!m) return;
+    putPending(m.summary, m.providerLabel);
+    if (m.name === 'generate_image') showSkeleton('image');
+    else if (m.name === 'create_design') showSkeleton('design');
+  }
 
   function addStep(step) {
     if (!step) return;
+    clearSkeleton();
     reveal();
     if (step.type === 'awaiting_confirmation') {
       if (pendingItem) { pendingItem.remove(); pendingItem = null; }
@@ -2210,7 +2229,16 @@ function createLiveTurnIndicator() {
   }
   function stopWorkClock() { if (workStartedAt !== null && workEndedAt === null) workEndedAt = performance.now(); }
 
-  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, remove };
+  // Progressive structured UI (SSE `ui` frames). Hides the idle dots and draws
+  // components as they become valid; the final message replaces this preview.
+  function showUi(blocks, pending) {
+    const idle = el.querySelector('[data-role="idle-indicator"]');
+    if (idle) idle.hidden = true;
+    liveUiUpdate(el.querySelector('.message-body'), blocks, pending);
+    scrollToBottom();
+  }
+
+  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, remove };
 }
 
 /* ── Files the person can take away ───────────────────────────────────
