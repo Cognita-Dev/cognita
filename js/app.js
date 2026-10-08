@@ -101,6 +101,12 @@ let conversationMeta = [];
 // copied to a different conversation, never sent for a different one.
 // Shape: [{ provider, scope, approvedActionClasses: string[] }]
 let conversationApprovals = [];
+// Design requirements card (create_design). What the person supplied for this
+// chat's designs, so Cognita never asks for the same thing twice. Images are
+// kept only in memory; text answers are rebuilt from the saved cards on reload.
+let conversationDesignAssets = {};   // { logo, photo, artwork } -> { mime, base64, w, h }
+let conversationDesignFacts = {};    // { name, when, venue, contact, price }
+let conversationDesignSkipped = [];  // field ids the person chose to leave out
 let currentConversationId = null;
 let isSending = false;
 let activeThinkingTimers = {};
@@ -757,6 +763,7 @@ async function _reconcileWithB2Inner() {
           conversation = [];
           conversationMeta = [];
           conversationApprovals = [];
+          resetDesignState(false);
           renderConversation();
           updateConversationTitle();
           showToast('This chat was deleted from another device.');
@@ -925,6 +932,7 @@ function loadConversation(id) {
     conversation = [];
     conversationMeta = [];
     conversationApprovals = [];
+    resetDesignState(false);
     loadingConversationId = entry.id;
     renderConversationLoading();
     document.getElementById('conversationTitle').textContent = displayTitleFor(entry);
@@ -947,6 +955,7 @@ function loadConversation(id) {
   conversation = entry.messages;
   conversationMeta = entry.meta || [];
   conversationApprovals = entry.approvals || [];
+  resetDesignState(true);
   if (entry.quality) setQuality(entry.quality);
   renderConversation();
   updateConversationTitle();
@@ -975,6 +984,7 @@ function deleteConversation(id) {
     conversation = [];
     conversationMeta = [];
     conversationApprovals = [];
+    resetDesignState(false);
     renderConversation();
     updateConversationTitle();
   }
@@ -999,6 +1009,7 @@ function startNewConversation() {
   conversation = [];
   conversationMeta = [];
   conversationApprovals = [];
+  resetDesignState(false);
   renderConversation();
   updateConversationTitle();
   renderSidebarHistory();
@@ -1687,6 +1698,7 @@ async function sendMessage(text) {
     approvals: conversationApprovals,
     sandboxHint: sendingDataFile || conversationHasSandbox(),
     mediaHint: conversationHasMedia(),
+    ...designPayload(text),
   };
   if (outgoingImages.length > 0) payload.images = outgoingImages;
 
@@ -1746,6 +1758,8 @@ async function runStreamedTurn(payload, resume) {
       elapsedMs,
       workMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
+      // create_design is waiting for details or files (see renderDesignRequestHtml).
+      designRequest: data.pendingDesignRequest ? { ...data.pendingDesignRequest, status: 'pending' } : null,
       // Files from the workspace the person can download, shown under the
       // answer (see renderDeliverablesHtml). Only path, title and size are kept.
       deliverables: cleanDeliverables(data.deliverables),
@@ -3407,6 +3421,7 @@ function renderMessage(msg, index) {
         // full text before the typing animation takes over.
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
+        (!isUser ? renderDesignRequestHtml(meta, index) : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
         (!isUser ? renderMediaHtml(meta, index) : '') +
         documentFileHtml +
@@ -3559,8 +3574,302 @@ async function resolvePendingToolCall(index, approved) {
     approvals: conversationApprovals,
     sandboxHint: conversationHasSandbox(),
     mediaHint: conversationHasMedia(),
+    ...designPayload(''),
   });
 }
+
+/* ── Design requirements card ────────────────────────────────────────
+ * When create_design needs something only the person has (a business or event
+ * name, a date, a venue, contact details, their own logo or photo), the Worker
+ * pauses and sends `pendingDesignRequest`. This card asks for just those
+ * things. Submitting (or skipping) resumes the SAME design request with the
+ * answers merged in, so nothing has to be typed again. Images are shrunk in
+ * the browser first and only used for this design. Approval cards for
+ * connected apps (renderApprovalHtml) are a separate path and are untouched. */
+const DREQ_DRAFTS = {};   // message index -> { logo|photo|artwork: prepared image }
+const DESIGN_WORD_RE = /\b(flyers?|posters?|invitations?|invites?|banners?|designs?|graphics?|logo|social|story|post|thumbnail|certificate)\b/i;
+const DREQ_IMG_ACCEPT = 'image/png,image/jpeg,image/webp';
+
+function resetDesignState(fromMeta) {
+  conversationDesignAssets = {};
+  conversationDesignFacts = {};
+  conversationDesignSkipped = [];
+  Object.keys(DREQ_DRAFTS).forEach((k) => { delete DREQ_DRAFTS[k]; });
+  if (!fromMeta) return;
+  conversationMeta.forEach((m) => {
+    const d = m && m.designRequest;
+    if (!d || d.status === 'pending') return;
+    Object.assign(conversationDesignFacts, d.answers || {});
+    (d.skipped || []).forEach((id) => { if (!conversationDesignSkipped.includes(id)) conversationDesignSkipped.push(id); });
+  });
+}
+
+// What goes along with a chat request. The images are only sent when the
+// message looks like design work, so ordinary chats stay light.
+function designPayload(text) {
+  const out = {};
+  if (Object.keys(conversationDesignAssets).length && (text === '' || DESIGN_WORD_RE.test(text || '') || conversationHasMedia())) {
+    out.designAssets = conversationDesignAssets;
+  }
+  if (Object.keys(conversationDesignFacts).length) out.designFacts = conversationDesignFacts;
+  if (conversationDesignSkipped.length) out.designSkipped = conversationDesignSkipped;
+  return out;
+}
+
+function renderDesignRequestHtml(meta, index) {
+  const d = meta && meta.designRequest;
+  if (!d || !d.request || !Array.isArray(d.request.fields)) return '';
+  const r = d.request;
+  const labelOf = (id) => { const f = r.fields.find((x) => x.id === id); return f ? (f.label || id) : id; };
+
+  if (d.status !== 'pending') {
+    const done = Array.isArray(d.answeredIds) ? d.answeredIds : [];
+    const text = done.length
+      ? 'Added to your design: ' + done.map(labelOf).join(', ')
+      : 'Designing without the extra details';
+    return '<div class="dreq dreq--done" data-index="' + index + '"><i class="ph ' + (done.length ? 'ph-check-circle' : 'ph-minus-circle') + '" aria-hidden="true"></i><span>' + escapeHtml(text) + '</span></div>';
+  }
+
+  const titleId = 'dreq-t-' + index;
+  const fieldsHtml = r.fields.map((f) => {
+    const id = escapeHtml(f.id);
+    const opt = f.optional ? '<span class="dreq-opt">Optional</span>' : '';
+    if (f.type === 'image') {
+      return '<div class="dreq-field dreq-field--image" data-dreq-field="' + id + '">' +
+        '<div class="dreq-label-row"><span class="dreq-label">' + escapeHtml(f.label) + '</span>' + opt + '</div>' +
+        (f.hint ? '<p class="dreq-hint">' + escapeHtml(f.hint) + '</p>' : '') +
+        '<div class="dreq-upload" data-state="empty">' +
+          '<input type="file" class="dreq-file" hidden accept="' + DREQ_IMG_ACCEPT + '" data-dreq-file="' + id + '">' +
+          '<button type="button" class="dreq-pick" data-dreq-pick="' + id + '"><i class="ph ph-upload-simple" aria-hidden="true"></i><span class="dreq-pick-text"><strong>Upload image</strong><small>PNG, JPG or WebP</small></span></button>' +
+          '<div class="dreq-chosen" hidden><img class="dreq-thumb" alt=""><span class="dreq-fname"></span><button type="button" class="dreq-remove" data-dreq-remove="' + id + '">Remove</button></div>' +
+        '</div></div>';
+    }
+    const inId = 'dreq-in-' + index + '-' + id;
+    return '<div class="dreq-field">' +
+      '<label class="dreq-label-row" for="' + inId + '"><span class="dreq-label">' + escapeHtml(f.label) + '</span>' + opt + '</label>' +
+      '<input id="' + inId + '" class="dreq-input" type="text" maxlength="120" autocomplete="off" data-dreq-input="' + id + '" placeholder="' + escapeHtml(f.placeholder || '') + '">' +
+    '</div>';
+  }).join('');
+
+  return (
+    '<section class="dreq" role="group" aria-labelledby="' + titleId + '" data-state="pending" data-index="' + index + '">' +
+      '<div class="dreq-top">' +
+        '<span class="dreq-tile" aria-hidden="true"><i class="ph ph-paint-brush-broad"></i></span>' +
+        '<span class="dreq-who"><span class="dreq-over">Design brief</span><span class="dreq-kind">' + escapeHtml(r.kindLabel || 'Design') + '</span></span>' +
+      '</div>' +
+      '<div class="dreq-title" id="' + titleId + '" role="heading" aria-level="3">' + escapeHtml(r.title || 'A few details to finish your design') + '</div>' +
+      (r.intro ? '<p class="dreq-intro">' + escapeHtml(r.intro) + '</p>' : '') +
+      '<div class="dreq-fields">' + fieldsHtml + '</div>' +
+      '<div class="dreq-actions">' +
+        '<button type="button" class="appr-btn appr-btn--primary dreq-submit" data-dreq-action="submit" data-index="' + index + '" disabled>Create my design</button>' +
+        '<button type="button" class="appr-btn appr-btn--ghost" data-dreq-action="skip" data-index="' + index + '">Skip, design without</button>' +
+      '</div>' +
+      '<p class="dreq-note">Anything you add is used only for this design.</p>' +
+    '</section>'
+  );
+}
+
+function refreshDesignRequest(index) {
+  const list = document.getElementById('messageList');
+  const msgEl = list && list.children[index];
+  const meta = conversationMeta[index];
+  if (!msgEl || !meta) return;
+  const old = msgEl.querySelector('.dreq');
+  const html = renderDesignRequestHtml(meta, index);
+  if (!html) { if (old) old.remove(); return; }
+  if (old) old.replaceWith(htmlToElement(html));
+}
+
+// Shrinks a picked image in the browser. Logos stay PNG (keeps transparency),
+// photos become JPEG. Keeps the upload small and the design sharp.
+function prepareDesignImage(file, kind) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const longEdge = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+        const encode = (max) => {
+          const k = Math.min(1, max / longEdge);
+          const w = Math.max(1, Math.round(img.naturalWidth * k));
+          const h = Math.max(1, Math.round(img.naturalHeight * k));
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          const cx = cv.getContext('2d');
+          if (kind !== 'logo') { cx.fillStyle = '#FFFFFF'; cx.fillRect(0, 0, w, h); }
+          cx.drawImage(img, 0, 0, w, h);
+          let mime = kind === 'logo' ? 'image/png' : 'image/jpeg';
+          let dataUrl = cv.toDataURL(mime, 0.88);
+          if (kind === 'logo' && dataUrl.length > 900000) {
+            const webp = cv.toDataURL('image/webp', 0.9);
+            if (webp.startsWith('data:image/webp')) { mime = 'image/webp'; dataUrl = webp; }
+          }
+          return { mime, dataUrl, w, h };
+        };
+        let out = encode(kind === 'logo' ? 900 : 1600);
+        if (out.dataUrl.length > 1600000) out = encode(kind === 'logo' ? 600 : 1100);
+        URL.revokeObjectURL(url);
+        if (out.dataUrl.length > 1700000) { reject(new Error('too large')); return; }
+        resolve({ mime: out.mime, base64: out.dataUrl.split(',')[1], w: out.w, h: out.h, name: file.name, dataUrl: out.dataUrl });
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+    img.src = url;
+  });
+}
+
+function dreqHasInput(card) {
+  const index = parseInt(card.dataset.index, 10);
+  const texts = Array.from(card.querySelectorAll('.dreq-input')).some((el) => el.value.trim());
+  const imgs = DREQ_DRAFTS[index] && Object.keys(DREQ_DRAFTS[index]).length > 0;
+  return texts || !!imgs;
+}
+
+function dreqSyncSubmit(card) {
+  const btn = card.querySelector('.dreq-submit');
+  if (btn) btn.disabled = !dreqHasInput(card);
+}
+
+async function dreqHandleFile(card, slot, file) {
+  if (!file) return;
+  const index = parseInt(card.dataset.index, 10);
+  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) { showToast('Please choose a PNG, JPG or WebP image.'); return; }
+  if (file.size > 15 * 1024 * 1024) { showToast('That image is over 15 MB. Please pick a smaller one.'); return; }
+  const box = card.querySelector('[data-dreq-field="' + slot + '"] .dreq-upload');
+  if (!box) return;
+  box.dataset.state = 'busy';
+  try {
+    const asset = await prepareDesignImage(file, slot === 'logo' ? 'logo' : 'photo');
+    DREQ_DRAFTS[index] = DREQ_DRAFTS[index] || {};
+    DREQ_DRAFTS[index][slot] = asset;
+    box.querySelector('.dreq-thumb').src = asset.dataUrl;
+    box.querySelector('.dreq-fname').textContent = file.name;
+    box.querySelector('.dreq-chosen').hidden = false;
+    box.querySelector('.dreq-pick').hidden = true;
+    box.dataset.state = 'filled';
+  } catch (e) {
+    box.dataset.state = 'empty';
+    showToast('Could not use that image. Try a different one.');
+  }
+  dreqSyncSubmit(card);
+}
+
+async function submitDesignRequest(index, skip) {
+  const meta = conversationMeta[index];
+  const d = meta && meta.designRequest;
+  if (!d || d.status !== 'pending' || isSending) return;
+  const card = document.querySelector('.dreq[data-index="' + index + '"]');
+  const answers = {};
+  const assets = {};
+  const skipped = [];
+  d.request.fields.forEach((f) => {
+    if (skip) { skipped.push(f.id); return; }
+    if (f.type === 'image') {
+      const a = DREQ_DRAFTS[index] && DREQ_DRAFTS[index][f.id];
+      if (a) assets[f.id] = a; else skipped.push(f.id);
+    } else {
+      const el = card && card.querySelector('[data-dreq-input="' + f.id + '"]');
+      const v = el ? el.value.trim().slice(0, 120) : '';
+      if (v) answers[f.id] = v; else skipped.push(f.id);
+    }
+  });
+
+  Object.assign(conversationDesignFacts, answers);
+  Object.keys(assets).forEach((k) => {
+    const a = assets[k];
+    conversationDesignAssets[k] = { mime: a.mime, base64: a.base64, w: a.w, h: a.h };
+  });
+  skipped.forEach((id) => { if (!conversationDesignSkipped.includes(id)) conversationDesignSkipped.push(id); });
+
+  const answeredIds = Object.keys(answers).concat(Object.keys(assets));
+  meta.designRequest = { name: d.name, args: d.args, request: d.request, status: answeredIds.length ? 'submitted' : 'skipped', answers, answeredIds, skipped };
+  delete DREQ_DRAFTS[index];
+  refreshDesignRequest(index);
+  persistCurrentConversation();
+
+  isSending = true;
+  try {
+    await runStreamedTurn({
+      messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+      quality: currentQuality,
+      designResume: { args: d.args, answers },
+      designAssets: Object.keys(conversationDesignAssets).length ? conversationDesignAssets : undefined,
+      designFacts: conversationDesignFacts,
+      designSkipped: conversationDesignSkipped,
+      approvals: conversationApprovals,
+      sandboxHint: conversationHasSandbox(),
+      mediaHint: true,
+    });
+  } finally {
+    isSending = false;
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (!(t instanceof Element)) return;
+  const pick = t.closest('[data-dreq-pick]');
+  if (pick) {
+    const input = pick.closest('.dreq-upload').querySelector('.dreq-file');
+    if (input) input.click();
+    return;
+  }
+  const rm = t.closest('[data-dreq-remove]');
+  if (rm) {
+    const card = rm.closest('.dreq');
+    const slot = rm.dataset.dreqRemove;
+    const index = parseInt(card.dataset.index, 10);
+    if (DREQ_DRAFTS[index]) delete DREQ_DRAFTS[index][slot];
+    const box = rm.closest('.dreq-upload');
+    box.querySelector('.dreq-file').value = '';
+    box.querySelector('.dreq-chosen').hidden = true;
+    box.querySelector('.dreq-pick').hidden = false;
+    box.dataset.state = 'empty';
+    dreqSyncSubmit(card);
+    return;
+  }
+  const act = t.closest('[data-dreq-action]');
+  if (act && !act.disabled) submitDesignRequest(parseInt(act.dataset.index, 10), act.dataset.dreqAction === 'skip');
+});
+
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement && t.classList.contains('dreq-file')) {
+    const card = t.closest('.dreq');
+    if (card) dreqHandleFile(card, t.dataset.dreqFile, t.files && t.files[0]);
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement && t.classList.contains('dreq-input')) {
+    const card = t.closest('.dreq');
+    if (card) dreqSyncSubmit(card);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (e.key === 'Enter' && t instanceof HTMLInputElement && t.classList.contains('dreq-input')) {
+    const card = t.closest('.dreq');
+    const btn = card && card.querySelector('.dreq-submit');
+    if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+  }
+});
+
+['dragover', 'drop'].forEach((evt) => {
+  document.addEventListener(evt, (e) => {
+    const zone = e.target instanceof Element ? e.target.closest('.dreq-pick') : null;
+    if (!zone) return;
+    e.preventDefault();
+    if (evt === 'drop') {
+      const card = zone.closest('.dreq');
+      const slot = zone.dataset.dreqPick;
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (card && file) dreqHandleFile(card, slot, file);
+    }
+  });
+});
 
 // Briefly turns the copy icon into a tick so the person can see the copy
 // worked, then puts the normal icon back.
