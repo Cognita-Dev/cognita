@@ -14,6 +14,7 @@ import {
 import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
 import * as mediaTools from './media-tools.js';
+import { extractUiBlocks } from './ui-schema.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Agent loop bounds (see Bug 2 in the audit doc). A user request can
@@ -1319,8 +1320,23 @@ export async function handleChatRequest(request, env) {
     reply = 'Would you like me to go ahead?';
   }
 
+  // Structured UI the model chose for this answer (see ui-schema.js). The
+  // fenced block is removed from the visible text and validated here; the
+  // browser validates it again before drawing anything. A paused turn
+  // (confirmation, design questions, sandbox hand-off) never carries UI.
+  let ui = [];
+  if (!pendingToolCall && !pendingDesignRequest && !pendingSandboxCall) {
+    const extracted = extractUiBlocks(reply);
+    ui = extracted.ui;
+    reply = extracted.text;
+    if (ui.length && !reply.trim()) reply = (ui[0].props && ui[0].props.title) || 'Here you go.';
+  } else {
+    reply = extractUiBlocks(reply).text;
+  }
+
   return {
     reply,
+    ui,
     // `thinking` is only ever the sanitized, first-person-normalized
     // version of the model's real reasoning (see
     // _cleanReasoningForDisplay) — never the raw text. `thinkingHeading`

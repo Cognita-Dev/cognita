@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-08.1';
+export const PROMPT_VERSION = '2026-10-08.2';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -220,6 +220,28 @@ const IMAGE_RULES =
   'text in an image is hard to read or something they asked about is not ' +
   'visible, say so plainly.';
 
+
+// Only sent when the interface can draw structured components. Appended after
+// the media rules so every earlier variant keeps its cacheable beginning.
+const UI_RULES =
+  'Plain text is the default. Greetings, questions and ordinary conversation get a normal written answer with no components. ' +
+  'Only when a structure clearly helps the person understand or act (a comparison, numbers, a plan, a checklist, a schedule, ' +
+  'a form to fill, a set of sources) you may add ONE fenced block after your written answer, never instead of it: ' +
+  '```cognita-ui then one JSON object {"type","props","children","actions"} then ```. Put several in one ```cognita-ui fence as ' +
+  'a JSON array only when each earns its place. Use only these types: card, table, stat, bar_chart, line_chart, pie_chart, list, checklist, steps, tabs, accordion, form, timeline, callout, code, data_summary, source_list, plan, document_result, media_result. ' +
+  'Props: card{title,description,content}; table{title,caption,columns[],rows[][]}; stat{label,value,explanation}; ' +
+  'bar_chart|line_chart|pie_chart{title,labels[],values[] or series[{name,values[]}],xLabel,yLabel}; list{title,ordered,items[]}; ' +
+  'checklist{title,items[{text,checked}]}; steps{title,items[{title,description,status:todo|doing|done}]}; tabs{tabs[{label,content}]}; ' +
+  'accordion{sections[{title,content}]}; form{title,description,fields[{name,label,type:text|textarea|select|checkbox|switch,options[],required}],submitLabel,submitPrompt}; ' +
+  'timeline{items[{date,title,description}]}; callout{variant:info|warning|success,title,content}; code{title,language,code}; ' +
+  'data_summary{title,findings[],metrics[{label,value}]} with optional table or chart children; source_list{title,sources[{title,url,description}]}; ' +
+  'plan{title,description,sections[{title,tasks[{text,done}]}]}. "actions" is an optional list of {label,prompt}; a button sends that prompt back to you, so use it only for follow-ups that need your thinking. ' +
+  'Checklists, tabs, accordions, sorting and chart views already work in the browser without you. ' +
+  'Never write HTML, CSS, JavaScript or invented component names. Components display information; they are not tools and do not do anything. ' +
+  'Run code in the workspace, call connectors and create documents, images and designs with the real tools, and report only what those tools actually did. ' +
+  'Use document_result or media_result only after the real tool has produced the file or picture. ' +
+  'Use real numbers from the person or from tool results; never invent data to fill a chart.';
+
 // ── Static prefixes, built ONCE when the Worker starts ─────────────────
 // Joined with blank lines so each module reads as its own paragraph.
 const join = (parts) => parts.join('\n\n');
@@ -246,7 +268,7 @@ function _baseFor(hasTools, hasSandbox) {
 // starts with exactly the same text as the one without them.
 function _staticFor(hasTools, hasSandbox, hasMedia) {
   const base = _baseFor(hasTools, hasSandbox);
-  return hasMedia ? base + '\n\n' + MEDIA_RULES : base;
+  return (hasMedia ? base + '\n\n' + MEDIA_RULES : base) + '\n\n' + UI_RULES;
 }
 
 // Image questions: its own slim prompt (no reasoning rules, no tool rules).
