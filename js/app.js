@@ -1811,7 +1811,8 @@ async function runStreamedTurn(payload, resume) {
     // anything newly approved this turn — so this conversation never
     // re-asks for the same write again (Bug 4).
     if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
-    freshAssistantIndex = conversation.length - 1;
+    // Text already streamed live from the model: don't replay the typewriter over it.
+    freshAssistantIndex = (live && live.streamedText && live.streamedText()) ? -1 : conversation.length - 1;
     const uiTouched = applyIncomingUiPatches(data.uiPatches);
     renderConversation();
     uiTouched.forEach((i) => { if (conversationMeta[i]) refreshUi(document, i, conversationMeta[i].ui); });
@@ -2246,6 +2247,7 @@ function createLiveTurnIndicator() {
   // HTML. The final message (`done`) replaces this preview, so nothing is
   // duplicated. `text_reset` drops a model turn that was not the final answer.
   let liveTextEl = null;
+  let streamedAny = false;
   function showText(t) {
     const body = el.querySelector('.message-body');
     if (!body || !t) return;
@@ -2259,15 +2261,17 @@ function createLiveTurnIndicator() {
       if (liveUi) body.insertBefore(liveTextEl, liveUi); else body.appendChild(liveTextEl);
     }
     liveTextEl.textContent += t;
+    streamedAny = true;
     scrollToBottom();
   }
   function resetStream() {
     if (liveTextEl) { liveTextEl.remove(); liveTextEl = null; }
+    streamedAny = false;
     const liveUi = el.querySelector('[data-cui-live]');
     if (liveUi) liveUi.remove();
   }
 
-  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream, remove };
+  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream, streamedText: () => streamedAny, remove };
 }
 
 /* ── Files the person can take away ───────────────────────────────────
