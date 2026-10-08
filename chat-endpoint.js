@@ -176,31 +176,75 @@ function _mergeApproval(approvals, provider, scope, actionClass) {
   return list;
 }
 
-// Pushes structured UI to the browser as `event: ui` frames while the reply is
-// being delivered, so components appear one by one (and fill in) before the
-// final `done` frame. The reply text is fed through the same incremental parser
-// (createUiStream) that handles a half-written fence; each frame carries only
-// validated blocks/patches. `done` still carries the full, final result.
-async function _streamUiFrames(emit, reply) {
-  if (typeof reply !== 'string' || !reply.includes('cognita-ui')) return;
-  const s = createUiStream();
-  const STEP = Math.max(160, Math.ceil(reply.length / 40));
+// Forwards the model's reply to the browser while it is still being written.
+// Provider text chunks arrive through onText (see providers.js streaming):
+//   - prose goes out as `event: text` frames ({ t }), with the cognita-ui fence
+//     and any <think> block held back so raw JSON / reasoning never shows as text;
+//   - the same chunks feed the existing incremental parser (createUiStream), and
+//     only validated blocks/patches go out as `event: ui` frames.
+// `event: text_reset` tells the browser to drop what it showed for a model turn
+// that turned out not to be the final answer (tool call, grounding retry).
+// `done` still carries the full, final, validated result and replaces the preview.
+const _FENCE = '```cognita-ui';
+function _makeTurnStreamer(emit) {
+  let raw = '';
+  let sent = '';
+  let ui = createUiStream();
+  let lastSig = '';
+  let streamed = false;
   const count = (list) => list.reduce((n, b) => n + 1 + count(b.children || []) + ((b.props && Array.isArray(b.props.items) && (b.type === 'tabs' || b.type === 'accordion')) ? b.props.items.reduce((m, it) => m + count(it.children || []), 0) : 0), 0);
-  let last = '';
-  for (let i = 0; i < reply.length; i += STEP) {
-    const seen = reply.slice(0, i + STEP);
-    const r = s.push(reply.slice(i, i + STEP));
-    // Component types the model has started writing but that are not complete
-    // yet: the browser shows a placeholder shaped like each one.
-    const started = (seen.match(/"type"\s*:\s*"([a-z_]+)"/g) || []).map((m) => m.replace(/.*"([a-z_]+)"$/, '$1')).filter((t) => UI_TYPES.includes(t));
-    const pending = started.slice(count(r.ui)).slice(0, 3);
-    const sig = JSON.stringify([r.ui, r.patches, pending]);
-    if ((r.ui.length || r.patches.length || pending.length) && sig !== last) {
-      last = sig;
-      emit('ui', { ui: r.ui, patches: r.patches, pending });
-      await new Promise((res) => setTimeout(res, 45));
+
+  function visibleOf(text, final) {
+    let v = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+    const t = v.indexOf('<think>');
+    if (t !== -1) v = v.slice(0, t);
+    const f = v.indexOf(_FENCE);
+    if (f !== -1) return v.slice(0, f);
+    if (!final) {
+      // hold back a trailing piece that might be the start of the fence or tag
+      for (const tok of [_FENCE, '<think>']) {
+        for (let k = Math.min(tok.length - 1, v.length); k > 0; k--) {
+          if (tok.startsWith(v.slice(v.length - k))) return v.slice(0, v.length - k);
+        }
+      }
+    }
+    return v;
+  }
+  function flushText(final) {
+    const v = visibleOf(raw, final);
+    if (v.length > sent.length && v.startsWith(sent)) {
+      const t = v.slice(sent.length);
+      sent = v;
+      streamed = true;
+      emit('text', { t });
     }
   }
+  function onText(delta) {
+    if (!delta) return;
+    raw += delta;
+    flushText(false);
+    if (raw.indexOf('cognita-ui') === -1) return;
+    let r;
+    try { r = ui.push(delta); } catch (_) { return; }
+    // Component types the model has started writing but that are not complete yet.
+    const started = (raw.match(/"type"\s*:\s*"([a-z_]+)"/g) || []).map((m) => m.replace(/.*"([a-z_]+)"$/, '$1')).filter((t) => UI_TYPES.includes(t));
+    const pending = started.slice(count(r.ui)).slice(0, 3);
+    const sig = JSON.stringify([r.ui, r.patches, pending]);
+    if ((r.ui.length || r.patches.length || pending.length) && sig !== lastSig) {
+      lastSig = sig;
+      streamed = true;
+      emit('ui', { ui: r.ui, patches: r.patches, pending });
+    }
+  }
+  return {
+    onText,
+    finish() { flushText(true); },
+    reset() {
+      if (streamed) emit('text_reset', {});
+      raw = ''; sent = ''; lastSig = ''; streamed = false;
+      ui = createUiStream();
+    },
+  };
 }
 
 /** Runs the model with tools if any are available, degrading to a plain
@@ -680,11 +724,14 @@ export async function handleChatRequest(request, env) {
   // A `: ping` comment line is sent periodically as a heartbeat so
   // intermediate proxies/CDNs don't time out an idle-looking connection
   // during a long model call.
+  const abortCtl = new AbortController();
   function _sseError(message, status) {
     return Object.assign(new Error(message), { __sseError: true, status });
   }
 
   async function _agent(emit) {
+  const streamer = _makeTurnStreamer(emit);
+  const streamOptions = Object.assign({}, cacheOptions, { onText: streamer.onText, signal: abortCtl.signal });
   let result;
   let pendingToolCall = null;
   let pendingDesignRequest = null;
@@ -764,7 +811,7 @@ export async function handleChatRequest(request, env) {
       if (tools.length === 0 && !confirmToolCall && !sandboxResume) {
         // Nothing connected — identical to the pre-tools code path, no
         // overhead for users who haven't set up any connector.
-        result = await callWithFallback(tierConfig, messages, env, cacheOptions);
+        result = await callWithFallback(tierConfig, messages, env, streamOptions);
       } else {
         // ── The bounded, recorded agent loop (Bug 2) ──
         // `workingMessages` accumulates plain assistant/user turns as
@@ -896,8 +943,11 @@ export async function handleChatRequest(request, env) {
         if (!quotaExceededError) {
           while (round < maxRounds) {
             if (!result) {
+              streamer.reset();
               emit('round', { round });
-              result = await _modelTurn(tierConfig, workingMessages, tools, env, cacheOptions);
+              result = await _modelTurn(tierConfig, workingMessages, tools, env, streamOptions);
+              // A turn that asks for a tool is internal: drop any preamble it streamed.
+              if (result && result.toolCalls && result.toolCalls.length) streamer.reset();
             }
 
             const call = result.toolCalls && result.toolCalls.length ? result.toolCalls[0] : null;
@@ -1284,7 +1334,7 @@ export async function handleChatRequest(request, env) {
         }
       }
     } else {
-      result = await callWithFallback(tierConfig, messages, env, cacheOptions);
+      result = await callWithFallback(tierConfig, messages, env, streamOptions);
     }
   } catch (e) {
     console.error('[chat] model call failed:', e.message);
@@ -1354,7 +1404,7 @@ export async function handleChatRequest(request, env) {
   let ui = [];
   let uiPatches = [];
   if (!pendingToolCall && !pendingDesignRequest && !pendingSandboxCall) {
-    try { await _streamUiFrames(emit, reply); } catch (_) { /* streaming is best effort; `done` carries the result */ }
+    try { streamer.finish(); } catch (_) { /* streaming is best effort; `done` carries the result */ }
     const extracted = extractUiBlocks(reply);
     ui = extracted.ui;
     uiPatches = extracted.patches || [];
@@ -1441,6 +1491,7 @@ export async function handleChatRequest(request, env) {
       }
     },
     cancel() {
+      abortCtl.abort(); // stop the provider stream when the browser disconnects
       // Client navigated away / aborted the fetch — nothing further to
       // clean up here since the heartbeat/controller are scoped inside
       // start() and torn down in its own finally block.

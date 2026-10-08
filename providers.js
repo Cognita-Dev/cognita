@@ -283,11 +283,195 @@ export async function callVisionModel(model, messages, images, env) {
   return { text, finishReason: 'stop', reasoning: null };
 }
 
+// ── Real streaming (provider → Worker) ─────────────────────────────────
+// When a caller passes options.onText, the provider call is made with
+// stream:true and every text delta is handed to onText the moment it
+// arrives. The return value keeps the exact same shape as the non-streaming
+// path ({ text, finishReason, reasoning, toolCalls, usage }), so the rest of
+// the agent loop is unchanged. Errors before the first delta are ordinary
+// errors (the fallback chain moves on to the next provider). An error after
+// text was already emitted is flagged err.partial = true: the chain must NOT
+// retry another provider then, because the user has already seen output.
+
+// Yields the `data:` payload of each SSE event. Handles chunk boundaries that
+// split a line or a multi-byte UTF-8 character.
+async function* _sseData(stream, signal) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buf = '';
+  try {
+    while (true) {
+      if (signal && signal.aborted) throw new Error('stream_aborted');
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.search(/\r?\n\r?\n/)) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx).replace(/^\r?\n\r?\n/, '');
+        const data = raw.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
+        if (data) yield data;
+      }
+    }
+    buf += decoder.decode();
+    const tail = buf.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
+    if (tail) yield tail;
+  } finally {
+    try { await reader.cancel(); } catch (_) {}
+  }
+}
+
+function _safeEmit(ctx, delta) {
+  if (!delta) return;
+  try { ctx.onText(delta); } catch (_) { /* a broken listener must not break the model call */ }
+}
+
+// OpenAI-compatible streaming (Groq, OpenRouter, Vercel Gateway).
+async function _streamChatCompletions(name, url, headers, body, ctx, hasTools) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } }),
+    signal: ctx.signal,
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    if (hasTools && res.status === 400 && /tool/i.test(t)) {
+      throw new Error('tools_unsupported:' + name + '_' + res.status + ':' + t.slice(0, 200));
+    }
+    throw new Error(name + '_' + res.status + ':' + t.slice(0, 200));
+  }
+  if (!res.body) throw new Error(name + '_empty');
+
+  let text = '';
+  let reasoning = '';
+  let finishReason;
+  let usage = null;
+  const calls = []; // by delta index
+  let emitted = false;
+  try {
+    for await (const data of _sseData(res.body, ctx.signal)) {
+      if (data === '[DONE]') break;
+      let j;
+      try { j = JSON.parse(data); } catch (_) { continue; } // malformed event: skip it
+      if (j.error) throw new Error(name + '_stream_error:' + String(j.error.message || JSON.stringify(j.error)).slice(0, 200));
+      if (j.usage) usage = _usageFrom(j);
+      const choice = j.choices && j.choices[0];
+      if (!choice) continue;
+      const d = choice.delta || {};
+      if (typeof d.content === 'string' && d.content) {
+        text += d.content;
+        emitted = true;
+        _safeEmit(ctx, d.content);
+      }
+      const r = d.reasoning || d.reasoning_content;
+      if (typeof r === 'string') reasoning += r;
+      if (Array.isArray(d.tool_calls)) {
+        for (const tc of d.tool_calls) {
+          const i = Number.isInteger(tc.index) ? tc.index : 0;
+          const c = calls[i] || (calls[i] = { id: null, name: '', args: '' });
+          if (tc.id) c.id = tc.id;
+          if (tc.function) {
+            if (tc.function.name) c.name += tc.function.name;
+            if (typeof tc.function.arguments === 'string') c.args += tc.function.arguments;
+          }
+        }
+      }
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+    }
+  } catch (e) {
+    if (emitted) e.partial = true;
+    throw e;
+  }
+  const toolCalls = calls.filter((c) => c && c.name).map((c) => ({ id: c.id, name: c.name, args: _safeParseToolArgs(c.args) }));
+  if (!toolCalls.length && !text.trim()) throw new Error(name + '_empty');
+  return {
+    text: text.trim(),
+    finishReason,
+    reasoning: reasoning || null,
+    toolCalls: toolCalls.length ? toolCalls : null,
+    usage,
+  };
+}
+
+async function _streamWorkersAI(messages, model, env, ctx) {
+  if (!env.AI) throw new Error('workersai_not_bound');
+  const cleaned = messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+    .map((m) => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content }));
+  const runOptions = ctx && ctx.sessionId ? { extraHeaders: { 'x-session-affinity': ctx.sessionId } } : undefined;
+  const res = await env.AI.run(model, { messages: cleaned, stream: true }, runOptions);
+  if (!res || typeof res.getReader !== 'function') {
+    // Binding answered without a stream: use it as a single chunk.
+    const t = typeof res?.response === 'string' ? res.response.trim() : '';
+    if (!t) throw new Error('workersai_empty');
+    _safeEmit(ctx, t);
+    return { text: t, finishReason: 'stop', reasoning: null, usage: _usageFrom(res) };
+  }
+  let text = '';
+  let usage = null;
+  let emitted = false;
+  try {
+    for await (const data of _sseData(res, ctx.signal)) {
+      if (data === '[DONE]') break;
+      let j;
+      try { j = JSON.parse(data); } catch (_) { continue; }
+      if (j.usage) usage = _usageFrom(j);
+      const delta = typeof j.response === 'string' ? j.response : (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || '';
+      if (delta) { text += delta; emitted = true; _safeEmit(ctx, delta); }
+    }
+  } catch (e) {
+    if (emitted) e.partial = true;
+    throw e;
+  }
+  if (!text.trim()) throw new Error('workersai_empty');
+  return { text: text.trim(), finishReason: 'stop', reasoning: null, usage };
+}
+
+const _OPENAI_ENDPOINTS = {
+  groq: (env, ctx) => ({
+    name: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions',
+    headers: { Authorization: 'Bearer ' + env.GROQ_API_KEY, 'Content-Type': 'application/json' },
+  }),
+  openrouter: (env, ctx) => ({
+    name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions',
+    headers: Object.assign({
+      Authorization: 'Bearer ' + env.OPENROUTER_API_KEY,
+      'HTTP-Referer': env.APP_ORIGIN || 'https://cognita.app',
+      'X-Title': 'Cognita',
+      'Content-Type': 'application/json',
+    }, ctx && ctx.sessionId ? { 'x-session-id': ctx.sessionId } : {}),
+  }),
+  vercel_v0: (env, ctx) => {
+    if (!env.V0_API_KEY) throw new Error('v0_not_configured');
+    return {
+      name: 'v0', url: 'https://ai-gateway.vercel.sh/v1/chat/completions',
+      headers: Object.assign({ Authorization: 'Bearer ' + env.V0_API_KEY, 'Content-Type': 'application/json' },
+        ctx && ctx.sessionId ? { 'x-session-affinity': ctx.sessionId } : {}),
+    };
+  },
+};
+
+// Shared streaming entry point used by _dispatch / _dispatchWithTools.
+async function _streamDispatch(providerName, messages, model, tools, env, maxTokens, ctx) {
+  if (providerName === 'workersai') return _streamWorkersAI(messages, model, env, ctx);
+  const make = _OPENAI_ENDPOINTS[providerName];
+  if (!make) throw new Error('Unknown provider: ' + providerName);
+  const ep = make(env, ctx);
+  const body = { model, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, temperature: 0.5, messages };
+  if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
+  return _streamChatCompletions(ep.name, ep.url, ep.headers, body, ctx, !!tools);
+}
+
 /**
  * Calls a provider by name. Internal use only — always go through
  * callWithFallback() from outside this file.
  */
 async function _dispatch(providerName, messages, model, env, maxTokens, ctx) {
+  if (ctx && ctx.onText) {
+    const mt = providerName === 'groq' ? _groqMaxTokens(messages, null, maxTokens, env) : maxTokens;
+    return _streamDispatch(providerName, messages, model, null, env, mt, ctx);
+  }
   if (providerName === 'groq') return _callGroq(messages, model, env, _groqMaxTokens(messages, null, maxTokens, env));
   if (providerName === 'openrouter') return _callOpenRouter(messages, model, env, maxTokens, ctx);
   if (providerName === 'vercel_v0') return _callV0(messages, model, env, maxTokens, ctx);
@@ -519,6 +703,10 @@ function _noteStepFailure(step, err, label, what) {
 }
 
 async function _dispatchWithTools(providerName, messages, model, tools, env, maxTokens, ctx) {
+  if (ctx && ctx.onText && providerName !== 'workersai') {
+    const mt = providerName === 'groq' ? _groqMaxTokens(messages, tools, maxTokens, env) : maxTokens;
+    return _streamDispatch(providerName, messages, model, tools, env, mt, ctx);
+  }
   if (providerName === 'groq') return _callGroqWithTools(messages, model, tools, env, _groqMaxTokens(messages, tools, maxTokens, env));
   if (providerName === 'openrouter') return _callOpenRouterWithTools(messages, model, tools, env, maxTokens, ctx);
   if (providerName === 'vercel_v0') return _callV0WithTools(messages, model, tools, env, maxTokens, ctx);
@@ -618,7 +806,7 @@ function _orderStepsByHealth(allSteps) {
  */
 export async function callWithTools(tierConfig, messages, tools, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
-  const ctx = { feature: options.feature, sessionId: options.sessionId };
+  const ctx = { feature: options.feature, sessionId: options.sessionId, onText: options.onText, signal: options.signal };
   const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
@@ -634,6 +822,7 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
       lastErr = err;
       if (!String(err.message).startsWith('tools_unsupported')) allToolsUnsupported = false;
       _noteStepFailure(step, err, i === 0 ? 'primary' : 'fallback #' + i, 'tool-call');
+      if (err && err.partial) throw err; // text already reached the user: never retry elsewhere
     }
   }
 
@@ -669,7 +858,7 @@ export async function callWithTools(tierConfig, messages, tools, env, options = 
  */
 export async function callWithFallback(tierConfig, messages, env, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
-  const ctx = { feature: options.feature, sessionId: options.sessionId };
+  const ctx = { feature: options.feature, sessionId: options.sessionId, onText: options.onText, signal: options.signal };
   const steps = _orderStepsByHealth(_stepsFromTierConfig(tierConfig));
 
   let lastErr = null;
@@ -685,6 +874,7 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
     } catch (err) {
       lastErr = err;
       _noteStepFailure(step, err, i === 0 ? 'primary' : 'fallback #' + i, 'chat');
+      if (err && err.partial) throw err; // text already reached the user: never retry elsewhere
     }
   }
   console.error('[providers] chain exhausted, last error:', lastErr && lastErr.message);
