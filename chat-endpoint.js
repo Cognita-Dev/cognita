@@ -194,24 +194,27 @@ function _makeTurnStreamer(emit) {
   let streamed = false;
   const count = (list) => list.reduce((n, b) => n + 1 + count(b.children || []) + ((b.props && Array.isArray(b.props.items) && (b.type === 'tabs' || b.type === 'accordion')) ? b.props.items.reduce((m, it) => m + count(it.children || []), 0) : 0), 0);
 
+  // `text` is what the existing parser (createUiStream) says is prose: fenced
+  // cognita-ui blocks are already removed (open ones too) and prose written
+  // after a block is kept. Reasoning blocks and a half-typed fence marker are
+  // held back so they never flash up as text.
   function visibleOf(text, final) {
     let v = text.replace(/<think>[\s\S]*?<\/think>/g, '');
     const t = v.indexOf('<think>');
     if (t !== -1) v = v.slice(0, t);
     const f = v.indexOf(_FENCE);
-    if (f !== -1) return v.slice(0, f);
+    if (f !== -1) v = v.slice(0, f);
     if (!final) {
-      // hold back a trailing piece that might be the start of the fence or tag
       for (const tok of [_FENCE, '<think>']) {
         for (let k = Math.min(tok.length - 1, v.length); k > 0; k--) {
-          if (tok.startsWith(v.slice(v.length - k))) return v.slice(0, v.length - k);
+          if (tok.startsWith(v.slice(v.length - k))) { v = v.slice(0, v.length - k); break; }
         }
       }
     }
     return v;
   }
-  function flushText(final) {
-    const v = visibleOf(raw, final);
+  function flushText(parsedText, final) {
+    const v = visibleOf(parsedText, final);
     if (v.length > sent.length && v.startsWith(sent)) {
       const t = v.slice(sent.length);
       sent = v;
@@ -222,10 +225,10 @@ function _makeTurnStreamer(emit) {
   function onText(delta) {
     if (!delta) return;
     raw += delta;
-    flushText(false);
-    if (raw.indexOf('cognita-ui') === -1) return;
-    let r;
-    try { r = ui.push(delta); } catch (_) { return; }
+    let r = null;
+    try { r = ui.push(delta); } catch (_) { r = null; }
+    flushText(r ? r.text : raw, false);
+    if (!r || raw.indexOf('cognita-ui') === -1) return;
     // Component types the model has started writing but that are not complete yet.
     const started = (raw.match(/"type"\s*:\s*"([a-z_]+)"/g) || []).map((m) => m.replace(/.*"([a-z_]+)"$/, '$1')).filter((t) => UI_TYPES.includes(t));
     const pending = started.slice(count(r.ui)).slice(0, 3);
@@ -238,7 +241,7 @@ function _makeTurnStreamer(emit) {
   }
   return {
     onText,
-    finish() { flushText(true); },
+    finish() { let t = raw; try { t = ui.end().text; } catch (_) {} flushText(t, true); },
     reset() {
       if (streamed) emit('text_reset', {});
       raw = ''; sent = ''; lastSig = ''; streamed = false;
