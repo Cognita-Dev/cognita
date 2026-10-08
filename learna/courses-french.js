@@ -23,11 +23,11 @@ export const french = {
   practical: 'Each section ends with a short speaking-or-writing task set in a real situation.',
   assessment: 'Exact-answer exercises are checked by the course. Short writing tasks are marked against a rubric. A lesson is complete when you answer at least 70% of its activities without being shown the answer.',
   modes: ['reading', 'writing', 'vocabulary', 'grammar', 'communication'],
-  language: { explanation: 'English', target: 'French', framework: 'CEFR-inspired (not an official CEFR course)' },
+  language: { explanation: 'English', target: 'French', tts: 'fr-FR', framework: 'CEFR-inspired (not an official CEFR course)' },
   access: 'plus',
   status: 'available',
   featured: true,
-  version: '1.0.0',
+  version: '1.1.0',
   masteryThreshold: 0.7,
   references: [
     { label: 'Council of Europe: CEFR and the Companion Volume (levels and can-do statements)', url: 'https://www.coe.int/en/web/common-european-framework-reference-languages' },
@@ -36,8 +36,8 @@ export const french = {
     section('s1', 'Meeting people', 'Greetings, names and where you are from.', [
       lesson('l1', 'Greeting and introducing yourself', 'By the end of this lesson, you can greet someone, say your name and ask for theirs.', 15, [
         teach('t1', 'explanation', 'Greetings and your name', [
-          'French has one everyday greeting for the daytime: Bonjour. In the evening you can say Bonsoir. To say goodbye, use Au revoir.',
-          'To say your name, use Je m\u2019appelle followed by your name. It means "I am called". To ask a friend or a child, say Tu t\u2019appelles comment ? To ask politely, say Vous vous appelez comment ?',
+          'French has one everyday greeting for the daytime: [[Bonjour]]. In the evening you can say [[Bonsoir]]. To say goodbye, use [[Au revoir]].',
+          'To say your name, use [[Je m\u2019appelle]] followed by your name. It means "I am called". To ask a friend or a child, say [[Tu t\u2019appelles comment]] ? To ask politely, say [[Vous vous appelez comment]] ?',
           'When you meet someone you can say Enchanté if you are a man, or Enchantée if you are a woman. Both mean "pleased to meet you". The two spellings sound the same.',
         ], { label: 'A short meeting', text: 'Bonjour ! Je m\u2019appelle Amina. Tu t\u2019appelles comment ?\nJe m\u2019appelle Paul. Enchanté !' }),
         act('a1', 'guided', 'Choose the greeting', {
@@ -76,9 +76,9 @@ export const french = {
       ]),
       lesson('l2', 'Saying where you are from', 'By the end of this lesson, you can say where you are from and ask another person where they are from.', 20, [
         teach('t1', 'explanation', 'The verb être and the word de', [
-          'The verb être means "to be". For je (I) it is je suis. For tu (you, informal) it is tu es. For il (he) and elle (she) it is il est and elle est.',
+          'The verb être means "to be". For je (I) it is [[je suis]]. For tu (you, informal) it is [[tu es]]. For il (he) and elle (she) it is [[il est]] and [[elle est]].',
           'To say where you are from, use Je suis de followed by a place. Je suis de Lagos. Before a vowel, de becomes d\u2019: Je suis d\u2019Abuja.',
-          'To ask, say Tu es d\u2019où ? or, more politely, Vous êtes d\u2019où ? A common answer is Je suis du Nigeria, because Nigeria is a masculine country in French (le Nigeria). That detail is for later. For now, use city names.',
+          'To ask, say [[Tu es d\u2019où]] ? or, more politely, [[Vous êtes d\u2019où]] ? A common answer is Je suis du Nigeria, because Nigeria is a masculine country in French (le Nigeria). That detail is for later. For now, use city names.',
         ], { label: 'Where are you from?', text: 'Tu es d\u2019où ?\nJe suis de Lagos. Et toi ?\nJe suis d\u2019Accra.' }),
         act('b1', 'guided', 'Choose the right form of être', {
           type: 'choice', prompt: 'Which form completes the sentence? "Tu ____ d\u2019Abuja ?"',
@@ -115,9 +115,9 @@ export const french = {
     section('s2', 'Everyday situations', 'Ordering at a café and asking for directions.', [
       lesson('l1', 'Ordering at a café', 'By the end of this lesson, you can order a drink politely and ask for the bill.', 20, [
         teach('t1', 'explanation', 'Polite requests', [
-          'To order politely, say Je voudrais, which means "I would like". Add the item, then s\u2019il vous plaît ("please"). Je voudrais un café, s\u2019il vous plaît.',
+          'To order politely, say [[Je voudrais]], which means "I would like". Add the item, then [[s\u2019il vous plaît]] ("please"). [[Je voudrais]] un café, [[s\u2019il vous plaît]].',
           'Un is used before masculine nouns: un café, un thé. Une is used before feminine nouns: une eau (a water), une limonade.',
-          'To ask for the bill, say L\u2019addition, s\u2019il vous plaît. To thank someone, say Merci.',
+          'To ask for the bill, say [[L\u2019addition]], [[s\u2019il vous plaît]]. To thank someone, say [[Merci]].',
         ], { label: 'At the café', text: 'Bonjour ! Je voudrais un thé, s\u2019il vous plaît.\nBien sûr. Voilà.\nMerci !' }),
         act('c1', 'guided', 'Order politely', {
           type: 'choice', prompt: 'Which sentence is a polite way to order a coffee?',
@@ -127,8 +127,8 @@ export const french = {
           hints: ['Look for Je voudrais and s\u2019il vous plaît.'], explain: 'Je voudrais plus s\u2019il vous plaît makes a polite request.',
         }),
         act('c2', 'guided', 'Un or une?', {
-          type: 'match', prompt: 'Match each article to the noun it goes with.',
-          pairs: [{ left: 'un', right: 'café' }, { left: 'une', right: 'limonade' }, { left: 'un', right: 'thé' }],
+          type: 'match', prompt: 'Match each noun to the article it goes with.',
+          pairs: [{ left: 'café', right: 'un' }, { left: 'limonade', right: 'une' }, { left: 'thé', right: 'un' }],
           hints: ['Café and thé are masculine. Limonade is feminine.'], explain: 'un café, une limonade, un thé.',
         }),
         act('c3', 'independent', 'Ask for the bill', {
@@ -151,9 +151,9 @@ export const french = {
       ]),
       lesson('l2', 'Asking for directions', 'By the end of this lesson, you can ask where a place is and understand three basic directions.', 20, [
         teach('t1', 'explanation', 'Where is it?', [
-          'To ask where a place is, say Où est followed by the place. Où est la gare ? means "Where is the station?". La is used for feminine places, le for masculine ones: la gare, le musée.',
-          'Three useful directions: tout droit (straight ahead), à gauche (to the left), à droite (to the right).',
-          'To get someone\u2019s attention politely, start with Excusez-moi.',
+          'To ask where a place is, say [[Où est]] followed by the place. [[Où est]] la gare ? means "Where is the station?". La is used for feminine places, le for masculine ones: la gare, le musée.',
+          'Three useful directions: [[tout droit]] (straight ahead), [[à gauche]] (to the left), [[à droite]] (to the right).',
+          'To get someone\u2019s attention politely, start with [[Excusez-moi]].',
         ], { label: 'Asking the way', text: 'Excusez-moi, où est la gare ?\nC\u2019est tout droit, puis à gauche.\nMerci beaucoup !' }),
         act('d1', 'guided', 'Understand the direction', {
           type: 'choice', prompt: 'What does "à droite" mean?',

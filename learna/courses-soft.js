@@ -1,80 +1,9 @@
 // learna/courses-soft.js
-// Public Speaking, UI/UX Design and Sales courses. Open tasks are marked against
+// UI/UX Design and Sales courses (Public Speaking now lives in courses-speaking.js). Open tasks are marked against
 // the rubric on each activity; choice and match items are checked exactly.
-import { teach, activity as act, lesson, section } from './courses-core.js';
+import { teach, activity as act, lesson, section, assignment } from './courses-core.js';
 
 const common = { access: 'plus', status: 'available', version: '1.0.0', masteryThreshold: 0.7, levelSystem: 'Beginner / Intermediate / Advanced' };
-
-export const speaking = {
-  ...common,
-  id: 'public-speaking-essentials', title: 'Public Speaking Essentials',
-  shortDescription: 'Open strongly, structure a short talk and sound clear under pressure.',
-  fullDescription: 'Build the habits of a clear speaker. You write and rehearse real openings, short talks and introductions, then get feedback against a rubric that names exactly what to fix.',
-  category: 'public-speaking', level: 'Beginner', estimatedDuration: '1 hour 30 minutes', estimatedMinutes: 90,
-  whoFor: 'Students and professionals who want to speak with more clarity and less stress.',
-  prerequisites: ['None'],
-  learningOutcomes: ['Open a talk in under 20 seconds', 'Organise a short talk in three parts', 'Introduce yourself at a networking event', 'Use pauses and short sentences'],
-  skills: ['Openings', 'Structure', 'Self-introduction', 'Clear delivery'],
-  practical: 'Each lesson ends with a written script or a rehearsal task you can say aloud in under a minute.',
-  assessment: 'Questions are checked exactly. Written scripts are marked against a rubric of named criteria. A lesson is complete when you pass at least 70% of its activities without being shown the answer.',
-  modes: ['writing', 'rehearsal'], references: [],
-  sections: [section('s1', 'Start well', 'Openings and introductions.', [
-    lesson('l1', 'Opening a talk', 'By the end of this lesson, you can open a talk with a hook that names the topic in under 20 seconds.', 15, [
-      teach('t1', 'explanation', 'The first 20 seconds', [
-        'Your audience decides quickly whether to listen. A strong opening does two things: it gives them a reason to care, and it tells them what the talk is about.',
-        'Three simple openings work well: a surprising fact, a short question, or a one-sentence story. Avoid starting with an apology ("Sorry, I am not very good at this") or with "Today I will be talking about".',
-      ], { label: 'Example', text: 'Every year, our school loses about 40 hours of teaching time to paper registers. Today I will show you how to get those hours back.' }),
-      act('a1', 'guided', 'Spot the weak opening', {
-        type: 'choice', prompt: 'Which opening is weakest?',
-        options: [{ id: 'a', text: 'Sorry, I am a bit nervous, so please bear with me.' }, { id: 'b', text: 'How many hours did you waste in meetings this week?' }, { id: 'c', text: 'Last month a customer called me at midnight, and she was right to.' }],
-        answer: 'a', why: { b: 'A question makes the audience think about their own experience.', c: 'A short story creates curiosity.' },
-        hints: ['One opening gives the audience a reason to doubt you.'], explain: 'An apology makes people watch for mistakes instead of listening.',
-      }),
-      act('a2', 'attempt', 'Write your opening', {
-        type: 'open', mode: 'writing',
-        prompt: 'Write an opening of two or three sentences for a 3-minute talk to your class about why people should sleep eight hours. Use a surprising fact, a question or a short story. Do not apologise.',
-        minWords: 15, minCriteria: 2,
-        rubric: [
-          { id: 'hook', label: 'Begins with a hook: a fact, a question or a short story.' },
-          { id: 'topic', label: 'Makes clear that the talk is about sleep.' },
-          { id: 'noapology', label: 'Contains no apology and does not begin with "Today I will be talking about".' },
-        ],
-        hints: ['Try starting with a question about the last time they felt tired.'],
-        exemplar: 'When did you last wake up feeling truly rested? Most of us cannot remember, and it is costing our marks. In the next three minutes, I will show you why eight hours matters.',
-        explain: 'A hook first, then the topic, with no apology.',
-      }),
-      act('a3', 'checkpoint', 'Choose the stronger opening', {
-        type: 'choice', prompt: 'You will speak about saving money. Which opening is strongest?',
-        options: [{ id: 'a', text: 'Today I will be talking about saving money.' }, { id: 'b', text: 'If you saved just \u20a65,000 a month, you would have \u20a660,000 in a year. Here is how.' }, { id: 'c', text: 'Um, so, hi everyone, I guess I will start now.' }],
-        answer: 'b', why: { a: 'It names the topic but gives no reason to care.', c: 'Filler words and hesitation weaken the opening.' }, hints: ['Look for a specific number and a promise.'], explain: 'It gives a concrete benefit and promises how.',
-      }),
-    ]),
-    lesson('l2', 'Introducing yourself', 'By the end of this lesson, you can give a 60-second introduction for a networking event.', 20, [
-      teach('t1', 'explanation', 'Name, what you do, why talk to me', [
-        'A good introduction has three parts. First, your name and role. Second, what you do in one plain sentence. Third, one reason the listener should continue the conversation.',
-        'Keep sentences short. Say the name slowly. Finish with an invitation, such as a question.',
-      ], { label: 'Example', text: 'I am Ngozi Eze, a maths teacher at a primary school in Yaba. I help children who fear numbers start enjoying them. If you know a child who struggles with maths, I would love to hear what they find hard.' }),
-      act('b1', 'guided', 'Order the parts', {
-        type: 'order', prompt: 'Put the three parts of an introduction in the best order.',
-        items: ['My name and role', 'What I do in one sentence', 'A reason to keep talking'],
-        hints: ['Who you are comes first.'], explain: 'Name and role, what you do, then the reason to talk.',
-      }),
-      act('b2', 'checkpoint', 'Write your 60-second introduction', {
-        type: 'open', mode: 'writing',
-        prompt: 'Write a 60-second introduction for a professional networking event. Start with your name and role, explain what you do in one sentence, then give one reason someone should continue the conversation with you.',
-        minWords: 25, minCriteria: 3,
-        rubric: [
-          { id: 'name', label: 'States a name and a role at the start.' },
-          { id: 'what', label: 'Explains what the person does in one clear sentence.' },
-          { id: 'reason', label: 'Gives one reason or invitation to continue the conversation.' },
-        ],
-        hints: ['Three parts, in this order. Keep each to one or two short sentences.'],
-        exemplar: 'I am Daniel Okoro, a product designer at a fintech startup. I design apps that make saving money feel simple. If you ever wondered why banking apps are confusing, I would enjoy swapping stories.',
-        explain: 'Follow the three-part order and keep it short.',
-      }),
-    ]),
-  ])],
-};
 
 export const uiux = {
   ...common,
@@ -136,6 +65,14 @@ export const uiux = {
         hints: ['Say what is wrong, then how to fix it.'],
         exemplar: 'Your password is too short. Use at least 8 characters and try again.',
         explain: 'Name the problem and the fix in plain words.',
+      }),
+      act('b3', 'reflection', 'Explain your choice aloud', {
+        type: 'open', mode: 'writing', voice: true, minWords: 15, minCriteria: 2,
+        prompt: 'Explain one design decision you would make on a sign-up screen and why. Say it aloud with the microphone button, or type it. Designers often explain choices out loud to a team.',
+        rubric: [{ id: 'decision', label: 'States one specific design decision.' }, { id: 'user', label: 'Links it to what the user needs.' }, { id: 'reason', label: 'Gives a reason.' }],
+        hints: ['Name the decision, then say who it helps.'],
+        exemplar: 'I would put the sign-up button at the bottom in a bright colour because a new user needs one clear next step. A single obvious button means fewer people get lost.',
+        explain: 'Decision, user need, reason.',
       }),
     ]),
   ])],
@@ -202,6 +139,12 @@ export const sales = {
         hints: ['Sentence one acknowledges. Sentence two names the missing value. Sentence three is a question.'],
         exemplar: 'That makes sense, because many schools begin with WhatsApp and spreadsheets. The difficulty is that a payment or a result can be hard to find when it is buried in a long chat. How do you check today which parents have not paid?',
         explain: 'Three sentences: acknowledge, show the gap, ask.',
+      }),
+      assignment('b3', 'independent', 'Practise your pitch aloud', {
+        format: 'audio', review: 'auto', certRequired: false, minSeconds: 20, maxSeconds: 90, maxAttempts: 3,
+        prompt: 'Imagine a school owner says: "We already use WhatsApp and spreadsheets." Record a 20 to 45 second reply that acknowledges the point, shows the gap and asks one question.',
+        rubric: [{ id: 'ack', label: 'Acknowledges what the customer said.' }, { id: 'gap', label: 'Shows one gap or cost in the current way.' }, { id: 'ask', label: 'Ends with one open question.' }],
+        metricRules: [], checklist: ['Stay calm', 'Do not argue', 'End with a question'],
       }),
     ]),
   ])],
