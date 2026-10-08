@@ -11,8 +11,8 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
-import { renderUiHtml, wireUi } from './ui-render.js';
-import { validateUi } from '../ui-schema.js';
+import { renderUiHtml, wireUi, refreshUi } from './ui-render.js';
+import { validateUi, applyPatches, findUiNode } from '../ui-schema.js';
 import { shouldOfferSandbox } from '../sandbox-intent.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
@@ -837,6 +837,37 @@ function reconcileIfDue(force) {
   _lastReconcileAt = now;
   reconcileWithB2();
 }
+
+// ── Generative UI: live blocks, state and patches ──────────────────────
+// The validated blocks (with ids and state) live in conversationMeta[i].ui, so
+// they are saved and restored with the conversation. Everything is re-validated
+// on the way in; nothing executable is ever stored.
+function getUiBlocks(i) {
+  const m = conversationMeta[i];
+  if (!m || !Array.isArray(m.ui) || !m.ui.length) return null;
+  if (m.ui.some((b) => !b || !b.id)) m.ui = validateUi(m.ui); // older saves had no ids
+  return m.ui;
+}
+
+// Applies validated patches from a reply to the newest message that holds the
+// target component. Returns the message indexes that changed.
+function applyIncomingUiPatches(patches) {
+  const touched = new Set();
+  if (!Array.isArray(patches)) return [];
+  patches.slice(0, 8).forEach((p) => {
+    for (let i = conversationMeta.length - 1; i >= 0; i--) {
+      if (!getUiBlocks(i)) continue;
+      const m = conversationMeta[i];
+      const key = p.op === 'create' ? p.parent : p.target;
+      if (key && !findUiNode(m.ui, key)) continue;
+      const r = applyPatches(m.ui, [p]);
+      if (r.applied) { m.ui = r.blocks; touched.add(i); }
+      break;
+    }
+  });
+  return Array.from(touched);
+}
+
 
 // Called after every completed exchange so the sidebar and title always
 // reflect what's on screen. Creates a new saved entry on first message,
@@ -1781,7 +1812,9 @@ async function runStreamedTurn(payload, resume) {
     // re-asks for the same write again (Bug 4).
     if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
     freshAssistantIndex = conversation.length - 1;
+    const uiTouched = applyIncomingUiPatches(data.uiPatches);
     renderConversation();
+    uiTouched.forEach((i) => { if (conversationMeta[i]) refreshUi(document, i, conversationMeta[i].ui); });
     refreshUsage();
     persistCurrentConversation();
   };
@@ -3036,7 +3069,11 @@ function renderConversation() {
   wireMessageActionButtons();
   wireDocumentDownloadButtons(list);
   wireCodeCopyButtons(list);
-  wireUi(list, { send: (t) => sendMessage(t), busy: () => isSending, notify: showToast });
+  wireUi(list, {
+    send: (t) => sendMessage(t), busy: () => isSending, notify: showToast,
+    getBlocks: getUiBlocks,
+    onChange: () => persistCurrentConversation(),
+  });
   hydrateFigures(list);
   collapseFreshActivity(list);
   announceApprovals();
@@ -3426,7 +3463,7 @@ function renderMessage(msg, index) {
         // full text before the typing animation takes over.
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
-        (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui) : '') +
+        (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui, index, index === freshAssistantIndex) : '') +
         (!isUser ? renderDesignRequestHtml(meta, index) : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
         (!isUser ? renderMediaHtml(meta, index) : '') +
