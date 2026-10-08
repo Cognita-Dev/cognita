@@ -1,5 +1,112 @@
+.resource-form-back {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  font-weight: 500;
+}
+.resource-form-back:hover { color: var(--text-1); }
+
+/* ── Shared list/field primitives (carried over from the removed resources.css; used by Reminders and Scheduler) ── */
+.resources-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+}
+.resources-generate-panel,
+.my-resources-panel {
+  max-width: 720px;
+  margin: 0 auto var(--space-7);
+}
+.resources-heading {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  margin-bottom: var(--space-2);
+}
+.resources-subheading {
+  color: var(--text-3);
+  font-size: var(--text-base);
+  margin-bottom: var(--space-5);
+}
+.resource-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.resource-field span {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.resource-field input,
+.resource-field textarea,
+.resource-field select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  background: var(--bg-subtle);
+  color: var(--text-1);
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color var(--duration-fast) var(--ease);
+}
+.resource-field input:focus,
+.resource-field textarea:focus,
+.resource-field select:focus { border-color: var(--accent-2); background: var(--bg-elevated); }
+.resource-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: var(--space-7);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238c8c86' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+}
+.my-resources-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.my-resources-empty {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--text-4);
+  font-size: var(--text-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+.my-resource-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease);
+}
+.my-resource-row:hover { border-color: var(--border-strong); }
+.my-resource-row i.resource-icon { font-size: 1.1rem; color: var(--accent); flex-shrink: 0; }
+.my-resource-info { flex: 1; min-width: 0; }
+.my-resource-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-resource-meta { font-size: var(--text-xs); color: var(--text-3); }
+
 /* css/reminders.css — Reminders view.
-   Loaded after resources.css, so these rules take the cascade for
+   Primitives it builds on are defined at the top of this file. These rules are scoped to
    anything scoped to #view-reminders / #reminderModal without
    touching the shared .resources-* / .modal-* classes used by other
    views. Goal: tighter rhythm, clearer hierarchy, and real affordance
