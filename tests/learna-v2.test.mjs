@@ -368,8 +368,8 @@ await test('speaking practice is recognition-only, never blocks, and can be skip
   // go to s1_l3 a3 (speak) by completing earlier lessons through the engine: set progress directly
   const prog = await FS.fsGet('learna_progress/p1_public-speaking-essentials', w.env); const sp = E.COURSE_MAP['public-speaking-essentials'];
   for (const f of E.flatLessons(sp).slice(0, 2)) prog.lessons[f.key] = { rev: f.lesson.rev, status: 'done', acts: {}, mastery: { ratio: 1 } };
-  prog.current = { lesson: 's1_l3', step: 3 }; await FS.fsSet('learna_progress/p1_public-speaking-essentials', prog, w.env);
-  const lesson = (await call(w, 'GET', P + '/lessons/s1_l3', 'p1')).json; const st = lesson.lesson.steps[3]; eq(st.type, 'speak'); eq(st.graded, false);
+  prog.current = { lesson: 's1_l3', step: 5 }; await FS.fsSet('learna_progress/p1_public-speaking-essentials', prog, w.env);
+  const lesson = (await call(w, 'GET', P + '/lessons/s1_l3', 'p1')).json; const st = lesson.lesson.steps[5]; eq(st.type, 'speak'); eq(st.graded, false);
   let r = await call(w, 'POST', P + '/submit', 'p1', { lesson: 's1_l3', activity: 'a3', transcript: 'banana banana' }); eq(r.json.result.correct, false); ok(/not a score for accent or pronunciation/.test(r.json.result.feedback));
   r = await call(w, 'POST', P + '/submit', 'p1', { lesson: 's1_l3', activity: 'a3', transcript: '' }); eq(r.json.result.invalid, true);
   r = await call(w, 'POST', P + '/submit', 'p1', { lesson: 's1_l3', activity: 'a3', transcript: 'I have prepared well and I will take my time' }); eq(r.json.result.correct, true); eq(r.json.canAdvance, true);
@@ -379,7 +379,7 @@ await test('skipping speaking practice lets the learner continue and is not coun
   mocks(w); user(w, 'p1', PLUS); await call(w, 'POST', '/courses/public-speaking-essentials/enroll', 'p1');
   const prog = await FS.fsGet('learna_progress/p1_public-speaking-essentials', w.env); const sp = E.COURSE_MAP['public-speaking-essentials'];
   for (const f of E.flatLessons(sp).slice(0, 2)) prog.lessons[f.key] = { rev: f.lesson.rev, status: 'done', acts: {}, mastery: { ratio: 1 } };
-  prog.current = { lesson: 's1_l3', step: 3 }; await FS.fsSet('learna_progress/p1_public-speaking-essentials', prog, w.env);
+  prog.current = { lesson: 's1_l3', step: 5 }; await FS.fsSet('learna_progress/p1_public-speaking-essentials', prog, w.env);
   const r = await call(w, 'POST', '/courses/public-speaking-essentials/submit', 'p1', { lesson: 's1_l3', activity: 'a3', skip: true }); eq(r.json.result.skipped, true); eq(r.json.canAdvance, true);
   const l = sp.sections[0].lessons[2]; const ls = { acts: { a1: { passed: true }, a2: { passed: true }, a4: { passed: true } } }; eq(E.lessonMastery(sp, l, ls).total, 3, 'speak step not counted');
 });

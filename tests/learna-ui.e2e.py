@@ -209,7 +209,7 @@ def run():
 
         print('\nSpeaking: say-it-aloud practice, recording audio, recording video, reviews')
         ctl('reset')
-        ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l3', step='3')
+        ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l3', step='5')
         ctx = new_ctx(pw, browser, 'plus'); page = open_learna(ctx, '&course=public-speaking-essentials&lesson=s1_l3'); page.wait_for_selector('.lrn-target')
         def t():
             assert 'It cannot judge your accent' in page.inner_text('.lrn-card'); assert page.locator('button:has-text("Skip this practice")').count() == 1
@@ -217,13 +217,13 @@ def run():
             page.wait_for_selector('.lrn-feedback.is-right', timeout=8000); assert 'understood 10 of 10 words' in page.inner_text('.lrn-feedback') and 'not a score for accent' in page.inner_text('.lrn-feedback')
             page.screenshot(path=SHOTS + '/desk-speak.png')
         check('saying the sentence gets a recognition result that is honest about what it is', t)
-        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l3', step='3'); page.reload(); page.wait_for_selector('.lrn-target')
+        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l3', step='5'); page.reload(); page.wait_for_selector('.lrn-target')
         def t():
             page.click('button:has-text("Skip this practice")'); page.wait_for_selector('button[data-act="advance"]'); assert 'Skipped' in page.inner_text('.lrn-feedback')
         check('a learner can always skip speaking practice and carry on', t)
         ctx.close()
 
-        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l1', step='1'); ctl('whisper', text='Good morning everyone. ' + ' '.join('word%d' % i for i in range(70)) + ' school and why I want to improve', dur='35')
+        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s1_l1', step='2'); ctl('whisper', text='Good morning everyone. ' + ' '.join('word%d' % i for i in range(70)) + ' school and why I want to improve', dur='35')
         ctx = new_ctx(pw, browser, 'plus'); page = open_learna(ctx, '&course=public-speaking-essentials&lesson=s1_l1'); page.wait_for_selector('button[data-act="rec-start"]')
         def t():
             assert 'Start recording' in page.inner_text('.lrn-card'), page.inner_text('.lrn-card')[:300]; assert 'private to you and your reviewers' in page.inner_text('.lrn-card')
@@ -243,7 +243,7 @@ def run():
         check('the recording is stored and linked to the learner\u2019s progress record', lambda: (l1['acts']['a1']['submissionId'] and l1['acts']['a1']['review'] == 'auto') or (_ for _ in ()).throw(AssertionError(l1['acts'])))
         ctx.close()
 
-        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s3_l3', step='3')
+        ctl('reset'); ctl('jump', uid='plus', course='public-speaking-essentials', lesson='s3_l3', step='5')
         ctx = new_ctx(pw, browser, 'plus'); page = open_learna(ctx, '&course=public-speaking-essentials&lesson=s3_l3'); page.wait_for_selector('button[data-act="rec-start"]')
         def t():
             assert 'Record a short video' in page.inner_text('.lrn-card') and page.locator('.lrn-cam--off').count() == 1
