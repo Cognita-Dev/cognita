@@ -39,7 +39,7 @@ def api(uid, method, path, body=None, raw=None, headers=None):
 INIT_SPEECH = """
 window.__spoken = []; window.__played = [];
 const origPlay = HTMLMediaElement.prototype.play;
-HTMLMediaElement.prototype.play = function () { window.__played.push(this.src.slice(0, 20)); return origPlay.apply(this, arguments); };
+HTMLMediaElement.prototype.play = function () { if (!(this.dataset && this.dataset.primer)) window.__played.push(this.src.slice(0, 20)); return origPlay.apply(this, arguments); };
 if (!window.__noVoices) {
   window.speechSynthesis.cancel = () => {};
   window.speechSynthesis.getVoices = () => [{ name: 'Test French', lang: 'fr-FR' }, { name: 'Test English NG', lang: 'en-NG' }];
@@ -159,7 +159,7 @@ def run():
         ctx.close()
 
         print('\nListening: premium voice, per-word icons, and fallbacks')
-        ctl('azure', on='1'); ctl('reset')
+        ctl('tts', on='1'); ctl('reset')
         ctx = new_ctx(pw, browser, 'plus'); api('plus', 'POST', '/learna/courses/french-a1/enroll')
         page = open_learna(ctx, '&course=french-a1&lesson=s1_l1')
         page.wait_for_selector('.lrn-card')
@@ -181,22 +181,22 @@ def run():
             page.evaluate('window.__played.length = 0'); page.select_option('select[data-pref="rate"]', '0.75'); page.click('.lrn-w:has-text("Bonsoir") .lrn-spk'); page.wait_for_function('window.__played.length >= 1')
             assert json.loads(reqs[-1][1])['rate'] == 0.75
         check('the speed setting is honoured', t)
-        ctl('azure', on='0', key='0')
+        ctl('tts', on='0', key='0')
         def t():
             page.evaluate('window.__played.length = 0; window.__spoken.length = 0')
             page.click('.lrn-w:has-text("Au revoir") .lrn-spk'); page.wait_for_function('window.__spoken.length >= 1', timeout=8000)
             sp = page.evaluate('window.__spoken[0]'); assert sp['text'] == 'Au revoir' and sp['lang'] == 'fr-FR', sp
         check('with no premium voice the browser voice says the same word, using a French voice', t)
-        ctx.close(); ctl('azure', on='1')
+        ctx.close(); ctl('tts', on='1')
 
         ctx = new_ctx(pw, browser, 'plus', no_voices=True)
-        page = open_learna(ctx, '&course=french-a1&lesson=s1_l1'); page.wait_for_selector('.lrn-card'); ctl('azure', on='0', key='0')
+        page = open_learna(ctx, '&course=french-a1&lesson=s1_l1'); page.wait_for_selector('.lrn-card'); ctl('tts', on='0', key='0')
         def t():
             page.evaluate('window.speechSynthesis.getVoices = () => []; window.speechSynthesis.speak = (u) => setTimeout(() => u.onend && u.onend(), 5); window.speechSynthesis.cancel = () => {}')
             page.click('.lrn-w:has-text("Bonjour") .lrn-spk'); page.wait_for_selector('.lrn-speech-note', timeout=8000)
             assert 'no fr-FR voice installed' in page.inner_text('.lrn-speech-note'); assert errs_of(page) == [], errs_of(page)
         check('on a device with no French voice the learner is told plainly, and nothing breaks', t)
-        ctx.close(); ctl('azure', on='1')
+        ctx.close(); ctl('tts', on='1')
 
         ctl('reset'); api('studio', 'POST', '/learna/courses/javascript-foundations/enroll')
         ctx = new_ctx(pw, browser, 'studio'); page = open_learna(ctx, '&course=javascript-foundations&lesson=s1_l1')

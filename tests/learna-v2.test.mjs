@@ -3,8 +3,23 @@
 // Run:  node tests/learna-v2.test.mjs
 import { test, eq, ok, summary, callWorker, load } from './harness.mjs';
 
-let groqReply = null, whisper = null, azureCalls = [], azureStatus = 200;
+let groqReply = null, whisper = null, edgeCalls = [], edgeMode = 'ok', edgeFetches = 0;   // edgeMode: ok | blocked | silent | flaky
 const files = new Map();                 // B2 in memory
+// A stand-in for the Edge read-aloud WebSocket: after the SSML message it sends one binary audio frame and then the turn.end marker.
+function fakeEdgeWs(silent) {
+  const L = { message: [] }, enc = new TextEncoder(), audio = new Uint8Array([73, 68, 51, 4, 0, 0, 1, 2, 3]);
+  return {
+    accept() {}, close() {},
+    addEventListener(t, fn) { if (t === 'message') L.message.push(fn); },
+    send(m) {
+      m = String(m); if (!/Path:ssml/.test(m)) return; edgeCalls.push(m);
+      setTimeout(() => {
+        if (!silent) { const hdr = enc.encode('X-RequestId:1\r\nPath:audio\r\n'); const f = new Uint8Array(2 + hdr.length + audio.length); f[0] = hdr.length >> 8; f[1] = hdr.length & 255; f.set(hdr, 2); f.set(audio, 2 + hdr.length); L.message.forEach((fn) => fn({ data: f.buffer })); }
+        L.message.forEach((fn) => fn({ data: 'X-RequestId:1\r\nPath:turn.end\r\n\r\n{}' }));
+      }, 0);
+    },
+  };
+}
 function mocks(w) {
   const inner = globalThis.fetch;
   w.env.B2_KEY_ID = 'k'; w.env.B2_APPLICATION_KEY = 's'; w.env.B2_BUCKET_ID = 'b'; w.env.B2_BUCKET_NAME = 'bucket';
@@ -31,7 +46,12 @@ function mocks(w) {
     if (u.host === 'api.b2.test') { if (u.pathname.endsWith('b2_get_upload_url')) return new Response(JSON.stringify({ uploadUrl: 'https://up.b2.test/u', authorizationToken: 'ut' }), { status: 200 }); return new Response('{}', { status: 200 }); }
     if (u.host === 'up.b2.test') { const name = decodeURIComponent(init.headers['X-Bz-File-Name']); files.set(name, new Uint8Array(init.body)); return new Response(JSON.stringify({ fileId: 'f', fileName: name, uploadTimestamp: 1 }), { status: 200 }); }
     if (u.host === 'dl.b2.test') { const name = decodeURIComponent(u.pathname.replace('/file/bucket/', '')); return files.has(name) ? new Response(files.get(name), { status: 200 }) : new Response('nf', { status: 404 }); }
-    if (u.host.endsWith('.tts.speech.microsoft.com')) { azureCalls.push(init.body); return azureStatus === 200 ? new Response(new Uint8Array([73, 68, 51, 4, 0, 0]), { status: 200 }) : new Response('no', { status: azureStatus }); }
+    if (u.host === 'speech.platform.bing.com') {   // the free Edge voice service, reached over a WebSocket upgrade
+      edgeFetches++; const hdr = init.headers || {};
+      if (edgeMode === 'blocked' || (edgeMode === 'flaky' && edgeFetches % 2 === 1)) return { status: 403 };
+      if (!/Sec-MS-GEC=[0-9A-F]{64}/.test(url) || hdr.Upgrade !== 'websocket') return { status: 400 };
+      return { status: 101, webSocket: fakeEdgeWs(edgeMode === 'silent') };
+    }
     return inner(input, init);
   };
 }
@@ -364,39 +384,50 @@ await test('skipping speaking practice lets the learner continue and is not coun
   const l = sp.sections[0].lessons[2]; const ls = { acts: { a1: { passed: true }, a2: { passed: true }, a4: { passed: true } } }; eq(E.lessonMastery(sp, l, ls).total, 3, 'speak step not counted');
 });
 async function ttsSetup(w, plan = PLUS) {
-  mocks(w); user(w, 'p1', plan); w.env.AZURE_SPEECH_KEY = 'key'; w.env.AZURE_SPEECH_REGION = 'westeurope'; azureCalls = []; azureStatus = 200; files.clear();
+  mocks(w); user(w, 'p1', plan); edgeCalls = []; edgeMode = 'ok'; edgeFetches = 0; files.clear();
   await call(w, 'POST', '/courses/french-a1/enroll', 'p1'); await call(w, 'POST', '/courses/javascript-foundations/enroll', 'p1');
 }
 const tts = (w, b, uid = 'p1') => call(w, 'POST', '/speech/tts', uid, b);
-await test('premium voices: French word is synthesised once, then served from storage', async (w) => {
+await test('free voices: French word is synthesised once by Denise, then served from storage', async (w) => {
   await ttsSetup(w);
   const body = { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'Bonjour' };
   const a = await callWorker(w, 'POST', '/api/learna/speech/tts', { uid: 'p1', email: 'p1@x.com', body }); eq(a.status, 200);
-  eq(azureCalls.length, 1); ok(/fr-FR-DeniseNeural/.test(azureCalls[0])); ok(/Bonjour/.test(azureCalls[0]));
-  const b = await callWorker(w, 'POST', '/api/learna/speech/tts', { uid: 'p1', email: 'p1@x.com', body }); eq(b.status, 200); eq(azureCalls.length, 1, 'second request is a cache hit');
-  eq(w.kv.get('learna:tts:' + new Date().toISOString().slice(0, 7)), '7', 'only the 7 characters of one synthesis are counted');
+  eq(edgeCalls.length, 1); ok(/\(fr-FR, DeniseNeural\)/.test(edgeCalls[0])); ok(/Bonjour/.test(edgeCalls[0])); ok(/rate='\+0%'/.test(edgeCalls[0]));
+  const b = await callWorker(w, 'POST', '/api/learna/speech/tts', { uid: 'p1', email: 'p1@x.com', body }); eq(b.status, 200); eq(edgeCalls.length, 1, 'second request is a cache hit');
+  eq(w.kv.get('learna:tts:' + new Date().toISOString().slice(0, 7)), undefined, 'no monthly counter is kept, so no extra KV writes');
+});
+await test('French Henri is the second voice, and the slow speed is sent as a negative rate', async (w) => {
+  await ttsSetup(w);
+  const base = { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'Bonjour', lang: 'fr-FR' };
+  eq((await tts(w, { ...base, voice: 'alt', rate: 0.75 })).status, 200); ok(/\(fr-FR, HenriNeural\)/.test(edgeCalls[0])); ok(/rate='-25%'/.test(edgeCalls[0]));
+  eq((await tts(w, { ...base, rate: 1.1 })).status, 200); ok(/\(fr-FR, DeniseNeural\)/.test(edgeCalls[1])); ok(/rate='\+10%'/.test(edgeCalls[1]));
 });
 await test('English lessons use the Nigerian voices: Ezinne by default, Abeo when asked', async (w) => {
   await ttsSetup(w);
   const base = { course: 'javascript-foundations', lesson: 's1_l1', step: 't1', part: 'text:0', lang: 'en-NG' };
-  eq((await tts(w, base)).status, 200); ok(/en-NG-EzinneNeural/.test(azureCalls[0]));
-  eq((await tts(w, { ...base, voice: 'alt' })).status, 200); ok(/en-NG-AbeoNeural/.test(azureCalls[1]));
+  eq((await tts(w, base)).status, 200); ok(/\(en-NG, EzinneNeural\)/.test(edgeCalls[0]));
+  eq((await tts(w, { ...base, voice: 'alt' })).status, 200); ok(/\(en-NG, AbeoNeural\)/.test(edgeCalls[1]));
   const v = (await call(w, 'GET', '/speech/voices', 'p1')).json; eq(v.premium, true); ok(v.voices.some((x) => x.name === 'Ezinne') && !/Neural/.test(JSON.stringify(v)), 'technical names are not exposed');
 });
 await test('the browser can never send its own text: only text that is in the lesson can be spoken', async (w) => {
   await ttsSetup(w);
   for (const b of [{ course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'pineapple' }, { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'text:99' }, { course: 'french-a1', lesson: 's1_l1', step: 'zz', part: 'text:0' }, { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'x'.repeat(60) }, { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'text', text: 'Read me anything' }]) eq((await tts(w, b)).json.code, 'BAD_TEXT', JSON.stringify(b).slice(0, 60));
-  eq(azureCalls.length, 0);
+  eq(edgeCalls.length, 0);
 });
-await test('speech falls back cleanly: no key, free plan, not enrolled, monthly budget, daily limit, service error', async (w) => {
-  await ttsSetup(w); const ok1 = { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'Bonjour' };
-  delete w.env.AZURE_SPEECH_KEY; eq((await tts(w, ok1)).json.code, 'TTS_NOT_CONFIGURED'); w.env.AZURE_SPEECH_KEY = 'key';
+await test('speech falls back cleanly: switched off, free plan, not enrolled, daily limit, service blocked or silent', async (w) => {
+  await ttsSetup(w); const ok1 = { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'Bonjour' }; const today = new Date().toISOString().slice(0, 10);
+  w.env.LEARNA_TTS_DISABLED = '1'; eq((await tts(w, ok1)).json.code, 'TTS_NOT_CONFIGURED'); eq((await call(w, 'GET', '/speech/voices', 'p1')).json.premium, false); delete w.env.LEARNA_TTS_DISABLED;
   user(w, 'f1'); eq((await tts(w, ok1, 'f1')).status, 403);
   user(w, 'p9', PLUS); eq((await tts(w, ok1, 'p9')).json.code, 'NOT_ENROLLED');
-  w.kv.set('learna:tts:' + new Date().toISOString().slice(0, 7), '399999'); let r = await tts(w, ok1); eq(r.status, 503); eq(r.json.code, 'TTS_BUDGET'); w.kv.delete('learna:tts:' + new Date().toISOString().slice(0, 7));
-  w.kv.set('usage:p1:learnaTts:' + new Date().toISOString().slice(0, 10), '4000'); r = await tts(w, ok1); eq(r.status, 429); eq(r.json.code, 'DAILY_LIMIT'); w.kv.delete('usage:p1:learnaTts:' + new Date().toISOString().slice(0, 10));
-  azureStatus = 500; r = await tts(w, ok1); eq(r.json.code, 'TTS_FAILED'); azureStatus = 429; r = await tts(w, { ...ok1, word: 'Bonsoir' }); eq(r.json.code, 'TTS_BUDGET');
-  eq(Number(w.kv.get('usage:p1:learnaTts:' + new Date().toISOString().slice(0, 10)) || 0), 0, 'failed synthesis gives the characters back');
+  w.kv.set('usage:p1:learnaTts:' + today, '4000'); let r = await tts(w, ok1); eq(r.status, 429); eq(r.json.code, 'DAILY_LIMIT'); w.kv.delete('usage:p1:learnaTts:' + today);
+  edgeMode = 'blocked'; edgeFetches = 0; r = await tts(w, ok1); eq(r.status, 503); eq(r.json.code, 'TTS_FAILED'); eq(edgeFetches, 2, 'tries twice before giving up');
+  edgeMode = 'silent'; r = await tts(w, { ...ok1, word: 'Bonsoir' }); eq(r.json.code, 'TTS_FAILED', 'a connection that sends no audio is a failure, not an empty file');
+  eq(Number(w.kv.get('usage:p1:learnaTts:' + today) || 0), 0, 'failed synthesis gives the characters back');
+  eq(files.size, 0, 'nothing is cached for a failed synthesis');
+});
+await test('one failed connection is retried and the learner still hears the voice', async (w) => {
+  await ttsSetup(w); edgeMode = 'flaky';
+  const r = await tts(w, { course: 'french-a1', lesson: 's1_l1', step: 't1', part: 'word', word: 'Bonjour' }); eq(r.status, 200); eq(edgeFetches, 2); eq(edgeCalls.length, 1);
 });
 
 console.log('\nNotifications');
