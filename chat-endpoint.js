@@ -14,7 +14,7 @@ import {
 import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
 import * as mediaTools from './media-tools.js';
-import { extractUiBlocks } from './ui-schema.js';
+import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Agent loop bounds (see Bug 2 in the audit doc). A user request can
@@ -174,6 +174,33 @@ function _mergeApproval(approvals, provider, scope, actionClass) {
     list[idx] = { ...list[idx], approvedActionClasses: [...list[idx].approvedActionClasses, actionClass] };
   }
   return list;
+}
+
+// Pushes structured UI to the browser as `event: ui` frames while the reply is
+// being delivered, so components appear one by one (and fill in) before the
+// final `done` frame. The reply text is fed through the same incremental parser
+// (createUiStream) that handles a half-written fence; each frame carries only
+// validated blocks/patches. `done` still carries the full, final result.
+async function _streamUiFrames(emit, reply) {
+  if (typeof reply !== 'string' || !reply.includes('cognita-ui')) return;
+  const s = createUiStream();
+  const STEP = Math.max(160, Math.ceil(reply.length / 40));
+  const count = (list) => list.reduce((n, b) => n + 1 + count(b.children || []) + ((b.props && Array.isArray(b.props.items) && (b.type === 'tabs' || b.type === 'accordion')) ? b.props.items.reduce((m, it) => m + count(it.children || []), 0) : 0), 0);
+  let last = '';
+  for (let i = 0; i < reply.length; i += STEP) {
+    const seen = reply.slice(0, i + STEP);
+    const r = s.push(reply.slice(i, i + STEP));
+    // Component types the model has started writing but that are not complete
+    // yet: the browser shows a placeholder shaped like each one.
+    const started = (seen.match(/"type"\s*:\s*"([a-z_]+)"/g) || []).map((m) => m.replace(/.*"([a-z_]+)"$/, '$1')).filter((t) => UI_TYPES.includes(t));
+    const pending = started.slice(count(r.ui)).slice(0, 3);
+    const sig = JSON.stringify([r.ui, r.patches, pending]);
+    if ((r.ui.length || r.patches.length || pending.length) && sig !== last) {
+      last = sig;
+      emit('ui', { ui: r.ui, patches: r.patches, pending });
+      await new Promise((res) => setTimeout(res, 45));
+    }
+  }
 }
 
 /** Runs the model with tools if any are available, degrading to a plain
@@ -1327,6 +1354,7 @@ export async function handleChatRequest(request, env) {
   let ui = [];
   let uiPatches = [];
   if (!pendingToolCall && !pendingDesignRequest && !pendingSandboxCall) {
+    try { await _streamUiFrames(emit, reply); } catch (_) { /* streaming is best effort; `done` carries the result */ }
     const extracted = extractUiBlocks(reply);
     ui = extracted.ui;
     uiPatches = extracted.patches || [];
