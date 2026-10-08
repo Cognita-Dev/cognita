@@ -416,6 +416,12 @@ export async function handleChatRequest(request, env) {
   // the browser sends its result back on this same endpoint (see the agent
   // loop below), exactly like a confirmed action resumes a paused turn.
   const sandboxResume = _parseSandboxResume(body.sandboxResume);
+  // Design requirements flow (media-tools.js). `designResume` is the second half
+  // of a paused create_design: the person filled in the request card, and the
+  // original call continues with their answers. Like confirmToolCall it is not
+  // a new message, so it does not use the daily message quota.
+  const designIn = mediaTools.sanitizeDesignInputs(body);
+  const designResume = designIn.resume;
   const conversationId = cleanConversationId(body.conversationId);
 
   let account;
@@ -440,7 +446,7 @@ export async function handleChatRequest(request, env) {
   }
 
   let quota;
-  if (confirmToolCall || sandboxResume) {
+  if (confirmToolCall || sandboxResume || designResume) {
     // Not a new message — just read today's count for the response's
     // remainingToday field, don't increment it.
     const used = await getUsage(identity.uid, 'messages', env);
@@ -592,7 +598,14 @@ export async function handleChatRequest(request, env) {
         hint: body.mediaHint === true,
       })
     : { offer: false, reason: 'images' };
-  const mediaEnabled = mediaGate.offer;
+  const mediaEnabled = mediaGate.offer || (!!designResume && !hasImages);
+  // Everything the person has said in this chat. The design validator only
+  // trusts what they said (never what the model wrote) when deciding which
+  // details are already known.
+  const allUserText = trimmedHistory
+    .filter((m) => m && m.role === 'user' && typeof m.content === 'string')
+    .map((m) => m.content).join('\n').slice(-6000);
+  const designCtx = { assets: designIn.assets, facts: designIn.facts, skipped: designIn.skipped, userText: allUserText };
   console.log('[chat][media] gate=' + (mediaEnabled ? 'offered' : 'skipped') + ' reason=' + mediaGate.reason);
 
   // Diagnostics for the connector tool-calling pipeline (see project
@@ -646,6 +659,7 @@ export async function handleChatRequest(request, env) {
   async function _agent(emit) {
   let result;
   let pendingToolCall = null;
+  let pendingDesignRequest = null;
   // Full recorded chain for this turn — every tool call that ran (or was
   // blocked, or ended up awaiting confirmation) gets one entry, in order.
   // This is what lets the user see "read file → rewrote it → committed"
@@ -818,6 +832,39 @@ export async function handleChatRequest(request, env) {
           round = turnTrace.length;
         }
 
+        // Second half of a paused create_design: run it now with the person's
+        // answers merged in. The model is not asked again; afterwards it just
+        // writes the closing reply, exactly as after a confirmed action.
+        if (designResume && !quotaExceededError) {
+          const dArgs = mediaTools.applyDesignAnswers(designResume.args, designResume.answers);
+          const dMeta = { providerLabel: mediaTools.providerLabelFor('create_design'), kind: 'run' };
+          const dSummary = mediaTools.describe('create_design', dArgs);
+          emit('step_start', { name: 'create_design', provider: 'media', ...dMeta, summary: dSummary });
+          const dT0 = Date.now();
+          let dOutcome;
+          try {
+            dOutcome = await mediaTools.execute('create_design', dArgs, {
+              uid: identity.uid, plan, env,
+              assets: designIn.assets, userText: allUserText,
+              facts: { ...designIn.facts, ...designResume.answers },
+            });
+          } catch (e) {
+            console.error('[chat][media] resumed design threw:', e && e.message);
+            dOutcome = { ok: false, modelResult: 'Error: this could not be made right now. Tell the user plainly and suggest trying again shortly.' };
+          }
+          mediaCallsThisTurn++;
+          steps.push({ type: 'executed', name: 'create_design', provider: 'media', ...dMeta, ms: Date.now() - dT0, ok: !!dOutcome.ok, summary: dSummary });
+          emit('step', steps[steps.length - 1]);
+          if (dOutcome.ok && dOutcome.media) emit('media', dOutcome.media);
+          console.log('[chat][media] tool=create_design (resumed after details) ok=' + !!dOutcome.ok);
+          const dEntry = sandboxTools.makeTraceEntry({
+            n: ++stepNo, kind: 'tool', assistantText: '',
+            description: dSummary, resultText: dOutcome.modelResult,
+          });
+          turnTrace.push(dEntry);
+          workingMessages = sandboxTools.appendExchange(workingMessages, dEntry);
+        }
+
         if (!quotaExceededError) {
           while (round < maxRounds) {
             if (!result) {
@@ -929,6 +976,22 @@ export async function handleChatRequest(request, env) {
                 round++;
                 continue;
               }
+              // Design requirements: if something the design truly depends on is
+              // missing (a name, a date, the person's own logo or photo ...), pause
+              // here and let the browser ask for it. The paused call is returned to
+              // the browser, which sends it back with the answers (designResume).
+              if (call.name === 'create_design' && !designResume) {
+                const dreq = mediaTools.checkDesignRequirements(call.args, {
+                  ...designCtx, lastUserText: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
+                  hasPriorMedia: body.mediaHint === true,
+                });
+                if (dreq) {
+                  pendingDesignRequest = { name: 'create_design', args: call.args, request: dreq };
+                  console.log('[chat][media] design paused for details: ' + dreq.fields.map((f) => f.id).join(','));
+                  result = { text: result.text || '', reasoning: result.reasoning || null, toolCalls: null };
+                  break;
+                }
+              }
               mediaCallsThisTurn++;
               const mediaMeta = { providerLabel: mediaTools.providerLabelFor(call.name), kind: 'run' };
               const mediaSummary = mediaTools.describe(call.name, call.args);
@@ -936,7 +999,7 @@ export async function handleChatRequest(request, env) {
               const mediaT0 = Date.now();
               let mediaOutcome;
               try {
-                mediaOutcome = await mediaTools.execute(call.name, call.args, { uid: identity.uid, plan, env });
+                mediaOutcome = await mediaTools.execute(call.name, call.args, { uid: identity.uid, plan, env, ...designCtx });
               } catch (e) {
                 console.error('[chat][media] execute threw:', e && e.message);
                 mediaOutcome = { ok: false, modelResult: 'Error: this could not be made right now. Tell the user plainly and suggest trying again shortly.' };
@@ -1248,6 +1311,10 @@ export async function handleChatRequest(request, env) {
   // card (e.g. "Creating X" shown twice). Keep this fallback short and
   // free of the summary so it never duplicates what the card already
   // says.
+  if (pendingDesignRequest) {
+    // The card carries the question; the line above it stays short and warm.
+    reply = 'Before I design this, I need a few details from you.';
+  }
   if (pendingToolCall && !reply.trim()) {
     reply = 'Would you like me to go ahead?';
   }
@@ -1265,6 +1332,8 @@ export async function handleChatRequest(request, env) {
     thinkingHeading,
     remainingToday: plan.limits.messagesPerDay - quota.used,
     pendingToolCall,
+    // Set when create_design needs details or files from the person first.
+    pendingDesignRequest,
     // Set only when a Tier 1 sandbox call has to run in the person's browser.
     // The browser runs it, then calls this endpoint again with
     // sandboxResume = { call, assistantText, result, trace: turnTrace }.

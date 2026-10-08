@@ -78,7 +78,7 @@ export const TOOLS = [
   _fn('create_design',
     'Make a finished graphic design (flyer, poster, invitation, social media post, story or banner) from the text you supply. ' +
     'Layout, spacing and colours are handled for you. The design is shown to the user automatically with PNG and SVG downloads. ' +
-    'Write every piece of real copy yourself (headline, details, call to action); never leave placeholders. Keep text short and punchy.',
+    'Write the headline, tagline and call to action yourself and keep text short and punchy. Use ONLY facts the person gave for names, dates, venues, prices, phone numbers, emails, websites and addresses; never invent them. If something essential is missing, still call this tool: the app asks the person for it before the design is made.',
     {
       kind: { type: 'string', description: 'One of: ' + DESIGN_KINDS.join(', ') + '.' },
       headline: { type: 'string', description: 'Main title, 2 to 8 words.' },
@@ -306,8 +306,11 @@ export async function execute(name, args, ctx) {
   }
 
   if (name === 'create_design') {
-    const spec = normalizeDesignSpec(a);
-    let bg = null;
+    const assets = ctx.assets || {};
+    const userPhoto = assets.photo || assets.artwork || null;
+    const said = String(ctx.userText || '') + ' ' + Object.values(ctx.facts || {}).join(' ');
+    const spec = normalizeDesignSpec(scrubInventedFacts(a, said), { hasPhoto: !!userPhoto });
+    let bg = userPhoto ? { mime: userPhoto.mime, base64: userPhoto.base64, user: true } : null;
     let bgNote = '';
     if (spec.imagePrompt) {
       // A background picture counts as one image for the daily allowance.
@@ -325,7 +328,7 @@ export async function execute(name, args, ctx) {
       }
     }
     try {
-      const built = buildDesignSvg(spec, bg);
+      const built = buildDesignSvg(spec, bg, { logo: assets.logo || null });
       console.log('[media] create_design ok kind=' + spec.kind + ' layout=' + spec.layout + ' bg=' + !!bg);
       return {
         ok: true,
@@ -339,6 +342,253 @@ export async function execute(name, args, ctx) {
   }
 
   return { ok: false, modelResult: 'Error: unknown media tool.' };
+}
+
+// ── Design requirements validator ───────────────────────────────────────
+// Runs BEFORE a design is made. It decides, from the conversation alone
+// (no extra model call), whether something the design genuinely depends on
+// is missing: a business or event name, a date, a venue, a way to get in
+// touch, a price, or an asset only the person owns (logo, photo, artwork).
+// If so, chat-endpoint.js pauses and the browser shows a request card; once
+// the person answers, the original create_design call continues with the
+// answers merged in (applyDesignAnswers), so nothing has to be repeated.
+//
+// Principles: ask for the fewest things possible, never ask for what the
+// conversation already holds, never ask twice, and let generic designs
+// (quotes, greetings, thank-yous) through immediately. Facts the model
+// invented are never counted as "already known" - only what the person said.
+
+const RX = {
+  date: /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?\s*\d{0,2}|\b\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}\s*(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?\b|\b(?:today|tonight|tomorrow|next (?:week|month|year))\b|\b\d{1,2}[\/.-]\d{1,2}(?:[\/.-]\d{2,4})?\b|\b20\d\d\b/i,
+  email: /[\w.+-]+@[\w-]+\.[\w.-]+/,
+  url: /(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+\.(?:com|org|net|ng|co|io|app|edu|info|biz|church|shop|store)\b/i,
+  handle: /(?:^|\s)@[A-Za-z0-9_.]{3,}/,
+  venue: /\b(?:venue|location|address|held at|taking place at|hosted at|located at|street|st\.|road|rd\.|avenue|ave\.|close|crescent|estate|plaza|hall|hotel|church|cathedral|centre|center|stadium|arena|park|school|university|campus|auditorium|resort|garden|club|lounge|mall|market|lagos|abuja|ibadan|port harcourt|kano|enugu|accra|nairobi|london|new york)\b/i,
+  price: /[\u20A6$\u20AC\u00A3]\s?\d|\b\d[\d,.]*\s?(?:naira|ngn|usd|dollars?|k|%|percent)\b|\bfree\b/i,
+  priceWord: /\b(?:price|prices|pricing|tickets?|cost|fee|entry|admission|how much|per (?:person|ticket|head))\b/i,
+  bookWord: /\b(?:register|registration|book|booking|reserve|reservation|rsvp|sign ?up|enrol+)\b/i,
+  online: /\b(?:online|virtual|zoom|webinar|google meet|live ?stream|instagram live|on whatsapp)\b/i,
+  invite: /\b(?:invitation|invite|rsvp|wedding|birthday party|baby shower|bridal|engagement|anniversary party|housewarming|graduation|naming ceremony|burial|funeral|memorial|thanksgiving service)\b/i,
+  event: /\b(?:event|conference|summit|seminar|workshop|webinar|concert|festival|crusade|revival|service|retreat|meetup|launch|party|tournament|fundraiser|gala|expo|fair|show|screening|training|bootcamp|hackathon|open day|rally|convention|outreach|class(?:es)?)\b/i,
+  business: /\b(?:sale|discount|offer|promo(?:tion)?|grand opening|opening|shop|store|salon|barber|restaurant|cafe|bakery|clinic|pharmacy|school|admissions?|enrolment|services?|hiring|vacanc\w+|recruit\w*|brand|company|business|boutique|catering|agency|gym|spa|studio|real estate|for rent|for sale|delivery|menu|product)\b/i,
+  generic: /\b(?:quote|quotes|motivational|inspirational|greeting|thank you|thanks|congratulations|congrats|happy birthday|good morning|bible verse|prayer|meme|tip of the day|fun fact|wallpaper|announcement)\b/i,
+  logoNo: /\b(?:no logo|without (?:a )?logo|text only|no photo)\b/i,
+  logoWord: /\blogo\b/i,
+  photoOwn: /\b(?:my|our|the)\s+(?:photo|photos|picture|pictures|pic|image|headshot|portrait|product|products|dish|dishes|food|car|house|property|shoe|shoes|bag|collection|team|staff|speaker|guest|artist|pastor|founder|ceo)\b|\bfeaturing\b|\bwith (?:my|the) (?:photo|picture|face)\b/i,
+  artworkOwn: /\b(?:my|our|existing|attached|uploaded|provided)\s+(?:artwork|design|flyer|poster|graphic|key visual|album cover|cover art|banner)\b/i,
+  revision: /^\s*(?:make|change|can you (?:make|change)|use|try|add|remove|swap|replace|more|less|bigger|smaller|another|different|redo|update|adjust|tweak|now)\b/i,
+  orgWord: /\b(?:church|ministry|school|company|brand|foundation|ngo|academy|university|college|firm|organi[sz]ation|association)\b/i,
+};
+
+const NAME_STOP = new Set(['I', "I'm", 'Ive', "I've", 'Please', 'Create', 'Design', 'Make', 'Generate', 'Can', 'Could', 'Need', 'Want', 'Flyer', 'Poster', 'Invitation', 'Banner', 'Instagram', 'Facebook', 'WhatsApp', 'Whatsapp', 'LinkedIn', 'Twitter', 'Story', 'Post', 'Canva', 'Cognita', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'Nigeria', 'Lagos', 'Abuja', 'Africa', 'English', 'Also', 'And', 'The', 'For', 'With', 'Add', 'Use', 'Should', 'Make', 'It', 'This', 'That', 'Thanks', 'Thank', 'Hi', 'Hello', 'Hey', 'Yes', 'No', 'Ok', 'Okay', 'Sure', 'Instagram', 'TikTok', 'YouTube', 'RSVP', 'PM', 'AM', 'PNG', 'PDF', 'SVG', 'AI', 'A4', 'A5', 'Royal', 'Sunset', 'Forest', 'Midnight', 'Coral', 'Mono', 'Gold', 'Ocean', 'Purple']);
+
+function _hasProperName(t) {
+  const s = String(t || '');
+  if (/["\u201C][^"\u201D]{3,60}["\u201D]/.test(s)) return true;
+  const toks = s.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < toks.length; i++) {
+    const w = toks[i].replace(/^[("'\u2018\u201C]+|[).,;:!?"'\u2019\u201D]+$/g, '');
+    if (!w || NAME_STOP.has(w)) continue;
+    const startOfSentence = i === 0 || /[.!?]$/.test(toks[i - 1]);
+    if (startOfSentence) continue;
+    if (/^[A-Z][a-z]{2,}/.test(w) || /^[A-Z]{2,6}\d*$/.test(w)) return true;
+  }
+  return false;
+}
+
+function _hasPhone(t) {
+  const m = String(t || '').match(/\+?\d[\d\s().-]{7,}\d/g) || [];
+  return m.some((x) => {
+    const d = x.replace(/\D/g, '');
+    return d.length >= 9 && d.length <= 15 && !/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(x.trim());
+  });
+}
+
+const _digits = (s) => String(s || '').replace(/\D/g, '');
+
+const DESIGN_FIELD_DEFS = {
+  name: { type: 'text', placeholder: 'e.g. Greenfield Bakery' },
+  when: { type: 'text', label: 'Date & time', placeholder: 'e.g. Saturday 12 July, 4 PM' },
+  venue: { type: 'text', label: 'Venue or address', placeholder: 'e.g. City Hall, Marina, Lagos' },
+  contact: { type: 'text', placeholder: 'e.g. 0800 000 0000 \u00B7 hello@brand.com' },
+  price: { type: 'text', label: 'Price or ticket details', placeholder: 'e.g. \u20A65,000 per ticket' },
+  logo: { type: 'image', label: 'Your logo', hint: 'A PNG with a transparent background looks best.', optional: true },
+  photo: { type: 'image', label: 'Your photo', hint: 'A clear, well-lit photo of the person or product. It becomes the hero of the design.', optional: true },
+  artwork: { type: 'image', label: 'Event artwork', hint: 'Your existing artwork or key visual to build the design around.', optional: true },
+};
+
+export const DESIGN_IMAGE_SLOTS = ['logo', 'photo', 'artwork'];
+const DESIGN_TEXT_IDS = ['name', 'when', 'venue', 'contact', 'price'];
+
+// Returns null when the design can be made straight away, otherwise the
+// request the browser renders as a card:
+//   { title, intro, fields: [{ id, type, label, hint?, placeholder?, optional? }] }
+// ctx: { userText, lastUserText, facts, skipped, assets, hasPriorMedia, resume }
+export function checkDesignRequirements(args, ctx) {
+  const c = ctx || {};
+  if (c.resume) return null;
+  const a = args || {};
+  const last = String(c.lastUserText || '');
+  // A tweak to a design that already exists ("make it bluer") never re-asks.
+  if (c.hasPriorMedia && last.length < 200 && RX.revision.test(last)) return null;
+
+  const facts = c.facts && typeof c.facts === 'object' ? c.facts : {};
+  const skipped = new Set(Array.isArray(c.skipped) ? c.skipped : []);
+  const assets = c.assets || {};
+  const said = String(c.userText || '') + ' ' + Object.values(facts).join(' ');
+  const topic = (last + ' ' + [a.headline, a.tagline, a.subheadline, a.body].filter(Boolean).join(' ')).toLowerCase();
+  const kind = DESIGN_KINDS.includes(a.kind) ? a.kind : 'flyer';
+
+  const isInvite = kind === 'invitation' || RX.invite.test(topic);
+  const isEvent = isInvite || RX.event.test(topic);
+  const isBusiness = RX.business.test(topic) || RX.orgWord.test(topic);
+  // Quotes, greetings and the like: nothing here depends on facts we lack.
+  if (!isEvent && !isBusiness) return null;
+  if (RX.generic.test(topic) && !isEvent) return null;
+
+  const have = {
+    name: !!facts.name || skipped.has('name') || _hasProperName(said),
+    when: !!facts.when || skipped.has('when') || RX.date.test(said),
+    venue: !!facts.venue || skipped.has('venue') || RX.venue.test(said) || RX.online.test(said),
+    contact: !!facts.contact || skipped.has('contact') || RX.email.test(said) || RX.url.test(said) || RX.handle.test(said) || _hasPhone(said),
+    price: !!facts.price || skipped.has('price') || RX.price.test(said),
+  };
+
+  const need = [];
+  if (!have.name) need.push('name');
+  if (isEvent && !have.when) need.push('when');
+  if (isEvent && !have.venue) need.push('venue');
+  // Invitations only need contact details when the host asked for RSVPs.
+  const wantsContact = isInvite ? RX.bookWord.test(topic) : (isEvent || isBusiness);
+  if (wantsContact && !have.contact) need.push('contact');
+  if (RX.priceWord.test(topic) && !have.price) need.push('price');
+
+  // Assets only the person owns. Asked for when they said so, or (logo only)
+  // alongside a card that is already being shown for a branded design.
+  const logoMentioned = RX.logoWord.test(last) || RX.logoWord.test(said);
+  const noLogo = RX.logoNo.test(said);
+  const images = [];
+  const photoMentioned = RX.photoOwn.test(last) && !/\b(?:generate|ai|stock)\b/.test(last);
+  if (photoMentioned && !assets.photo && !assets.artwork && !skipped.has('photo')) images.push('photo');
+  if (RX.artworkOwn.test(last) && !assets.photo && !assets.artwork && !skipped.has('artwork')) images.push('artwork');
+  if (!assets.logo && !skipped.has('logo') && !noLogo) {
+    if (logoMentioned) images.push('logo');
+    else if (need.length && (isBusiness || RX.orgWord.test(topic))) images.push('logo');
+  }
+  if (!need.length && !images.some((id) => id !== 'logo' || logoMentioned)) return null;
+
+  const ids = need.concat(images).slice(0, 5);
+  const noun = kind.replace('_', ' ');
+  const nameLabel = isEvent ? 'Event or host name' : 'Business or brand name';
+  const contactLabel = RX.bookWord.test(topic) ? 'Phone, email or link to register' : 'Phone, email or website';
+  const fields = ids.map((id) => {
+    const d = DESIGN_FIELD_DEFS[id];
+    const f = { id, type: d.type, label: d.label || '' };
+    if (id === 'name') f.label = nameLabel;
+    if (id === 'contact') f.label = contactLabel;
+    if (d.placeholder) f.placeholder = d.placeholder;
+    if (d.hint) f.hint = d.hint;
+    if (d.optional) f.optional = true;
+    return f;
+  });
+  const withText = fields.some((f) => f.type === 'text');
+  return {
+    title: 'A few details to finish your ' + noun,
+    intro: withText
+      ? 'Add what you have and I\u2019ll build the design around it. Leave anything blank to skip it.'
+      : 'Add these and I\u2019ll build the design around them, or skip to continue without.',
+    kindLabel: noun.charAt(0).toUpperCase() + noun.slice(1),
+    fields,
+  };
+}
+
+// Merges the card's answers into the original create_design arguments so the
+// design is made exactly as first requested, plus the new information.
+export function applyDesignAnswers(args, answers) {
+  const a = { ...(args || {}) };
+  const ans = answers && typeof answers === 'object' ? answers : {};
+  const val = (k) => _clean(typeof ans[k] === 'string' ? ans[k] : '', 70);
+  let details = (Array.isArray(a.details) ? a.details : []).map((d) => String(d));
+  const drop = (re) => { details = details.filter((d) => !re.test(d.trim())); };
+  const added = [];
+
+  if (val('when')) { drop(/^(?:date|time|when|day)\b/i); added.push('Date: ' + val('when')); }
+  if (val('venue')) { drop(/^(?:venue|location|address|where)\b/i); added.push('Venue: ' + val('venue')); }
+  if (val('contact')) {
+    drop(/^(?:call|phone|tel|contact|email|e-mail|website|web|whatsapp|rsvp|reach|register)\b/i);
+    const v = val('contact');
+    const label = RX.email.test(v) && !_hasPhone(v) ? 'Email' : (_hasPhone(v) && !RX.email.test(v) && !RX.url.test(v) ? 'Call' : (RX.url.test(v) && !RX.email.test(v) && !_hasPhone(v) ? 'Web' : 'Contact'));
+    added.push(label + ': ' + v);
+  }
+  if (val('price')) { drop(/^(?:price|cost|ticket|fee|entry|admission)\b/i); added.push('Price: ' + val('price')); }
+  a.details = added.concat(details).slice(0, 6);
+
+  const name = val('name');
+  if (name && !String(a.headline || '').toLowerCase().includes(name.toLowerCase())) {
+    if (!a.tagline) a.tagline = name;
+    else a.footer = name + (a.footer ? ' \u00B7 ' + a.footer : '');
+  }
+  return a;
+}
+
+// Contact details are real-world facts. If the model wrote a phone number,
+// email or website that the person never gave, it is removed rather than
+// printed on a design the person may send out.
+export function scrubInventedFacts(args, said) {
+  const a = { ...(args || {}) };
+  const hay = String(said || '');
+  const hayLower = hay.toLowerCase();
+  const hayDigits = _digits(hay);
+  const real = (v) => {
+    const s = String(v);
+    const em = s.match(RX.email);
+    if (em && !hayLower.includes(em[0].toLowerCase())) return false;
+    const um = s.match(RX.url);
+    if (um && !em && !hayLower.includes(um[0].toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, ''))) return false;
+    if (_hasPhone(s)) {
+      const nums = s.match(/\+?\d[\d\s().-]{7,}\d/g) || [];
+      if (!nums.every((n) => { const d = _digits(n); return d.length < 9 || hayDigits.includes(d) || hayDigits.includes(d.replace(/^0/, '')); })) return false;
+    }
+    return true;
+  };
+  if (Array.isArray(a.details)) a.details = a.details.filter((d) => real(d));
+  if (typeof a.footer === 'string' && !real(a.footer)) a.footer = '';
+  if (typeof a.body === 'string' && !real(a.body)) a.body = '';
+  return a;
+}
+
+// Cleans the design-related fields the browser sends with a chat request.
+// Sizes are capped; nothing here can grant anything beyond "use this picture".
+const _ASSET_MIME = /^image\/(png|jpeg|webp)$/;
+const _B64 = /^[A-Za-z0-9+/=]+$/;
+export function sanitizeDesignInputs(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const assets = {};
+  const rawAssets = b.designAssets && typeof b.designAssets === 'object' ? b.designAssets : {};
+  for (const slot of DESIGN_IMAGE_SLOTS) {
+    const x = rawAssets[slot];
+    if (!x || typeof x !== 'object') continue;
+    if (!_ASSET_MIME.test(x.mime || '') || typeof x.base64 !== 'string' || x.base64.length > 1800000 || !_B64.test(x.base64)) continue;
+    assets[slot] = {
+      mime: x.mime, base64: x.base64,
+      w: Number.isFinite(x.w) && x.w > 0 && x.w < 10000 ? Math.round(x.w) : 0,
+      h: Number.isFinite(x.h) && x.h > 0 && x.h < 10000 ? Math.round(x.h) : 0,
+    };
+  }
+  const facts = {};
+  const rawFacts = b.designFacts && typeof b.designFacts === 'object' ? b.designFacts : {};
+  for (const id of DESIGN_TEXT_IDS) if (typeof rawFacts[id] === 'string' && rawFacts[id].trim()) facts[id] = _clean(rawFacts[id], 120);
+  const all = DESIGN_TEXT_IDS.concat(DESIGN_IMAGE_SLOTS);
+  const skipped = (Array.isArray(b.designSkipped) ? b.designSkipped : []).filter((x) => all.includes(x)).slice(0, 10);
+  let resume = null;
+  const r = b.designResume;
+  if (r && typeof r === 'object' && r.args && typeof r.args === 'object') {
+    const answers = {};
+    const ra = r.answers && typeof r.answers === 'object' ? r.answers : {};
+    for (const id of DESIGN_TEXT_IDS) if (typeof ra[id] === 'string' && ra[id].trim()) answers[id] = _clean(ra[id], 120);
+    resume = { args: r.args, answers };
+  }
+  return { assets, facts, skipped, resume };
 }
 
 // ── Design: spec cleanup ────────────────────────────────────────────────
@@ -431,7 +681,8 @@ function _autoLayout(kind, hasImage, a) {
   return hasImage ? 'poster' : 'bold';
 }
 
-export function normalizeDesignSpec(a) {
+export function normalizeDesignSpec(a, opts) {
+  const hasPhoto = !!(opts && opts.hasPhoto);
   const kind = DESIGN_KINDS.includes(a.kind) ? a.kind : 'flyer';
   const theme = THEMES[String(a.theme || '').toLowerCase()] || THEMES.royal;
   const customPrimary = _hex(a.primary_color);
@@ -446,11 +697,11 @@ export function normalizeDesignSpec(a) {
   // Photography briefs get art-direction appended so backgrounds are calm
   // and leave room for type instead of fighting it.
   const rawImg = _clean(a.image_prompt, 300);
-  const imagePrompt = rawImg
+  const imagePrompt = rawImg && !hasPhoto
     ? rawImg + ', professional editorial photography, soft natural light, uncluttered composition with calm negative space, shallow depth of field, no text, no lettering, no logos, no watermark'
     : '';
   const layoutRaw = String(a.layout || '').toLowerCase();
-  const layout = LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg, { bullets, details, body });
+  const layout = LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg || hasPhoto, { bullets, details, body });
   return {
     kind,
     layout,
@@ -559,12 +810,12 @@ function _lines(lines, x, top, size, o) {
   }).join('');
 }
 
-export function buildDesignSvg(spec, bg) {
+export function buildDesignSvg(spec, bg, extras) {
   // Type steps down gently until the whole design fits the page.
   let scale = 1;
   let built = null;
   for (let i = 0; i < 9; i++) {
-    built = _compose(spec, bg, scale);
+    built = _compose(spec, bg, scale, extras || {});
     if (built.fits) break;
     scale *= 0.93;
   }
@@ -591,7 +842,13 @@ function _total(blocks) {
   return bl.reduce((s, b, i) => s + b.h + (i < bl.length - 1 ? (b.gap || 0) : 0), 0);
 }
 
-function _compose(spec, bg, scale) {
+function _hash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+function _compose(spec, bg, scale, extras) {
   const { width: W, height: H } = designSize(spec.kind);
   const S = (n) => Math.round(n * (W / 1080));
   const c = spec.colors;
@@ -630,6 +887,10 @@ function _compose(spec, bg, scale) {
 
   const hair = (x, y, ww, tone, op) => '<rect x="' + Math.round(x) + '" y="' + Math.round(y) + '" width="' + Math.round(ww) + '" height="' + Math.max(1, S(2)) + '" fill="' + tone.hair + '" fill-opacity="' + (op || 0.25) + '"/>';
   const href = bg ? 'data:' + bg.mime + ';base64,' + bg.base64 : '';
+  // The person's own photos keep their top (faces) when cropped; generated ones centre.
+  const pAR = bg && bg.user ? 'xMidYMin slice' : 'xMidYMid slice';
+  // Deterministic variety: the same brief always looks the same, different briefs differ.
+  const seed = _hash(spec.headline + '|' + spec.kind) % 3;
 
   // ── Blocks ──────────────────────────────────────────────────────────
 
@@ -905,15 +1166,15 @@ function _compose(spec, bg, scale) {
       draw: (y) => {
         const cy = y + r + S(24);
         return '<clipPath id="med"><circle cx="' + x0 + '" cy="' + cy + '" r="' + r + '"/></clipPath>' +
-          '<image href="' + href + '" x="' + (x0 - r) + '" y="' + (cy - r) + '" width="' + 2 * r + '" height="' + 2 * r + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#med)"/>' +
+          '<image href="' + href + '" x="' + (x0 - r) + '" y="' + (cy - r) + '" width="' + 2 * r + '" height="' + 2 * r + '" preserveAspectRatio="' + pAR + '" clip-path="url(#med)"/>' +
           '<circle cx="' + x0 + '" cy="' + cy + '" r="' + (r + S(10)) + '" fill="none" stroke="' + c.accent + '" stroke-width="' + S(4) + '"/>' +
           '<circle cx="' + x0 + '" cy="' + cy + '" r="' + (r + S(24)) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.4" stroke-width="' + S(1.5) + '"/>';
       },
     };
   }
 
-  // Rounded picture window for the editorial layout. Without a photo it
-  // becomes an abstract sun-and-arc composition in the theme colours.
+  // Picture window for the editorial layout. Without a photo it becomes a
+  // single flat shape on a solid field: one idea, no extra ornament.
   function bWindow(wh) {
     return {
       h: wh, gap: S(40),
@@ -921,22 +1182,47 @@ function _compose(spec, bg, scale) {
         const r = S(30), ox = left, ww = w;
         let out = '<clipPath id="win"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" rx="' + r + '"/></clipPath>';
         if (bg) {
-          out += '<rect x="' + (ox + S(16)) + '" y="' + (y + S(16)) + '" width="' + ww + '" height="' + wh + '" rx="' + r + '" fill="' + c.accent + '"/>';
-          out += '<image href="' + href + '" x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#win)"/>';
+          out += '<image href="' + href + '" x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" preserveAspectRatio="' + pAR + '" clip-path="url(#win)"/>';
         } else {
-          const cx = ox + ww * 0.74, cy = y + wh * 0.46, R = wh * 0.46;
-          out += '<g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="url(#wingrad)"/>' +
-            '<circle cx="' + Math.round(cx) + '" cy="' + Math.round(cy) + '" r="' + Math.round(R * 1.55) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.3" stroke-width="' + S(2) + '"/>' +
-            '<circle cx="' + Math.round(cx) + '" cy="' + Math.round(cy) + '" r="' + Math.round(R * 1.25) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.5" stroke-width="' + S(2) + '"/>' +
-            '<circle cx="' + Math.round(cx) + '" cy="' + Math.round(cy) + '" r="' + Math.round(R) + '" fill="' + c.accent + '"/>' +
-            '<circle cx="' + Math.round(ox + ww * 0.22) + '" cy="' + Math.round(y + wh * 1.05) + '" r="' + Math.round(wh * 0.6) + '" fill="' + c.light + '" fill-opacity="0.09"/></g>';
+          out += '<g clip-path="url(#win)"><rect x="' + ox + '" y="' + y + '" width="' + ww + '" height="' + wh + '" fill="' + c.primary + '"/>';
+          if (seed === 0) out += '<circle cx="' + Math.round(ox + ww * 0.7) + '" cy="' + Math.round(y + wh * 0.5) + '" r="' + Math.round(wh * 0.34) + '" fill="' + c.accent + '"/>';
+          else if (seed === 1) {
+            const aw = Math.round(wh * 0.52), ax = Math.round(ox + ww * 0.62), ah = Math.round(wh * 0.74), ay = y + wh - ah;
+            out += '<path d="M' + ax + ' ' + (y + wh) + ' V' + (ay + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ay + aw / 2) + ' V' + (y + wh) + ' Z" fill="' + c.accent + '"/>';
+          } else out += '<circle cx="' + Math.round(ox + ww * 0.5) + '" cy="' + (y + wh) + '" r="' + Math.round(wh * 0.52) + '" fill="' + c.accent + '"/>';
+          out += '</g>';
         }
         return out;
       },
     };
   }
 
+  // The person's own logo. On a coloured surface it sits on a light plate so
+  // a dark logo never disappears; on paper it is placed directly.
+  function bLogo(onDark) {
+    const lg = extras && extras.logo;
+    if (!lg) return null;
+    const maxW = S(wide ? 210 : 290), maxH = S(wide ? 76 : 108);
+    const ratio = lg.w > 0 && lg.h > 0 ? lg.w / lg.h : 1;
+    const bw = Math.round(Math.min(maxW, maxH * ratio));
+    const bh = Math.round(bw / ratio);
+    const pad = onDark ? S(16) : 0;
+    const pw = bw + pad * 2, ph = bh + pad * 2;
+    const src = 'data:' + lg.mime + ';base64,' + lg.base64;
+    return {
+      h: ph, gap: S(wide ? 24 : 40),
+      draw: (y) => {
+        const px = align(pw);
+        return (onDark ? '<rect x="' + px + '" y="' + y + '" width="' + pw + '" height="' + ph + '" rx="' + S(14) + '" fill="' + c.light + '"/>' : '') +
+          '<image href="' + src + '" x="' + (px + pad) + '" y="' + (y + pad) + '" width="' + bw + '" height="' + bh + '" preserveAspectRatio="xMidYMid meet"/>';
+      },
+    };
+  }
+
   // ── Page assembly ───────────────────────────────────────────────────
+  // Backgrounds are flat colour with at most one deliberate graphic idea
+  // (a cropped letter, a single circle, an arch). No stacked gradients,
+  // rings or confetti: restraint is what makes it look designed.
   const defs = [];
   let back = '';
   let content = '';
@@ -947,28 +1233,27 @@ function _compose(spec, bg, scale) {
   const footTop = H - padBot - (footer ? footer.h : 0);
   const limit = footer ? footTop - S(40) : H - padBot;
   const spacer = (h) => ({ h, gap: 0, draw: () => '' });
+  const tonal = _mix(c.primary, darkInk, 0.08);
+  const initial = (spec.headline.match(/[A-Za-z0-9]/) || ['A'])[0].toUpperCase();
+  const letter = (x, base, size, fill) => '<text x="' + x + '" y="' + base + '" font-size="' + size + '" font-family="' + FONT_HEAD + '" font-weight="900" fill="' + fill + '" text-anchor="end">' + initial + '</text>';
+  const solid = '<rect width="' + W + '" height="' + H + '" fill="url(#base)"/>';
 
-  defs.push('<linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + c.mid + '"/><stop offset="0.45" stop-color="' + c.primary + '"/><stop offset="1" stop-color="' + c.deep + '"/></linearGradient>');
-  defs.push('<linearGradient id="wingrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + c.mid + '"/><stop offset="1" stop-color="' + c.deep + '"/></linearGradient>');
-  defs.push('<pattern id="dots" width="' + S(30) + '" height="' + S(30) + '" patternUnits="userSpaceOnUse"><circle cx="' + S(15) + '" cy="' + S(15) + '" r="' + S(2.3) + '" fill="' + darkInk + '" fill-opacity="0.2"/></pattern>');
-  defs.push('<linearGradient id="shade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.6"/><stop offset="0.5" stop-color="' + c.deep + '" stop-opacity="0.78"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.96"/></linearGradient>');
-  defs.push('<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.25"/><stop offset="0.38" stop-color="' + c.deep + '" stop-opacity="0.08"/><stop offset="0.66" stop-color="' + c.deep + '" stop-opacity="0.88"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.97"/></linearGradient>');
-  defs.push('<radialGradient id="glow" cx="0.5" cy="0.42" r="0.75"><stop offset="0" stop-color="' + c.mid + '"/><stop offset="1" stop-color="' + c.deep + '"/></radialGradient>');
+  defs.push('<linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.primary + '"/><stop offset="1" stop-color="' + _mix(c.primary, c.deep, 0.55) + '"/></linearGradient>');
+  defs.push('<linearGradient id="shade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.8"/><stop offset="0.36" stop-color="' + c.deep + '" stop-opacity="0.4"/><stop offset="0.62" stop-color="' + c.deep + '" stop-opacity="0.5"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.95"/></linearGradient>');
+  defs.push('<linearGradient id="hshade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.3"/><stop offset="0.5" stop-color="' + c.deep + '" stop-opacity="0.6"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.92"/></linearGradient>');
+  defs.push('<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + c.deep + '" stop-opacity="0.22"/><stop offset="0.4" stop-color="' + c.deep + '" stop-opacity="0.06"/><stop offset="0.68" stop-color="' + c.deep + '" stop-opacity="0.86"/><stop offset="1" stop-color="' + c.deep + '" stop-opacity="0.97"/></linearGradient>');
   defs.push('<linearGradient id="side" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + c.primary + '"/><stop offset="1" stop-color="' + c.primary + '" stop-opacity="0"/></linearGradient>');
 
   if (layout === 'split') {
-    const hero = [bTag(dark, false), bHead(dark, 112, 4, true), bRule('bar', dark)];
+    const hero = [bLogo(true), bTag(dark, false), bHead(dark, 112, 4, true), bRule('bar', dark)];
     const heroContent = _total(hero);
     const minHero = Math.round(H * (bg ? 0.46 : 0.36));
     const heroH = Math.min(Math.round(H * 0.62), Math.max(minHero, heroContent + Math.round(padTop * 0.7) + S(78)));
-    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/>';
+    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/><clipPath id="hclip"><rect width="' + W + '" height="' + heroH + '"/></clipPath>';
     if (bg) {
-      back += '<clipPath id="hclip"><rect width="' + W + '" height="' + heroH + '"/></clipPath><image href="' + href + '" width="' + W + '" height="' + heroH + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#hclip)"/><rect width="' + W + '" height="' + heroH + '" fill="url(#shade)"/>';
+      back += '<image href="' + href + '" width="' + W + '" height="' + heroH + '" preserveAspectRatio="' + pAR + '" clip-path="url(#hclip)"/><rect width="' + W + '" height="' + heroH + '" fill="url(#hshade)"/>';
     } else {
-      back += '<rect width="' + W + '" height="' + heroH + '" fill="url(#g1)"/>' +
-        '<circle cx="' + Math.round(W * 0.92) + '" cy="' + Math.round(heroH * 0.16) + '" r="' + S(250) + '" fill="' + c.accent + '" fill-opacity="0.16"/>' +
-        '<circle cx="' + Math.round(W * 0.92) + '" cy="' + Math.round(heroH * 0.16) + '" r="' + S(170) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.45" stroke-width="' + S(2) + '"/>' +
-        '<rect x="' + (W - S(380)) + '" y="' + Math.round(heroH - S(210)) + '" width="' + S(300) + '" height="' + S(150) + '" fill="url(#dots)"/>';
+      back += '<rect width="' + W + '" height="' + heroH + '" fill="' + c.primary + '"/><g clip-path="url(#hclip)">' + letter(W + S(24), Math.round(heroH + heroH * 0.14), Math.round(heroH * 1.25), tonal) + '</g>';
     }
     back += '<rect y="' + (heroH - S(12)) + '" width="' + W + '" height="' + S(12) + '" fill="' + c.accent + '"/>';
     const hy = Math.max(Math.round(padTop * 0.6), heroH - S(78) - heroContent);
@@ -979,12 +1264,11 @@ function _compose(spec, bg, scale) {
     content += res.svg;
     fits = hy + heroContent <= heroH - S(60) && ly + res.h <= limit;
   } else if (layout === 'editorial') {
-    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/>' +
-      '<rect width="' + W + '" height="' + S(14) + '" fill="' + c.primary + '"/><rect x="0" y="0" width="' + S(180) + '" height="' + S(14) + '" fill="' + c.accent + '"/>';
+    back += '<rect width="' + W + '" height="' + H + '" fill="' + c.light + '"/><rect width="' + W + '" height="' + S(14) + '" fill="' + c.primary + '"/>';
     const y0 = Math.round(padTop * 0.9);
-    const pre = [bTag(light, false), bHead(light, 104, 4, false), bRule('hair', light)];
+    const pre = [bLogo(false), bTag(light, false), bHead(light, 104, 4, false), bRule('hair', light)];
     const post = [bSub(light), bBody(light), bBullets(light), bDetails(light), bCta(light)];
-    const others = _total(pre) + (pre.length ? pre[pre.length - 1].gap : 0) + _total(post) + S(40);
+    const others = _total(pre) + (pre.filter(Boolean).length ? pre.filter(Boolean).slice(-1)[0].gap : 0) + _total(post) + S(40);
     const wh = Math.min(Math.round(H * 0.36), Math.round(limit - y0 - others));
     const winH = Math.max(wh, S(150));
     const res = _stack([...pre, bWindow(winH), ...post], y0, limit - y0, true);
@@ -993,56 +1277,42 @@ function _compose(spec, bg, scale) {
   } else {
     // Single-surface layouts: bold, poster, centered, and the banner variant of bold.
     if (layout === 'centered') {
-      back += '<rect width="' + W + '" height="' + H + '" fill="url(#glow)"/>';
-      const o = S(44), o2 = S(62), dm = S(9);
-      back += '<rect x="' + o + '" y="' + o + '" width="' + (W - o * 2) + '" height="' + (H - o * 2) + '" fill="none" stroke="' + c.accent + '" stroke-width="' + S(3.5) + '"/>' +
-        '<rect x="' + o2 + '" y="' + o2 + '" width="' + (W - o2 * 2) + '" height="' + (H - o2 * 2) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.45" stroke-width="' + S(1.5) + '"/>';
-      [[o, o], [W - o, o], [o, H - o], [W - o, H - o]].forEach(([px, py]) => {
-        back += '<rect x="' + (px - dm) + '" y="' + (py - dm) + '" width="' + dm * 2 + '" height="' + dm * 2 + '" fill="' + c.accent + '" transform="rotate(45 ' + px + ' ' + py + ')"/>';
-      });
+      const o = S(52);
+      back += '<rect width="' + W + '" height="' + H + '" fill="' + c.primary + '"/>' +
+        '<rect x="' + o + '" y="' + o + '" width="' + (W - o * 2) + '" height="' + (H - o * 2) + '" fill="none" stroke="' + c.accent + '" stroke-width="' + S(2.5) + '"/>';
     } else if (layout === 'poster') {
       if (bg) {
-        back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="xMidYMid slice"/><rect width="' + W + '" height="' + H + '" fill="url(#fade)"/>';
+        back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="' + pAR + '"/><rect width="' + W + '" height="' + H + '" fill="url(#fade)"/>';
       } else {
-        const sx = Math.round(W * 0.64), sy = Math.round(H * 0.27), sr = Math.round(W * 0.27);
-        back += '<rect width="' + W + '" height="' + H + '" fill="url(#g1)"/>' +
-          '<circle cx="' + sx + '" cy="' + sy + '" r="' + Math.round(sr * 1.5) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.28" stroke-width="' + S(2) + '"/>' +
-          '<circle cx="' + sx + '" cy="' + sy + '" r="' + Math.round(sr * 1.22) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.45" stroke-width="' + S(2) + '"/>' +
-          '<circle cx="' + sx + '" cy="' + sy + '" r="' + sr + '" fill="' + c.accent + '"/>' +
-          '<circle cx="' + Math.round(W * 0.36) + '" cy="' + Math.round(H * 0.33) + '" r="' + Math.round(sr * 0.72) + '" fill="' + c.deep + '" fill-opacity="0.55"/>' +
-          '<rect y="' + Math.round(H * 0.5) + '" width="' + W + '" height="' + Math.round(H * 0.5) + '" fill="' + c.deep + '" fill-opacity="0.35"/>';
+        back += solid;
+        if (seed === 0) back += '<circle cx="' + Math.round(W * 0.66) + '" cy="' + Math.round(H * 0.3) + '" r="' + Math.round(W * 0.29) + '" fill="' + c.accent + '"/>';
+        else if (seed === 1) {
+          const aw = Math.round(W * 0.5), ax = W - margin - aw, ay = Math.round(H * 0.1), ah = Math.round(H * 0.44);
+          back += '<path d="M' + ax + ' ' + (ay + ah) + ' V' + (ay + aw / 2) + ' A' + aw / 2 + ' ' + aw / 2 + ' 0 0 1 ' + (ax + aw) + ' ' + (ay + aw / 2) + ' V' + (ay + ah) + ' Z" fill="' + c.accent + '"/>';
+        } else back += letter(W + S(12), Math.round(H * 0.52), Math.round(W * 1.1), tonal);
       }
+    } else if (bg && !wide) {
+      back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="' + pAR + '"/><rect width="' + W + '" height="' + H + '" fill="url(#shade)"/>';
     } else {
-      // bold
-      if (bg && !wide) {
-        back += '<rect width="' + W + '" height="' + H + '" fill="' + c.deep + '"/><image href="' + href + '" width="' + W + '" height="' + H + '" preserveAspectRatio="xMidYMid slice"/><rect width="' + W + '" height="' + H + '" fill="url(#shade)"/>';
-      } else {
-        back += '<rect width="' + W + '" height="' + H + '" fill="url(#g1)"/>';
-        if (wide) {
-          if (bg) {
-            back += '<clipPath id="pclip"><rect x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '"/></clipPath><image href="' + href + '" x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#pclip)"/>' +
-              '<rect x="' + (panelX - 1) + '" width="' + S(260) + '" height="' + H + '" fill="url(#side)"/>';
-          } else {
-            const cx = Math.round(W * 0.8), cy = Math.round(H * 0.5), R = Math.round(H * 0.34);
-            back += '<circle cx="' + cx + '" cy="' + cy + '" r="' + Math.round(R * 1.45) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.3" stroke-width="' + S(2) + '"/>' +
-              '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + c.accent + '"/>' +
-              '<circle cx="' + Math.round(W * 0.9) + '" cy="' + Math.round(H * 0.18) + '" r="' + Math.round(H * 0.1) + '" fill="' + darkInk + '" fill-opacity="0.12"/>';
-          }
+      back += solid;
+      if (wide) {
+        if (bg) {
+          back += '<clipPath id="pclip"><rect x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '"/></clipPath><image href="' + href + '" x="' + panelX + '" width="' + (W - panelX) + '" height="' + H + '" preserveAspectRatio="' + pAR + '" clip-path="url(#pclip)"/>' +
+            '<rect x="' + (panelX - 1) + '" width="' + S(260) + '" height="' + H + '" fill="url(#side)"/>';
         } else {
-          back += '<circle cx="' + Math.round(W * 0.95) + '" cy="' + Math.round(H * 0.06) + '" r="' + S(330) + '" fill="none" stroke="' + c.accent + '" stroke-opacity="0.3" stroke-width="' + S(2) + '"/>' +
-            '<circle cx="' + Math.round(W * 0.95) + '" cy="' + Math.round(H * 0.06) + '" r="' + S(230) + '" fill="' + c.accent + '" fill-opacity="0.14"/>' +
-            '<rect x="' + (W - S(400)) + '" y="' + (H - S(420)) + '" width="' + S(320) + '" height="' + S(260) + '" fill="url(#dots)"/>';
+          back += '<circle cx="' + Math.round(W * 0.8) + '" cy="' + Math.round(H * 0.5) + '" r="' + Math.round(H * 0.32) + '" fill="' + c.accent + '"/>';
         }
-      }
+      } else if (seed === 0) back += '<g>' + letter(W + S(30), Math.round(H * 0.97), Math.round(W * 0.92), tonal) + '</g>';
+      else if (seed === 1) back += '<rect width="' + S(22) + '" height="' + H + '" fill="' + c.accent + '"/>';
+      else back += '<circle cx="' + Math.round(W * 0.92) + '" cy="' + Math.round(H * 0.93) + '" r="' + Math.round(W * 0.42) + '" fill="' + tonal + '"/>';
     }
 
     const tagPill = layout === 'bold' || layout === 'poster';
     const tag = bTag(dark, tagPill && !centered);
     if (layout === 'centered') {
-      const group = [bMedallion(), tag, bHead(dark, 92, 4, false), bRule('orn', dark), bSub(dark), bBody(dark)];
+      const group = [bLogo(true), bMedallion(), tag, bHead(dark, 92, 4, false), bRule('orn', dark), bSub(dark), bBody(dark)];
       const lower = [bBullets(dark), bDetails(dark), bCta(dark)];
       const all = lower.some(Boolean) ? [...group, spacer(S(26)), ...lower] : group;
-      // Keep the group's last block from leaving a trailing gap.
       const gh = _total(all);
       const y = padTop + Math.max(0, (limit - padTop - gh) * 0.46);
       content += _stack(all, y, 0, false).svg;
@@ -1053,16 +1323,16 @@ function _compose(spec, bg, scale) {
       const all = lower.some(Boolean) ? [...hero, spacer(S(18)), ...lower] : hero;
       const gh = _total(all);
       const y = limit - gh;
-      if (tag) content += tag.draw(padTop);
+      const topB = [bLogo(true), tag];
+      content += _stack(topB, padTop, 0, false).svg;
       content += _stack(all, y, 0, false).svg;
-      const topH = tag ? tag.h + S(60) : 0;
+      const topH = topB.some(Boolean) ? _total(topB) + S(60) : 0;
       fits = y >= padTop + topH + Math.round(H * (story ? 0.2 : 0.26));
     } else {
-      const hero = [tag, bHead(dark, wide ? 84 : (story ? 128 : 124), wide ? 3 : 4, true), bRule('bar', dark), bSub(dark), bBody(dark)];
+      const hero = [bLogo(true), tag, bHead(dark, wide ? 84 : (story ? 128 : 124), wide ? 3 : 4, true), bRule('bar', dark), bSub(dark), bBody(dark)];
       const lower = [bBullets(dark), bDetails(dark), bCta(dark)];
       const hh = _total(hero);
       if (!lower.some(Boolean)) {
-        // Short content: sit the group a little above centre rather than hugging the top.
         const y = padTop + Math.max(0, (limit - padTop - hh) * 0.34);
         content += _stack(hero, y, 0, false).svg;
         fits = hh <= limit - padTop;

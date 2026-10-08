@@ -202,8 +202,10 @@ const MEDIA_RULES =
   'illustration, painting, logo artwork, wallpaper or character, call generate_image with a ' +
   'detailed English prompt (subject, setting, lighting, colours, style). For flyers, posters, ' +
   'invitations, social media posts, stories and banners, call create_design and write all the ' +
-  'real copy yourself: a short strong headline, a tagline, key details such as date, time, ' +
-  'venue and phone, and a call to action. Pick a theme and layout that suit the subject, and ' +
+  'real copy yourself: a short strong headline, a tagline and a call to action, plus the details ' +
+  'the person actually gave you (date, time, venue, phone, price). Never invent names, dates, venues, ' +
+  'prices, phone numbers, emails or websites; if something essential is missing, still call ' +
+  'create_design and the app will ask the person for it before the design is made. Pick a theme and layout that suit the subject, and ' +
   'add image_prompt only when a background picture would genuinely help. Image models cannot ' +
   'spell, so never ask a picture to contain words; put words in create_design. If the person ' +
   'gave exact wording, use it exactly. Do the work straight away instead of asking questions ' +
