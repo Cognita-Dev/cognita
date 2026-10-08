@@ -207,6 +207,8 @@ const SECTION_META = {
   resources: { title: 'Resources', subtitle: 'Browse, filter and manage every learning resource.' },
   create: { title: 'Create', subtitle: 'Generate a new resource with AI, or write one by hand.' },
   collections: { title: 'Collections', subtitle: 'Group published resources for learners to browse.' },
+  courses: { title: 'Courses', subtitle: 'Create, edit, publish and unpublish Learna courses without touching code.' },
+  reviews: { title: 'Task reviews', subtitle: 'Watch recordings, read written work and approve or send tasks back.' },
   roles: { title: 'People', subtitle: 'Manage who can curate content as an admin or moderator.' },
 };
 
@@ -233,6 +235,7 @@ function switchSection(section) {
   document.getElementById('sectionSubtitle').textContent = meta.subtitle;
   document.getElementById('topbarActions').hidden = section === 'create';
 
+  document.dispatchEvent(new CustomEvent('admin:section', { detail: section }));
   closeMobileNav();
 }
 

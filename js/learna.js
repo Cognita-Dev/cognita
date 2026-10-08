@@ -7,10 +7,14 @@
 //
 // The browser never decides progress or grades. It shows what the server returns
 // and sends answers. Code tests run in the existing Cognita sandbox; the server
-// compares the values they produce against expectations the browser never sees.
+// compares the values they produce against expectations the browser never sees,
+// and adds hidden cases for every run (see learna-endpoint.js).
+// Speech (listening, dictation, recording) lives in learna-speech.js and is only
+// offered where it has a learning purpose.
 
 import { escapeHtml as esc, ensureSidebarAccount } from './shell.js';
 import { SandboxClient } from './sandbox-client.js';
+import * as Speech from './learna-speech.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 const root = () => document.getElementById('learnaRoot');
@@ -29,7 +33,14 @@ const S = {
   result: {},                // latest server result per activity id
   codeOut: {},               // latest test run per activity id
   notice: null,
+  hot: {},                   // selected hotspot per step id
+  voices: null,              // speech status from the server
+  speech: { playing: null, note: null },
+  rec: {},                   // recorder state per activity id
+  cert: { name: '', busy: false, error: null, done: null },
+  prefs: null, prefsOpen: false,
 };
+let liveRec = null, liveDict = null;   // the one active recorder and dictation session
 let sandbox = null;
 let mounted = false;
 
@@ -48,6 +59,23 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// Binary helpers: premium voice audio comes back as audio, and recordings go up as raw bytes.
+async function apiBlob(path, body) {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/learna' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); return { ok: false, code: j.code || null, status: res.status }; }
+    return { ok: true, blob: await res.blob() };
+  } catch (_) { return { ok: false, code: 'NETWORK' }; }
+}
+async function apiUpload(path, blob, headers) {
+  let res;
+  try { res = await window.Auth.authedFetch(WORKER_URL + '/api/learna' + path, { method: 'POST', headers, body: blob }); }
+  catch (_) { throw new ApiError('Could not reach Cognita. Check your connection and try again.', 0, 'NETWORK'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error || 'The upload did not work. Please try again.', res.status, data.code || (res.status === 401 ? 'AUTH' : null));
+  return data;
+}
+
 const say = (text) => { const el = document.getElementById('learnaStatus'); if (el) { el.textContent = ''; setTimeout(() => { el.textContent = text; }, 30); } };
 const paras = (arr) => arr.map((t) => '<p>' + esc(t) + '</p>').join('');
 const catName = (id) => ((S.cat && S.cat.categories.find((c) => c.id === id)) || {}).name || '';
@@ -55,6 +83,24 @@ const planName = (p) => ({ free: 'Starter', plus: 'Plus', studio: 'Studio', admi
 const minutes = (n) => (n >= 60 ? (Math.floor(n / 60) + ' h' + (n % 60 ? ' ' + (n % 60) + ' min' : '')) : n + ' min');
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const isAuthErr = (e) => e && (e.code === 'AUTH' || e.status === 401);
+const courseLang = () => (S.detail && S.detail.course.language && S.detail.course.language.tts) || 'en-NG';
+const isLangCourse = () => !!(S.detail && S.detail.course.language);
+const clock = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+// [[word]] in course text shows the word with a small speaker button that says only that word.
+function rich(text) {
+  return esc(text).replace(/\[\[(.+?)\]\]/g, (_, w) => `<span class="lrn-w">${w}<button type="button" class="lrn-spk" data-act="speak-word" data-word="${w}" aria-label="Hear ${w}"><i class="ph ph-speaker-high" aria-hidden="true"></i></button></span>`);
+}
+const plainText = (t) => String(t).replace(/\[\[|\]\]/g, '');
+
+function visualHtml(v, id) {
+  if (!v) return '';
+  const sel = S.hot[id];
+  const spots = (v.hotspots || []).map((h, i) => `<button type="button" class="lrn-hot ${sel === i ? 'is-on' : ''}" style="left:${h.x}%;top:${h.y}%" data-act="hot" data-step="${esc(id)}" data-i="${i}" aria-label="${esc(h.label)}: point ${i + 1} of ${v.hotspots.length}" aria-pressed="${sel === i}"><span aria-hidden="true">${i + 1}</span></button>`).join('');
+  const panel = v.hotspots && v.hotspots.length ? `<div class="lrn-hot-panel" role="status">${sel != null && v.hotspots[sel] ? `<p class="lrn-hot-h">${sel + 1}. ${esc(v.hotspots[sel].label)}</p><p>${esc(v.hotspots[sel].text)}</p>` : '<p class="lrn-hot-hint">Tap a numbered point on the picture to learn more.</p>'}</div>
+    <details class="lrn-hot-list"><summary>Read the numbered points as a list</summary><ol>${v.hotspots.map((h) => `<li><strong>${esc(h.label)}.</strong> ${esc(h.text)}</li>`).join('')}</ol></details>` : '';
+  return `<figure class="lrn-visual"><div class="lrn-visual-img"><img src="${esc(v.src)}" alt="${esc(v.alt)}" loading="lazy" decoding="async" width="1200" height="675">${spots}</div>${v.caption ? `<figcaption>${esc(v.caption)}</figcaption>` : ''}</figure>${panel}`;
+}
 
 function routeFromUrl() {
   const p = new URLSearchParams(window.location.search);
@@ -92,11 +138,13 @@ async function loadDetail(id, force) {
   try { const d = await api('/courses/' + encodeURIComponent(id)); if (t !== S.token) return; S.detail = d; S.detailState = 'ready'; }
   catch (e) { if (t !== S.token) return; S.detailState = e.status === 404 ? 'missing' : 'error'; S.detailError = e; }
   render();
+  if (S.detailState === 'ready') { S.cert = { name: S.cert.name, busy: false, error: null, done: null }; loadCertificate(); }
 }
 
 async function loadLesson(courseId, key, force) {
   if (S.lessonFor === courseId + '/' + key && S.lessonData && !force) return;
-  const t = ++S.token; S.lessonData = null; S.lessonFor = courseId + '/' + key; S.lessonState = 'loading';
+  cleanupMedia();
+  const t = ++S.token; S.lessonData = null; S.lessonFor = courseId + '/' + key; S.lessonState = 'loading'; S.hot = {}; S.rec = {};
   S.tutor = { open: window.matchMedia('(min-width: 900px)').matches, log: [], sending: false }; S.result = {}; S.codeOut = {}; S.draft = {};
   if (!S.detail || S.detailFor !== courseId) { try { S.detail = await api('/courses/' + encodeURIComponent(courseId)); S.detailFor = courseId; } catch (e) { if (t !== S.token) return; S.lessonState = 'error'; S.lessonError = e; render(); return; } if (t !== S.token) return; }
   if (!S.detail.progress) { go(courseId, null, { replace: true }); return; }
@@ -104,7 +152,8 @@ async function loadLesson(courseId, key, force) {
   try {
     const d = await api('/courses/' + encodeURIComponent(courseId) + '/lessons/' + encodeURIComponent(key));
     if (t !== S.token) return;
-    S.lessonData = d; S.lessonState = 'ready'; S.notice = d.notice || null;
+    S.lessonData = d; S.lessonState = 'ready'; S.notice = d.notice || null; ensureVoices();
+    if (S.openTask && !d.lesson.steps.some((x) => x.id === S.openTask)) S.openTask = null;
     S.detail.progress = d.progress;
   } catch (e) {
     if (t !== S.token) return;
@@ -155,7 +204,7 @@ function accessLine(v) {
 
 function courseRow(c, mine) {
   const m = mine[c.id];
-  const status = m ? (m.status === 'completed' ? '<span class="lrn-tag lrn-tag--done">Completed</span>' : `<span class="lrn-tag lrn-tag--live">${m.percent}% done</span>`) : (c.status !== 'available' ? '<span class="lrn-tag">Coming soon</span>' : (c.access_state.allowed ? '' : `<span class="lrn-tag">${planName(c.access)} to start</span>`));
+  const status = m ? (m.status === 'completed' ? '<span class="lrn-tag lrn-tag--done">Completed</span>' : `<span class="lrn-tag lrn-tag--live">${m.percent}% done</span>`) : (c.adminState ? `<span class="lrn-tag lrn-tag--warn">${c.adminState === 'draft' ? 'Draft: only admins see this' : 'Unpublished'}</span>` : c.status !== 'available' ? '<span class="lrn-tag">Coming soon</span>' : (c.access_state.allowed ? '' : `<span class="lrn-tag">${planName(c.access)} to start</span>`));
   return `<li><a class="lrn-row" href="/app.html?view=learna&course=${encodeURIComponent(c.id)}" data-course="${esc(c.id)}">
     <span class="lrn-row-main">
       <span class="lrn-eyebrow">${esc(catName(c.category))}</span>
@@ -203,6 +252,7 @@ function viewCatalogue() {
     <div class="lrn-plan-wrap">${accessLine(v)}</div>
     ${S.catState === 'error' ? `<div class="lrn-banner" role="alert">Could not refresh the list. <button class="lrn-link" type="button" data-act="reload-cat">Try again</button></div>` : ''}
     ${yours}${featured}
+    ${v.isAdmin ? '<p class="lrn-plan"><a href="/admin.html#courses">Manage courses</a> (admins only): create, edit, publish and review tasks.</p>' : ''}
     <section class="lrn-section" aria-labelledby="lrnAll">
       <h3 id="lrnAll" class="lrn-h">All courses</h3>
       <div class="lrn-tools">
@@ -214,6 +264,7 @@ function viewCatalogue() {
       ${list.length ? `<ul class="lrn-list">${list.map((c) => courseRow(c, mine)).join('')}</ul>` : `<div class="lrn-state"><h3>No courses match</h3><p>Try a different word, or clear the filters.</p><button class="lrn-btn" type="button" data-act="clear">Clear filters</button></div>`}
     </section>
     ${done.length ? `<p class="lrn-foot">You have completed ${plural(done.length, 'course')}.</p>` : ''}
+    ${v.canTake ? prefsPanel() : ''}
   </div>`;
 }
 
@@ -260,9 +311,11 @@ function viewCourse() {
         <section aria-labelledby="lrnPr"><h3 id="lrnPr" class="lrn-h">Practical work</h3><p class="lrn-body">${esc(c.practical)}</p></section>
         <section aria-labelledby="lrnAs"><h3 id="lrnAs" class="lrn-h">How you are assessed</h3><p class="lrn-body">${esc(c.assessment)}</p></section>
         ${c.language ? `<section aria-labelledby="lrnLg"><h3 id="lrnLg" class="lrn-h">Language</h3><p class="lrn-body">Explanations in ${esc(c.language.explanation)}. You learn ${esc(c.language.target)}. ${esc(c.language.framework)}. Cognita is not accredited by the Council of Europe and this course does not lead to an official certificate.</p></section>` : ''}
+        ${c.certificate && !prog ? '' : ''}
         <section aria-labelledby="lrnCur"><h3 id="lrnCur" class="lrn-h">Curriculum</h3>
           ${c.curriculum.map((s, i) => `<details class="lrn-sec" ${i === 0 ? 'open' : ''}><summary><span>Section ${i + 1}: ${esc(s.title)}</span><span class="lrn-sec-n">${plural(s.lessons.length, 'lesson')}</span></summary><p class="lrn-sec-sum">${esc(s.summary)}</p><ol class="lrn-lessons">${s.lessons.map((l) => { const st = prog && prog.lessons[l.key]; const done = st && st.status === 'done'; return `<li class="${done ? 'is-done' : ''}"><span class="lrn-tick" aria-hidden="true">${done ? '<i class="ph ph-check"></i>' : ''}</span><span><span class="lrn-ltitle">${esc(l.title)}${done ? '<span class="lrn-sr"> (completed)</span>' : ''}</span><span class="lrn-lobj">${esc(l.objective)}</span><span class="lrn-lmeta">${l.minutes} min · ${plural(l.activityCount, 'activity')}</span></span></li>`; }).join('')}</ol></details>`).join('')}
         </section>
+        ${tasksPanel(d)}${certPanel(d)}
         ${c.references && c.references.length ? `<section aria-labelledby="lrnRef"><h3 id="lrnRef" class="lrn-h">Reference material</h3><ul class="lrn-bullets">${c.references.map((r) => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.label)}</a></li>`).join('')}</ul></section>` : ''}
         <p class="lrn-foot">Version ${esc(c.version)}</p>
       </div>
@@ -326,7 +379,7 @@ function viewWorkspace() {
         <div class="lrn-steps" aria-hidden="true">${L.steps.map((s, i) => `<span class="${i < step || (ld.status === 'done' && viewingOld) ? 'is-done' : i === step ? 'is-now' : ''}"></span>`).join('')}</div>
         <p class="lrn-stepline">${stepLabel}${S.busy.has('save') ? ' · Saving' : ''}</p>
       </header>
-      <div class="lrn-step" id="lrnStep">${viewingOld ? reviewOld(L, ld) : (doneCourse ? courseDone(d) : stepBody(st, ld, L))}</div>
+      <div class="lrn-step" id="lrnStep">${viewingOld ? reviewOld(L, ld) : (doneCourse ? courseDone(d) + lessonTasks(L, ld) : stepBody(st, ld, L))}</div>
       ${tutorHtml(d, ld, L, st)}
     </section>
     <div class="lrn-drawer ${S.drawer ? 'is-open' : ''}" id="lrnDrawer" ${S.drawer ? '' : 'hidden'}>
@@ -337,10 +390,10 @@ function viewWorkspace() {
 }
 
 function reviewOld(L, ld) {
-  return `<div class="lrn-card"><h3 class="lrn-h">You have finished this lesson</h3><p class="lrn-body">${ld.mastery ? `You passed ${ld.mastery.passedClean} of ${ld.mastery.total} activities without seeing the answer.` : ''} Pick any lesson in the list, or carry on where you stopped.</p><button class="lrn-btn lrn-btn--primary" type="button" data-act="open-lesson" data-lesson="${esc(ld.progress.current.lesson)}">Go to my current lesson</button></div>`;
+  return `<div class="lrn-card"><h3 class="lrn-h">You have finished this lesson</h3><p class="lrn-body">${ld.mastery ? `You passed ${ld.mastery.passedClean} of ${ld.mastery.total} activities without seeing the answer.` : ''} Pick any lesson in the list, or carry on where you stopped.</p><button class="lrn-btn lrn-btn--primary" type="button" data-act="open-lesson" data-lesson="${esc(ld.progress.current.lesson)}">Go to my current lesson</button></div>${lessonTasks(L, ld)}`;
 }
 function courseDone(d) {
-  return `<div class="lrn-card lrn-card--done"><h3 class="lrn-h">You finished ${esc(d.course.title)}</h3><p class="lrn-body">Every lesson is complete. Your course place is free again, so you can start another course. You can reopen any lesson from the list.</p><a class="lrn-btn lrn-btn--primary" href="/app.html?view=learna" data-act="home">Choose your next course</a></div>`;
+  return `<div class="lrn-card lrn-card--done"><h3 class="lrn-h">You finished ${esc(d.course.title)}</h3><p class="lrn-body">Every lesson is complete. Your course place is free again, so you can start another course. You can reopen any lesson from the list.</p><div class="lrn-actions"><a class="lrn-btn lrn-btn--primary" href="/app.html?view=learna" data-act="home">Choose your next course</a>${d.course.certificate ? `<a class="lrn-btn" href="/app.html?view=learna&course=${encodeURIComponent(d.course.id)}" data-act="to-course">Check my certificate</a>` : ''}</div></div>`;
 }
 
 function stepBody(st, ld, L) {
@@ -353,10 +406,33 @@ function stepBody(st, ld, L) {
   return activityBody(st, ld);
 }
 
+function listenBtn(stepId, part, label) {
+  const on = S.speech.playing === stepId + ':' + part;
+  return `<button type="button" class="lrn-listen ${on ? 'is-on' : ''}" data-act="listen" data-step="${esc(stepId)}" data-part="${esc(part)}" aria-label="${on ? 'Stop' : 'Listen to'} ${esc(label)}" aria-pressed="${on}"><i class="ph ${on ? 'ph-stop-circle' : 'ph-speaker-high'}" aria-hidden="true"></i><span>${on ? 'Stop' : 'Listen'}</span></button>`;
+}
+function speechNote() { return S.speech.note ? `<p class="lrn-speech-note" role="status">${esc(S.speech.note)}</p>` : ''; }
+
+function voiceControls() {
+  const p = Speech.prefs.get(); const v = S.voices;
+  const lang = courseLang();
+  const list = v ? v.voices.filter((x) => x.lang === lang) : [];
+  const two = list.length >= 2;
+  return `<div class="lrn-voice" role="group" aria-label="Voice settings">
+    ${two ? `<label class="lrn-select lrn-select--small"><span>Voice</span><select data-pref="voice">${[['default', list.find((x) => x.default) || list[0]], ['alt', list.find((x) => !x.default) || list[1]]].map(([id, x]) => `<option value="${id}" ${p.voice === id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
+    <label class="lrn-select lrn-select--small"><span>Speed</span><select data-pref="rate">${[[0.75, 'Slow'], [1, 'Normal'], [1.1, 'Fast']].map(([r, n]) => `<option value="${r}" ${Number(p.rate) === r ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+  </div>`;
+}
+
 function teachBody(st, ld, L) {
   const last = ld.step >= L.steps.length - 1;
-  return `<article class="lrn-card"><h3 class="lrn-h">${esc(st.title)}</h3><div class="lrn-prose">${paras(st.text)}</div>
-    ${st.example ? `<figure class="lrn-example"><figcaption>${esc(st.example.label)}</figcaption><pre>${esc(st.example.text)}</pre></figure>` : ''}
+  const canListen = st.listen || isLangCourse();
+  const lines = st.example ? st.example.text.split('\n') : [];
+  const exampleHtml = st.example ? `<figure class="lrn-example"><figcaption>${esc(st.example.label)}</figcaption>${isLangCourse() ? `<ul class="lrn-lines">${lines.map((l, i) => l.trim() ? `<li><span>${esc(l)}</span><button type="button" class="lrn-spk lrn-spk--line" data-act="listen" data-step="${esc(st.id)}" data-part="example:${i}" aria-label="Hear this line"><i class="ph ph-speaker-high" aria-hidden="true"></i></button></li>` : '').join('')}</ul>` : `<pre>${esc(st.example.text)}</pre>`}</figure>` : '';
+  return `<article class="lrn-card"><div class="lrn-card-top"><h3 class="lrn-h">${esc(st.title)}</h3>${canListen ? listenBtn(st.id, 'all', 'this explanation') : ''}</div>
+    ${canListen ? voiceControls() : ''}${speechNote()}
+    ${visualHtml(st.visual, st.id)}
+    <div class="lrn-prose">${st.text.map((t) => '<p>' + rich(t) + '</p>').join('')}</div>
+    ${exampleHtml}
     <div class="lrn-actions"><button class="lrn-btn lrn-btn--primary" type="button" data-act="advance" ${S.busy.has('advance') ? 'disabled' : ''}>${last ? 'Finish lesson' : 'Continue'}</button></div>
     <p class="lrn-error" id="lrnErr" role="alert" hidden></p></article>`;
 }
@@ -376,44 +452,50 @@ function activityBody(st, ld) {
   else if (st.type === 'fill') input = `<div class="lrn-prompt">${prompt(st.prompt)}</div><label class="lrn-field"><span class="lrn-sr">Your answer</span><input id="lrnAns" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(draft || '')}" ${dis}></label>`;
   else if (st.type === 'order') { const cur = Array.isArray(draft) ? draft : st.items; input = `<div class="lrn-prompt">${prompt(st.prompt)}</div><ol class="lrn-order">${cur.map((t, i) => `<li><span class="lrn-order-t">${esc(t)}</span><span class="lrn-order-b"><button type="button" class="lrn-icon" data-act="move" data-i="${i}" data-d="-1" aria-label="Move ${esc(t)} up" ${dis || i === 0 ? 'disabled' : ''}><i class="ph ph-arrow-up" aria-hidden="true"></i></button><button type="button" class="lrn-icon" data-act="move" data-i="${i}" data-d="1" aria-label="Move ${esc(t)} down" ${dis || i === cur.length - 1 ? 'disabled' : ''}><i class="ph ph-arrow-down" aria-hidden="true"></i></button></span></li>`).join('')}</ol>`; }
   else if (st.type === 'match') { const m = draft || {}; input = `<div class="lrn-prompt">${prompt(st.prompt)}</div><div class="lrn-match">${st.left.map((l, i) => `<div class="lrn-match-row"><label for="lrnM${i}">${esc(l)}</label><select id="lrnM${i}" data-left="${esc(l)}" ${dis}><option value="">Choose</option>${st.right.map((x) => `<option value="${esc(x)}" ${m[l] === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>`).join('')}</div>`; }
+  else if (st.type === 'speak') input = speakInput(st, ld, a, r);
+  else if (st.type === 'assignment') input = assignmentInput(st, ld, a, r);
   else if (st.type === 'open') {
     const text = draft || '';
     const wc = (text.match(/\S+/g) || []).length;
     input = `<div class="lrn-prompt">${prompt(st.prompt)}</div>
       <div class="lrn-criteria"><p class="lrn-objective-h">Your answer should</p>${r && r.checklist ? `<ul class="lrn-check">${r.checklist.map((c) => `<li class="${c.met ? 'is-met' : 'is-miss'}"><i class="ph ${c.met ? 'ph-check-circle' : 'ph-circle'}" aria-hidden="true"></i><span>${esc(c.label)}<span class="lrn-sr">${c.met ? ' (done)' : ' (missing)'}</span></span></li>`).join('')}</ul>` : `<ul class="lrn-bullets">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>`}</div>
       <label class="lrn-field"><span class="lrn-sr">Your answer</span><textarea id="lrnAns" rows="5" ${dis} placeholder="Write your answer here">${esc(text)}</textarea></label>
-      <p class="lrn-wc" id="lrnWc">${wc} of at least ${st.minWords} words</p>`;
+      <p class="lrn-wc" id="lrnWc">${wc} of at least ${st.minWords} words</p>${st.voice ? dictateBar(st.id, courseLang() === 'fr-FR' ? 'fr-FR' : 'en-NG', 'lrnAns') : ''}`;
   } else if (st.type === 'code') {
     const code = draft != null ? draft : st.starter;
     const out = S.codeOut[st.id];
-    input = `<div class="lrn-prompt">${prompt(st.prompt)}</div>
+    input = `${st.visual ? visualHtml(st.visual, st.id) : ''}<div class="lrn-prompt">${prompt(st.prompt)}</div>
       <label class="lrn-field"><span class="lrn-sr">Your code</span><textarea id="lrnCode" class="lrn-code" rows="9" spellcheck="false" autocapitalize="off" autocomplete="off" ${dis}>${esc(code)}</textarea></label>
-      <div class="lrn-tests"><p class="lrn-objective-h">Tests that must pass</p>${r && r.checklist ? `<ul class="lrn-check">${r.checklist.map((c) => `<li class="${c.met ? 'is-met' : 'is-miss'}"><i class="ph ${c.met ? 'ph-check-circle' : 'ph-x-circle'}" aria-hidden="true"></i><code>${esc(c.label)}</code><span class="lrn-sr">${c.met ? ' passed' : ' failed'}</span></li>`).join('')}</ul>` : `<ul class="lrn-check">${st.tests.map((t) => `<li><i class="ph ph-circle" aria-hidden="true"></i><code>${esc(t.name)}</code></li>`).join('')}</ul>`}</div>
+      <div class="lrn-tests"><p class="lrn-objective-h">Tests that must pass</p>${r && r.checklist ? `<ul class="lrn-check">${r.checklist.map((c) => `<li class="${c.met ? 'is-met' : 'is-miss'}"><i class="ph ${c.met ? 'ph-check-circle' : 'ph-x-circle'}" aria-hidden="true"></i><code>${esc(c.label)}</code><span class="lrn-sr">${c.met ? ' passed' : ' failed'}</span></li>`).join('')}</ul>` : `<ul class="lrn-check">${st.tests.map((t) => `<li><i class="ph ph-circle" aria-hidden="true"></i><code>${esc(t.name)}</code></li>`).join('')}${st.hiddenCount ? `<li><i class="ph ph-circle" aria-hidden="true"></i><span>${st.hiddenCount} extra cases you cannot see. They change every time you run your code.</span></li>` : ''}</ul>`}</div>
       ${out ? `<pre class="lrn-out" tabindex="0" aria-label="Run output">${esc(out)}</pre>` : ''}`;
   }
 
-  const feedback = r && r.feedback ? `<div class="lrn-feedback ${r.correct ? 'is-right' : r.invalid ? 'is-note' : 'is-wrong'}" role="status"><p class="lrn-fb-h">${r.correct ? 'Correct' : r.invalid ? 'Check your answer' : 'Not yet'}</p><p>${esc(r.feedback)}</p></div>` : (a.lastFeedback && !r ? `<div class="lrn-feedback ${a.passed ? 'is-right' : 'is-wrong'}" role="status"><p>${esc(a.lastFeedback)}</p></div>` : '');
+  const metricsHtml = r && r.metrics ? `<dl class="lrn-metrics"><div><dt>Words</dt><dd>${r.metrics.words}</dd></div><div><dt>Pace</dt><dd>${r.metrics.wpm} per min</dd></div><div><dt>Fillers</dt><dd>${r.metrics.fillerTotal}</dd></div><div><dt>Length</dt><dd>${clock(r.metrics.seconds)}</dd></div></dl>` : '';
+  const checklistHtml = r && r.checklist && st.type === 'assignment' && st.format !== 'code' ? `<ul class="lrn-check">${r.checklist.map((c) => `<li class="${c.met ? 'is-met' : 'is-miss'}"><i class="ph ${c.met ? 'ph-check-circle' : 'ph-circle'}" aria-hidden="true"></i><span>${esc(c.label)}<span class="lrn-sr">${c.met ? ' (done)' : ' (missing)'}</span></span></li>`).join('')}</ul>` : '';
+  const feedback = r && r.feedback ? `<div class="lrn-feedback ${r.correct ? 'is-right' : r.invalid ? 'is-note' : 'is-wrong'}" role="status"><p class="lrn-fb-h">${r.correct ? (st.type === 'assignment' ? (r.pendingReview ? 'Submitted' : 'Passed') : 'Correct') : r.invalid ? 'Check your answer' : 'Not yet'}</p><p>${esc(r.feedback)}</p>${checklistHtml}${metricsHtml}</div>` : (a.lastFeedback && !r ? `<div class="lrn-feedback ${a.passed ? 'is-right' : 'is-wrong'}" role="status"><p>${esc(a.lastFeedback)}</p></div>` : '');
   const reveal = r && r.revealed ? `<div class="lrn-reveal"><p class="lrn-objective-h">The answer</p>${st.type === 'code' || st.type === 'open' ? `<pre>${esc(r.revealed.answer)}</pre>` : `<p>${esc(r.revealed.answer)}</p>`}<p>${esc(r.revealed.explanation)}</p></div>` : '';
   const hintBox = S.hint && S.hint.id === st.id ? `<div class="lrn-hint" role="status"><p class="lrn-objective-h">Hint ${S.hint.n}</p><p>${esc(S.hint.text)}</p></div>` : '';
   const canHint = !finished && st.hintCount > a.hintsUsed;
   const last = ld.step >= S.lessonData.lesson.steps.length - 1;
 
+  const ownSubmit = st.type === 'assignment' && st.format !== 'code';
   return `<article class="lrn-card" aria-labelledby="lrnActH">
-    <p class="lrn-eyebrow">${activityLabel(st)}</p><h3 class="lrn-h" id="lrnActH">${esc(st.title)}</h3>
+    <p class="lrn-eyebrow">${activityLabel(st)}${st.graded === false ? ' · practice' : ''}</p><h3 class="lrn-h" id="lrnActH">${esc(st.title)}</h3>
     <form id="lrnForm" novalidate>${input}
       ${feedback}${reveal}${hintBox}
       <div class="lrn-actions">
         ${finished ? `<button class="lrn-btn lrn-btn--primary" type="button" data-act="advance" ${S.busy.has('advance') ? 'disabled' : ''}>${last ? 'Finish lesson' : 'Continue'}</button>` :
-          st.type === 'code' ? `<button class="lrn-btn lrn-btn--primary" type="submit" ${busyCheck ? 'disabled' : ''}>${busyCheck ? 'Running tests' : 'Run tests'}</button>` :
+          ownSubmit || st.type === 'speak' ? '' :
+          st.type === 'code' || (st.type === 'assignment' && st.format === 'code') ? `<button class="lrn-btn lrn-btn--primary" type="submit" ${busyCheck ? 'disabled' : ''}>${busyCheck ? 'Running tests' : 'Run tests'}</button>` :
           `<button class="lrn-btn lrn-btn--primary" type="submit" ${busyCheck || st.unsupported ? 'disabled' : ''}>${busyCheck ? 'Checking' : 'Check answer'}</button>`}
-        ${canHint ? `<button class="lrn-btn" type="button" data-act="hint" ${S.busy.has('hint') ? 'disabled' : ''}>Show a hint</button>` : ''}
-        ${!finished ? `<span class="lrn-tries">${left === 1 ? '1 try left' : left + ' tries left'}</span>` : ''}
+        ${canHint && st.type !== 'assignment' ? `<button class="lrn-btn" type="button" data-act="hint" ${S.busy.has('hint') ? 'disabled' : ''}>Show a hint</button>` : ''}
+        ${!finished && st.type !== 'speak' ? `<span class="lrn-tries">${left === 1 ? '1 try left' : left + ' tries left'}</span>` : ''}
       </div></form>
     <p class="lrn-error" id="lrnErr" role="alert" hidden></p>
   </article>`;
 }
 function prompt(t) { return String(t).split('\n').map((l) => l ? `<span class="lrn-pl">${esc(l)}</span>` : '<span class="lrn-pl">&nbsp;</span>').join(''); }
-function activityLabel(st) { return ({ choice: 'Question', fill: 'Fill in the blank', order: 'Put in order', match: 'Match', open: 'Writing task', code: 'Coding task' }[st.type]) || 'Activity'; }
+function activityLabel(st) { return ({ choice: 'Question', fill: 'Fill in the blank', order: 'Put in order', match: 'Match', open: 'Writing task', code: 'Coding task', speak: 'Say it aloud', assignment: ({ audio: 'Speaking task', video: 'Video task', text: 'Written task', code: 'Project task', file: 'Task' }[st.format]) || 'Task' }[st.type]) || 'Activity'; }
 
 function tutorHtml(d, ld, L, st) {
   const t = S.tutor;
@@ -475,6 +557,7 @@ async function doAdvance() {
 }
 
 function currentStep() { const ld = S.lessonData; return ld.lesson.steps[ld.step]; }
+function activeStep() { const ld = S.lessonData; if (S.openTask) { const t = ld.lesson.steps.find((x) => x.id === S.openTask); if (t) return t; } return currentStep(); }
 
 function gather(st) {
   const f = document.getElementById('lrnForm');
@@ -488,7 +571,12 @@ function gather(st) {
 async function runTests(st) {
   const src = document.getElementById('lrnCode').value;
   S.draft[st.id] = src;
-  const thunks = st.tests.map((t) => 'function(){return (' + t.expr + ');}').join(',');
+  // A fresh challenge adds extra hidden cases to this run. The expected values stay on the server.
+  let ch = { nonce: null, expr: [] };
+  try { ch = await api('/courses/' + encodeURIComponent(S.route.course) + '/code/challenge', { method: 'POST', body: { lesson: S.route.lesson, activity: st.id } }); }
+  catch (e) { if (e.code === 'OUT_OF_SYNC') throw e; throw e; }
+  const exprs = [...st.tests.map((t) => t.expr), ...ch.expr];
+  const thunks = exprs.map((x) => 'function(){return (' + x + ');}').join(',');
   const code = src + '\n;(function(){var T=[' + thunks + '],o=[];for(var i=0;i<T.length;i++){try{var v=T[i]();o.push({value:v===undefined?null:v});}catch(e){o.push({error:String(e&&e.message||e)});}}console.log("@@LEARNA@@"+JSON.stringify(o));})();';
   if (!sandbox) sandbox = new SandboxClient();
   const call = { id: 'learna_' + Math.random().toString(36).slice(2, 9), name: 'sandbox_run_javascript', args: { code }, limits: { timeoutMs: 8000, maxFileBytes: 1048576, maxWorkspaceBytes: 5242880, maxOutputChars: 12000, maxProcesses: 1, network: false } };
@@ -502,7 +590,7 @@ async function runTests(st) {
     if (result.exitCode === 124) return { text: 'Your code ran for too long and was stopped. Check for a loop that never ends.' };
     return { text: err ? 'Your code has an error:\n' + err.slice(0, 600) : 'The tests did not finish. Check your code and run it again.' };
   }
-  try { return { results: JSON.parse(m[1]) }; } catch (_) { return { text: 'The test results could not be read. Run your code again.' }; }
+  try { return { results: JSON.parse(m[1]), nonce: ch.nonce, source: src }; } catch (_) { return { text: 'The test results could not be read. Run your code again.' }; }
 }
 
 async function doSubmit() {
@@ -511,12 +599,12 @@ async function doSubmit() {
   const body = { lesson: key, activity: st.id };
   if (st.type === 'code') {
     S.busy.add('submit'); render();
-    let run; try { run = await runTests(st); } catch (e) { run = { unavailable: true, text: 'The code sandbox could not start in this browser.' }; }
+    let run; try { run = await runTests(st); } catch (e) { run = e && e.code === 'OUT_OF_SYNC' ? null : { unavailable: true, text: e && e.status ? e.message : 'The code sandbox could not start in this browser.' }; if (!run) { S.busy.delete('submit'); await loadLesson(S.route.course, S.route.lesson, true); return; } }
     S.busy.delete('submit');
     if (t !== S.token) return;
     if (run.unavailable) { S.codeOut[st.id] = ''; S.result[st.id] = { invalid: true, feedback: 'The coding sandbox is not available right now. ' + run.text + ' Try again in a moment, or reload the page.' }; render(); return; }
     if (!run.results) { S.codeOut[st.id] = run.text; S.result[st.id] = { invalid: true, feedback: 'Fix the problem below, then run the tests again.' }; render(); return; }
-    S.codeOut[st.id] = ''; body.results = run.results;
+    S.codeOut[st.id] = ''; body.results = run.results; body.nonce = run.nonce; body.source = run.source;
   } else {
     const ans = gather(st); S.draft[st.id] = ans;
     if (ans === null || (typeof ans === 'string' && !ans.trim()) || (st.type === 'match' && Object.keys(ans).length < st.left.length)) { S.result[st.id] = { invalid: true, feedback: st.type === 'choice' ? 'Choose one of the options.' : st.type === 'match' ? 'Match every item.' : 'Write your answer first.' }; render(); return; }
@@ -528,7 +616,8 @@ async function doSubmit() {
     S.result[st.id] = r.result;
     if (r.act) ld.acts[st.id] = r.act;
     S.hint = null; render();
-    if (r.result && !r.result.invalid) say(r.result.correct ? 'Correct.' : 'Not yet. ' + r.result.feedback);
+    if (r.result && r.result.needChallenge) say('Run your code again.');
+    else if (r.result && !r.result.invalid) say(r.result.correct ? 'Correct.' : 'Not yet. ' + r.result.feedback);
   } catch (e) {
     if (t !== S.token) return;
     const msg = e.code === 'ASSESSMENT_UNAVAILABLE' ? e.message : e.code === 'DAILY_LIMIT' ? e.message : isAuthErr(e) ? 'You were signed out. Sign in again to continue.' : e.message;
@@ -576,6 +665,279 @@ function openLesson(key) {
   go(S.route.course, key);
 }
 
+// ── Speech, recording and tasks ──────────────────────────────────────────
+function stepById(id) { return S.lessonData && S.lessonData.lesson.steps.find((x) => x.id === id); }
+
+function cleanupMedia() {
+  Speech.stopSpeaking(); Speech.paceGuide(false);
+  if (liveRec) { liveRec.cancel(); liveRec = null; }
+  if (liveDict) { liveDict.stop(); liveDict = null; }
+  for (const r of Object.values(S.rec)) if (r && r.url) URL.revokeObjectURL(r.url);
+  S.rec = {}; S.speech = { playing: null, note: null };
+}
+
+function ensureVoices() {
+  if (S.voices) return;
+  S.voices = { voices: [], premium: false };
+  api('/speech/voices').then((v) => { S.voices = v; if (S.lessonData && !document.activeElement.closest('form')) render(); }).catch(() => {});
+}
+
+async function doListen(stepId, part, word) {
+  const key = stepId + ':' + (word ? 'w:' + word : part);
+  if (S.speech.playing === key) { Speech.stopSpeaking(); S.speech.playing = null; render(); return; }
+  const st = stepById(stepId); if (!st) return;
+  let text = '';
+  if (word) text = word;
+  else if (part === 'all') text = (st.text || []).map(plainText).join(' ') + (st.example && !isLangCourse() ? '' : '');
+  else if (part === 'target') text = st.target;
+  else if (part === 'prompt') text = st.prompt;
+  else if (/^example:\d+$/.test(part)) text = plainText((st.example.text.split('\n')[+part.split(':')[1]]) || '');
+  if (!text.trim()) return;
+  S.speech.note = null; S.speech.playing = key; render();
+  const ref = { course: S.route.course, lesson: S.route.lesson, step: stepId, part: word ? 'word' : part === 'all' ? 'text:0' : part, word: word || undefined, lang: courseLang() };
+  let r;
+  if (part === 'all' && !word) {
+    // Read every paragraph in turn so the premium voice stays within what the server will fetch.
+    for (let i = 0; i < st.text.length; i++) {
+      if (S.speech.playing !== key) return;
+      r = await Speech.speak({ ...ref, part: 'text:' + i }, plainText(st.text[i]), { blob: apiBlob }, {});
+      if (!r.ok) break;
+    }
+  } else r = await Speech.speak(ref, text, { blob: apiBlob }, {});
+  if (S.speech.playing !== key && r && r.cancelled) return;
+  S.speech.playing = null; S.speech.note = r && r.note ? r.note : (r && !r.ok && !r.cancelled ? 'Could not play speech on this device.' : null);
+  render();
+}
+
+// Dictation: say it instead of typing. Fills the text box. A recognition aid, not a pronunciation score.
+function dictateBar(id, lang, targetId) {
+  const on = S.rec['dict:' + id] && S.rec['dict:' + id].on;
+  const msg = S.rec['dict:' + id] && S.rec['dict:' + id].msg;
+  if (!Speech.dictationSupported()) return `<p class="lrn-speech-note">Dictation is not available in this browser, so type your answer. Chrome, Edge and Safari support it.</p>`;
+  return `<div class="lrn-dict"><button type="button" class="lrn-btn lrn-btn--small ${on ? 'is-rec' : ''}" data-act="dictate" data-id="${esc(id)}" data-lang="${esc(lang)}" data-target="${esc(targetId)}" aria-pressed="${!!on}"><i class="ph ${on ? 'ph-stop-circle' : 'ph-microphone'}" aria-hidden="true"></i> ${on ? 'Stop dictating' : 'Say your answer'}</button><span class="lrn-dict-hint">${on ? 'Listening. Speak, then press stop. You can edit the text afterwards.' : 'Optional. Your words appear in the box.'}</span>${msg ? `<span class="lrn-error" role="alert">${esc(msg)}</span>` : ''}</div>`;
+}
+function startDictation(id, lang, targetId) {
+  const key = 'dict:' + id;
+  if (liveDict) { liveDict.stop(); liveDict = null; S.rec[key] = { on: false }; render(); return; }
+  const box = document.getElementById(targetId); if (!box) return;
+  const base = box.value ? box.value.replace(/\s+$/, '') + ' ' : '';
+  S.rec[key] = { on: true };
+  liveDict = Speech.dictate(lang, {
+    onUpdate: (fin, interim) => { const b = document.getElementById(targetId); if (b) { b.value = base + fin + (interim ? ' ' + interim : ''); S.draft[id] = b.value; b.dispatchEvent(new Event('input', { bubbles: true })); } },
+    onEnd: (reason, text) => { liveDict = null; S.rec[key] = { on: false, msg: reason === 'denied' ? 'Cognita was not allowed to use the microphone. Allow it in your browser settings, or type your answer.' : reason === 'no-speech' ? 'No speech was heard. Try again, or type your answer.' : reason === 'error' ? 'Dictation stopped unexpectedly. You can type instead.' : null }; if (text) S.draft[id] = (base + text).trim(); render(); },
+  });
+  render();
+}
+
+// Say-it-aloud practice. The server compares what the speech recogniser heard with the target text.
+function speakInput(st, ld, a, r) {
+  const s = S.rec['speak:' + st.id] || {};
+  const supported = Speech.dictationSupported();
+  return `<div class="lrn-prompt">${prompt(st.prompt)}</div>
+    <div class="lrn-target"><p class="lrn-target-t" lang="${esc(st.lang)}">${esc(plainText(st.target))}</p>
+      <div class="lrn-target-b">${listenBtn(st.id, 'target', 'the target')}<button type="button" class="lrn-listen" data-act="listen-slow" data-step="${esc(st.id)}" aria-label="Listen slowly"><i class="ph ph-person-simple-walk" aria-hidden="true"></i><span>Slowly</span></button></div></div>
+    ${voiceControls()}${speechNote()}
+    ${supported ? `<div class="lrn-dict"><button type="button" class="lrn-btn ${s.on ? 'is-rec' : 'lrn-btn--primary'}" data-act="speak-record" data-id="${esc(st.id)}" data-lang="${esc(st.lang)}" aria-pressed="${!!s.on}" ${a.passed ? 'disabled' : ''}><i class="ph ${s.on ? 'ph-stop-circle' : 'ph-microphone'}" aria-hidden="true"></i> ${s.on ? 'Stop and check' : 'Say it'}</button><span class="lrn-dict-hint">${s.on ? 'Listening. Say the text, then press stop.' : 'Say the text out loud. The recogniser shows what it heard.'}</span></div>
+      <p class="lrn-heard" id="lrnHeard" aria-live="polite">${s.text ? 'Heard: <q>' + esc(s.text) + '</q>' : ''}</p>` : '<p class="lrn-speech-note">Speech recognition is not available in this browser, so this practice is optional. Use Chrome, Edge or Safari to try it. You can skip it.</p>'}
+    ${s.msg ? `<p class="lrn-error" role="alert">${esc(s.msg)}</p>` : ''}
+    <p class="lrn-speech-note">This checks that a speech recogniser understood your words. It cannot judge your accent or how close your sounds are to a native speaker, so do not read it as a pronunciation score.</p>
+    <div class="lrn-actions">${a.passed ? '' : `<button class="lrn-btn" type="button" data-act="speak-skip" ${S.busy.has('submit') ? 'disabled' : ''}>Skip this practice</button>`}</div>`;
+}
+function toggleSpeakRecord(id, lang) {
+  const key = 'speak:' + id;
+  if (liveDict) { liveDict.stop(); return; }
+  S.rec[key] = { on: true, text: '' }; render();
+  let heard = '';
+  liveDict = Speech.dictate(lang, {
+    continuous: false,
+    onUpdate: (fin, interim) => { heard = fin || interim; const el = document.getElementById('lrnHeard'); if (el) el.innerHTML = 'Heard: <q>' + esc(heard) + '</q>'; },
+    onEnd: (reason, text) => {
+      liveDict = null; const t = text || heard;
+      S.rec[key] = { on: false, text: t, msg: reason === 'denied' ? 'Cognita was not allowed to use the microphone. Allow it in your browser settings, or skip this practice.' : (!t && reason === 'no-speech' ? 'No speech was heard. Try again, or skip.' : null) };
+      render();
+      if (t) submitSpeak(id, t);
+    },
+  });
+}
+async function submitSpeak(id, transcript, skip) {
+  const st = currentStep(), t = S.token;
+  try {
+    const r = await post('submit', { lesson: S.route.lesson, activity: id, ...(skip ? { skip: true } : { transcript }) }, 'submit');
+    if (!r || t !== S.token) return;
+    S.result[id] = r.result; if (r.act) S.lessonData.acts[id] = r.act; render();
+    if (r.result) say(r.result.feedback);
+  } catch (e) { S.result[id] = { invalid: true, feedback: e.message }; render(); } void st;
+}
+
+// Tasks: written, spoken, video, or code.
+const REVIEW_TEXT = { pending: 'A reviewer will look at this. You can carry on with the course. Your certificate waits for the approval.', changes: 'Your reviewer asked for changes. Read the note, then send a new version.', approved: 'Approved by your reviewer.', auto: 'Passed.' };
+function taskStatus(a) { return a.review ? `<div class="lrn-review lrn-review--${esc(a.review)}" role="status"><p><strong>${a.review === 'pending' ? 'Waiting for a reviewer' : a.review === 'changes' ? 'Changes requested' : a.review === 'approved' ? 'Approved' : 'Passed'}.</strong> ${esc(REVIEW_TEXT[a.review] || '')}</p>${a.reviewNote ? `<blockquote>${esc(a.reviewNote)}</blockquote>` : ''}</div>` : ''; }
+
+function assignmentInput(st, ld, a, r) {
+  const draft = S.draft[st.id];
+  const locked = a.review === 'pending' || a.review === 'approved' || (a.review === 'auto' && a.passed);
+  const crit = st.criteria && st.criteria.length ? `<div class="lrn-criteria"><p class="lrn-objective-h">${st.format === 'audio' || st.format === 'video' ? 'What is checked' : 'Your answer should'}</p><ul class="lrn-bullets">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : '';
+  const tips = st.checklist && st.checklist.length ? `<div class="lrn-tips"><p class="lrn-objective-h">Before you start</p><ul class="lrn-bullets">${st.checklist.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : '';
+  const head = `${st.visual ? visualHtml(st.visual, st.id) : ''}<div class="lrn-prompt">${prompt(st.prompt)}</div>${taskStatus(a)}${st.certRequired ? '<p class="lrn-pill">Needed for your certificate</p>' : ''}`;
+  if (st.format === 'text') {
+    const text = draft || ''; const wc = (text.match(/\S+/g) || []).length;
+    return `${head}${crit}<label class="lrn-field"><span class="lrn-sr">Your answer</span><textarea id="lrnAns" rows="7" ${locked || S.busy.has('submit') ? 'disabled' : ''} placeholder="Write here">${esc(text)}</textarea></label><p class="lrn-wc" id="lrnWc">${wc} of at least ${st.minWords} words</p>${locked ? '' : dictateBar(st.id, 'en-NG', 'lrnAns')}
+      <div class="lrn-actions">${locked ? '' : `<button class="lrn-btn lrn-btn--primary" type="submit" ${S.busy.has('submit') ? 'disabled' : ''}>${S.busy.has('submit') ? 'Sending' : st.review === 'admin' ? 'Submit for review' : 'Submit'}</button>`}</div>`;
+  }
+  if (st.format === 'code') {
+    const code = draft != null ? draft : st.starter; const out = S.codeOut[st.id];
+    return `${head}<label class="lrn-field"><span class="lrn-sr">Your code</span><textarea id="lrnCode" class="lrn-code" rows="14" spellcheck="false" autocapitalize="off" autocomplete="off" ${locked ? 'disabled' : ''}>${esc(code)}</textarea></label>
+      <div class="lrn-tests"><p class="lrn-objective-h">Tests that must pass</p>${r && r.checklist ? `<ul class="lrn-check">${r.checklist.map((c) => `<li class="${c.met ? 'is-met' : 'is-miss'}"><i class="ph ${c.met ? 'ph-check-circle' : 'ph-x-circle'}" aria-hidden="true"></i><code>${esc(c.label.length > 90 ? c.label.slice(0, 90) + '...' : c.label)}</code></li>`).join('')}</ul>` : `<ul class="lrn-check">${st.tests.map((t) => `<li><i class="ph ph-circle" aria-hidden="true"></i><code>${esc(t.name.length > 90 ? t.name.slice(0, 90) + '...' : t.name)}</code></li>`).join('')}${st.hiddenCount ? `<li><i class="ph ph-circle" aria-hidden="true"></i><span>${st.hiddenCount} extra cases you cannot see.</span></li>` : ''}</ul>`}</div>${out ? `<pre class="lrn-out" tabindex="0">${esc(out)}</pre>` : ''}
+      <p class="lrn-speech-note">Your code runs in a sandbox in your browser. Cognita checks the results again with extra cases, keeps your code, and a reviewer reads it before it counts towards a certificate.</p>`;
+  }
+  return recorderUi(st, a, head, crit, tips, locked);
+}
+
+function recorderUi(st, a, head, crit, tips, locked) {
+  const kind = st.format === 'video' ? 'video' : 'audio';
+  const rs = S.rec['rec:' + st.id] || { phase: 'idle' };
+  const sup = Speech.recorderSupport(kind);
+  const limit = st.maxSeconds || 120;
+  let body = '';
+  if (!sup.ok) body = `<div class="lrn-state"><h3>Recording is not available here</h3><p>${esc(sup.why)}</p></div>`;
+  else if (locked) body = '';
+  else if (rs.phase === 'idle') body = `${kind === 'video' ? '<div class="lrn-cam lrn-cam--off"><i class="ph ph-video-camera" aria-hidden="true"></i><p>Your camera is off. Press the button to start.</p></div>' : ''}${rs.error ? `<p class="lrn-error" role="alert">${esc(rs.error)}</p>` : ''}
+    <p class="lrn-speech-note">${st.minSeconds ? 'Record at least ' + st.minSeconds + ' seconds. ' : ''}You can record up to ${clock(limit)}. Your recording stays private to you and your reviewers.</p>
+    <div class="lrn-actions"><button class="lrn-btn lrn-btn--primary" type="button" data-act="rec-start" data-id="${esc(st.id)}"><i class="ph ph-record" aria-hidden="true"></i> Start recording</button>${kind === 'audio' && st.format === 'audio' ? `<button class="lrn-btn" type="button" data-act="pace" aria-pressed="${Speech.paceGuideOn()}"><i class="ph ph-metronome" aria-hidden="true"></i> Pace guide ${Speech.paceGuideOn() ? 'on' : 'off'}</button>` : ''}</div>`;
+  else if (rs.phase === 'recording') body = `${kind === 'video' ? '<video id="lrnCam" class="lrn-cam" playsinline muted></video>' : ''}
+    <div class="lrn-recbar" role="status"><span class="lrn-recdot" aria-hidden="true"></span><strong id="lrnRecTime">0:00</strong> <span>of ${clock(limit)}</span><span class="lrn-meter" aria-hidden="true"><span id="lrnMeter"></span></span></div>
+    ${Speech.dictationSupported() && kind === 'audio' ? '<p class="lrn-live" id="lrnLive" aria-live="off"></p>' : ''}
+    <div class="lrn-actions"><button class="lrn-btn lrn-btn--primary" type="button" data-act="rec-stop" data-id="${esc(st.id)}"><i class="ph ph-stop-circle" aria-hidden="true"></i> Stop</button></div>`;
+  else if (rs.phase === 'review') body = `${kind === 'video' ? `<video class="lrn-cam" controls playsinline src="${esc(rs.url)}"></video>` : `<audio class="lrn-audio" controls src="${esc(rs.url)}"></audio>`}
+    <p class="lrn-speech-note">Length ${clock(rs.ms / 1000)}. Listen first. If you are happy, send it. Otherwise record again.</p>${rs.error ? `<p class="lrn-error" role="alert">${esc(rs.error)}</p>` : ''}
+    <div class="lrn-actions"><button class="lrn-btn lrn-btn--primary" type="button" data-act="rec-send" data-id="${esc(st.id)}" ${S.busy.has('submit') ? 'disabled' : ''}>${S.busy.has('submit') ? (kind === 'audio' && st.format === 'audio' && st.review !== 'admin' ? 'Checking your speech' : 'Uploading') : st.review === 'admin' ? 'Submit for review' : 'Send for checking'}</button><button class="lrn-btn" type="button" data-act="rec-redo" data-id="${esc(st.id)}" ${S.busy.has('submit') ? 'disabled' : ''}>Record again</button></div>`;
+  return `${head}${crit}${tips}${body}`;
+}
+
+async function startRec(id) {
+  const st = currentStepFor(id); if (!st) return;
+  const kind = st.format === 'video' ? 'video' : 'audio';
+  const key = 'rec:' + id;
+  Speech.stopSpeaking();
+  if (S.rec[key] && S.rec[key].url) URL.revokeObjectURL(S.rec[key].url);
+  S.rec[key] = { phase: 'recording' }; render();
+  const meter = (v) => { const m = document.getElementById('lrnMeter'); if (m) m.style.width = Math.round(v * 100) + '%'; };
+  const tick = (s) => { const t = document.getElementById('lrnRecTime'); if (t) t.textContent = clock(s); };
+  liveRec = new Speech.Recorder(kind, { maxSeconds: st.maxSeconds || 120, onTick: tick, onLevel: meter, onAutoStop: () => stopRec(id) });
+  try { await liveRec.start(document.getElementById('lrnCam')); }
+  catch (e) { liveRec = null; S.rec[key] = { phase: 'idle', error: Speech.micError(e) }; render(); return; }
+  Speech.cue.start();
+  if (kind === 'audio' && Speech.dictationSupported()) {
+    const t0 = Date.now();
+    liveDict = Speech.dictate('en-NG', { onUpdate: (fin, interim) => { const el = document.getElementById('lrnLive'); if (!el) return; const words = ((fin + ' ' + interim).match(/\S+/g) || []).length; const mins = Math.max((Date.now() - t0) / 60000, 0.05); el.textContent = 'Live estimate: about ' + Math.round(words / mins) + ' words per minute. The official check happens after you send.'; }, onEnd: () => { liveDict = null; } });
+  }
+}
+async function stopRec(id) {
+  const key = 'rec:' + id;
+  if (!liveRec) return;
+  const r = await liveRec.stop(); liveRec = null;
+  if (liveDict) { liveDict.stop(); liveDict = null; }
+  Speech.cue.stop();
+  if (!r || !r.blob.size) { S.rec[key] = { phase: 'idle', error: 'Nothing was recorded. Check your microphone and try again.' }; render(); return; }
+  S.rec[key] = { phase: 'review', blob: r.blob, mime: r.mime, ms: r.durationMs, url: URL.createObjectURL(r.blob) }; render();
+}
+function currentStepFor(id) { return S.lessonData && S.lessonData.lesson.steps.find((s) => s.id === id); }
+
+async function sendRec(id) {
+  const st = currentStepFor(id), key = 'rec:' + id, rs = S.rec[key];
+  if (!st || !rs || S.busy.has('submit')) return;
+  const t = S.token; S.busy.add('submit'); render();
+  try {
+    const r = await apiUpload('/courses/' + encodeURIComponent(S.route.course) + '/assignments/submit', rs.blob, { 'Content-Type': rs.mime, 'X-Learna-Lesson': S.route.lesson, 'X-Learna-Activity': id, 'X-Duration-Ms': String(Math.round(rs.ms)) });
+    S.busy.delete('submit'); if (t !== S.token) return;
+    afterTask(st, r, key);
+  } catch (e) {
+    S.busy.delete('submit'); if (t !== S.token) return;
+    S.rec[key].error = isAuthErr(e) ? 'You were signed out. Sign in again, then send your recording again.' : e.message; render();
+  }
+}
+function afterTask(st, r, key) {
+  S.result[st.id] = r.result;
+  if (r.act) S.lessonData.acts[st.id] = r.act;
+  if (r.result && (r.result.invalid || !r.result.correct)) { if (key && S.rec[key]) S.rec[key] = { phase: 'idle' }; }
+  else if (key && S.rec[key]) { if (S.rec[key].url) URL.revokeObjectURL(S.rec[key].url); S.rec[key] = { phase: 'idle' }; }
+  S.detail && (S.detail.tasks = null);
+  render(); if (r.result) say(r.result.feedback);
+}
+
+async function sendTextTask(st) {
+  const t = S.token; const box = document.getElementById('lrnAns'); const text = box ? box.value : '';
+  S.draft[st.id] = text; S.busy.add('submit'); render();
+  try { const r = await api('/courses/' + encodeURIComponent(S.route.course) + '/assignments/submit', { method: 'POST', body: { lesson: S.route.lesson, activity: st.id, text } }); S.busy.delete('submit'); if (t !== S.token) return; afterTask(st, r); }
+  catch (e) { S.busy.delete('submit'); if (t !== S.token) return; S.result[st.id] = { invalid: true, feedback: isAuthErr(e) ? 'You were signed out. Sign in again to continue.' : e.message }; render(); }
+}
+async function sendCodeTask(st) {
+  const t = S.token; S.busy.add('submit'); render();
+  let run; try { run = await runTests(st); } catch (e) { run = { unavailable: true, text: e.message && e.code ? e.message : 'The code sandbox could not start in this browser.' }; }
+  if (run.unavailable || !run.results) { S.busy.delete('submit'); if (t !== S.token) return; S.codeOut[st.id] = run.unavailable ? '' : run.text; S.result[st.id] = { invalid: true, feedback: run.unavailable ? 'The coding sandbox is not available right now. ' + run.text + ' Try again in a moment, or reload the page.' : 'Fix the problem below, then run the tests again.' }; render(); return; }
+  S.codeOut[st.id] = '';
+  try { const r = await api('/courses/' + encodeURIComponent(S.route.course) + '/assignments/submit', { method: 'POST', body: { lesson: S.route.lesson, activity: st.id, source: run.source, results: run.results, nonce: run.nonce } }); S.busy.delete('submit'); if (t !== S.token) return; afterTask(st, r); }
+  catch (e) { S.busy.delete('submit'); if (t !== S.token) return; S.result[st.id] = { invalid: true, feedback: e.message }; render(); }
+}
+
+// Tasks from earlier lessons (a reviewer asked for changes, or a task is still open) can be done from their lesson page.
+function lessonTasks(L, ld) {
+  const tasks = L.steps.filter((s) => s.kind === 'activity' && s.type === 'assignment');
+  if (!tasks.length) return '';
+  return `<div class="lrn-tasks"><h3 class="lrn-h">Practical tasks in this lesson</h3>${tasks.map((st) => { const a = ld.acts[st.id] || {}; const open = S.openTask === st.id; return `<div class="lrn-task"><div class="lrn-task-h"><span><strong>${esc(st.title)}</strong> ${taskTag(a, st)}</span><button type="button" class="lrn-btn lrn-btn--small" data-act="task-toggle" data-id="${esc(st.id)}" aria-expanded="${open}">${open ? 'Close' : (a.review === 'changes' ? 'Fix it' : a.review ? 'View' : 'Open')}</button></div>${open ? `<form id="lrnForm" novalidate>${assignmentInput(st, ld, a, S.result[st.id])}${S.result[st.id] && S.result[st.id].feedback ? `<div class="lrn-feedback ${S.result[st.id].correct ? 'is-right' : 'is-note'}" role="status"><p>${esc(S.result[st.id].feedback)}</p></div>` : (a.lastFeedback ? `<div class="lrn-feedback is-note"><p>${esc(a.lastFeedback)}</p></div>` : '')}</form>` : ''}</div>`; }).join('')}</div>`;
+}
+function taskTag(a, st) {
+  const t = a.review === 'pending' ? ['Waiting for a reviewer', ''] : a.review === 'changes' ? ['Changes requested', 'warn'] : a.review === 'approved' ? ['Approved', 'done'] : a.review === 'auto' ? ['Passed', 'done'] : a.passed ? ['Done', 'done'] : ['Not done', ''];
+  return `<span class="lrn-tag ${t[1] === 'done' ? 'lrn-tag--done' : t[1] === 'warn' ? 'lrn-tag--warn' : ''}">${t[0]}</span>${st.certRequired ? ' <span class="lrn-tag">Certificate</span>' : ''}`;
+}
+
+// Course page: tasks, certificate, reminders.
+function tasksPanel(d) {
+  if (!d.tasks || !d.tasks.length) return '';
+  const tag = (t) => t.state === 'pending' ? 'Waiting for a reviewer' : t.state === 'changes' ? 'Changes requested' : t.state === 'approved' ? 'Approved' : (t.state === 'done' || t.state === 'auto') ? 'Done' : 'To do';
+  return `<section class="lrn-section" aria-labelledby="lrnTasks"><h3 id="lrnTasks" class="lrn-h">Your practical tasks</h3><ul class="lrn-tasklist">${d.tasks.map((t) => `<li class="lrn-taskrow lrn-taskrow--${esc(t.state)}"><span><strong>${esc(t.title)}</strong><span class="lrn-lmeta">${esc({ audio: 'Recording', video: 'Video', text: 'Written', code: 'Project', file: 'File' }[t.format] || t.format)}${t.certRequired ? ' · needed for the certificate' : ''}</span>${t.note ? `<span class="lrn-tasknote">${esc(t.note)}</span>` : ''}</span><span class="lrn-tag ${t.state === 'approved' || t.state === 'done' || t.state === 'auto' ? 'lrn-tag--done' : t.state === 'changes' ? 'lrn-tag--warn' : ''}">${tag(t)}</span><button type="button" class="lrn-btn lrn-btn--small" data-act="open-task" data-lesson="${esc(t.lesson)}" data-id="${esc(t.id)}">${t.state === 'changes' ? 'Fix it' : t.state === 'todo' ? 'Open' : 'View'}</button></li>`).join('')}</ul></section>`;
+}
+
+function certPanel(d) {
+  const c = d.course;
+  if (!c.certificate) return '';
+  const done = S.cert.done;
+  const cert = d.certificate;
+  const body = done ? certCard(done) : !d.progress ? `<p class="lrn-body">To earn the certificate you must:</p><ul class="lrn-bullets">${c.certificate.requirements.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` :
+    cert ? `<ul class="lrn-reqs">${cert.requirements.map((r) => `<li class="${r.met ? 'is-met' : ''}"><i class="ph ${r.met ? 'ph-check-circle' : 'ph-circle'}" aria-hidden="true"></i><span>${esc(r.label)}<span class="lrn-lmeta">${esc(r.detail || '')}</span></span></li>`).join('')}</ul>
+      ${cert.eligible ? `<form id="lrnCertForm"><p class="lrn-body">Every requirement is met. Enter your full name as it should appear. You cannot change it after it is issued.</p><label class="lrn-field"><span class="lrn-sr">Full name</span><input id="lrnCertName" type="text" maxlength="80" autocomplete="name" placeholder="Your full name" value="${esc(S.cert.name)}"></label><button class="lrn-btn lrn-btn--primary" type="submit" ${S.cert.busy ? 'disabled' : ''}>${S.cert.busy ? 'Issuing' : 'Get my certificate'}</button>${S.cert.error ? `<p class="lrn-error" role="alert">${esc(S.cert.error)}</p>` : ''}</form>` : '<p class="lrn-lmeta">The certificate is issued only when every item above is done.</p>'}` : '';
+  return `<section class="lrn-section" aria-labelledby="lrnCert"><h3 id="lrnCert" class="lrn-h">${esc(c.certificate.title)}</h3>${body}</section>`;
+}
+function certCard(cert) {
+  return `<div class="lrn-certcard"><p class="lrn-eyebrow">Issued</p><p class="lrn-body"><strong>${esc(cert.name)}</strong><br>${esc(cert.courseTitle)}<br>Number: <code>${esc(cert.id)}</code></p><a class="lrn-btn lrn-btn--primary" href="/certificate.html?id=${encodeURIComponent(cert.id)}" target="_blank" rel="noopener">View and print</a></div>`;
+}
+async function loadCertificate() {
+  const d = S.detail; if (!d || !d.progress || !d.course.certificate) return;
+  try { const r = await api('/courses/' + encodeURIComponent(d.course.id) + '/certificate'); if (r.certificate) S.cert.done = r.certificate; if (!S.cert.name && r.suggestedName) S.cert.name = r.suggestedName; render(); } catch (_) { /* the panel still shows requirements */ }
+}
+async function claimCertificate() {
+  const inp = document.getElementById('lrnCertName'); S.cert.name = inp ? inp.value : S.cert.name; S.cert.busy = true; S.cert.error = null; render();
+  try { const r = await api('/courses/' + encodeURIComponent(S.route.course) + '/certificate', { method: 'POST', body: { name: S.cert.name } }); S.cert.done = r.certificate; say('Certificate issued.'); }
+  catch (e) { S.cert.error = e.code === 'NOT_ELIGIBLE' ? 'Not every requirement is met yet. Reload the page and check the list.' : isAuthErr(e) ? 'You were signed out. Sign in again.' : e.message; }
+  S.cert.busy = false; render();
+}
+
+function prefsPanel() {
+  const p = S.prefs;
+  const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+  const permText = perm === 'granted' ? 'Notifications are allowed in this browser.' : perm === 'denied' ? 'Notifications are blocked in this browser. Allow them in your browser settings to receive reminders.' : perm === 'default' ? 'Notifications are not switched on yet. You can switch them on in <a href="/app.html?view=reminders">Reminders</a>.' : 'This browser cannot show notifications.';
+  return `<details class="lrn-prefs" ${S.prefsOpen ? 'open' : ''}><summary data-act="prefs-toggle">Reminders and notifications</summary>${!p ? '<p class="lrn-lmeta">Loading</p>' : `<p class="lrn-body">Cognita only sends a notification when it is useful: when a reviewer has looked at your work, when your certificate is ready, and, if you stop part way through a course, one nudge after about 3 days and one after about 10 days. Never daily. Nothing is sent at night.</p>
+    <label class="lrn-switch"><input type="checkbox" data-pref-n="reviewAlerts" ${p.reviewAlerts ? 'checked' : ''}><span>Tell me when work is reviewed or a certificate is ready</span></label>
+    <label class="lrn-switch"><input type="checkbox" data-pref-n="nudges" ${p.nudges ? 'checked' : ''}><span>Remind me if I stop part way through a course</span></label>
+    <p class="lrn-lmeta">${permText}</p>`}</details>`;
+}
+async function loadPrefs() { if (S.prefs) return; try { S.prefs = await api('/prefs'); S.prefs.tz = S.prefs.tz; render(); } catch (_) { /* the panel stays in its loading state */ } }
+async function savePref(key, val) {
+  S.prefs = { ...S.prefs, [key]: val };
+  try { S.prefs = await api('/prefs', { method: 'POST', body: { [key]: val, tz: Intl.DateTimeFormat().resolvedOptions().timeZone } }); say('Saved.'); } catch (e) { say(e.message); }
+  render();
+}
+
 // ── Events (bound once) ──────────────────────────────────────────────────
 function onClick(e) {
   const link = e.target.closest('a[data-course]');
@@ -598,6 +960,21 @@ function onClick(e) {
   if (act === 'drawer-close') { S.drawer = false; render(); if (S.lastFocus && document.body.contains(S.lastFocus)) S.lastFocus.focus(); else { const b = root().querySelector('[data-act="drawer"]'); if (b) b.focus(); } return; }
   if (act === 'tutor-toggle') { S.tutor.open = !S.tutor.open; render(); if (S.tutor.open) { const i = document.getElementById('lrnTutorIn'); if (i) i.focus({ preventScroll: true }); } return; }
   if (act === 'quick') { sendTutor(a.dataset.q); return; }
+  if (act === 'listen') { doListen(a.dataset.step, a.dataset.part); return; }
+  if (act === 'listen-slow') { const st = stepById(a.dataset.step); Speech.prefs.set({}); Speech.speak({ course: S.route.course, lesson: S.route.lesson, step: a.dataset.step, part: 'target', lang: st.lang, rate: 0.75 }, plainText(st.target), { blob: apiBlob }, {}).then((r) => { S.speech.note = r.note || null; render(); }); return; }
+  if (act === 'speak-word') { doListen(a.closest('[data-step]') ? a.closest('[data-step]').dataset.step : (S.lessonData && S.lessonData.lesson.steps[S.lessonData.step] || {}).id, 'word', a.dataset.word); return; }
+  if (act === 'hot') { S.hot[a.dataset.step] = S.hot[a.dataset.step] === +a.dataset.i ? null : +a.dataset.i; render(); const b = root().querySelector('.lrn-hot[data-i="' + a.dataset.i + '"]'); if (b) b.focus({ preventScroll: true }); return; }
+  if (act === 'dictate') { startDictation(a.dataset.id, a.dataset.lang, a.dataset.target); return; }
+  if (act === 'speak-record') { toggleSpeakRecord(a.dataset.id, a.dataset.lang); return; }
+  if (act === 'speak-skip') { const st = currentStep(); submitSpeak(st.id, '', true); return; }
+  if (act === 'rec-start') { startRec(a.dataset.id); return; }
+  if (act === 'rec-stop') { stopRec(a.dataset.id); return; }
+  if (act === 'rec-redo') { const k = 'rec:' + a.dataset.id; if (S.rec[k] && S.rec[k].url) URL.revokeObjectURL(S.rec[k].url); S.rec[k] = { phase: 'idle' }; render(); return; }
+  if (act === 'rec-send') { sendRec(a.dataset.id); return; }
+  if (act === 'pace') { Speech.paceGuide(!Speech.paceGuideOn(), 130); render(); return; }
+  if (act === 'task-toggle') { S.openTask = S.openTask === a.dataset.id ? null : a.dataset.id; render(); return; }
+  if (act === 'open-task') { S.openTask = a.dataset.id; const l = a.dataset.lesson; if (S.detail && S.detail.progress && S.detail.progress.current.lesson === l) { go(S.route.course, l); } else go(S.route.course, l); return; }
+  if (act === 'prefs-toggle') { S.prefsOpen = !S.prefsOpen; if (S.prefsOpen) loadPrefs(); return; }
   if (act === 'move') {
     const st = currentStep(); const cur = (Array.isArray(S.draft[st.id]) ? S.draft[st.id] : st.items).slice();
     const i = +a.dataset.i, j = i + +a.dataset.d; if (j < 0 || j >= cur.length) return;
@@ -606,19 +983,27 @@ function onClick(e) {
   }
 }
 function onSubmit(e) {
-  if (e.target.id === 'lrnForm') { e.preventDefault(); doSubmit(); }
+  if (e.target.id === 'lrnCertForm') { e.preventDefault(); claimCertificate(); return; }
+  if (e.target.id === 'lrnForm') {
+    e.preventDefault();
+    const st = S.lessonData ? activeStep() : null;
+    if (st && st.type === 'assignment') { if (st.format === 'text') sendTextTask(st); else if (st.format === 'code') sendCodeTask(st); return; }
+    doSubmit();
+  }
   else if (e.target.id === 'lrnTutorForm') { e.preventDefault(); const i = document.getElementById('lrnTutorIn'); const v = i.value; i.value = ''; sendTutor(v); }
 }
 function onInput(e) {
   const t = e.target;
   if (t.id === 'lrnSearch') { S.filters.q = t.value; const list = S.cat ? filtered() : []; const el = root(); el.innerHTML = viewCatalogue(); const n = document.getElementById('lrnSearch'); n.focus(); n.setSelectionRange(t.value.length, t.value.length); say(plural(list.length, 'course') + ' found'); }
-  else if (t.id === 'lrnAns' && S.lessonData) { const st = currentStep(); S.draft[st.id] = t.value; const wc = document.getElementById('lrnWc'); if (wc) wc.textContent = (t.value.match(/\S+/g) || []).length + ' of at least ' + st.minWords + ' words'; }
-  else if (t.id === 'lrnCode' && S.lessonData) S.draft[currentStep().id] = t.value;
+  else if (t.id === 'lrnAns' && S.lessonData) { const st = activeStep(); S.draft[st.id] = t.value; const wc = document.getElementById('lrnWc'); if (wc) wc.textContent = (t.value.match(/\S+/g) || []).length + ' of at least ' + st.minWords + ' words'; }
+  else if (t.id === 'lrnCode' && S.lessonData) S.draft[activeStep().id] = t.value;
 }
 function onChange(e) {
   const t = e.target;
   if (t.id === 'lrnLevel') { S.filters.level = t.value; render(); }
   else if (t.name === 'ans' && S.lessonData) S.draft[currentStep().id] = t.value;
+  else if (t.dataset && t.dataset.pref) { Speech.prefs.set({ [t.dataset.pref]: t.dataset.pref === 'rate' ? Number(t.value) : t.value }); }
+  else if (t.dataset && t.dataset.prefN) savePref(t.dataset.prefN, t.checked);
 }
 function onKey(e) {
   if (e.key === 'Escape' && S.drawer) { S.drawer = false; render(); const b = root().querySelector('[data-act="drawer"]'); if (b) b.focus(); return; }
@@ -632,7 +1017,8 @@ function onKey(e) {
 
 function onRouteChange() {
   const next = routeFromUrl();
-  S.route = next; S.drawer = false; S.hint = null;
+  if (!(next.lesson && next.lesson === S.route.lesson && next.course === S.route.course)) cleanupMedia();
+  S.route = next; S.drawer = false; S.hint = null; if (!next.lesson) S.openTask = null;
   if (!next.course) { render(); loadCatalogue(!S.cat); return; }
   if (!next.lesson) { S.lessonFor = null; loadDetail(next.course, true); return; }
   loadLesson(next.course, next.lesson, false);
@@ -646,6 +1032,7 @@ function onLearnaNavClick() {
 // ── Router hooks ─────────────────────────────────────────────────────────
 export async function mount() {
   if (mounted) return;
+  window.addEventListener('pagehide', cleanupMedia);
   const user = await window.Auth.requireAuthOrRedirect();
   if (!user) return;
   mounted = true;
@@ -659,4 +1046,4 @@ export async function mount() {
   onRouteChange();
 }
 export function activate() { S.cat = null; onRouteChange(); }
-export function deactivate() { S.drawer = false; }
+export function deactivate() { S.drawer = false; cleanupMedia(); }
