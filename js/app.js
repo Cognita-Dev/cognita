@@ -856,6 +856,7 @@ function applyIncomingUiPatches(patches) {
   const touched = new Set();
   if (!Array.isArray(patches)) return [];
   patches.slice(0, 8).forEach((p) => {
+    let found = false;
     for (let i = conversationMeta.length - 1; i >= 0; i--) {
       if (!getUiBlocks(i)) continue;
       const m = conversationMeta[i];
@@ -863,7 +864,17 @@ function applyIncomingUiPatches(patches) {
       if (key && !findUiNode(m.ui, key)) continue;
       const r = applyPatches(m.ui, [p]);
       if (r.applied) { m.ui = r.blocks; touched.add(i); }
+      found = true;
       break;
+    }
+    // A replacement for a component that no longer exists is simply a new component on the newest answer.
+    if (!found && p.op === 'replace' && p.node) {
+      const last = conversation.length - 1;
+      const m = conversationMeta[last];
+      if (m && conversation[last] && conversation[last].role === 'assistant') {
+        m.ui = validateUi((Array.isArray(m.ui) ? m.ui : []).concat(p.node));
+        touched.add(last);
+      }
     }
   });
   return Array.from(touched);
