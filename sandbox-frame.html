@@ -427,9 +427,10 @@ var post = function (m) { self.postMessage(m); };
 // plain message instead of a clock that counts up forever.
 var STALL_MS = 40000;
 var HOST_NAME = PYODIDE_BASE_URL.replace(/^https?:\/\//, '').split('/')[0];
-var dl = { loaded: 0, cur: null, phase: 'core', lastPost: 0, failure: null };
+var dl = { loaded: 0, cur: null, phase: 'core', lastPost: 0, failure: null, detail: '' };
 var nativeFetch = self.fetch ? self.fetch.bind(self) : null;
 
+function fileOf(input) { var u = typeof input === 'string' ? input : (input && (input.url || input.href)) || ''; return String(u).split('/').pop().split('?')[0] || 'file'; }
 function fmtMB(n) { return (n / 1048576).toFixed(1); }
 function reportDownload(force) {
   var now = Date.now();
@@ -453,7 +454,7 @@ async function trackedFetch(input, init) {
   arm();
   var res;
   try { res = await nativeFetch(input, Object.assign({}, init || {}, { signal: ctl.signal })); }
-  catch (e) { disarm(); if (!dl.failure) dl.failure = 'unreachable'; throw e; }
+  catch (e) { disarm(); if (!dl.failure) dl.failure = 'unreachable'; dl.detail = fileOf(input) + ' - ' + (e && e.name || 'Error') + ': ' + (e && e.message || ''); throw e; }
   if (!res.ok) { disarm(); dl.failure = 'http:' + res.status; throw new Error('Python download failed with status ' + res.status); }
   var len = parseInt(res.headers.get('content-length') || '0', 10);
   var track = { len: len, got: 0 };
@@ -485,10 +486,12 @@ if (nativeFetch) {
 function downloadProblem(e) {
   var f = dl.failure;
   var raw = String(e && e.message || e || '');
-  if (!f && !/NetworkError|Failed to fetch|Load failed|importScripts|Python download failed|aborted/i.test(raw)) return null;
-  if (f === 'stalled') return 'Python stopped downloading: no data arrived for ' + Math.round(STALL_MS / 1000) + ' seconds. Check your internet connection and try again. It only has to be downloaded once.';
-  if (f && f.indexOf('http:') === 0) return 'Cognita could not download Python. The Python server (' + HOST_NAME + ') answered with an error (' + f.slice(5) + '). This is a problem on our side, not with your code. Please try again later.';
-  return 'Cognita could not reach the Python server (' + HOST_NAME + '). Check your internet connection and try again. If it keeps happening, the server may be down.';
+  if (!f && !/NetworkError|Failed to fetch|Load failed|importScripts|Importing a script failed|Python download failed|aborted/i.test(raw)) return null;
+  var why = (dl.detail || raw || '').slice(0, 160);
+  var tail = why ? '\n(Technical detail: ' + why + ')' : '';
+  if (f === 'stalled') return 'Python stopped downloading: no data arrived for ' + Math.round(STALL_MS / 1000) + ' seconds. Check your internet connection and try again. It only has to be downloaded once.' + tail;
+  if (f && f.indexOf('http:') === 0) return 'Cognita could not download Python. The Python server (' + HOST_NAME + ') answered with an error (' + f.slice(5) + '). This is a problem on our side, not with your code. Please try again later.' + tail;
+  return 'Cognita could not reach the Python server (' + HOST_NAME + '). Check your internet connection and try again. If it keeps happening, the server may be down.' + tail;
 }
 
 var RUNNER = [
@@ -529,9 +532,6 @@ async function boot() {
     post({ t: 'status', text: 'Starting Python\u2026' });
     var py;
     try {
-      // Fetch the loader first (small): this is the quick "is the host reachable?" check,
-      // and importScripts then finds it already in the browser's cache.
-      if (nativeFetch) { var r0 = await (await self.fetch(PYODIDE_BASE_URL + 'pyodide.js')).arrayBuffer(); r0 = null; }
       importScripts(PYODIDE_BASE_URL + 'pyodide.js');
       py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
     } catch (e) {
