@@ -1628,6 +1628,23 @@ function buildEffectiveContent(msg) {
   return text.trim();
 }
 
+// What the model is shown for an earlier assistant answer. The saved text has the component blocks
+// removed, so without this a follow-up like "make the rent 30% higher and update the chart" cannot
+// name the component to patch and the model rewrites everything as plain text instead.
+function historyContent(m, i) {
+  const base = buildEffectiveContent(m);
+  if (!m || m.role !== 'assistant') return base;
+  const meta = conversationMeta[i];
+  const blocks = meta && Array.isArray(meta.ui) ? meta.ui : [];
+  if (!blocks.length) return base;
+  const slim = (b) => ({ id: b.id, type: b.type, props: b.props, children: Array.isArray(b.children) && b.children.length ? b.children.map(slim) : undefined });
+  let json = '';
+  try { json = JSON.stringify(blocks.map(slim)); } catch (_) { json = ''; }
+  if (json.length > 6000) json = JSON.stringify(blocks.map((b) => ({ id: b.id, type: b.type, title: b.props && b.props.title })));
+  return (base + '\n\n[Components already shown on screen with this answer (not text to repeat): ' + json +
+    ' To change one, answer with a short sentence and a cognita-ui patch for its id; do not rewrite the answer.]').trim();
+}
+
 /* Copies the attached data files into this chat's workspace. Resolves a Map
  * from each pending attachment to the saved message attachment. A file that
  * could not be saved falls back to the old inline text for text formats, or to
@@ -1727,7 +1744,7 @@ async function sendMessage(text) {
   updateConversationTitle();
 
   const payload = {
-    messages: conversation.map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+    messages: conversation.map((m, i) => ({ role: m.role, content: historyContent(m, i) })),
     quality: currentQuality,
     approvals: conversationApprovals,
     sandboxHint: sendingDataFile || conversationHasSandbox(),
@@ -3758,7 +3775,7 @@ async function resolvePendingToolCall(index, approved) {
   refreshActivity(index);
 
   await runStreamedTurn({
-    messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+    messages: conversation.slice(0, index + 1).map((m, i) => ({ role: m.role, content: historyContent(m, i) })),
     quality: currentQuality,
     confirmToolCall: { name: ptc.name, args: ptc.args },
     approvals: conversationApprovals,
@@ -3980,7 +3997,7 @@ async function submitDesignRequest(index, skip) {
   isSending = true;
   try {
     await runStreamedTurn({
-      messages: conversation.slice(0, index + 1).map((m) => ({ role: m.role, content: buildEffectiveContent(m) })),
+      messages: conversation.slice(0, index + 1).map((m, i) => ({ role: m.role, content: historyContent(m, i) })),
       quality: currentQuality,
       designResume: { args: d.args, answers },
       designAssets: Object.keys(conversationDesignAssets).length ? conversationDesignAssets : undefined,
