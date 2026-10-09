@@ -310,6 +310,12 @@ export const REGISTRY = {
         };
       }).filter(Boolean);
       if (!fields.length) return null;
+      const seen = new Set();
+      fields.forEach((f) => {
+        let name = f.name, n = 2;
+        while (seen.has(name)) name = f.name.slice(0, 36) + '_' + (n++);
+        seen.add(name); f.name = name;
+      });
       return { props: { title: str(p.title), description: str(p.description, 500), fields,
         submitLabel: str(p.submitLabel, 40) || 'Submit', submitPrompt: str(p.submitPrompt, 600) } };
     },
@@ -829,7 +835,8 @@ function liftLeakedCalls(src, partial) {
   return out;
 }
 
-const FENCE = /```[ \t]*cognita-ui[ \t]*\r?\n([\s\S]*?)(```|$)/g;
+const FENCE = /(```|~~~)[ \t]*(?:json[ \t]+)?cognita-ui[ \t]*(?:\r?\n|(?=[{\[]))([\s\S]*?)(?:\1|$)/gi;
+const FENCE_HEAD_PREFIX = /(?:```|~~~)[ \t]*(?:j(?:s(?:o(?:n[ \t]*)?)?)?)?(?:[ \t]*c(?:o(?:g(?:n(?:i(?:t(?:a(?:-(?:u(?:i)?)?)?)?)?)?)?)?)?)?[ \t]*$/i;
 
 /**
  * Pulls ```cognita-ui fences out of a reply. Returns the remaining text, the
@@ -839,9 +846,10 @@ const FENCE = /```[ \t]*cognita-ui[ \t]*\r?\n([\s\S]*?)(```|$)/g;
 export function parseUiReply(reply, opts) {
   let src = typeof reply === 'string' ? reply : '';
   src = liftLeakedCalls(src, !!(opts && opts.partial));
-  if (!src.includes('cognita-ui')) return { text: src, ui: [], patches: [] };
+  if (opts && opts.partial) src = src.replace(FENCE_HEAD_PREFIX, '');   // a fence header still being typed must not flash up as text
+  if (!/cognita-ui/i.test(src)) return { text: src, ui: [], patches: [] };
   const rawBlocks = [], rawPatches = [];
-  const rest = src.replace(FENCE, (_, body, close) => {
+  const rest = src.replace(FENCE, (_m, _f, body) => {
     let val;
     try { val = JSON.parse(body.trim()); } catch (_e) {
       val = parsePartial(body);   // also for a fence cut off by the token limit, so the final answer matches the live preview
