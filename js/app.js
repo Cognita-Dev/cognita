@@ -2099,6 +2099,7 @@ function createLiveTurnIndicator() {
   let lastTick = performance.now();
   let wordIdx = 0;
   let wordShownAt = performance.now();
+  let stallCredited = false;
   const stateOf = () => (!navigator.onLine ? 'offline' : (performance.now() - lastSignalAt > STALL_MS ? 'stalled' : 'ok'));
   const wordInterval = setInterval(() => {
     if (thinkingOver || stateOf() !== 'ok') return;
@@ -2109,6 +2110,10 @@ function createLiveTurnIndicator() {
     const now = performance.now();
     const st = stateOf();
     if (!thinkingOver && st === 'ok') thoughtMs += now - lastTick;
+    // The stall is only noticed STALL_MS after the last byte; that silent stretch was counted as
+    // thinking while it was still "ok", so take it back once, when the stall is first detected.
+    if (st === 'stalled' && !stallCredited) { thoughtMs = Math.max(0, thoughtMs - Math.min(STALL_MS, now - lastSignalAt)); stallCredited = true; }
+    else if (st === 'ok') stallCredited = false;
     lastTick = now;
     if (wordEl && !thinkingOver) {
       wordEl.textContent = st === 'offline' ? 'You are offline' : st === 'stalled' ? 'Waiting for connection' : THINKING_WORDS[wordIdx];
@@ -4302,19 +4307,25 @@ function appendThinkingIndicator() {
   list.appendChild(el);
   scrollToBottom();
 
-  const startedAt = performance.now();
   const wordEl = document.getElementById(id + '-word');
   const timerEl = document.getElementById(id + '-timer');
   let wordIdx = 0;
+  let counted = 0;
+  let lastTick = performance.now();
 
   const wordInterval = setInterval(() => {
-    wordIdx = (wordIdx + 1) % THINKING_WORDS.length;
+    if (!navigator.onLine) return;
+    if (wordIdx < THINKING_WORDS.length - 1) wordIdx++;   // in order, then hold the last one
     if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
   }, 2200);
 
   const timerInterval = setInterval(() => {
-    const elapsed = (performance.now() - startedAt) / 1000;
-    if (timerEl) timerEl.textContent = elapsed.toFixed(1) + 's';
+    const now = performance.now();
+    const online = navigator.onLine;
+    if (online) counted += now - lastTick;               // offline time is not thinking time
+    lastTick = now;
+    if (wordEl) wordEl.textContent = online ? THINKING_WORDS[wordIdx] : 'You are offline';
+    if (timerEl) timerEl.textContent = (counted / 1000).toFixed(1) + 's';
   }, 100);
 
   activeThinkingTimers[id] = { wordInterval, timerInterval };
