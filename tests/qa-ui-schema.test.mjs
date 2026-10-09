@@ -42,3 +42,17 @@ test('no javascript:/script survives as a link or raw html field', () => {
   const out = JSON.stringify(validateUi({ blocks: [{ type: 'callout', text: '<script>x</script>', href: 'javascript:alert(1)' }] }));
   assert.ok(!/javascript:/i.test(out), out);
 });
+
+test('components written with flat props (no "props" wrapper) are kept, not dropped', () => {
+  const flat = [
+    { type: 'table', title: 'Budget', columns: ['Item', 'Cost'], rows: [['Flour', '$200']] },
+    { type: 'bar_chart', title: 'Spend', labels: ['A', 'B'], values: [1, 2] },
+    { type: 'form', title: 'Orders', fields: [{ name: 'n', label: 'Name', type: 'text' }] },
+    { type: 'callout', variant: 'warning', title: 'Legal', content: 'Check rules' },
+  ];
+  const out = validateUi(flat);
+  assert.deepEqual(out.map((b) => b.type), ['table', 'bar_chart', 'form', 'callout']);
+  assert.equal(JSON.stringify(validateUi(out)), JSON.stringify(out), 'second validation must not change anything');
+  const wrapped = validateUi([{ type: 'table', props: { title: 'T', columns: ['a'], rows: [['1']] } }]);
+  assert.equal(wrapped.length, 1);
+});
