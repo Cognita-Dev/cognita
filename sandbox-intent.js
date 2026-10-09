@@ -20,7 +20,9 @@ export const SANDBOX_INTENT_PATTERNS = [
   { name: 'analyze', re: /\banaly[sz]\w*\b/i },
   { name: 'data-file', re: /\b(?:csv|tsv|json|xlsx|xls|spreadsheet|dataset|data set|dataframe|pandas|numpy)\b/i },
   { name: 'data-table', re: /\b(?:table of data|data table|rows and columns)\b/i },
-  { name: 'chart', re: /\b(?:chart|histogram|scatter|heatmap|matplotlib|(?:plot|graph) (?:a|an|the|this|these|my|it|me)\b|bar graph|line graph|pie chart)/i },
+  // A chart in a plan or budget is drawn by the chat's built-in chart cards, no code needed.
+  // Only real plotting libraries or a data file send the request to the sandbox.
+  { name: 'chart', re: /\b(?:histogram|heatmap|matplotlib|seaborn|plotly|scatter ?plot|(?:plot|graph|chart) (?:these|this|my|the following)\b|bar graph of (?:these|my|this))/i },
   { name: 'regex', re: /\b(?:regex|regexp|regular expression)\b/i },
   { name: 'transform', re: /\b(?:parse|parsing|dedupe|deduplicate|sort these|convert (?:this|these|the|it|them)|clean (?:up )?(?:this|the) data)\b/i },
   { name: 'script', re: /\b(?:script|python|javascript|node\.?js|node)\b/i },
