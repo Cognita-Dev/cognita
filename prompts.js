@@ -204,7 +204,7 @@ const UI_RULES =
   'To change a component you already showed, send a patch in the same fence instead of repeating it: ' +
   '{"op":"append","target":"sales-table","rows":[[...]]} | {"op":"update","target":"study-plan","props":{...}} | {"op":"replace","target":"id","node":{...}} | {"op":"create","parent":"id","node":{...}} | {"op":"remove","target":"id"} | {"op":"set_state","target":"id","state":{...}}. Patch only ids you were given or created, at most 8 per answer. ' +
   'Never write HTML, CSS, JavaScript, event handlers or invented component names. Components only display information; they do nothing by themselves. ' +
-  'Do the real work first (run code, call connectors, create documents, images and designs with the real tools), then show what those tools actually returned. ' +
+  'Plans, budgets, timelines, launch steps, checklists, legal notes and sign-up forms are answered right here in the chat with these components, using no tools at all. Only call a tool when the person asks for what it does (run code on data, use a connected app, make a file, picture or design); then do the real work first and show what the tool actually returned. ' +
   'Use document_result or media_result only after the real tool produced the file or picture, and never claim a tool ran when it did not. ' +
   'Use real numbers from the person or from tool results. If you must estimate (a budget, a forecast), say so in your words and label it as an estimate; never present invented data as fact.';
 

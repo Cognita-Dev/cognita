@@ -8,7 +8,7 @@ import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from 
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
-  executeConnectorTool, validateToolArgs, approvalScopeForTool, isToolApproved,
+  executeConnectorTool, shouldOfferConnectorTools, validateToolArgs, approvalScopeForTool, isToolApproved,
   getSandboxToolSchemas, isSandboxToolName, describeConfirmation, stepMeta,
 } from './connector-tools.js';
 import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
@@ -681,7 +681,10 @@ export async function handleChatRequest(request, env) {
       const lastUserMsg = [...trimmedHistory].reverse().find((m) => m.role === 'user');
       const intentText = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
       lastUserText = intentText;
-      const connectorTools = connectorToolsEnabled ? await getAvailableTools(identity.uid, env, intentText) : [];
+      const recentUserTexts = [...trimmedHistory].reverse().filter((m) => m && m.role === 'user' && typeof m.content === 'string').map((m) => m.content);
+      const connectorWanted = connectorToolsEnabled && shouldOfferConnectorTools(recentUserTexts);
+      console.log('[chat][connectors] gate=' + (connectorWanted ? 'offered' : 'skipped'));
+      const connectorTools = connectorWanted ? await getAvailableTools(identity.uid, env, intentText) : [];
 
       // Sandbox tools: offered only for what the active provider can really
       // do, and withheld once today's run allowance is used up or the person

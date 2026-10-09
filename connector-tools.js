@@ -145,6 +145,22 @@ function _matchedKeys(text, keywordMap) {
   return matched;
 }
 
+
+// ── Should connected-app tools be offered for this message? ─────────────
+// Offering them costs tokens and tempts the model to reach for an app (for
+// example saving a budget to Drive) when the answer belongs in the chat. They
+// are only offered when the person names an app or asks for something an app
+// does. `texts` is the newest user messages, newest first; the last three are
+// checked so a short follow-up like "yes, do it" keeps the tools.
+const CONNECTOR_INTENT_RE = /\b(?:google|gmail|g-?drive|drive|google docs?|docs?|sheets?|spreadsheet|calendar|inbox|e-?mails?|github|repo|repository|pull request|commits?|branch(?:es)?|facebook|instagram|social media|canva|figma|slack|reels?|meeting|appointment|schedule (?:a|an|my|the)|my (?:files?|folders?|events?|documents?))\b/i;
+export function shouldOfferConnectorTools(texts) {
+  const list = Array.isArray(texts) ? texts.slice(0, 3) : [texts];
+  for (const t of list) {
+    if (typeof t === 'string' && CONNECTOR_INTENT_RE.test(t.slice(0, 20000))) return true;
+  }
+  return false;
+}
+
 /**
  * Returns the OpenAI-compatible tool schemas the model should be offered
  * for this user right now — i.e. only tools belonging to providers they
