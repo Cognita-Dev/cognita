@@ -126,7 +126,7 @@ const CATALOG = [
 
   // Local browser test (Tier 1). Runs in the person's own browser, free on every plan.
   { cap: CAPS.BROWSER_TEST, tool: _fn('sandbox_browser_test',
-    'Open an HTML page in a real browser and report console errors, failed loads, page text and layout measurements. Give path (an .html file in the workspace; linked local .css and .js files are included) or html. No internet: outside files are blocked. Use it to check a page you wrote, then fix what it reports.',
+    'Open an HTML page in a real browser and report console errors, failed loads, page text and layout measurements. The user is also shown a screenshot and a live preview of the page (you only get the text report). Give path (an .html file in the workspace; linked local .css and .js files are included) or html. No internet: outside files are blocked. Use it to check a page you wrote, then fix what it reports.',
     {
       path: { type: 'string', description: 'HTML file in /workspace.' },
       html: { type: 'string', description: 'Or the HTML itself.' },
@@ -135,6 +135,8 @@ const CATALOG = [
       wait_ms: { type: 'integer', description: 'Extra wait after load for scripts, 0 to 5000. Default 300.' },
       selectors: { type: 'array', items: { type: 'string' }, description: 'Up to 10 CSS selectors to measure (count, visible, size, position).' },
       touch: { type: 'boolean', description: 'Also flag tap targets smaller than 44 px.' },
+      full_page: { type: 'boolean', description: 'Screenshot the whole page (up to 3000 px tall) instead of just the first screen.' },
+      screenshot: { type: 'boolean', description: 'Set false to skip the screenshot the user sees. Default true.' },
     }, []) },
 
   // Cloud browser (Studio and Admin only). Offered per request by chat-endpoint.js, never by a provider.

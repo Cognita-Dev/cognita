@@ -747,6 +747,12 @@ export async function handleChatRequest(request, env) {
             const usedCloud = await getUsage(identity.uid, 'browserRemote', env);
             if (usedCloud < plan.limits.browserRemotePerDay) offerCaps.add(CAPS.BROWSER_REMOTE);
           }
+          // Local browser test: 100/day Starter, 500/day Plus, unlimited above (entitlements.js).
+          const usedTests = await getUsage(identity.uid, 'browserTests', env);
+          if (usedTests >= (plan.limits.browserTestPerDay || 0)) {
+            offerCaps.delete(CAPS.BROWSER_TEST);
+            sandboxLimitNote = '\n\nThe user has used up today\'s browser-test allowance. Do not call sandbox_browser_test; check the page by reading the code instead and mention the limit briefly if it matters.';
+          }
           sandboxToolSchemas = getSandboxToolSchemas(offerCaps);
         }
       }
@@ -1213,6 +1219,21 @@ export async function handleChatRequest(request, env) {
                 result = null;
                 round++;
                 continue;
+              }
+
+              // Browser tests have their own daily allowance, charged here when the call is
+              // accepted (a tampered call to a plan with no allowance is refused the same way).
+              if (sbName === 'sandbox_browser_test') {
+                const btCharge = await checkAndIncrement(identity.uid, 'browserTests', plan.limits.browserTestPerDay || 0, env);
+                if (!btCharge.allowed) {
+                  workingMessages = workingMessages.concat([
+                    { role: 'assistant', content: 'Attempting ' + call.name + '.' },
+                    { role: 'user', content: 'The browser test allowance for today is used up (' + btCharge.limit + ' per day). Do not call sandbox_browser_test again. Review the code by reading it and tell the user briefly.' },
+                  ]);
+                  result = null;
+                  round++;
+                  continue;
+                }
               }
 
               if (sandboxProvider.site === 'client') {

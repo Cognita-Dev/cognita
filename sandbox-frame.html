@@ -784,7 +784,7 @@ self.onmessage = async function (ev) {
   // a meta CSP that blocks every network request, and talks back only through postMessage.
   function collectorMain(token, cfg) {
     var logs = [], errors = [], resErrors = [], blocked = [];
-    function post(type, data) { try { parent.postMessage({ cog: token, type: type, data: data }, '*'); } catch (e) {} }
+    function post(type, data, shot) { try { parent.postMessage({ cog: token, type: type, data: data, shot: shot }, '*'); } catch (e) {} }
     function fmt(args) { return Array.prototype.map.call(args, function (x) { if (typeof x === 'string') return x; try { return JSON.stringify(x); } catch (e) { return String(x); } }).join(' '); }
     ['log', 'info', 'warn', 'error'].forEach(function (k) {
       var orig = console[k];
@@ -831,8 +831,68 @@ self.onmessage = async function (ev) {
       rep.console = logs; rep.errors = errors; rep.failedResources = resErrors; rep.blocked = blocked;
       return rep;
     }
+
+    // Screenshot with no library and no network: the page is copied, written out as an SVG
+    // <foreignObject>, and drawn onto a canvas. Canvases in the page become pictures first.
+    // Any failure (some browsers refuse to read the canvas back) just means "no screenshot".
+    function takeShot(done) {
+      var finished = false;
+      function fin(v) { if (!finished) { finished = true; done(v); } }
+      try {
+        var de = document.documentElement, w = Math.max(innerWidth, 100);
+        var fullH = cfg.fullPage ? Math.min(Math.max(de.scrollHeight, innerHeight), 3000) : innerHeight;
+        var clone = de.cloneNode(true), live = de.getElementsByTagName('canvas'), copy = clone.getElementsByTagName('canvas');
+        for (var i = copy.length - 1; i >= 0; i--) {
+          try {
+            var img = document.createElement('img'); img.setAttribute('src', live[i].toDataURL('image/png'));
+            img.setAttribute('style', 'width:' + live[i].clientWidth + 'px;height:' + live[i].clientHeight + 'px;' + (live[i].getAttribute('style') || ''));
+            copy[i].parentNode.replaceChild(img, copy[i]);
+          } catch (e) { /* tainted or empty canvas: left blank */ }
+        }
+        Array.prototype.forEach.call(clone.querySelectorAll('script,noscript,iframe,object,embed,meta[http-equiv]'), function (n) { n.remove(); });
+        var liveIn = de.querySelectorAll('input,textarea,select'), cloneIn = clone.querySelectorAll('input,textarea,select');
+        for (var j = 0; j < liveIn.length && j < cloneIn.length; j++) {
+          var a = liveIn[j], b = cloneIn[j];
+          if (a.tagName === 'TEXTAREA') b.textContent = a.value;
+          else if (a.tagName === 'SELECT') Array.prototype.forEach.call(b.options, function (o, k) { if (a.options[k] && a.options[k].selected) o.setAttribute('selected', ''); else o.removeAttribute('selected'); });
+          else { b.setAttribute('value', a.value); if (a.checked) b.setAttribute('checked', ''); else b.removeAttribute('checked'); }
+        }
+        // Keep the page's own scroll position (a page that scrolled itself before the shot).
+        var sy = window.pageYOffset || 0;
+        var body = clone.getElementsByTagName('body')[0];
+        if (body && sy && !cfg.fullPage) { var wrap = document.createElement('div'); wrap.setAttribute('style', 'position:relative;top:' + (-sy) + 'px'); while (body.firstChild) wrap.appendChild(body.firstChild); body.appendChild(wrap); }
+        clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+        clone.style.minHeight = fullH + 'px'; clone.style.width = w + 'px';
+        // A body background normally paints the whole page; inside the copy it must be set on the root.
+        var dcs = getComputedStyle(de), bcs = document.body ? getComputedStyle(document.body) : null;
+        if (bcs && (dcs.backgroundColor === 'rgba(0, 0, 0, 0)' || dcs.backgroundColor === 'transparent') && dcs.backgroundImage === 'none') {
+          clone.style.backgroundColor = bcs.backgroundColor; if (bcs.backgroundImage !== 'none') { clone.style.backgroundImage = bcs.backgroundImage; clone.style.backgroundSize = bcs.backgroundSize; clone.style.backgroundRepeat = bcs.backgroundRepeat; }
+        }
+        var xml = new XMLSerializer().serializeToString(clone);
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + fullH + '"><foreignObject x="0" y="0" width="' + w + '" height="' + fullH + '">' + xml + '</foreignObject></svg>';
+        var im = new Image();
+        im.onload = function () {
+          try {
+            var scale = Math.min(1, 900 / w), cw = Math.round(w * scale), ch = Math.round(fullH * scale);
+            var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+            var cx = cv.getContext('2d'); cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, cw, ch);
+            cx.drawImage(im, 0, 0, cw, ch);
+            var q = 0.72, out = cv.toDataURL('image/jpeg', q);
+            while (out.length > 330000 && q > 0.3) { q -= 0.15; out = cv.toDataURL('image/jpeg', q); }
+            fin(out.length <= 330000 ? { dataUrl: out, width: cw, height: ch, fullPage: !!cfg.fullPage } : null);
+          } catch (e) { fin(null); }
+        };
+        im.onerror = function () { fin(null); };
+        im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        setTimeout(function () { fin(null); }, 4000);
+      } catch (e) { fin(null); }
+    }
     post('hello', {});
-    window.addEventListener('load', function () { setTimeout(function () { var rep; try { rep = report(); } catch (e) { rep = { reportError: String(e && e.message || e), console: logs, errors: errors }; } post('report', rep); }, cfg.waitMs); });
+    window.addEventListener('load', function () { setTimeout(function () {
+      var rep; try { rep = report(); } catch (e) { rep = { reportError: String(e && e.message || e), console: logs, errors: errors }; }
+      if (cfg.screenshot === false) { rep.screenshotSkipped = true; post('report', rep); return; }
+      takeShot(function (shot) { post('report', rep, shot); });
+    }, cfg.waitMs); });
   }
 
   function inlineLocalAssets(html, dir, missing) {
@@ -844,13 +904,20 @@ self.onmessage = async function (ev) {
     }
     html = html.replace(/<link\b[^>]*>/gi, function (tag) {
       if (!/rel\s*=\s*["']?stylesheet/i.test(tag)) return tag;
-      var m = tag.match(/href\s*=\s*["']([^"']+)["']/i); if (!m) return tag;
+      var m = tag.match(/href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'>]+))/i); if (!m) return tag; m[1] = m[1] || m[2] || m[3];
       var css = rd(m[1]); return css === null ? tag : '<style>' + css.replace(/<\/style/gi, '<\\/style') + '</style>';
     });
-    html = html.replace(/<script\b([^>]*?)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi, function (tag, pre, src, post) {
-      var js = rd(src); return js === null ? tag : '<script' + pre + post + '>' + js.replace(/<\/script/gi, '<\\/script') + '</scr' + 'ipt>';
+    html = html.replace(/<script\b([^>]*?)\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'>]+))([^>]*)>\s*<\/script>/gi, function (tag, pre, q1, q2, q3, post) {
+      var src = q1 || q2 || q3, js = rd(src); return js === null ? tag : '<script' + pre + post + '>' + js.replace(/<\/script/gi, '<\\/script') + '</scr' + 'ipt>';
     });
     return html;
+  }
+
+  // Only a small JPEG data address from the test page is accepted as a screenshot.
+  function validShot(sh) {
+    if (!sh || typeof sh.dataUrl !== 'string' || sh.dataUrl.length > 340000) return null;
+    if (!/^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(sh.dataUrl)) return null;
+    return { dataUrl: sh.dataUrl, width: Math.min(Math.max(parseInt(sh.width, 10) || 0, 1), 2000), height: Math.min(Math.max(parseInt(sh.height, 10) || 0, 1), 3000), fullPage: !!sh.fullPage };
   }
 
   async function runBrowserTest(a, io, limits, id) {
@@ -865,6 +932,8 @@ self.onmessage = async function (ev) {
     var cfg = {
       waitMs: Math.min(Math.max(parseInt(a.wait_ms, 10) || 300, 0), 5000),
       touch: !!a.touch,
+      screenshot: a.screenshot !== false,
+      fullPage: !!a.full_page,
       selectors: Array.isArray(a.selectors) ? a.selectors.filter(function (s) { return typeof s === 'string'; }).slice(0, 10) : []
     };
     var width = Math.min(Math.max(parseInt(a.width, 10) || 1024, 200), 2000), height = Math.min(Math.max(parseInt(a.height, 10) || 768, 200), 3000);
@@ -878,7 +947,7 @@ self.onmessage = async function (ev) {
       var fr = document.createElement('iframe'), helloSeen = false, finished = false;
       fr.setAttribute('sandbox', 'allow-scripts');
       fr.style.cssText = 'position:fixed;left:0;top:0;border:0;visibility:hidden;width:' + width + 'px;height:' + height + 'px';
-      function end(code, rep, fallback, why) {
+      function end(code, rep, fallback, why, shot) {
         if (finished) return; finished = true; clearTimeout(timer); window.removeEventListener('message', onMsg);
         try { fr.remove(); } catch (e) {}
         if (rep) {
@@ -890,14 +959,14 @@ self.onmessage = async function (ev) {
           if (missing.length) probs.push(missing.length + ' linked local file(s) missing');
           if (rep.horizontalScroll) probs.push('page scrolls sideways at ' + rep.viewport.width + ' px');
           if (rep.brokenImages && rep.brokenImages.length) probs.push(rep.brokenImages.length + ' broken image(s)');
-          io.out((probs.length ? 'PROBLEMS FOUND: ' + probs.join('; ') : 'NO PROBLEMS FOUND by these checks') + '\n' + JSON.stringify(rep, null, 1).slice(0, limits.maxOutputChars || 12000) + '\n');
+          io.out((shot ? 'A screenshot of the page was captured and is shown to the user (you cannot see it; rely on the measurements below).\n' : (rep.screenshotSkipped ? '' : 'No screenshot could be captured in this browser; rely on the measurements below.\n')) + (probs.length ? 'PROBLEMS FOUND: ' + probs.join('; ') : 'NO PROBLEMS FOUND by these checks') + '\n' + JSON.stringify(rep, null, 1).slice(0, limits.maxOutputChars || 12000) + '\n');
         } else io.err(why + '\n');
-        resolve({ code: code, fallback: fallback });
+        resolve({ code: code, fallback: fallback, screenshot: shot || null, previewHtml: rep ? html.slice(0, 200000) : null, viewport: { width: width, height: height } });
       }
       function onMsg(ev) {
         var m = ev.data; if (ev.source !== fr.contentWindow || !m || m.cog !== token) return;
         if (m.type === 'hello') helloSeen = true;
-        else if (m.type === 'report') end(0, m.data && typeof m.data === 'object' ? m.data : {}, null);
+        else if (m.type === 'report') end(0, m.data && typeof m.data === 'object' ? m.data : {}, null, null, validShot(m.shot));
       }
       var timer = setTimeout(function () {
         if (helloSeen) end(124, null, null, 'The page did not finish loading within ' + Math.round(totalMs / 1000) + ' s. It may have an endless loop or wait for something that never arrives.');
@@ -916,7 +985,7 @@ self.onmessage = async function (ev) {
     var before = vfs.versions();
     var col = makeCollector(call.id, limits);
     var io = { out: function (t) { col.add('stdout', t); }, err: function (t) { col.add('stderr', t); } };
-    var exitCode = 0, command = '', note, fallback;
+    var exitCode = 0, command = '', note, fallback, screenshot, previewHtml, previewSize;
     var ctx = {
       fs: vfs, cwd: cwd, env: env, maxOutput: limits.maxOutputChars || 12000,
       // A command line such as "cd src && python a.py" must run Python from src.
@@ -964,7 +1033,15 @@ self.onmessage = async function (ev) {
         case 'sandbox_offer_file': {
           var op = relPath(a.path); if (!op) bad(a.path);
           if (!vfs.isFile(op)) throw new Error(op + ' does not exist.');
-          offered.set(op, String(a.title || Shell.basename(op)).slice(0, 120)); command = 'offer ' + op; io.out('Ready for download: ' + op + '\n'); break;
+          offered.set(op, String(a.title || Shell.basename(op)).slice(0, 120)); command = 'offer ' + op; io.out('Ready for download: ' + op + '\n');
+          // An offered web page also gets a live preview for the person (local css/js inlined, size capped).
+          if (/\.html?$/i.test(op)) {
+            try {
+              var ph = inlineLocalAssets(vfs.readText(op), op.slice(0, op.lastIndexOf('/')) || Shell.ROOT, []);
+              if (ph.length <= 200000) { previewHtml = ph; previewSize = { width: 1024, height: 480 }; }
+            } catch (e) { /* no preview; the download still works */ }
+          }
+          break;
         }
         case 'sandbox_run_python': {
           var pf = null;
@@ -991,7 +1068,7 @@ self.onmessage = async function (ev) {
         case 'sandbox_browser_test': {
           command = 'browser test ' + (a.path ? String(a.path) : '(inline html)');
           var bt = await runBrowserTest(a, io, limits, call.id);
-          exitCode = bt.code; fallback = bt.fallback || undefined;
+          exitCode = bt.code; fallback = bt.fallback || undefined; screenshot = bt.screenshot || undefined; previewHtml = bt.previewHtml || undefined; previewSize = bt.viewport;
           break;
         }
         default:
@@ -1004,7 +1081,8 @@ self.onmessage = async function (ev) {
     var res = {
       command: command, cwd: cwd, stdout: col.stdout, stderr: col.stderr, exitCode: exitCode,
       durationMs: Math.round(performance.now() - t0), truncated: col.truncated, files: changes,
-      cancelled: exitCode === 130 || undefined, note: note, fallback: fallback
+      cancelled: exitCode === 130 || undefined, note: note, fallback: fallback,
+      screenshot: screenshot, previewHtml: previewHtml, previewSize: previewSize
     };
     var off = [];
     offered.forEach(function (title, p) { if (vfs.isFile(p)) off.push({ path: p, title: title, size: vfs.readBytes(p).length }); });

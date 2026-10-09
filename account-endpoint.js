@@ -94,6 +94,7 @@ export async function handleUsageRequest(request, env) {
     'resourceGen',
     'flashcardImage',
     'sandboxRuns',
+    'browserTests',
     'sandboxArtifacts',
   ], env);
   return new Response(JSON.stringify({
@@ -107,6 +108,7 @@ export async function handleUsageRequest(request, env) {
       resourceGen: { used: used.resourceGen, limit: plan.limits.resourceGenPerDay },
       flashcardImage: { used: used.flashcardImage, limit: plan.limits.flashcardImagePerDay },
       sandboxRuns: { used: used.sandboxRuns, limit: plan.limits.sandboxRunsPerDay },
+      browserTests: { used: used.browserTests, limit: plan.limits.browserTestPerDay },
       sandboxArtifacts: { used: used.sandboxArtifacts, limit: plan.limits.sandboxArtifactsPerDay },
     },
     // Per-plan sizes the browser needs before it sends a file to the code
