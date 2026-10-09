@@ -144,6 +144,20 @@ def main():
         check('6 error clears live preview', page.evaluate("!document.querySelector('.live-stream-text') && !document.querySelector('[data-cui-live]')"))
         page.wait_for_timeout(500)
 
+        # 8. Thinking indicator: ordered words, pauses offline, ends with "Thought for Xs", no reasoning summary.
+        set_script([{'wait': 2500}, {'event': 'text', 'data': {'t': 'Done thinking.'}}, {'wait': 200}, {'event': 'done', 'data': {'reply': 'Done thinking.', 'ui': [], 'uiPatches': []}}])
+        page.fill('#composerInput', 'think'); page.click('#sendBtn'); page.wait_for_timeout(700)
+        t1 = page.inner_text('.thinking-timer'); w1 = page.inner_text('.thinking-word')
+        ctx.set_offline(True); page.evaluate("window.dispatchEvent(new Event('offline'))"); page.wait_for_timeout(900)
+        t2 = page.inner_text('.thinking-timer'); w2 = page.inner_text('.thinking-word'); page.wait_for_timeout(600)
+        t3 = page.inner_text('.thinking-timer')
+        ctx.set_offline(False); page.evaluate("window.dispatchEvent(new Event('online'))")
+        check('8a thinking word starts as first variant', w1 == 'Thinking', w1)
+        check('8b offline pauses the clock and says so', t2 == t3 and 'offline' in w2.lower(), (t2, t3, w2))
+        page.wait_for_function("document.querySelector('#messageList').innerText.includes('Done thinking.') && !document.querySelector('.message.is-streaming') && !document.querySelector('.live-stream-text')", timeout=20000); page.wait_for_timeout(400)
+        body = page.inner_text('#messageList')
+        check('8c ends with Thought for Xs', 'Thought for' in body, repr(body[-300:]))
+        check('8d reasoning summary gone', 'Reasoning summary' not in body and 'Worked through this' not in body)
         check('7 no JavaScript errors', not errors, errors[:3])
         b.close()
     failed = [r for r in results if not r[1]]
