@@ -3,6 +3,7 @@ const ent = await load('entitlements.js');
 const tools = await load('sandbox-tools.js');
 const prov = await load('sandbox-provider.js');
 const br = await load('browser-rendering.js');
+const intent = await load('sandbox-intent.js');
 
 console.log('\nPlan gating for the cloud browser');
 await test('only studio and admin may use it', async () => {
@@ -99,5 +100,10 @@ await test('fallback is kept by normalizeResult but hidden from the model', asyn
   eq(n.fallback.html, '<p>x</p>'); eq(n.fallback.selectors.length, 1);
   ok(!tools.resultForModel(n).includes('<p>x</p>'));
   ok(!tools.normalizeResult({ exitCode: 0, fallback: 'nope' }).fallback);
+});
+console.log('\nWeb page requests turn the tools on');
+await test('page and link messages are offered the sandbox', async () => {
+  for (const t of ['build me a landing page for my school', 'make a simple html page with a contact form', 'what is on https://example.com/about', 'check my website layout on a phone'])
+    ok(intent.shouldOfferSandbox({ text: t }).offer, t);
 });
 summary();
