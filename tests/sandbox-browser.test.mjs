@@ -64,7 +64,7 @@ await test('success sends the bearer token and returns text', async () => {
   fake(200, { success: true, result: '# Hello' });
   const r = await br.renderRemote({ url: 'https://example.com' }, env);
   ok(r.ok); eq(r.stdout, '# Hello');
-  ok(fake.last.url.endsWith('/browser-rendering/markdown')); eq(fake.last.init.headers.Authorization, 'Bearer tok');
+  ok(fake.last.url.endsWith('/browser-run/markdown')); eq(fake.last.init.headers.Authorization, 'Bearer tok');
 });
 await test('elements mode returns measurements', async () => {
   fake(200, { success: true, result: [{ selector: 'h1', results: [{ text: 'Hi', top: 1, left: 2, width: 3, height: 4, html: '<h1>Hi</h1>' }] }] });
