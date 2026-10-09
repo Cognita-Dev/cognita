@@ -1783,13 +1783,8 @@ async function runStreamedTurn(payload, resume) {
     const elapsedMs = performance.now() - startedAt;
     conversation.push({ role: 'assistant', content: data.reply || '' });
     conversationMeta[conversation.length - 1] = {
-      // `thinking`, when present, is already the sanitized, on-brand
-      // version of the model's real reasoning — see
-      // _cleanReasoningForDisplay in chat-endpoint.js. `thinkingHeading`
-      // is the fallback for turns where nothing safe enough survived
-      // that cleaning, or where tools were used. Never both.
-      thinking: data.thinking || null,
-      thinkingHeading: data.thinkingHeading || null,
+      // Time the backend was really thinking before the first output (see createLiveTurnIndicator).
+      thoughtMs: live.thoughtMs(),
       sources: data.sources || null,
       elapsedMs,
       workMs,
@@ -1831,6 +1826,7 @@ async function runStreamedTurn(payload, resume) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }, {
+      onSignal: () => live.signal(),
       onRound: () => live.addPendingRow(),
       onStepStart: (m) => live.addStepStart(m),
       onStep: (step) => live.addStep(step),
@@ -2030,6 +2026,7 @@ async function streamChatSSE(url, options, handlers) {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      handlers.onSignal && handlers.onSignal();
       buffer += decoder.decode(value, { stream: true });
       consumeBuffered();
     }
@@ -2092,22 +2089,43 @@ function createLiveTurnIndicator() {
   // model to decide whether any work was needed.
   let workStartedAt = null;
   let workEndedAt = null;
+  // Thinking time is only counted while the backend is demonstrably alive: bytes (or heartbeats)
+  // keep arriving and the browser is online. A stalled connection pauses the clock and says so.
+  // The count stops for good when the first real output (text, UI or a step) appears.
+  const STALL_MS = 25000;       // the server heartbeat is far more frequent than this
+  let lastSignalAt = performance.now();
+  let thoughtMs = 0;
+  let thinkingOver = false;
+  let lastTick = performance.now();
   let wordIdx = 0;
+  let wordShownAt = performance.now();
+  const stateOf = () => (!navigator.onLine ? 'offline' : (performance.now() - lastSignalAt > STALL_MS ? 'stalled' : 'ok'));
   const wordInterval = setInterval(() => {
-    wordIdx = (wordIdx + 1) % THINKING_WORDS.length;
+    if (thinkingOver || stateOf() !== 'ok') return;
+    if (wordIdx < THINKING_WORDS.length - 1) wordIdx++;   // in order, then hold the last one
     if (wordEl) wordEl.textContent = THINKING_WORDS[wordIdx];
   }, 2200);
   const timerInterval = setInterval(() => {
-    if (timerEl) timerEl.textContent = ((performance.now() - startedAt) / 1000).toFixed(1) + 's';
+    const now = performance.now();
+    const st = stateOf();
+    if (!thinkingOver && st === 'ok') thoughtMs += now - lastTick;
+    lastTick = now;
+    if (wordEl && !thinkingOver) {
+      wordEl.textContent = st === 'offline' ? 'You are offline' : st === 'stalled' ? 'Waiting for connection' : THINKING_WORDS[wordIdx];
+    }
+    if (timerEl && !thinkingOver) timerEl.textContent = (thoughtMs / 1000).toFixed(1) + 's';
     if (actTimeEl && workStartedAt !== null) {
       actTimeEl.textContent = ((performance.now() - workStartedAt) / 1000).toFixed(1) + 's';
     }
   }, 100);
   activeThinkingTimers[id] = { wordInterval, timerInterval };
+  function signal() { lastSignalAt = performance.now(); }
+  function endThinking() { if (!thinkingOver) { thinkingOver = true; } }
 
   let pendingItem = null;   // the one "in progress" row, if any
 
   function reveal() {
+    endThinking();
     if (workStartedAt === null) workStartedAt = performance.now();
     if (idleEl) idleEl.style.display = 'none';
     actEl.hidden = false;
@@ -2294,12 +2312,14 @@ function createLiveTurnIndicator() {
       const liveUi = body.querySelector('[data-cui-live]');
       if (liveUi) body.insertBefore(liveTextEl, liveUi); else body.appendChild(liveTextEl);
     }
+    endThinking();
     liveFull += t;
     if (!liveRaf) liveRaf = requestAnimationFrame(liveFrame);
   }
   function showUi(blocks, pending) {
     const idle = el.querySelector('[data-role="idle-indicator"]');
     if (idle) idle.hidden = true;
+    endThinking();
     liveUiUpdate(el.querySelector('.message-body'), blocks, pending);
     if (el.querySelector('[data-cui-live]')) liveUiShown = true;
     scrollToBottom();
@@ -2314,6 +2334,7 @@ function createLiveTurnIndicator() {
 
   return {
     id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream,
+    signal, thoughtMs: () => Math.round(thoughtMs),
     streamedText: () => liveFull.length > 0,
     shownText: () => liveFull.slice(0, liveCut),   // exactly what the person has seen so far
     uiShown: () => liveUiShown,
@@ -2956,17 +2977,13 @@ function renderActivityHtml(meta, index, isUser) {
   if (isUser || !meta) return '';
   const steps = (Array.isArray(meta.steps) ? meta.steps : []).filter((s) => s && s.type !== 'awaiting_confirmation');
   const ptc = meta.pendingToolCall || null;
-  if (!steps.length && !ptc && !meta.thinking && !meta.thinkingHeading) return '';
+  if (!steps.length && !ptc) {
+    // A plain answer: just the quiet "Thought for Xs" line (time the backend was really thinking).
+    const th = formatDuration(meta.thoughtMs);
+    return th && meta.thoughtMs >= 500 ? '<section class="act act--thought" data-index="' + index + '"><div class="act-head"><span class="act-label">Thought for ' + escapeHtml(th) + '</span></div></section>' : '';
+  }
 
   const items = [];
-  if (meta.thinking) {
-    items.push(actItemHtml({
-      state: 'done', title: 'Reasoning summary',
-      detailHtml: '<div class="act-prose">' + renderMarkdownLite(meta.thinking) + '</div>',
-    }));
-  } else if (meta.thinkingHeading && !steps.length) {
-    items.push(actItemHtml({ state: 'done', title: meta.thinkingHeading }));
-  }
 
   // Runs of plain reads in the same app become one row: "Read 4 items in GitHub".
   const isRead = (st) => st.type !== 'sandbox' && st.type !== 'blocked' && st.ok !== false && st.kind === 'read' && st.providerLabel;
@@ -3012,9 +3029,9 @@ function renderActivityHtml(meta, index, isUser) {
   else if (steps.length) label = (tWork ? 'Worked for ' + tWork + ', ' : '') + plural(steps.length, 'step', 'steps') + (failed ? ', ' + failed + ' failed' : '');
   else if (ptc && ptc.status === 'cancelled') label = 'Declined';
   else if (ptc) label = approvingIndex === index ? 'Running approved action' : 'Approved';
-  else label = t ? 'Thought for ' + t : 'Reasoning';
+  else label = t ? 'Thought for ' + t : 'Working';
 
-  const wantOpen = failed > 0 || pendingApproval || (!!ptc && !steps.length && !meta.thinking);
+  const wantOpen = failed > 0 || pendingApproval || (!!ptc && !steps.length);
   const fresh = index === freshAssistantIndex && !(streamResume && streamResume.index === index) && !wantOpen && steps.length > 0;
   const open = wantOpen || fresh;
   return (
