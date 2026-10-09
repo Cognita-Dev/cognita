@@ -1792,7 +1792,9 @@ async function runStreamedTurn(payload, resume) {
   const finishWithError = (message, status) => {
     if (settled) return;
     settled = true;
-    live.remove();
+    // Steps that already ran stay on screen (marked stopped) so the person can
+    // see what was done before the error; otherwise the bubble just goes away.
+    if (live.stepsShown() > 0) live.interrupt(); else live.remove();
     const wasApproving = approvingIndex;
     approvingIndex = null;
     if (wasApproving != null) refreshActivity(wasApproving);
@@ -1915,6 +1917,7 @@ async function continueAfterSandbox(payload, paused, turn) {
 
   const step = {
     type: 'sandbox', name: call.name, provider: 'sandbox',
+    providerLabel: /browser/i.test(String(call.name || '')) ? 'Browser' : 'Code', kind: 'run',
     ok: result.exitCode === 0, cancelled: !!outcome.cancelled,
     summary: call.summary || call.name,
     sandbox: trimSandboxResultForStorage(result),
@@ -2100,8 +2103,8 @@ function createLiveTurnIndicator() {
       '</div>' +
       '<section class="act is-open is-live" data-role="act" hidden>' +
         '<button type="button" class="act-head" aria-expanded="true">' +
-          '<span class="act-label">Working</span>' +
-          '<span class="act-time" data-role="act-time">0.0s</span>' +
+          '<span class="act-label" data-role="act-label">Working</span>' +
+          '<span class="act-time" data-role="act-time">0s</span>' +
           '<i class="ph ph-caret-down act-caret" aria-hidden="true"></i>' +
         '</button>' +
         '<div class="act-body"><ol class="act-rail" role="list" data-role="rail"></ol></div>' +
@@ -2120,6 +2123,10 @@ function createLiveTurnIndicator() {
   const railEl = el.querySelector('[data-role="rail"]');
   const actTimeEl = el.querySelector('[data-role="act-time"]');
   const statusEl = el.querySelector('[data-role="status"]');
+  const labelEl = el.querySelector('[data-role="act-label"]');
+  let stepCount = 0;
+  let failCount = 0;
+  let interrupted = false;
   if (wordEl) wordEl.textContent = THINKING_WORDS[0];
 
   const startedAt = performance.now();
@@ -2177,11 +2184,23 @@ function createLiveTurnIndicator() {
   }
   function say(text) { if (statusEl) statusEl.textContent = text || ''; }
 
-  function putPending(title, sub) {
+  // "Working · 3 steps, 1 failed" — kept in step with what the rail shows.
+  function updateHead() {
+    if (!labelEl || interrupted) return;
+    labelEl.textContent = 'Working' + (stepCount ? ' · ' + plural(stepCount, 'step', 'steps') : '') + (failCount ? ', ' + failCount + ' failed' : '');
+    actEl.classList.toggle('has-fail', failCount > 0);
+  }
+  function appendItem(item, animate) {
+    if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) item.classList.add('act-item--enter');
+    railEl.appendChild(item);
+  }
+
+  function putPending(title, sub, icon) {
+    if (interrupted) return;
     reveal();
     if (!pendingItem) {
-      pendingItem = htmlToElement(actItemHtml({ state: 'running', title: title || 'Working', sub: sub || '' }));
-      railEl.appendChild(pendingItem);
+      pendingItem = htmlToElement(actItemHtml({ state: 'running', title: title || 'Working', sub: sub || '', icon: icon || 'ph-sparkle' }));
+      appendItem(pendingItem, true);
     } else {
       if (title) pendingItem.querySelector('.act-title').textContent = title;
       const subEl = pendingItem.querySelector('.act-sub');
@@ -2211,14 +2230,14 @@ function createLiveTurnIndicator() {
   function clearSkeleton() { if (skelEl) { skelEl.remove(); skelEl = null; } }
 
   function addStepStart(m) {
-    if (!m) return;
-    putPending(m.summary, m.providerLabel);
+    if (!m || interrupted) return;
+    putPending(m.summary, m.providerLabel, stepIconFor(m));
     if (m.name === 'generate_image') showSkeleton('image');
     else if (m.name === 'create_design') showSkeleton('design');
   }
 
   function addStep(step) {
-    if (!step) return;
+    if (!step || interrupted) return;
     clearSkeleton();
     reveal();
     if (step.type === 'awaiting_confirmation') {
@@ -2227,7 +2246,10 @@ function createLiveTurnIndicator() {
     }
     const item = htmlToElement(step.type === 'sandbox' ? renderSandboxStepHtml(step) : renderStepItemHtml(step));
     if (pendingItem) { pendingItem.replaceWith(item); pendingItem = null; }
-    else railEl.appendChild(item);
+    else appendItem(item, true);
+    stepCount++;
+    if (step.ok === false && step.type !== 'blocked') failCount++;
+    updateHead();
     hydrateFigures(item);
     say(step.summary);
     scrollToBottom();
@@ -2240,7 +2262,8 @@ function createLiveTurnIndicator() {
     reveal();
     if (pendingItem) { pendingItem.remove(); pendingItem = null; }
     const item = htmlToElement(actItemHtml({
-      state: 'running', title: call.summary || 'Running code', sub: 'Code', live: true,
+      state: 'running', title: call.summary || 'Running code',
+      sub: /browser/i.test(String(call.name || '')) ? 'Browser' : 'Code', icon: /browser/i.test(String(call.name || '')) ? 'ph-globe' : 'ph-terminal-window', live: true,
       detailHtml: '<div class="sbx-body"><pre class="sbx-out" aria-live="off"></pre></div>', openDetail: true,
     }));
     const timeEl = item.querySelector('.act-ms');
@@ -2253,7 +2276,7 @@ function createLiveTurnIndicator() {
       ev.currentTarget.disabled = true;
       getSandbox().cancel(call.id);
     });
-    railEl.appendChild(item);
+    appendItem(item, true);
     say(call.summary);
     scrollToBottom();
 
@@ -2278,6 +2301,9 @@ function createLiveTurnIndicator() {
         clearInterval(tick);
         const settled = htmlToElement(renderSandboxStepHtml(step));
         item.replaceWith(settled);
+        stepCount++;
+        if (step.ok === false && !step.cancelled) failCount++;
+        updateHead();
         hydrateFigures(settled);
         scrollToBottom();
       },
@@ -2358,6 +2384,8 @@ function createLiveTurnIndicator() {
       if (liveUi) body.insertBefore(liveTextEl, liveUi); else body.appendChild(liveTextEl);
     }
     endThinking();
+    // The answer has started, so the generic "Working" row has nothing left to wait for.
+    if (pendingItem) { pendingItem.remove(); pendingItem = null; }
     liveFull += t;
     if (!liveRaf) liveRaf = requestAnimationFrame(liveFrame);
   }
@@ -2375,9 +2403,34 @@ function createLiveTurnIndicator() {
     liveFull = ''; livePos = 0; liveCut = 0; liveStartT = 0; liveUiShown = false;
     const liveUi = el.querySelector('[data-cui-live]');
     if (liveUi) liveUi.remove();
+    // That text was only a lead-in to a tool call: show the work as ongoing again.
+    if (workStartedAt !== null && !pendingItem && !interrupted) putPending('Working', '');
+  }
+
+  // The turn failed after some steps had already run. Keep them on screen,
+  // stop every clock and spinner, and say plainly that it stopped.
+  function interrupt() {
+    if (interrupted) return;
+    interrupted = true;
+    stopLiveLoop();
+    const timers = activeThinkingTimers[id];
+    if (timers) { clearInterval(timers.wordInterval); clearInterval(timers.timerInterval); delete activeThinkingTimers[id]; }
+    if (pendingItem) { pendingItem.remove(); pendingItem = null; }
+    railEl.querySelectorAll('.act-item[data-state="running"]').forEach((li) => {
+      li.dataset.state = 'stopped';
+      const n = li.querySelector('.act-node');
+      if (n) n.innerHTML = '<i class="ph ph-minus"></i>';
+      const stop = li.querySelector('.sbx-stop'); if (stop) stop.remove();
+    });
+    if (idleEl) idleEl.style.display = 'none';
+    actEl.classList.remove('is-live');
+    actEl.classList.add('has-fail');
+    if (labelEl) labelEl.textContent = 'Stopped' + (stepCount ? ' after ' + plural(stepCount, 'step', 'steps') : '');
+    say('Stopped');
   }
 
   return {
+    stepsShown: () => stepCount, interrupt,
     id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream,
     signal, thoughtMs: () => Math.round(thoughtMs),
     streamedText: () => liveFull.length > 0,
@@ -2866,6 +2919,20 @@ const PROVIDER_GLYPHS = {
   figma: 'ph-figma-logo', canva: 'ph-paint-brush', google: 'ph-google-logo',
 };
 
+// One small picture per step, so the rail says at a glance where each thing happened.
+const LABEL_GLYPHS = {
+  'GitHub': 'ph-github-logo', 'Google Drive': 'ph-google-drive-logo', 'Gmail': 'ph-envelope-simple',
+  'Google Calendar': 'ph-calendar-blank', 'Facebook': 'ph-facebook-logo', 'Instagram': 'ph-instagram-logo',
+  'Figma': 'ph-figma-logo', 'Canva': 'ph-paint-brush', 'Code': 'ph-terminal-window', 'Browser': 'ph-globe',
+  'Image': 'ph-image', 'Design': 'ph-paint-brush',
+};
+function stepIconFor(step) {
+  const label = step && step.providerLabel;
+  if (label && LABEL_GLYPHS[label]) return LABEL_GLYPHS[label];
+  const kind = step && step.kind;
+  return kind === 'write' ? 'ph-pencil-simple' : kind === 'read' ? 'ph-magnifying-glass' : kind === 'run' ? 'ph-terminal-window' : 'ph-sparkle';
+}
+
 // Whole seconds under a minute ("56s"), then minutes and seconds ("2m 56s").
 function formatClock(ms) {
   const total = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
@@ -2875,19 +2942,21 @@ function formatClock(ms) {
 
 function formatDuration(ms) {
   if (!Number.isFinite(ms) || ms < 100) return '';
+  if (ms < 10000) return (Math.round(ms / 100) / 10).toFixed(1) + 's';   // "0.9s", "4.2s": short steps are not all "0s"
   return formatClock(ms);
 }
 
 function actItemHtml(o) {
   const state = o.state || 'done';
   const words = { done: 'Done', fail: 'Failed', wait: 'Waiting', running: 'Running', stopped: 'Stopped' };
-  const icons = { done: 'ph-check', fail: 'ph-x', wait: 'ph-hand-palm', stopped: 'ph-minus' };
-  const node = '<span class="act-node" aria-hidden="true">' + (icons[state] ? '<i class="ph ' + icons[state] + '"></i>' : '') + '</span>';
+  const icons = { fail: 'ph-x', wait: 'ph-hand-palm', stopped: 'ph-minus' };
+  const node = '<span class="act-node" aria-hidden="true"><i class="ph ' + (icons[state] || o.icon || 'ph-check') + '"></i></span>';
   const text =
     '<span class="act-text">' +
       '<span class="act-sr">' + words[state] + ': </span>' +
       '<span class="act-title">' + escapeHtml(o.title || '') + '</span>' +
       '<span class="act-sub">' + escapeHtml(o.sub || '') + '</span>' +
+      (o.reason ? '<span class="act-note">' + escapeHtml(o.reason) + '</span>' : '') +
     '</span>' +
     '<span class="act-ms">' + escapeHtml(o.ms || '') + '</span>';
   const open = !!(o.detailHtml && o.openDetail);
@@ -2917,6 +2986,8 @@ function renderStepItemHtml(step, msgIndex) {
     title: step.summary || step.name || 'Action performed',
     sub: step.providerLabel || '',
     ms: formatDuration(step.ms),
+    icon: stepIconFor(step),
+    reason: !ok && !blocked && typeof step.reason === 'string' ? step.reason.slice(0, 200) : '',
   });
 }
 
@@ -3025,7 +3096,8 @@ function renderSandboxStepHtml(step, msgIndex) {
   return actItemHtml({
     state: step.cancelled ? 'stopped' : (ok ? 'done' : 'fail'),
     title: step.summary || step.name || 'Ran code',
-    sub: 'Code',
+    sub: step.providerLabel || 'Code',
+    icon: stepIconFor({ providerLabel: step.providerLabel || 'Code' }),
     ms: formatDuration(sb.durationMs),
     detailHtml: detail,
     openDetail: !ok && !step.cancelled,
@@ -3105,7 +3177,7 @@ function renderActivityHtml(meta, index, isUser) {
     if (n >= 2) {
       const group = steps.slice(i, j + 1);
       items.push(actItemHtml({
-        state: 'done', title: 'Read ' + n + ' items', sub: steps[i].providerLabel,
+        state: 'done', title: 'Read ' + n + ' items', sub: steps[i].providerLabel, icon: stepIconFor(steps[i]),
         ms: formatDuration(group.reduce((t, g) => t + (Number.isFinite(g.ms) ? g.ms : 0), 0)),
         detailHtml: '<ul class="act-list">' + group.map((g) => '<li>' + escapeHtml(g.summary || g.name || '') + '</li>').join('') + '</ul>',
       }));
