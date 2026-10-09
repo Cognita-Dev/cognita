@@ -686,7 +686,7 @@ export function parseUiReply(reply, opts) {
   const rest = src.replace(FENCE, (_, body, close) => {
     let val;
     try { val = JSON.parse(body.trim()); } catch (_e) {
-      if (close || (opts && opts.partial)) val = parsePartial(body);
+      val = parsePartial(body);   // also for a fence cut off by the token limit, so the final answer matches the live preview
     }
     if (val !== undefined) sortOut(val, rawBlocks, rawPatches);
     return '';

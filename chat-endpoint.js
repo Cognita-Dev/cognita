@@ -648,7 +648,7 @@ export async function handleChatRequest(request, env) {
 
   async function _agent(emit) {
   const streamer = _makeTurnStreamer(emit);
-  const streamOptions = Object.assign({}, cacheOptions, { onText: streamer.onText, signal: abortCtl.signal });
+  const streamOptions = Object.assign({ maxTokens: 4096 }, cacheOptions, { onText: streamer.onText, signal: abortCtl.signal });
   let result;
   let pendingToolCall = null;
   let pendingDesignRequest = null;

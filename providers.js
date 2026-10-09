@@ -897,11 +897,17 @@ export async function callWithFallback(tierConfig, messages, env, options = {}) 
 async function _continueIfTruncated(providerName, model, messages, partial, env, maxTokens, options, ctx) {
   try {
     const jsonMode = !!options.jsonMode;
+    // Cut off inside a ```cognita-ui block: carry on the JSON itself, glued on with no separator,
+    // so the finished answer is the same text the browser already watched stream in.
+    const openAt = partial.text.lastIndexOf('```cognita-ui');
+    const inUiFence = !jsonMode && openAt !== -1 && partial.text.indexOf('```', openAt + 13) === -1;
     const continuation = messages.concat([
       { role: 'assistant', content: partial.text },
       {
         role: 'user',
-        content: jsonMode
+        content: inUiFence
+          ? 'Your last response was cut off inside a cognita-ui block. Continue from the exact next character so the JSON stays valid. Output only the raw continuation: no repeated text, no new opening fence, no commentary. Keep the remaining components short, close the JSON, close the block with ``` and stop.'
+          : jsonMode
           ? 'Your last response was cut off mid-JSON. Continue the JSON from the exact character after where you stopped. Output only the raw continuation — no repeated text, no markdown fences, no commentary.'
           : 'Continue directly from where you left off. Do not repeat anything already written.',
       },
@@ -911,7 +917,7 @@ async function _continueIfTruncated(providerName, model, messages, partial, env,
     const extra = await _dispatch(providerName, continuation, model, env, maxTokens, ctx);
     _logCacheUsage(env, ctx, continuation, { provider: providerName, model }, extra.usage);
     return {
-      text: jsonMode ? (partial.text + extra.text).trim() : (partial.text + '\n\n' + extra.text).trim(),
+      text: (jsonMode || inUiFence) ? (partial.text + extra.text).trim() : (partial.text + '\n\n' + extra.text).trim(),
       finishReason: 'stop',
       reasoning: partial.reasoning || extra.reasoning || null,
     };

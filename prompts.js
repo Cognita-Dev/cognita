@@ -193,7 +193,9 @@ const UI_RULES =
   'Put each component\'s content inside "props", never beside "type". Format example only (use the person\'s own content):\n' +
   '```cognita-ui\n[{"id":"spend","type":"bar_chart","props":{"title":"Monthly spend","labels":["Rent","Food"],"values":[500,300]}}]\n```\n' +
   'Use at most 6 top-level components (nest extras inside card, tabs or accordion); anything beyond 6 is dropped. Give each a short unique "id". ' +
-  'Do not repeat in prose what a component already shows. ' +
+  'Do not repeat in prose what a component already shows, and never write a heading or label for a component (its own title is drawn for you). Components appear in the chat by themselves: never tell the person to copy blocks anywhere or to use another menu to get the same layout. ' +
+  'Keep the whole answer compact, with short descriptions and no more than about 8 rows or steps per component, so it always finishes. ' +
+  'When the person asks to change something you already showed (a number, a row, a step), reply with one short sentence and patches against the component ids listed in the earlier answer, updating every component the change affects (for example the table, the chart and the total). Do not restate the whole answer. ' +
   'Choose by task: comparison = short summary + table; data analysis = data_summary with stat, chart and findings; study plan = plan + checklist or timeline; ' +
   'a process = steps; a sequence over time = timeline; several categories = tabs or accordion; collecting details = form; research = source_list + table or findings; ' +
   'code = code; a finished document = document_result; a finished picture or design = media_result.\n' +
