@@ -343,6 +343,9 @@ export function liveUiUpdate(container, blocks, pending) {
   });
   // Placeholders for components the model has started but not finished.
   root.querySelectorAll('.cui-skel').forEach((x) => x.remove());
+  // A component that stopped being valid (the stream was re-read) must not linger as a stale card.
+  while (root.children.length > safe.length) root.lastElementChild.remove();
+  if (root._sig.length > safe.length) root._sig.length = safe.length;
   (pending || []).slice(0, 3).forEach((t) => root.insertAdjacentHTML('beforeend', skeletonNodeHtml(t)));
 }
 

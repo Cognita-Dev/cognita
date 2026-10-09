@@ -114,6 +114,7 @@ let isSending = false;
 let activeThinkingTimers = {};
 let approvingIndex = null;   // message whose approved action is running right now
 let freshAssistantIndex = -1; // index of the just-received assistant reply to type out; -1 = none pending
+let streamResume = null;     // { index, shown, hadUi }: the reply was already streaming live, so carry on from `shown` instead of replaying
 
 let placeholderIndex = 0;
 let placeholderTimeoutId = null;
@@ -1775,6 +1776,8 @@ async function runStreamedTurn(payload, resume) {
     settled = true;
     live.stopWorkClock();
     const workMs = live.workElapsedMs();
+    const liveShown = live.shownText();
+    const liveHadUi = live.uiShown();
     live.remove();
     approvingIndex = null;
     const elapsedMs = performance.now() - startedAt;
@@ -1811,8 +1814,10 @@ async function runStreamedTurn(payload, resume) {
     // anything newly approved this turn — so this conversation never
     // re-asks for the same write again (Bug 4).
     if (Array.isArray(data.approvals)) conversationApprovals = data.approvals;
-    // Text already streamed live from the model: don't replay the typewriter over it.
-    freshAssistantIndex = (live && live.streamedText && live.streamedText()) ? -1 : conversation.length - 1;
+    // Text already streamed live from the model: the finished reply continues from what is on
+    // screen (no replay from the start, no jump to the full text).
+    freshAssistantIndex = conversation.length - 1;
+    streamResume = liveShown || liveHadUi ? { index: freshAssistantIndex, shown: liveShown, hadUi: liveHadUi } : null;
     const uiTouched = applyIncomingUiPatches(data.uiPatches);
     renderConversation();
     uiTouched.forEach((i) => { if (conversationMeta[i]) refreshUi(document, i, conversationMeta[i].ui); });
@@ -2236,18 +2241,48 @@ function createLiveTurnIndicator() {
 
   // Progressive structured UI (SSE `ui` frames). Hides the idle dots and draws
   // components as they become valid; the final message replaces this preview.
-  function showUi(blocks, pending) {
-    const idle = el.querySelector('[data-role="idle-indicator"]');
-    if (idle) idle.hidden = true;
-    liveUiUpdate(el.querySelector('.message-body'), blocks, pending);
-    scrollToBottom();
-  }
-
-  // Real model text as it arrives (SSE `text` frames). Plain text only, never
-  // HTML. The final message (`done`) replaces this preview, so nothing is
-  // duplicated. `text_reset` drops a model turn that was not the final answer.
+  // Real model text as it arrives (SSE `text` frames). Every chunk goes into a
+  // queue (liveFull); a time-based loop reveals it a whole word at a time
+  // through the same markdown renderer the finished reply uses, so chunks that
+  // arrive in bursts are smoothed out instead of pasted in. The loop speeds up
+  // when the queue grows, so it can never fall behind for long. When `done`
+  // arrives, shownText() says exactly what is on screen, and the finished
+  // reply carries on from there (see startAssistantStream). `text_reset` drops
+  // a model turn that was not the final answer, queue included.
   let liveTextEl = null;
-  let streamedAny = false;
+  let liveFull = '';   // everything received for the current model turn
+  let livePos = 0;     // characters revealed so far (fractional, time based)
+  let liveCut = 0;     // end of the last word actually drawn
+  let liveRaf = 0;
+  let liveLastT = 0;
+  let liveStartT = 0;
+  let liveUiShown = false;
+
+  function stopLiveLoop() {
+    if (liveRaf) cancelAnimationFrame(liveRaf);
+    liveRaf = 0;
+    liveLastT = 0;
+  }
+  function liveFrame(t) {
+    liveRaf = 0;
+    if (!liveTextEl || !el.isConnected) return;   // removed, or the chat was switched
+    if (!liveLastT) { liveLastT = t; if (!liveStartT) liveStartT = t; }
+    const dt = Math.min(t - liveLastT, 100);      // a background tab must not make the text lurch forward
+    liveLastT = t;
+    const backlog = liveFull.length - livePos;
+    // Base pace, but never more than ~1.2 s behind what has already arrived.
+    const cps = streamClamp(Math.max(STREAM_BASE_CPS, backlog / 1.2), STREAM_BASE_CPS, STREAM_MAX_CPS);
+    const ramp = Math.min(1, 0.5 + 0.5 * ((t - liveStartT) / STREAM_RAMP_MS));
+    livePos = Math.min(liveFull.length, livePos + cps * ramp * (dt / 1000));
+    const nextCut = livePos >= liveFull.length ? liveFull.length : streamWordEnd(liveFull, Math.floor(livePos));
+    if (nextCut !== liveCut) {
+      liveCut = nextCut;
+      streamPatch(liveTextEl, streamSafePrefix(liveFull.slice(0, liveCut)), null, 'live-');
+      scrollToBottom();
+    }
+    if (livePos < liveFull.length) liveRaf = requestAnimationFrame(liveFrame);
+    else liveLastT = 0;                            // caught up: sleep until the next chunk
+  }
   function showText(t) {
     const body = el.querySelector('.message-body');
     if (!body || !t) return;
@@ -2255,23 +2290,35 @@ function createLiveTurnIndicator() {
     if (idle) idle.hidden = true;
     if (!liveTextEl || !liveTextEl.isConnected) {
       liveTextEl = document.createElement('div');
-      liveTextEl.className = 'live-stream-text';
-      liveTextEl.style.whiteSpace = 'pre-wrap';
+      liveTextEl.className = 'message-content live-stream-text';
       const liveUi = body.querySelector('[data-cui-live]');
       if (liveUi) body.insertBefore(liveTextEl, liveUi); else body.appendChild(liveTextEl);
     }
-    liveTextEl.textContent += t;
-    streamedAny = true;
+    liveFull += t;
+    if (!liveRaf) liveRaf = requestAnimationFrame(liveFrame);
+  }
+  function showUi(blocks, pending) {
+    const idle = el.querySelector('[data-role="idle-indicator"]');
+    if (idle) idle.hidden = true;
+    liveUiUpdate(el.querySelector('.message-body'), blocks, pending);
+    if (el.querySelector('[data-cui-live]')) liveUiShown = true;
     scrollToBottom();
   }
   function resetStream() {
+    stopLiveLoop();
     if (liveTextEl) { liveTextEl.remove(); liveTextEl = null; }
-    streamedAny = false;
+    liveFull = ''; livePos = 0; liveCut = 0; liveStartT = 0; liveUiShown = false;
     const liveUi = el.querySelector('[data-cui-live]');
     if (liveUi) liveUi.remove();
   }
 
-  return { id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream, streamedText: () => streamedAny, remove };
+  return {
+    id, addPendingRow, addStepStart, addStep, startSandboxRun, workElapsedMs, stopWorkClock, showUi, showText, resetStream,
+    streamedText: () => liveFull.length > 0,
+    shownText: () => liveFull.slice(0, liveCut),   // exactly what the person has seen so far
+    uiShown: () => liveUiShown,
+    remove() { stopLiveLoop(); remove(); },
+  };
 }
 
 /* ── Files the person can take away ───────────────────────────────────
@@ -2968,7 +3015,7 @@ function renderActivityHtml(meta, index, isUser) {
   else label = t ? 'Thought for ' + t : 'Reasoning';
 
   const wantOpen = failed > 0 || pendingApproval || (!!ptc && !steps.length && !meta.thinking);
-  const fresh = index === freshAssistantIndex && !wantOpen && steps.length > 0;
+  const fresh = index === freshAssistantIndex && !(streamResume && streamResume.index === index) && !wantOpen && steps.length > 0;
   const open = wantOpen || fresh;
   return (
     '<section class="act' + (open ? ' is-open' : '') + (failed ? ' has-fail' : '') + '"' + (fresh ? ' data-autocollapse="1"' : '') + ' data-index="' + index + '">' +
@@ -3144,7 +3191,9 @@ function renderConversation() {
   // flag so later re-renders do not replay it on old messages.
   if (freshAssistantIndex !== -1 && conversation[freshAssistantIndex] && conversation[freshAssistantIndex].role === 'assistant') {
     const idx = freshAssistantIndex;
+    const resume = streamResume && streamResume.index === idx ? streamResume : null;
     freshAssistantIndex = -1;
+    streamResume = null;
     const targetEl = list.querySelector('.message.is-streaming');
     const contentEl = targetEl ? targetEl.querySelector('.message-content') : null;
     if (targetEl && contentEl) {
@@ -3154,10 +3203,12 @@ function renderConversation() {
         fullText: conversation[idx].content || '',
         sources: (conversationMeta[idx] || {}).sources || null,
         index: idx,
+        shown: resume ? resume.shown : '',
       });
     }
   } else {
     freshAssistantIndex = -1;
+    streamResume = null;
   }
 }
 
@@ -3356,17 +3407,24 @@ function streamPatch(contentEl, text, sources, idPrefix) {
   wireCodeCopyButtons(contentEl);
 }
 
-function startAssistantStream({ messageEl, contentEl, fullText, sources, index }) {
+function startAssistantStream({ messageEl, contentEl, fullText, sources, index, shown }) {
   const idPrefix = 's' + index + '-';
   const total = fullText.length;
   const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   // Short replies flow at the base pace. Long ones speed up just enough to
   // finish within STREAM_MAX_SECONDS, so nobody waits half a minute.
-  const cps = streamClamp(Math.max(STREAM_BASE_CPS, total / STREAM_MAX_SECONDS), STREAM_BASE_CPS, STREAM_MAX_CPS);
+  // When the reply was already streaming live, `shown` is what the person has seen: carry on
+  // from the longest part of it that the final text still starts with.
+  let resumeAt = 0;
+  if (shown) {
+    const lim = Math.min(shown.length, total);
+    while (resumeAt < lim && shown.charCodeAt(resumeAt) === fullText.charCodeAt(resumeAt)) resumeAt++;
+  }
+  const cps = streamClamp(Math.max(STREAM_BASE_CPS, (total - resumeAt) / STREAM_MAX_SECONDS), STREAM_BASE_CPS, STREAM_MAX_CPS);
 
-  let pos = 0;
-  let cut = 0;
+  let pos = resumeAt;
+  let cut = resumeAt;
   let lastT = 0;
   let startT = 0;
   let rafId = 0;
@@ -3416,10 +3474,12 @@ function startAssistantStream({ messageEl, contentEl, fullText, sources, index }
 
   activeStream = handle;
   contentEl.classList.add('is-typing');
-  if (reduceMotion || total === 0) {
+  if (reduceMotion || total === 0 || resumeAt >= total) {
     finish();
     return;
   }
+  // Draw what was already on screen right now, before the first paint, so there is no blank flash.
+  if (resumeAt > 0) streamPatch(contentEl, streamSafePrefix(fullText.slice(0, resumeAt)), sources, idPrefix);
   rafId = requestAnimationFrame(frame);
 }
 
@@ -3524,7 +3584,7 @@ function renderMessage(msg, index) {
         // full text before the typing animation takes over.
         visualHtml +
         (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
-        (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui, index, index === freshAssistantIndex) : '') +
+        (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui, index, index === freshAssistantIndex && !(streamResume && streamResume.index === index && streamResume.hadUi)) : '') +
         (!isUser ? renderDesignRequestHtml(meta, index) : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
         (!isUser ? renderMediaHtml(meta, index) : '') +
