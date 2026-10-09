@@ -301,118 +301,10 @@ function _tierForQualityHint(hint) {
   return 'fast';
 }
 
-function _extractThinking(text) {
-  if (!text) return { thinking: null, reply: text || '' };
-  const match = text.match(/<think>([\s\S]*?)<\/think>/i);
-  if (!match) return { thinking: null, reply: text.trim() };
-  const thinking = match[1].trim();
-  const reply = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
-  return { thinking, reply };
-}
-
-// Sentence-level shapes that mark a piece of reasoning as talking ABOUT
-// the interaction (the system prompt, the fact that there's a "user" and
-// an "assistant", what model/provider is involved) rather than actually
-// reasoning through the problem. This is the raw reasoning channel's own
-// habit, not something the visible system prompt asks for — it happens
-// even though that prompt explicitly says to reason in first person and
-// never narrate the task — so it has to be filtered on the way out
-// rather than prevented at the source. Sentences matching any of these
-// are dropped entirely rather than rewritten, since there's no safe
-// first-person paraphrase of "developer instructions say I must not…"
-// that isn't still describing the scaffolding to the user.
-const REASONING_LEAK_SENTENCE_PATTERNS = [
-  /\bthe user\b/i,
-  /\bthe assistant\b/i,
-  /\bdeveloper instructions?\b/i,
-  /\bsystem prompt\b/i,
-  /\b(?:my|the) (?:instructions|guidelines|policy|policies)\b/i,
-  /\baccording to (?:the )?(?:rules|instructions|guidelines|policy)\b/i,
-  /\b(?:openai|anthropic|chatgpt|groq|open ?router|workers ?ai|hugging ?face|llama|mistral|gpt-?\d)\b/i,
-  /\bas an ai\b/i,
-  /\blanguage model\b/i,
-  /\btraining data\b/i,
-  /\bi (?:was|am|'m) (?:trained|instructed|told|programmed) (?:to|not to)\b/i,
-  /\bmy (?:creators|training)\b/i,
-];
-
-// Takes the model's raw hidden-reasoning text and either returns a
-// cleaned, on-brand version safe to show the user, or null if it can't
-// be made safe. Reasoning-tier models keep this channel genuinely
-// separate from their final answer and it does not reliably follow the
-// "speak as Cognita, first person, never we" instructions the way the
-// visible reply does — in testing it has flatly referred to "the user",
-// said "we must not claim we performed actions", and cited "developer
-// instructions" by name. That's real reasoning content underneath, so
-// rather than discard it outright (the previous, blunter fix), this
-// strips the handful of sentence shapes that talk about the interaction
-// itself and normalizes the model's default "we" framing to Cognita's
-// actual first-person voice. If too much of the text turns out to be
-// that kind of scaffolding-talk to make a coherent result, it gives up
-// and returns null so the caller can fall back to a generic heading
-// instead of showing a choppy, gutted paragraph.
-function _cleanReasoningForDisplay(raw) {
-  if (!raw) return null;
-  const flat = raw.replace(/\s+/g, ' ').trim();
-  if (!flat) return null;
-
-  // Naive sentence split — this never has to be linguistically perfect,
-  // it just has to reliably isolate the handful of leak-shaped sentences
-  // reasoning models fall into so they can be dropped one at a time
-  // instead of nuking the whole paragraph over one bad line.
-  const sentences = flat.match(/[^.!?]+[.!?]*(?:\s+|$)/g) || [flat];
-  const kept = sentences.filter((s) => !REASONING_LEAK_SENTENCE_PATTERNS.some((re) => re.test(s)));
-
-  // More than a third of the sentences were about the scaffolding rather
-  // than the problem — too saturated to trust the remainder as a
-  // coherent thought.
-  if (kept.length === 0 || kept.length < sentences.length * 0.66) return null;
-
-  let cleaned = kept.join(' ').replace(/\s+/g, ' ').trim();
-  if (cleaned.length < 20) return null;
-
-  // First-person normalization — order matters (contractions and
-  // possessives before the bare pronoun) since each step only touches
-  // whole-word matches.
-  cleaned = cleaned
-    .replace(/\bwe're\b/gi, "I'm")
-    .replace(/\bwe've\b/gi, "I've")
-    .replace(/\bwe'll\b/gi, "I'll")
-    .replace(/\bwe'd\b/gi, "I'd")
-    .replace(/\bourselves\b/gi, 'myself')
-    .replace(/\bours\b/gi, 'mine')
-    .replace(/\bour\b/gi, 'my')
-    .replace(/\bus\b/gi, 'me')
-    .replace(/\bwe\b/gi, 'I');
-
-  return cleaned;
-}
-
-// Human-readable names for the "Looking at your ___" heading below — kept
-// in sync with the provider keys used across connector-tools.js.
-const _PROVIDER_LABELS = {
-  github: 'GitHub repositories',
-  google: 'Google account',
-  facebook: 'Facebook & Instagram',
-  canva: 'Canva designs',
-};
-
-// A short, one-line heading for the collapsed "Thought for Xs" box.
-// Deliberately NOT an extra LLM call (that would add latency and cost to
-// every turn) — just a cheap, deterministic summary. For tool-using
-// turns it's derived from which provider(s) the recorded `steps`
-// touched; for plain turns the caller falls back to a generic constant
-// heading instead (see the end of _agent in handleChatRequest) — the
-// model's raw reasoning is never shown to the user in either case, see
-// that same comment for why.
-function _thinkingHeadingFromSteps(steps) {
-  if (!steps || steps.length === 0) return null;
-  const providers = [...new Set(steps.map((s) => s.provider).filter(Boolean))];
-  if (providers.length === 0) return 'Working on your request';
-  if (providers.length === 1) {
-    return 'Looking at your ' + (_PROVIDER_LABELS[providers[0]] || providers[0]);
-  }
-  return 'Working across your connected tools';
+// Strips an inline <think> block so it never reaches the answer. The reasoning itself is discarded.
+function _stripThinking(text) {
+  if (!text) return text || '';
+  return text.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
 }
 
 function _validateImages(images, plan) {
@@ -723,7 +615,7 @@ export async function handleChatRequest(request, env) {
   //                    (data: { message, status })
   //   event: done   — the turn is finished; data is the exact same JSON
   //                    shape /api/chat used to return in one shot
-  //                    ({ reply, thinking, thinkingHeading, ... })
+  //                    ({ reply, ... })
   // A `: ping` comment line is sent periodically as a heartbeat so
   // intermediate proxies/CDNs don't time out an idle-looking connection
   // during a long model call.
@@ -1348,36 +1240,8 @@ export async function handleChatRequest(request, env) {
     throw _sseError(quotaExceededError, 429);
   }
 
-  // Never show the model's raw internal reasoning to the user unfiltered
-  // — see _thinkingHeadingFromSteps above for why tool-using turns
-  // already avoid it, and _cleanReasoningForDisplay for the plain-turn
-  // case. The <think> block (when a model leaks it inline instead of
-  // using a dedicated reasoning field) is always stripped out of the
-  // reply either way — it must never appear in what the user reads as
-  // the answer — but its content only makes it into the thought box if
-  // it survives cleaning.
-  let reply = result.text || '';
-  let rawReasoning = result.reasoning || null;
-  if (!rawReasoning) {
-    const extracted = _extractThinking(reply);
-    if (extracted.thinking) {
-      rawReasoning = extracted.thinking;
-      reply = extracted.reply;
-    }
-  }
-
-  let thinking = null;
-  let thinkingHeading = _thinkingHeadingFromSteps(steps);
-  if (!thinkingHeading && rawReasoning) {
-    thinking = _cleanReasoningForDisplay(rawReasoning);
-    if (!thinking) {
-      // Cleaning gave up (too much of it was scaffolding-talk to trust)
-      // — still true that reasoning happened, just nothing safe enough
-      // to show verbatim, so fall back to the same generic heading
-      // tool-using turns use.
-      thinkingHeading = 'Worked through this before answering';
-    }
-  }
+  // The model's reasoning is never sent to the browser. An inline <think> block is stripped from the answer.
+  let reply = _stripThinking(result.text || '');
 
   // When a write action is pending confirmation, prefer a clear
   // yes/no-shaped prompt over whatever (possibly empty, since some models
@@ -1422,15 +1286,6 @@ export async function handleChatRequest(request, env) {
     ui,
     // Controlled updates to components shown earlier (validated; see ui-schema.js).
     uiPatches,
-    // `thinking` is only ever the sanitized, first-person-normalized
-    // version of the model's real reasoning (see
-    // _cleanReasoningForDisplay) — never the raw text. `thinkingHeading`
-    // is used instead whenever there's nothing safe enough to show
-    // verbatim, or when the turn used tools (see
-    // _thinkingHeadingFromSteps). The frontend shows at most one of the
-    // two.
-    thinking,
-    thinkingHeading,
     remainingToday: plan.limits.messagesPerDay - quota.used,
     pendingToolCall,
     // Set when create_design needs details or files from the person first.
