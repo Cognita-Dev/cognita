@@ -250,6 +250,28 @@ function _makeTurnStreamer(emit) {
   };
 }
 
+// Some models call the component format as if it were a tool ("cognita-ui", or a component name such
+// as "pie_chart"). There is no such tool, and an unknown tool name turns into an approval card for
+// "a connected app", which ends the turn with the answer cut off and no components. This turns such a
+// call back into what it was meant to be: a cognita-ui block appended to the answer, validated later
+// by extractUiBlocks like any other.
+export function _uiBlockFromPseudoCall(call, isRealTool) {
+  if (!call || typeof call.name !== 'string' || isRealTool(call.name)) return null;
+  const name = call.name.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const a = call.args && typeof call.args === 'object' ? call.args : null;
+  if (!a) return null;
+  let blocks = null;
+  if (name === 'cognita_ui' || name === 'cognitaui' || name === 'ui' || name === 'render_ui' || name === 'show_ui') {
+    if (Array.isArray(a)) blocks = a;
+    else if (Array.isArray(a.blocks)) blocks = a.blocks;
+    else if (Array.isArray(a.ui)) blocks = a.ui;
+    else if (typeof a.type === 'string') blocks = [a];
+  } else if (UI_TYPES.includes(name)) {
+    blocks = [{ type: name, ...(a.props && typeof a.props === 'object' ? a : { props: a }) }];
+  }
+  return blocks && blocks.length ? blocks : null;
+}
+
 /** Runs the model with tools if any are available, degrading to a plain
  * tool-less reply if the resolved tier's providers don't support
  * tool-calling at all right now. Normalizes both paths to the same
@@ -841,6 +863,11 @@ export async function handleChatRequest(request, env) {
               streamer.reset();
               emit('round', { round });
               result = await _modelTurn(tierConfig, workingMessages, tools, env, streamOptions);
+              // The component format called as a "tool": keep it as a component block, not a tool call.
+              if (result && result.toolCalls && result.toolCalls.length) {
+                const uiBlocks = _uiBlockFromPseudoCall(result.toolCalls[0], (n) => !!providerForTool(n) || mediaTools.isMediaTool(n));
+                if (uiBlocks) result = { ...result, toolCalls: null, text: (result.text || '').trimEnd() + '\n\n```cognita-ui\n' + JSON.stringify(uiBlocks) + '\n```' };
+              }
               // A turn that asks for a tool is internal: drop any preamble it streamed.
               if (result && result.toolCalls && result.toolCalls.length) streamer.reset();
             }
