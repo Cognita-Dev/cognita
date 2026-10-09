@@ -4534,7 +4534,10 @@ function renderMarkdownLite(text, sources, idPrefix) {
     mathBlocks.push({ expr, display: true });
     return '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
-  raw = raw.replace(/(^|[^$])\$([^$\n]+?)\$(?!\$)/g, (_, pre, expr) => {
+  // A closing $ followed by a digit, or padding spaces inside the $..$, means money ("$1,000-$1,300",
+  // "$5 and $10"), not math, so it is left as plain text.
+  raw = raw.replace(/(^|[^$])\$([^$\n]+?)\$(?![$\d])/g, (m, pre, expr) => {
+    if (/^\s|\s$/.test(expr)) return m;
     mathBlocks.push({ expr, display: false });
     return pre + '\x00MATH' + (mathBlocks.length - 1) + '\x00';
   });
