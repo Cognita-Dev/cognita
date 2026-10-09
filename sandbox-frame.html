@@ -419,6 +419,78 @@ var pyodide = null;
 var loading = null;
 var post = function (m) { self.postMessage(m); };
 
+// ── Download progress and clear failures ───────────────────────────────
+// Python and its libraries are downloaded the first time they are needed (a
+// few MB to tens of MB), then kept by the browser. Every request to the Python
+// host goes through trackedFetch, which reports how much has arrived and gives
+// up if nothing arrives for STALL_MS, so a slow or unreachable host becomes a
+// plain message instead of a clock that counts up forever.
+var STALL_MS = 40000;
+var HOST_NAME = PYODIDE_BASE_URL.replace(/^https?:\/\//, '').split('/')[0];
+var dl = { loaded: 0, cur: null, phase: 'core', lastPost: 0, failure: null };
+var nativeFetch = self.fetch ? self.fetch.bind(self) : null;
+
+function fmtMB(n) { return (n / 1048576).toFixed(1); }
+function reportDownload(force) {
+  var now = Date.now();
+  if (!force && now - dl.lastPost < 250) return;
+  dl.lastPost = now;
+  var what = dl.phase === 'libs' ? 'Downloading Python libraries' : 'Downloading Python';
+  // The full size is not known up front (files are found as they are needed), so a percentage
+  // is only shown for a single large file; otherwise the running total in MB is the progress.
+  var c = dl.cur;
+  var amount = c && c.len >= 1048576 && c.got <= c.len
+    ? ' ' + Math.min(99, Math.floor(c.got / c.len * 100)) + '% of ' + fmtMB(c.len) + ' MB'
+    : ' ' + fmtMB(dl.loaded) + ' MB so far';
+  post({ t: 'status', text: what + ' (first time only)\u2026' + amount });
+}
+
+async function trackedFetch(input, init) {
+  var ctl = new AbortController();
+  var timer = null;
+  function arm() { clearTimeout(timer); timer = setTimeout(function () { dl.failure = 'stalled'; ctl.abort(); }, STALL_MS); }
+  function disarm() { clearTimeout(timer); }
+  arm();
+  var res;
+  try { res = await nativeFetch(input, Object.assign({}, init || {}, { signal: ctl.signal })); }
+  catch (e) { disarm(); if (!dl.failure) dl.failure = 'unreachable'; throw e; }
+  if (!res.ok) { disarm(); dl.failure = 'http:' + res.status; throw new Error('Python download failed with status ' + res.status); }
+  var len = parseInt(res.headers.get('content-length') || '0', 10);
+  var track = { len: len, got: 0 };
+  if (!res.body || typeof res.body.getReader !== 'function' || typeof ReadableStream !== 'function') { disarm(); return res; }
+  try {
+    var reader = res.body.getReader();
+    var stream = new ReadableStream({
+      pull: async function (c) {
+        arm();
+        var r;
+        try { r = await reader.read(); } catch (e) { disarm(); c.error(e); return; }
+        if (r.done) { disarm(); if (track.got >= 1048576) { track.got = track.len = track.got; dl.cur = track; reportDownload(true); } if (dl.cur === track) dl.cur = null; c.close(); return; }
+        dl.loaded += r.value.length; track.got += r.value.length; dl.cur = track; reportDownload(false); c.enqueue(r.value);
+      },
+      cancel: function (reason) { disarm(); return reader.cancel(reason); }
+    });
+    return new Response(stream, { status: res.status, statusText: res.statusText, headers: res.headers });
+  } catch (e) { disarm(); return res; }   // never let the progress display break the download itself
+}
+if (nativeFetch) {
+  self.fetch = function (input, init) {
+    var url = typeof input === 'string' ? input : (input && (input.url || input.href)) || '';   // Pyodide passes URL objects for its large files
+    return url.indexOf(PYODIDE_BASE_URL) === 0 ? trackedFetch(input, init) : nativeFetch(input, init);
+  };
+}
+
+// A message the person can act on. `kind` tells the page whether this was a
+// connection problem (so it does not blame their device).
+function downloadProblem(e) {
+  var f = dl.failure;
+  var raw = String(e && e.message || e || '');
+  if (!f && !/NetworkError|Failed to fetch|Load failed|importScripts|Python download failed|aborted/i.test(raw)) return null;
+  if (f === 'stalled') return 'Python stopped downloading: no data arrived for ' + Math.round(STALL_MS / 1000) + ' seconds. Check your internet connection and try again. It only has to be downloaded once.';
+  if (f && f.indexOf('http:') === 0) return 'Cognita could not download Python. The Python server (' + HOST_NAME + ') answered with an error (' + f.slice(5) + '). This is a problem on our side, not with your code. Please try again later.';
+  return 'Cognita could not reach the Python server (' + HOST_NAME + '). Check your internet connection and try again. If it keeps happening, the server may be down.';
+}
+
 var RUNNER = [
   'import sys, os, runpy, traceback',
   'os.environ["MPLBACKEND"] = "Agg"',
@@ -453,9 +525,22 @@ async function boot() {
   if (pyodide) return pyodide;
   if (loading) return loading;
   loading = (async function () {
+    dl.failure = null; dl.phase = 'core';
     post({ t: 'status', text: 'Starting Python\u2026' });
-    importScripts(PYODIDE_BASE_URL + 'pyodide.js');
-    var py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
+    var py;
+    try {
+      // Fetch the loader first (small): this is the quick "is the host reachable?" check,
+      // and importScripts then finds it already in the browser's cache.
+      if (nativeFetch) { var r0 = await (await self.fetch(PYODIDE_BASE_URL + 'pyodide.js')).arrayBuffer(); r0 = null; }
+      importScripts(PYODIDE_BASE_URL + 'pyodide.js');
+      py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
+    } catch (e) {
+      var friendly = downloadProblem(e);
+      if (friendly) { var err = new Error(friendly); err.kind = 'network'; throw err; }
+      throw e;
+    }
+    post({ t: 'status', text: 'Starting Python\u2026' });
+    dl.phase = 'libs';
     py.FS.mkdirTree('/workspace');
     // Built-in helper so the model can make real .docx and .pdf files
     // (see the cognita_docs notes in prompts.js). Lives outside /workspace so
@@ -518,7 +603,7 @@ function readSnapshot(py) {
 
 self.onmessage = async function (ev) {
   var m = ev.data;
-  if (m.t === 'warm') { try { await boot(); post({ t: 'ready' }); } catch (e) { post({ t: 'boot_error', message: String(e && e.message || e) }); } return; }
+  if (m.t === 'warm') { try { await boot(); post({ t: 'ready' }); } catch (e) { post({ t: 'boot_error', message: String(e && e.message || e), kind: e && e.kind || 'other' }); } return; }
   if (m.t === 'install') {
     try {
       var py = await boot();
@@ -543,9 +628,18 @@ self.onmessage = async function (ev) {
     py2.setStderr({ batched: function (s) { post({ t: 'out', stream: 'stderr', text: s + '\n' }); } });
     if (m.mode === 'file' || m.mode === 'code') {
       var src = m.mode === 'file' ? new TextDecoder().decode(py2.FS.readFile(m.file)) : m.code;
-      try { await py2.loadPackagesFromImports(src, { messageCallback: function () {}, errorCallback: function () {} }); } catch (e) {}
+      dl.failure = null;
+      try { await py2.loadPackagesFromImports(src, { messageCallback: function () {}, errorCallback: function () {} }); }
+      catch (e) {
+        // A library that could not be downloaded must say so, not surface later as a confusing "No module named ..." error.
+        var lp = downloadProblem(e);
+        if (lp) throw new Error(lp.replace('Python stopped', 'The Python libraries stopped').replace('could not download Python', 'could not download the Python libraries'));
+      }
     }
-    if (m.mode === 'module' && m.code === 'pytest') { try { await py2.loadPackage('pytest'); } catch (e) {} }
+    if (m.mode === 'module' && m.code === 'pytest') {
+      dl.failure = null;
+      try { await py2.loadPackage('pytest'); } catch (e) { var pp = downloadProblem(e); if (pp) throw new Error(pp); }
+    }
     var fn = py2.globals.get('__cognita_run');
     try { code = fn(m.mode, m.code || '', m.file || '', m.args || [], m.cwd || '/workspace'); }
     finally { fn.destroy(); }
@@ -611,6 +705,7 @@ self.onmessage = async function (ev) {
   var enc = new TextEncoder();
 
   var pyWorker = null, pyReady = null, pySyncedVersion = -1, idleTimer = null;
+  var pyBooting = false, lastPyStatus = '';   // a run that starts while Python is still loading is told where it is
   var active = null;                // { id, kill() } for the call that is running
   var queue = Promise.resolve();
   var seq = 0;
@@ -642,15 +737,16 @@ self.onmessage = async function (ev) {
     pyUrl = pyUrl || blobUrl('py-worker-src');
     pyWorker = new Worker(pyUrl);
     var w = pyWorker;
+    pyBooting = true; lastPyStatus = '';
     pyReady = new Promise(function (resolve, reject) {
       function onMsg(ev) {
         var m = ev.data;
-        if (m.t === 'status') { send({ t: 'status', id: active && active.id, text: m.text }); }
-        else if (m.t === 'ready') { w.removeEventListener('message', onMsg); resolve(w); }
-        else if (m.t === 'boot_error') { w.removeEventListener('message', onMsg); killPy(); reject(new Error(m.message)); }
+        if (m.t === 'status') { lastPyStatus = m.text; send({ t: 'status', id: active && active.id, text: m.text }); }
+        else if (m.t === 'ready') { pyBooting = false; w.removeEventListener('message', onMsg); resolve(w); }
+        else if (m.t === 'boot_error') { pyBooting = false; w.removeEventListener('message', onMsg); killPy(); var be = new Error(m.message); be.kind = m.kind; reject(be); }
       }
       w.addEventListener('message', onMsg);
-      w.onerror = function (e) { killPy(); reject(new Error(e && e.message || 'Python worker failed to start')); };
+      w.onerror = function (e) { pyBooting = false; killPy(); reject(new Error(e && e.message || 'Python worker failed to start')); };
       w.postMessage({ t: 'warm' });
     });
     return pyReady;
@@ -673,9 +769,12 @@ self.onmessage = async function (ev) {
   // Runs one Python invocation in the worker and applies its file changes to the workspace.
   async function runPython(spec, io, limits, id) {
     var w;
+    // Python may already be loading (started ahead of time): show where it is right away.
+    if (pyBooting && lastPyStatus) send({ t: 'status', id: id, text: lastPyStatus });
     try { w = await getPy(); }
     catch (e) {
-      io.err('Python could not start: ' + e.message + '\nThis device or browser may not support running Python here.\n');
+      if (e && e.kind === 'network') io.err(e.message + '\n');
+      else io.err('Python could not start: ' + e.message + '\nThis device or browser may not support running Python here.\n');
       return 127;
     }
     touchIdle();
