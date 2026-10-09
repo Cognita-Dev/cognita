@@ -210,5 +210,5 @@ failures on our side or Cloudflare's refund the allowance; only public https URL
 (no IPs, localhost, `.local`, credentials).
 
 Setup: `npx wrangler secret put CF_BROWSER_ACCOUNT_ID` and `npx wrangler secret put CF_BROWSER_API_TOKEN`
-(API token with the "Browser Rendering - Edit" permission). Optional var `CF_BROWSER_GLOBAL_PER_DAY`.
+(API token with the "Browser Run (or Browser Rendering) - Edit" permission). Optional var `CF_BROWSER_GLOBAL_PER_DAY`.
 Check the current free-plan allowance in the Cloudflare dashboard before relying on it.

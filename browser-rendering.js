@@ -1,9 +1,10 @@
 // browser-rendering.js
-// Server-side fallback browser, using Cloudflare Browser Rendering's REST API.
+// Server-side fallback browser, using Cloudflare Browser Run's REST API
+// (renamed from Browser Rendering in April 2026; endpoints live under /browser-run/).
 //
 // Only Studio and Admin plans may use it (entitlements.js: features.sandboxBrowserRemote).
 // The Worker needs two secrets: CF_BROWSER_ACCOUNT_ID and CF_BROWSER_API_TOKEN
-// (an API token with the "Browser Rendering - Edit" permission). Without both,
+// (an API token with the Browser Run / Browser Rendering Edit permission). Without both,
 // this module reports "not configured" and nothing calls Cloudflare.
 //
 // What it can do: render a public https page, or a piece of HTML the model wrote,
@@ -82,7 +83,7 @@ export async function renderRemote(args, env) {
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   const t0 = Date.now();
   try {
-    const res = await fetch(API + env.CF_BROWSER_ACCOUNT_ID + '/browser-rendering/' + ENDPOINT[mode], {
+    const res = await fetch(API + env.CF_BROWSER_ACCOUNT_ID + '/browser-run/' + ENDPOINT[mode], {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.CF_BROWSER_API_TOKEN },
       body: JSON.stringify(body),
