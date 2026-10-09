@@ -28,6 +28,10 @@ export const SANDBOX_INTENT_PATTERNS = [
   { name: 'script', re: /\b(?:script|python|javascript|node\.?js|node)\b/i },
   { name: 'run-code', re: /\b(?:run (?:this|the|my|that)(?: code| script| program)?|execute|test this code|unit tests?|run the (?:code|tests?))\b/i },
   { name: 'use-code', re: /\b(?:use code|using code|with code|write a (?:program|script|function)|write code)\b/i },
+  // Web pages: lets the model build a page and check it in a browser, and lets Studio and
+  // Admin ask about a live site. Without these the browser tools would never be offered.
+  { name: 'web-page', re: /\b(?:html|css|web ?page|landing page|web ?site|webpage)\b/i },
+  { name: 'url', re: /https?:\/\/[^\s]+/i },
   { name: 'code-fence', re: /```/ },
   { name: 'number-list', re: /(?:^|[^\w.])-?\d+(?:[.,]\d+)?(?:\s*(?:,|;|\band\b|\s)\s*-?\d+(?:[.,]\d+)?){2,}(?![\w.])/ },
   { name: 'file-format', re: /\b(?:as|into|to) (?:an? )?(?:excel|xlsx|csv|spreadsheet)\b/i },
