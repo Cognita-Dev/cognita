@@ -30,6 +30,7 @@
 //     size-capped here and only ever shown to the model as a tool result.
 
 import { CAPS } from './sandbox-provider.js';
+import { checkPublicUrl, MODES as BROWSER_MODES } from './browser-rendering.js';
 
 export const WORKSPACE_ROOT = '/workspace';
 
@@ -123,6 +124,29 @@ const CATALOG = [
     'Give the user a download button for a workspace file (report, chart, CSV, script). Call it for every file they asked for; unoffered files are scratch.',
     { path: { type: 'string' }, title: { type: 'string', description: 'Short title, e.g. "Sales summary".' } }, ['path']) },
 
+  // Local browser test (Tier 1). Runs in the person's own browser, free on every plan.
+  { cap: CAPS.BROWSER_TEST, tool: _fn('sandbox_browser_test',
+    'Open an HTML page in a real browser and report console errors, failed loads, page text and layout measurements. Give path (an .html file in the workspace; linked local .css and .js files are included) or html. No internet: outside files are blocked. Use it to check a page you wrote, then fix what it reports.',
+    {
+      path: { type: 'string', description: 'HTML file in /workspace.' },
+      html: { type: 'string', description: 'Or the HTML itself.' },
+      width: { type: 'integer', description: 'Viewport width, 200 to 2000. Default 1024. Use 375 to check a phone.' },
+      height: { type: 'integer', description: 'Viewport height, 200 to 3000. Default 768.' },
+      wait_ms: { type: 'integer', description: 'Extra wait after load for scripts, 0 to 5000. Default 300.' },
+      selectors: { type: 'array', items: { type: 'string' }, description: 'Up to 10 CSS selectors to measure (count, visible, size, position).' },
+      touch: { type: 'boolean', description: 'Also flag tap targets smaller than 44 px.' },
+    }, []) },
+
+  // Cloud browser (Studio and Admin only). Offered per request by chat-endpoint.js, never by a provider.
+  { cap: CAPS.BROWSER_REMOTE, tool: _fn('sandbox_browser_fetch',
+    'Cloud browser. Render a public https web page (or html you give) in real Chrome and return the rendered text, html, links, or measurements of elements. Use it for live sites, or when sandbox_browser_test cannot run. It cannot report console errors.',
+    {
+      url: { type: 'string', description: 'Public https address. Give url or html, not both.' },
+      html: { type: 'string' },
+      mode: { type: 'string', description: '"text" (default), "html", "links" or "elements".' },
+      selectors: { type: 'array', items: { type: 'string' }, description: 'For mode "elements": up to 10 CSS selectors.' },
+    }, []) },
+
   // Only offered by providers that report real processes (Tier 3).
   { cap: CAPS.PROCESSES, tool: _fn('sandbox_start_process',
     'Start a long-running background command; returns a process id.',
@@ -210,6 +234,8 @@ export function describe(name, args) {
     case 'sandbox_get_working_directory': return 'Checking the working directory.';
     case 'sandbox_import_from_tool': return 'Placing the fetched data in ' + _short(a.path, 80) + '.';
     case 'sandbox_offer_file': return 'Preparing ' + _short(a.title || a.path, 80) + ' for download.';
+    case 'sandbox_browser_test': return a.path ? 'Testing ' + _short(a.path, 70) + ' in a browser.' : 'Testing the page in a browser.';
+    case 'sandbox_browser_fetch': return a.url ? 'Opening ' + _short(a.url, 80) + ' in the cloud browser.' : 'Rendering the page in the cloud browser.';
     case 'sandbox_start_process': return 'Starting: ' + _short(a.command, 100);
     case 'sandbox_get_process_output': return 'Reading process output.';
     case 'sandbox_stop_process': return 'Stopping the process.';
@@ -245,6 +271,26 @@ export function validateSandboxArgs(name, args) {
   if ((name === 'sandbox_run_command' || name === 'sandbox_start_process')) {
     if (typeof a.command !== 'string') return { ok: false, error: '"command" must be a string.' };
     if (a.command.length > MAX_COMMAND_CHARS) return { ok: false, error: 'The command is too long (max ' + MAX_COMMAND_CHARS + ' characters).' };
+  }
+  if (name === 'sandbox_browser_test') {
+    const hasPath = typeof a.path === 'string' && a.path.trim() !== '';
+    const hasHtml = typeof a.html === 'string' && a.html.trim() !== '';
+    if (hasPath === hasHtml) return { ok: false, error: 'Give either "path" or "html", not both and not neither.' };
+    if (hasHtml && a.html.length > MAX_CODE_CHARS) return { ok: false, error: 'That HTML is too long (max ' + MAX_CODE_CHARS + ' characters). Save it as a file and pass "path".' };
+    for (const f of ['width', 'height', 'wait_ms']) {
+      if (a[f] !== undefined && !Number.isFinite(a[f])) return { ok: false, error: '"' + f + '" must be a number.' };
+    }
+    if (a.selectors !== undefined && (!Array.isArray(a.selectors) || a.selectors.some((s) => typeof s !== 'string' || s.length > 200))) {
+      return { ok: false, error: '"selectors" must be a list of short CSS selector strings.' };
+    }
+  }
+  if (name === 'sandbox_browser_fetch') {
+    const hasUrl = typeof a.url === 'string' && a.url.trim() !== '';
+    const hasHtml = typeof a.html === 'string' && a.html !== '';
+    if (hasUrl === hasHtml) return { ok: false, error: 'Give either "url" or "html", not both and not neither.' };
+    if (hasUrl) { const c = checkPublicUrl(a.url); if (!c.ok) return { ok: false, error: c.error }; }
+    if (a.mode !== undefined && !BROWSER_MODES.includes(a.mode)) return { ok: false, error: '"mode" must be one of: ' + BROWSER_MODES.join(', ') + '.' };
+    if (a.mode === 'elements' && (!Array.isArray(a.selectors) || !a.selectors.length)) return { ok: false, error: 'mode "elements" needs "selectors".' };
   }
   if (name === 'sandbox_import_from_tool' && !Number.isInteger(a.source_step)) {
     return { ok: false, error: '"source_step" must be a whole number taken from an earlier tool result.' };
@@ -291,6 +337,16 @@ export function normalizeResult(raw, fallbackCommand) {
   if (offered.length) out.offered = offered;
   if (r.cancelled) out.cancelled = true;
   if (typeof r.note === 'string' && r.note) out.note = _str(r.note, 600);
+  // Set by the browser test only when the test page could not be run here at all
+  // (never for a page that ran and failed). chat-endpoint.js may retry it in the
+  // cloud browser for Studio and Admin, then drops the field.
+  if (r.fallback && typeof r.fallback === 'object' && typeof r.fallback.html === 'string' && r.fallback.html) {
+    out.fallback = {
+      html: r.fallback.html.slice(0, 200000),
+      selectors: Array.isArray(r.fallback.selectors) ? r.fallback.selectors.filter((s) => typeof s === 'string').slice(0, 10) : [],
+      reason: _str(r.fallback.reason, 200),
+    };
+  }
   return out;
 }
 
@@ -301,7 +357,8 @@ export function normalizeResult(raw, fallbackCommand) {
  * offer it, because a file the person cannot download is not delivered.
  */
 export function resultForModel(normalized, offerHint) {
-  const r = normalized;
+  const r = Object.assign({}, normalized);
+  delete r.fallback;
   const head = r.ok ? 'The command succeeded (exit code 0).' : 'The command FAILED (exit code ' + r.exitCode + '). Read stderr, fix the cause and try again.';
   const tail = offerHint
     ? '\nThe user asked for a file. Call sandbox_offer_file for it now so they get a download button, then tell them it is ready by its name only.'

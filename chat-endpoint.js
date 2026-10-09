@@ -2,8 +2,9 @@
 
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole, assertPlan } from './subscription.js';
-import { checkAndIncrement, getUsage } from './usage.js';
-import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox } from './entitlements.js';
+import { checkAndIncrement, getUsage, refundUsage } from './usage.js';
+import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox, planHasRemoteBrowser } from './entitlements.js';
+import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
@@ -11,7 +12,7 @@ import {
   executeConnectorTool, shouldOfferConnectorTools, validateToolArgs, approvalScopeForTool, isToolApproved,
   getSandboxToolSchemas, isSandboxToolName, describeConfirmation, stepMeta,
 } from './connector-tools.js';
-import { selectSandboxProvider, cleanConversationId } from './sandbox-provider.js';
+import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
 import * as mediaTools from './media-tools.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
@@ -136,6 +137,30 @@ function _looksLikeUnfinishedStall(text) {
 // repo, a different provider, or a different action class, and it never
 // persists across conversations (the frontend only sends it back for the
 // same conversation it came from).
+// Cloud browser (Cloudflare Browser Rendering). Studio and Admin only; the plan is
+// the one resolved on the server from the verified uid. Counted per person AND for the
+// whole account, because Cloudflare's free allowance is shared by every user.
+async function _cloudBrowser(args, { uid, planId, plan, env }) {
+  const fail = (msg, code) => ({ ok: false, exitCode: code || 1, stdout: '', stderr: msg, error: true });
+  if (!planHasRemoteBrowser(planId)) return fail('The cloud browser is not part of this plan.');
+  if (!remoteBrowserConfigured(env)) return fail('The cloud browser is not set up on this server.', 3);
+  const globalCap = Math.max(1, parseInt(env.CF_BROWSER_GLOBAL_PER_DAY, 10) || 60);
+  const g = await checkAndIncrement('__cf_browser_global', 'browserRemote', globalCap, env);
+  if (!g.allowed) return fail('The cloud browser has reached its limit for today. It resets at midnight UTC.', 429);
+  const u = await checkAndIncrement(uid, 'browserRemote', plan.limits.browserRemotePerDay, env);
+  if (!u.allowed) {
+    await refundUsage('__cf_browser_global', 'browserRemote', env);
+    return fail('You have reached your daily cloud browser limit for the ' + plan.name + ' plan (' + u.limit + ' per day). It resets at midnight UTC.', 429);
+  }
+  const r = await renderRemote(args, env);
+  if (!r.ok && (r.exitCode === 3 || r.exitCode === 2 || r.exitCode === 429)) {
+    // Our side or Cloudflare's side failed: it must not cost the person their allowance.
+    await refundUsage(uid, 'browserRemote', env);
+    await refundUsage('__cf_browser_global', 'browserRemote', env);
+  }
+  return r;
+}
+
 // The browser's report of a sandbox run it just did for us (Tier 1). It is
 // treated as data only: the call description, the result and the trace are
 // size-capped and re-shaped here, and nothing in it can grant a permission
@@ -715,7 +740,14 @@ export async function handleChatRequest(request, env) {
         if (usedRuns >= plan.limits.sandboxRunsPerDay) {
           sandboxLimitNote = '\n\nThe user has used up today\'s code-running allowance. Do not run code and do not claim to have run any; answer without it and mention the limit briefly if it matters.';
         } else if (!(sandboxResume && sandboxResume.cancelled)) {
-          sandboxToolSchemas = getSandboxToolSchemas(sandboxProvider.capabilities);
+          const offerCaps = new Set(sandboxProvider.capabilities);
+          // The cloud browser is offered only to plans that include it, only when the Worker
+          // is configured for it, and only while the person still has allowance today.
+          if (planHasRemoteBrowser(account.planId) && remoteBrowserConfigured(env)) {
+            const usedCloud = await getUsage(identity.uid, 'browserRemote', env);
+            if (usedCloud < plan.limits.browserRemotePerDay) offerCaps.add(CAPS.BROWSER_REMOTE);
+          }
+          sandboxToolSchemas = getSandboxToolSchemas(offerCaps);
         }
       }
       const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas() : [];
@@ -815,7 +847,26 @@ export async function handleChatRequest(request, env) {
           turnTrace = sandboxResume.trace.slice();
           stepNo = turnTrace.reduce((m, e) => Math.max(m, e.n), 0);
           for (const e of turnTrace) workingMessages = sandboxTools.appendExchange(workingMessages, e);
-          const normalized = sandboxTools.normalizeResult(sandboxResume.result, sandboxTools.describe(sandboxResume.call.name, sandboxResume.call.args));
+          let normalized = sandboxTools.normalizeResult(sandboxResume.result, sandboxTools.describe(sandboxResume.call.name, sandboxResume.call.args));
+          // Backup path: the local browser test could not run the page at all (not a page
+          // that ran and failed). Studio and Admin get one automatic try in the cloud browser.
+          if (sandboxResume.call.name === 'sandbox_browser_test' && normalized.fallback && !sandboxResume.cancelled) {
+            const fb = normalized.fallback;
+            if (planHasRemoteBrowser(account.planId) && remoteBrowserConfigured(env)) {
+              const cloud = await _cloudBrowser(
+                { html: fb.html, mode: fb.selectors.length ? 'elements' : 'text', selectors: fb.selectors },
+                { uid: identity.uid, planId: account.planId, plan, env });
+              normalized = sandboxTools.normalizeResult({
+                exitCode: cloud.ok ? 0 : 1, error: !cloud.ok, command: normalized.command, stdout: cloud.stdout, stderr: cloud.stderr,
+                durationMs: cloud.durationMs, note: cloud.ok ? 'The local browser could not run this page, so the cloud browser did. ' + (cloud.note || '') : 'The local browser could not run this page and the cloud browser failed too.',
+              });
+              console.log('[chat][sandbox] browser test fell back to cloud ok=' + normalized.ok);
+            } else {
+              normalized.note = 'The browser could not run this page here (' + (fb.reason || 'unknown reason') + ').';
+              normalized.ok = false; normalized.exitCode = normalized.exitCode || 1;
+            }
+            delete normalized.fallback;
+          }
           // The person asked for a file, this run made one, and nothing has been
           // offered yet this turn: tell the model to offer it (see resultForModel).
           const offeredSoFar = turnTrace.some((e) => e.o);
@@ -1125,6 +1176,43 @@ export async function handleChatRequest(request, env) {
                 quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' +
                   plan.limits.sandboxRunsPerDay + ' runs per day). It resets at midnight UTC.';
                 break;
+              }
+
+              // Cloud browser: always runs on the Worker, whatever provider is active.
+              // Plan, setup and allowance are checked here again, so a tampered or
+              // hallucinated call can never reach Cloudflare without them.
+              if (sbName === 'sandbox_browser_fetch' || (sbName === 'sandbox_browser_test' && sandboxProvider.site !== 'client')) {
+                emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', summary: describeTool(call.name, call.args) });
+                let cb;
+                if (sbName === 'sandbox_browser_test') {
+                  cb = { ok: false, exitCode: 1, stdout: '', stderr: 'The local browser test is not available in this kind of workspace. Use sandbox_browser_fetch with html instead if you have it.', error: true };
+                } else {
+                  const sbCharge2 = await checkAndIncrement(identity.uid, 'sandboxRuns', plan.limits.sandboxRunsPerDay, env);
+                  if (!sbCharge2.allowed) {
+                    quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + sbCharge2.limit + ' runs per day). It resets at midnight UTC.';
+                    break;
+                  }
+                  cb = await _cloudBrowser(sbArgs, { uid: identity.uid, planId: account.planId, plan, env });
+                }
+                const cbResult = sandboxTools.normalizeResult({
+                  exitCode: cb.ok ? 0 : (cb.exitCode || 1), error: !cb.ok, command: describeTool(call.name, call.args),
+                  stdout: cb.stdout, stderr: cb.stderr, durationMs: cb.durationMs, note: cb.note,
+                }, sandboxTools.describe(call.name, call.args));
+                steps.push({
+                  type: 'sandbox', name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', ms: cbResult.durationMs, ok: cbResult.ok,
+                  summary: describeTool(call.name, call.args), sandbox: cbResult,
+                });
+                emit('step', steps[steps.length - 1]);
+                const cbEntry = sandboxTools.makeTraceEntry({
+                  n: ++stepNo, kind: 'sbx', assistantText: (result.text && result.text.trim()) ? result.text : '',
+                  description: describeTool(call.name, call.args), resultText: sandboxTools.resultForModel(cbResult),
+                  tool: sbName, files: [], offered: null,
+                });
+                turnTrace.push(cbEntry);
+                workingMessages = sandboxTools.appendExchange(workingMessages, cbEntry);
+                result = null;
+                round++;
+                continue;
               }
 
               if (sandboxProvider.site === 'client') {

@@ -778,13 +778,145 @@ self.onmessage = async function (ev) {
   function relPath(p) { return Shell.resolvePath(p, cwd); }
   function bad(p) { throw new Error('"' + p + '" is outside /workspace.'); }
 
+  // ── Browser test ────────────────────────────────────────────────
+  // Renders a page in a nested, network-less iframe inside this already isolated frame and
+  // reports what happened. The nested frame has its own opaque origin (no allow-same-origin),
+  // a meta CSP that blocks every network request, and talks back only through postMessage.
+  function collectorMain(token, cfg) {
+    var logs = [], errors = [], resErrors = [], blocked = [];
+    function post(type, data) { try { parent.postMessage({ cog: token, type: type, data: data }, '*'); } catch (e) {} }
+    function fmt(args) { return Array.prototype.map.call(args, function (x) { if (typeof x === 'string') return x; try { return JSON.stringify(x); } catch (e) { return String(x); } }).join(' '); }
+    ['log', 'info', 'warn', 'error'].forEach(function (k) {
+      var orig = console[k];
+      console[k] = function () { if (logs.length < 60) logs.push({ level: k, text: fmt(arguments).slice(0, 300) }); try { orig.apply(console, arguments); } catch (e) {} };
+    });
+    window.addEventListener('error', function (e) {
+      var t = e.target;
+      if (t && t !== window && t.tagName) { if (resErrors.length < 20) resErrors.push(t.tagName.toLowerCase() + ' ' + String(t.src || t.href || '').slice(0, 200)); }
+      else if (errors.length < 20) errors.push({ message: String(e.message).slice(0, 300), line: e.lineno, col: e.colno });
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) { if (errors.length < 20) errors.push({ message: 'Unhandled promise rejection: ' + String(e.reason && e.reason.message || e.reason).slice(0, 300) }); });
+    document.addEventListener('securitypolicyviolation', function (e) { if (blocked.length < 20) blocked.push(String(e.blockedURI || 'inline').slice(0, 200) + ' (' + e.violatedDirective + ')'); });
+    function desc(el) { return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : ''); }
+    function visible(el, r) { var cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; }
+    function report() {
+      var de = document.documentElement, body = document.body, all = document.getElementsByTagName('*');
+      var rep = {
+        title: document.title || null, lang: de.lang || null,
+        hasViewportMeta: !!document.querySelector('meta[name=viewport]'),
+        viewport: { width: innerWidth, height: innerHeight },
+        pageSize: { width: de.scrollWidth, height: de.scrollHeight },
+        horizontalScroll: de.scrollWidth > innerWidth + 1,
+        counts: { elements: all.length, images: document.images.length, links: document.links.length, buttons: document.querySelectorAll('button,[role=button]').length, inputs: document.querySelectorAll('input,select,textarea').length, forms: document.forms.length },
+        headings: Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3')).slice(0, 12).map(function (h) { return h.tagName.toLowerCase() + ': ' + h.textContent.trim().slice(0, 80); }),
+        text: (body ? body.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 600),
+        brokenImages: [], imagesWithoutAlt: 0, buttonsWithoutName: 0, overflowing: [], smallTapTargets: [], selectors: []
+      };
+      Array.prototype.forEach.call(document.images, function (im) { if (im.complete && im.naturalWidth === 0 && rep.brokenImages.length < 10) rep.brokenImages.push(String(im.getAttribute('src') || '').slice(0, 120)); if (!im.hasAttribute('alt')) rep.imagesWithoutAlt++; });
+      Array.prototype.forEach.call(document.querySelectorAll('button,[role=button]'), function (b) { if (!b.textContent.trim() && !b.getAttribute('aria-label') && !b.getAttribute('title')) rep.buttonsWithoutName++; });
+      var n = Math.min(all.length, 3000);
+      for (var i = 0; i < n; i++) {
+        var el = all[i]; if (el === de || el === body || /^(SCRIPT|STYLE|META|LINK|HEAD|TITLE)$/.test(el.tagName)) continue;
+        var r = el.getBoundingClientRect(); if (!r.width && !r.height) continue;
+        if (rep.overflowing.length < 8 && (r.right > innerWidth + 1 || r.left < -1) && getComputedStyle(el).position !== 'fixed') rep.overflowing.push(desc(el) + ' (left ' + Math.round(r.left) + ', right ' + Math.round(r.right) + ')');
+        if (cfg.touch && rep.smallTapTargets.length < 8 && el.matches('a[href],button,input:not([type=hidden]),select,textarea,[role=button]') && (r.width < 44 || r.height < 44)) rep.smallTapTargets.push(desc(el) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height));
+      }
+      (cfg.selectors || []).slice(0, 10).forEach(function (sel) {
+        try {
+          var list = document.querySelectorAll(sel), first = list[0], item = { selector: sel, count: list.length };
+          if (first) { var r2 = first.getBoundingClientRect(); item.visible = visible(first, r2); item.x = Math.round(r2.left); item.y = Math.round(r2.top); item.width = Math.round(r2.width); item.height = Math.round(r2.height); item.text = first.textContent.trim().slice(0, 100); }
+          rep.selectors.push(item);
+        } catch (e) { rep.selectors.push({ selector: sel, error: 'invalid selector' }); }
+      });
+      rep.console = logs; rep.errors = errors; rep.failedResources = resErrors; rep.blocked = blocked;
+      return rep;
+    }
+    post('hello', {});
+    window.addEventListener('load', function () { setTimeout(function () { var rep; try { rep = report(); } catch (e) { rep = { reportError: String(e && e.message || e), console: logs, errors: errors }; } post('report', rep); }, cfg.waitMs); });
+  }
+
+  function inlineLocalAssets(html, dir, missing) {
+    function rd(ref) {
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(ref)) return null;
+      var p = Shell.resolvePath(ref.split(/[?#]/)[0], dir);
+      if (p && vfs.isFile(p)) return vfs.readText(p);
+      missing.push(ref); return null;
+    }
+    html = html.replace(/<link\b[^>]*>/gi, function (tag) {
+      if (!/rel\s*=\s*["']?stylesheet/i.test(tag)) return tag;
+      var m = tag.match(/href\s*=\s*["']([^"']+)["']/i); if (!m) return tag;
+      var css = rd(m[1]); return css === null ? tag : '<style>' + css.replace(/<\/style/gi, '<\\/style') + '</style>';
+    });
+    html = html.replace(/<script\b([^>]*?)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi, function (tag, pre, src, post) {
+      var js = rd(src); return js === null ? tag : '<script' + pre + post + '>' + js.replace(/<\/script/gi, '<\\/script') + '</scr' + 'ipt>';
+    });
+    return html;
+  }
+
+  async function runBrowserTest(a, io, limits, id) {
+    var html, dir = Shell.ROOT, missing = [];
+    if (a.path) {
+      var fp = relPath(a.path); if (!fp) bad(a.path);
+      if (!vfs.isFile(fp)) throw new Error(fp + ' does not exist.');
+      html = vfs.readText(fp); dir = fp.slice(0, fp.lastIndexOf('/')) || Shell.ROOT;
+    } else html = String(a.html || '');
+    if (!html.trim()) throw new Error('The page is empty.');
+    html = inlineLocalAssets(html, dir, missing);
+    var cfg = {
+      waitMs: Math.min(Math.max(parseInt(a.wait_ms, 10) || 300, 0), 5000),
+      touch: !!a.touch,
+      selectors: Array.isArray(a.selectors) ? a.selectors.filter(function (s) { return typeof s === 'string'; }).slice(0, 10) : []
+    };
+    var width = Math.min(Math.max(parseInt(a.width, 10) || 1024, 200), 2000), height = Math.min(Math.max(parseInt(a.height, 10) || 768, 200), 3000);
+    var token = 'cog' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    var meta = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">';
+    var inject = meta + '<scr' + 'ipt>(' + collectorMain.toString() + ')(' + JSON.stringify(token) + ',' + JSON.stringify(cfg) + ');</scr' + 'ipt>';
+    var dt = html.match(/^\s*<!doctype[^>]*>/i);
+    var doc = dt ? dt[0] + inject + html.slice(dt[0].length) : inject + html;
+    var totalMs = Math.min(limits.timeoutMs || 20000, cfg.waitMs + 12000);
+    return new Promise(function (resolve) {
+      var fr = document.createElement('iframe'), helloSeen = false, finished = false;
+      fr.setAttribute('sandbox', 'allow-scripts');
+      fr.style.cssText = 'position:fixed;left:0;top:0;border:0;visibility:hidden;width:' + width + 'px;height:' + height + 'px';
+      function end(code, rep, fallback, why) {
+        if (finished) return; finished = true; clearTimeout(timer); window.removeEventListener('message', onMsg);
+        try { fr.remove(); } catch (e) {}
+        if (rep) {
+          if (missing.length) rep.missingLocalFiles = missing.slice(0, 10);
+          var probs = [];
+          if (rep.errors && rep.errors.length) probs.push(rep.errors.length + ' script error(s)');
+          if (rep.failedResources && rep.failedResources.length) probs.push(rep.failedResources.length + ' resource(s) failed to load');
+          if (rep.blocked && rep.blocked.length) probs.push(rep.blocked.length + ' request(s) blocked (no internet here)');
+          if (missing.length) probs.push(missing.length + ' linked local file(s) missing');
+          if (rep.horizontalScroll) probs.push('page scrolls sideways at ' + rep.viewport.width + ' px');
+          if (rep.brokenImages && rep.brokenImages.length) probs.push(rep.brokenImages.length + ' broken image(s)');
+          io.out((probs.length ? 'PROBLEMS FOUND: ' + probs.join('; ') : 'NO PROBLEMS FOUND by these checks') + '\n' + JSON.stringify(rep, null, 1).slice(0, limits.maxOutputChars || 12000) + '\n');
+        } else io.err(why + '\n');
+        resolve({ code: code, fallback: fallback });
+      }
+      function onMsg(ev) {
+        var m = ev.data; if (ev.source !== fr.contentWindow || !m || m.cog !== token) return;
+        if (m.type === 'hello') helloSeen = true;
+        else if (m.type === 'report') end(0, m.data && typeof m.data === 'object' ? m.data : {}, null);
+      }
+      var timer = setTimeout(function () {
+        if (helloSeen) end(124, null, null, 'The page did not finish loading within ' + Math.round(totalMs / 1000) + ' s. It may have an endless loop or wait for something that never arrives.');
+        else end(1, null, { html: html.slice(0, 200000), selectors: cfg.selectors, reason: 'the test page could not start in this browser' }, 'This browser could not run the test page.');
+      }, totalMs);
+      active = { id: id, kill: function () { end(130, null, null, 'Stopped.'); } };
+      window.addEventListener('message', onMsg);
+      try { fr.srcdoc = doc; document.body.appendChild(fr); }
+      catch (e) { end(1, null, { html: html.slice(0, 200000), selectors: cfg.selectors, reason: 'iframes are not supported here' }, 'This browser could not run the test page.'); }
+    });
+  }
+
   async function execTool(call) {
     var name = call.name, a = call.args || {}, limits = call.limits || {};
     vfs.setLimits({ maxFileBytes: limits.maxFileBytes, maxWorkspaceBytes: limits.maxWorkspaceBytes });
     var before = vfs.versions();
     var col = makeCollector(call.id, limits);
     var io = { out: function (t) { col.add('stdout', t); }, err: function (t) { col.add('stderr', t); } };
-    var exitCode = 0, command = '', note;
+    var exitCode = 0, command = '', note, fallback;
     var ctx = {
       fs: vfs, cwd: cwd, env: env, maxOutput: limits.maxOutputChars || 12000,
       // A command line such as "cd src && python a.py" must run Python from src.
@@ -856,6 +988,12 @@ self.onmessage = async function (ev) {
           cwd = ctx.cwd; exitCode = r.exitCode; col.stdout = r.stdout; col.stderr = r.stderr; col.truncated = col.truncated || r.truncated;
           break;
         }
+        case 'sandbox_browser_test': {
+          command = 'browser test ' + (a.path ? String(a.path) : '(inline html)');
+          var bt = await runBrowserTest(a, io, limits, call.id);
+          exitCode = bt.code; fallback = bt.fallback || undefined;
+          break;
+        }
         default:
           exitCode = 127; io.err('This sandbox does not support ' + name + '.\n'); command = name;
       }
@@ -866,7 +1004,7 @@ self.onmessage = async function (ev) {
     var res = {
       command: command, cwd: cwd, stdout: col.stdout, stderr: col.stderr, exitCode: exitCode,
       durationMs: Math.round(performance.now() - t0), truncated: col.truncated, files: changes,
-      cancelled: exitCode === 130 || undefined, note: note
+      cancelled: exitCode === 130 || undefined, note: note, fallback: fallback
     };
     var off = [];
     offered.forEach(function (title, p) { if (vfs.isFile(p)) off.push({ path: p, title: title, size: vfs.readBytes(p).length }); });

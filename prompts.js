@@ -155,6 +155,7 @@ const SANDBOX_RULES =
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
   'PowerPoint is not available here (point to the \"Create a document\" option in the + menu). ' +
   'Offer each finished file with sandbox_offer_file. ' +
+  'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +
   'Say what you did and found in plain words, name files by file name only, and ' +
   'do not mention tools, sandboxes or workspaces.';
 

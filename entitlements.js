@@ -50,6 +50,8 @@ export const PLANS = {
       // Counted by the Worker under the usage key sandboxArtifacts.
       sandboxArtifactMaxMB: 2,
       sandboxArtifactsPerDay: 5,
+      // Cloud browser fallback (browser-rendering.js). Studio and Admin only.
+      browserRemotePerDay: 0,
       noteTakerSessionsPerDay: 3,
       noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
@@ -96,6 +98,7 @@ export const PLANS = {
       designTemplates: false,
       connectorTools: false,       // chat cannot call connected-app tools
       sandbox: true,               // agent sandbox (browser tier) is available on every plan
+      sandboxBrowserRemote: false,   // Cloudflare cloud browser fallback; Studio and Admin only
       aiInbox: false,               // AI Inbox (comment/DM triage) — see planHasAiInbox
       insightsDigest: false,        // AI Insights Digest — see planHasInsightsDigest
     },
@@ -130,6 +133,8 @@ export const PLANS = {
       // Counted by the Worker under the usage key sandboxArtifacts.
       sandboxArtifactMaxMB: 5,
       sandboxArtifactsPerDay: 30,
+      // Cloud browser fallback (browser-rendering.js). Studio and Admin only.
+      browserRemotePerDay: 0,
       noteTakerSessionsPerDay: 30,
       noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
@@ -167,6 +172,7 @@ export const PLANS = {
       designTemplates: true,
       connectorTools: true,
       sandbox: true,
+      sandboxBrowserRemote: false,   // Cloudflare cloud browser fallback; Studio and Admin only
       aiInbox: true,
       insightsDigest: true,
     },
@@ -201,6 +207,8 @@ export const PLANS = {
       // Counted by the Worker under the usage key sandboxArtifacts.
       sandboxArtifactMaxMB: 10,
       sandboxArtifactsPerDay: 100,
+      // Cloud browser fallback (browser-rendering.js). Studio and Admin only.
+      browserRemotePerDay: 30,
       noteTakerSessionsPerDay: 150,
       noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
@@ -235,6 +243,7 @@ export const PLANS = {
       designTemplates: true,
       connectorTools: true,
       sandbox: true,
+      sandboxBrowserRemote: true,   // Cloudflare cloud browser fallback; Studio and Admin only
       aiInbox: true,
       insightsDigest: true,
     },
@@ -279,6 +288,8 @@ export const PLANS = {
       // Counted by the Worker under the usage key sandboxArtifacts.
       sandboxArtifactMaxMB: 10,
       sandboxArtifactsPerDay: UNLIMITED,
+      // Cloud browser fallback (browser-rendering.js). Studio and Admin only.
+      browserRemotePerDay: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting
@@ -320,6 +331,7 @@ export const PLANS = {
       designTemplates: true,
       connectorTools: true,
       sandbox: true,
+      sandboxBrowserRemote: true,   // Cloudflare cloud browser fallback; Studio and Admin only
       aiInbox: true,
       insightsDigest: true,
     },
@@ -338,6 +350,13 @@ export function planHasSandbox(planId) {
 
 export function planHasRemoteSandbox(planId) {
   return !!getPlan(planId).features.sandboxRemote;
+}
+
+// Cloud browser fallback (Cloudflare Browser Rendering). Studio and Admin only.
+// Checked on the server from the plan resolved from the verified uid, never from the request.
+export function planHasRemoteBrowser(planId) {
+  const p = getPlan(planId);
+  return !!p.features.sandboxBrowserRemote && (p.limits.browserRemotePerDay || 0) > 0;
 }
 
 // Can this plan use connected-app tools (GitHub/Google/Facebook/Canva)

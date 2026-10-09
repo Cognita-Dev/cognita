@@ -184,3 +184,31 @@ Not tested: a real iPhone, the live Cloudflare Pages site, the live Vercel heade
 ## Not built
 
 Binary Drive files (above), shell-level git/npm (Tier 3), a GitHub Actions provider.
+
+## Browser testing (local first, cloud as backup)
+
+**Local, free, every plan: `sandbox_browser_test`.** Renders an HTML page (a workspace file, or HTML the
+model passes in) inside a nested iframe in the existing sandbox frame, in the person's own browser. Linked local
+`.css` and `.js` files from the workspace are inlined. The nested frame has its own opaque origin and a meta CSP
+that blocks all network. It reports console output, script errors, failed or blocked loads, missing local files,
+broken images, sideways scrolling, elements that overflow the viewport, small tap targets (`touch: true`), page
+text, and size/position of up to 10 selectors. Use `width: 375` to check a phone layout.
+Limits: it is whatever browser the person uses (Safari on iPhone, Chrome on Android), not a fixed Chromium. No
+screenshots. Error line numbers are offset by about 50 lines because a small collector script is injected first.
+A page with an endless loop can freeze the frame until the existing watchdog replaces it.
+
+**Cloud, Studio and Admin only: `sandbox_browser_fetch`.** Cloudflare Browser Rendering REST API (`browser-rendering.js`).
+Renders a public https page, or HTML, and returns rendered text, html, links or element measurements. It cannot
+report console errors and the model cannot see screenshots, so there is no screenshot mode.
+It is also an automatic backup: if the local test could not start at all (not when the page itself failed),
+`chat-endpoint.js` retries once in the cloud for Studio and Admin.
+
+Safeguards: plan is checked on the server from the verified uid (`planHasRemoteBrowser`); the tool is only offered when
+secrets exist and the person has allowance left; per-person cap `limits.browserRemotePerDay` (Studio 30, Admin unlimited)
+plus an account-wide cap `CF_BROWSER_GLOBAL_PER_DAY` (default 60) because Cloudflare's free allowance is shared by everyone;
+failures on our side or Cloudflare's refund the allowance; only public https URLs on port 443 with a domain name
+(no IPs, localhost, `.local`, credentials).
+
+Setup: `npx wrangler secret put CF_BROWSER_ACCOUNT_ID` and `npx wrangler secret put CF_BROWSER_API_TOKEN`
+(API token with the "Browser Rendering - Edit" permission). Optional var `CF_BROWSER_GLOBAL_PER_DAY`.
+Check the current free-plan allowance in the Cloudflare dashboard before relying on it.

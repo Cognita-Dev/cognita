@@ -78,6 +78,11 @@
     "crons": ["*/5 * * * *"]
   },
 
+  // Cloud browser fallback (Studio and Admin only). Set these as SECRETS, not vars:
+  //   npx wrangler secret put CF_BROWSER_ACCOUNT_ID
+  //   npx wrangler secret put CF_BROWSER_API_TOKEN   (permission: Browser Rendering - Edit)
+  // Optional daily cap across all users, default 60: CF_BROWSER_GLOBAL_PER_DAY
+
   "vars": {
     "FIREBASE_PROJECT_ID": "cognita-b94eb",
     "APP_ORIGIN": "https://app.cognita.com.ng",

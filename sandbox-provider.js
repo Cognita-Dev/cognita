@@ -34,6 +34,8 @@ export const CAPS = {
   PIP: 'pip',                   // real pip with network access to a package index
   BASH: 'bash',                 // a real Bash
   NETWORK: 'network',
+  BROWSER_TEST: 'browser_test',      // render a page in the person's own browser and report what happened
+  BROWSER_REMOTE: 'browser_remote', // Cloudflare cloud browser (Studio and Admin only, added per request by chat-endpoint.js)
 };
 
 class SandboxProvider {
@@ -55,7 +57,7 @@ export class BrowserSandboxProvider extends SandboxProvider {
   get tier() { return 1; }
   get site() { return 'client'; }
   get capabilities() {
-    return new Set([CAPS.FILES, CAPS.SHELL_LITE, CAPS.PYTHON, CAPS.JS, CAPS.TESTS_PY]);
+    return new Set([CAPS.FILES, CAPS.SHELL_LITE, CAPS.PYTHON, CAPS.JS, CAPS.TESTS_PY, CAPS.BROWSER_TEST]);
   }
   async availability(_env) { return { ok: true }; }
 }
