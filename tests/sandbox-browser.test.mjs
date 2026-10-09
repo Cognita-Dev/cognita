@@ -106,4 +106,24 @@ await test('page and link messages are offered the sandbox', async () => {
   for (const t of ['build me a landing page for my school', 'make a simple html page with a contact form', 'what is on https://example.com/about', 'check my website layout on a phone'])
     ok(intent.shouldOfferSandbox({ text: t }).offer, t);
 });
+
+console.log('\nDaily browser-test allowance and screenshot fields');
+await test('browser tests: 100 Starter, 500 Plus, unlimited Studio and Admin', async () => {
+  eq(ent.getPlan('free').limits.browserTestPerDay, 100);
+  eq(ent.getPlan('plus').limits.browserTestPerDay, 500);
+  eq(ent.getPlan('studio').limits.browserTestPerDay, ent.UNLIMITED);
+  eq(ent.getPlan('admin').limits.browserTestPerDay, ent.UNLIMITED);
+});
+await test('the screenshot is never forwarded to the model or kept by the Worker', async () => {
+  const n = tools.normalizeResult({ exitCode: 0, stdout: 'ok', screenshot: { dataUrl: 'data:image/jpeg;base64,AAAA' }, previewHtml: '<p>x</p>' });
+  ok(!('screenshot' in n)); ok(!('previewHtml' in n));
+  ok(!tools.resultForModel(n).includes('base64'));
+});
+await test('browser test accepts the new options', async () => {
+  const names = (await load('connector-tools.js')).getSandboxToolSchemas(new Set(prov.PROVIDERS.browser.capabilities));
+  const t = names.find((x) => (x.function || x).name === 'sandbox_browser_test');
+  const props = (t.function || t).parameters.properties;
+  ok(props.full_page && props.screenshot);
+});
+
 summary();
