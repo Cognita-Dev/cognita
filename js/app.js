@@ -1934,11 +1934,18 @@ async function continueAfterSandbox(payload, paused, turn) {
       // the server only needs the tool name for its log and the trace.
       call: { id: call.id, name: call.name, args: shortenArgs(call.args) },
       assistantText: call.assistantText || '',
-      result,
+      // The screenshot and the page copy are only for the person's screen; the server never needs them.
+      result: withoutPreviewFields(result),
       cancelled: !!outcome.cancelled,
       trace: Array.isArray(paused.turnTrace) ? paused.turnTrace : [],
     },
   }, turn);
+}
+
+function withoutPreviewFields(r) {
+  const out = Object.assign({}, r);
+  delete out.screenshot; delete out.previewHtml; delete out.previewSize;
+  return out;
 }
 
 function shortenArgs(args) {
@@ -1964,6 +1971,11 @@ function trimSandboxResultForStorage(r) {
     files: (Array.isArray(r.files) ? r.files : []).slice(0, 20),
     images: imageFilesOf(r.files),
     offered: (Array.isArray(r.offered) ? r.offered : []).slice(0, 10),
+    // Kept so the picture and live preview survive a reload; dropped when too big for storage.
+    screenshot: r.screenshot && typeof r.screenshot.dataUrl === 'string' && r.screenshot.dataUrl.length <= 150000 &&
+      /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(r.screenshot.dataUrl) ? { dataUrl: r.screenshot.dataUrl, width: r.screenshot.width, height: r.screenshot.height } : undefined,
+    previewHtml: typeof r.previewHtml === 'string' && r.previewHtml.length <= 60000 ? r.previewHtml : undefined,
+    previewSize: r.previewSize && Number.isFinite(r.previewSize.height) ? { width: r.previewSize.width, height: r.previewSize.height } : undefined,
   };
 }
 
@@ -2908,6 +2920,67 @@ function renderStepItemHtml(step, msgIndex) {
   });
 }
 
+/* Screenshot and live preview of a page the browser test (or an offered .html file) ran.
+ * The screenshot is a small picture. "Live preview" swaps it for the real page, running
+ * inside /preview-frame: an isolated frame with no network (see vercel.json). */
+const sandboxPreviewStore = new Map();
+let sandboxPreviewSeq = 0;
+function sandboxPreviewHtml(sb) {
+  const shot = sb && sb.screenshot && typeof sb.screenshot.dataUrl === 'string' &&
+    /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(sb.screenshot.dataUrl) ? sb.screenshot : null;
+  const html = sb && typeof sb.previewHtml === 'string' && sb.previewHtml ? sb.previewHtml : '';
+  if (!shot && !html) return '';
+  let id = '';
+  if (html) {
+    id = 'pv' + (++sandboxPreviewSeq);
+    sandboxPreviewStore.set(id, { html, height: sb.previewSize && sb.previewSize.height });
+    if (sandboxPreviewStore.size > 40) sandboxPreviewStore.delete(sandboxPreviewStore.keys().next().value);
+  }
+  return '<div class="sbx-preview"' + (id ? ' data-preview-id="' + id + '"' : '') + '>' +
+    '<div class="sbx-preview-stage">' +
+      (shot ? '<img class="sbx-shot" alt="Screenshot of the page" src="' + shot.dataUrl + '">' : '<div class="sbx-muted">No screenshot is available for this page.</div>') +
+    '</div>' +
+    (html ? '<div class="sbx-actions"><button type="button" class="sbx-preview-toggle" aria-expanded="false"><i class="ph ph-play" aria-hidden="true"></i> Live preview</button></div>' : '') +
+  '</div>';
+}
+
+function toggleSandboxPreview(btn) {
+  const wrap = btn.closest('.sbx-preview');
+  const entry = wrap && sandboxPreviewStore.get(wrap.dataset.previewId);
+  if (!wrap || !entry) return;
+  const stage = wrap.querySelector('.sbx-preview-stage');
+  const open = btn.getAttribute('aria-expanded') === 'true';
+  if (open) {
+    const old = stage.querySelector('iframe');
+    if (old) old.remove();
+    stage.classList.remove('is-live');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.innerHTML = '<i class="ph ph-play" aria-hidden="true"></i> Live preview';
+    return;
+  }
+  const fr = document.createElement('iframe');
+  fr.className = 'sbx-live';
+  fr.setAttribute('sandbox', 'allow-scripts');
+  fr.setAttribute('title', 'Live preview of the page');
+  fr.setAttribute('referrerpolicy', 'no-referrer');
+  fr.style.height = Math.min(Math.max(parseInt(entry.height, 10) || 480, 240), 600) + 'px';
+  const onMsg = (ev) => {
+    if (ev.source !== fr.contentWindow || !ev.data || ev.data.t !== 'preview-ready') return;
+    window.removeEventListener('message', onMsg);
+    try { fr.contentWindow.postMessage({ t: 'html', html: entry.html }, '*'); } catch (_) {}
+  };
+  window.addEventListener('message', onMsg);
+  fr.src = '/preview-frame';
+  stage.appendChild(fr);
+  stage.classList.add('is-live');
+  btn.setAttribute('aria-expanded', 'true');
+  btn.innerHTML = '<i class="ph ph-stop" aria-hidden="true"></i> Show screenshot';
+}
+document.addEventListener('click', (e) => {
+  const b = e.target && e.target.closest && e.target.closest('.sbx-preview-toggle');
+  if (b) toggleSandboxPreview(b);
+});
+
 function renderSandboxStepHtml(step, msgIndex) {
   const sb = step.sandbox || {};
   const ok = step.ok !== false && !step.cancelled;
@@ -2939,6 +3012,7 @@ function renderSandboxStepHtml(step, msgIndex) {
   // Pictures are shown under the answer (renderFigureGridHtml), not repeated here.
   const detail =
     '<div class="sbx-body">' +
+    sandboxPreviewHtml(sb) +
       (sb.command ? '<div class="sbx-cmd"><span class="sbx-prompt">$</span> ' + escapeHtml(sb.command) + '</div>' : '') +
       '<pre class="sbx-out">' + out + '</pre>' +
       (sb.truncated ? '<div class="sbx-note">Output was cut to keep things fast.</div>' : '') +
