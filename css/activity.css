@@ -96,6 +96,11 @@
 .act-caret, .act-chev { font-size: 12px; transition: transform var(--duration-fast) var(--ease); }
 .act.is-open > .act-head .act-caret { transform: rotate(180deg); }
 .act.has-fail > .act-head .act-label { color: var(--danger); }
+.act.is-live > .act-head .act-label::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: var(--radius-full);
+  background: var(--accent); vertical-align: 1px; animation: act-pulse 1.4s ease-in-out infinite;
+}
+@keyframes act-pulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
 
 /* open/close without measuring heights */
 .act-body {
@@ -110,26 +115,40 @@
   position: relative; display: flex; gap: 12px; padding-bottom: var(--space-3);
 }
 .act-item::before { /* the rail */
-  content: ""; position: absolute; left: 9px; top: 20px; bottom: 0; width: 1px;
+  content: ""; position: absolute; left: 11px; top: 26px; bottom: 0; width: 1px;
   background: var(--border-strong);
 }
 .act-item:last-child { padding-bottom: 2px; }
 .act-item:last-child::before { display: none; }
 .act-node {
-  position: relative; z-index: 1; flex-shrink: 0; width: 19px; height: 19px; margin-top: 2px;
+  position: relative; z-index: 1; flex-shrink: 0; width: 22px; height: 22px; margin-top: 1px;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-full); border: 1px solid var(--border-strong);
-  background: var(--bg-base); color: var(--text-2); font-size: 11px;
+  border-radius: var(--radius-full); border: 1px solid var(--border);
+  background: var(--bg-subtle); color: var(--text-2); font-size: 12px;
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.act-item[data-state="done"] .act-node { color: var(--success); border-color: var(--success); }
+.act-item[data-state="done"] .act-node { color: var(--text-1); }
 .act-item[data-state="fail"] .act-node { color: var(--danger); border-color: var(--danger); background: var(--danger-subtle); }
-.act-item[data-state="wait"] .act-node { color: var(--warning); border-color: var(--warning); }
-.act-item[data-state="running"] .act-node::before {
-  content: ""; width: 9px; height: 9px; border-radius: var(--radius-full);
-  border: 1.5px solid var(--text-2); border-top-color: transparent;
-  animation: act-spin 0.8s linear infinite;
+.act-item[data-state="wait"] .act-node { color: var(--warning); border-color: var(--warning); background: var(--warning-subtle); }
+.act-item[data-state="stopped"] .act-node { color: var(--text-2); border-style: dashed; }
+.act-item[data-state="running"] .act-node { color: var(--text-1); border-color: transparent; }
+.act-item[data-state="running"] .act-node::after { /* spinning arc around the icon */
+  content: ""; position: absolute; inset: -1px; border-radius: var(--radius-full);
+  border: 1.5px solid var(--border-strong); border-top-color: var(--accent);
+  animation: act-spin 0.9s linear infinite;
 }
 @keyframes act-spin { to { transform: rotate(360deg); } }
+/* the title of a step that is still running breathes */
+.act-item[data-state="running"] .act-title {
+  background: linear-gradient(90deg, var(--text-2) 0%, var(--text-1) 45%, var(--text-2) 90%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: act-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes act-shimmer { 0% { background-position: 110% 0; } 100% { background-position: -110% 0; } }
+/* a row sliding in while a turn is live */
+.act-item--enter { animation: act-in 220ms var(--ease) both; }
+@keyframes act-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .act-main { min-width: 0; flex: 1; }
 .act-row { display: flex; align-items: flex-start; gap: var(--space-2); }
@@ -144,6 +163,8 @@ button.act-toggle { min-height: 44px; margin: -10px 0; padding: 10px 0; }
 .act-title { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 .act-sub { font-size: 12px; color: var(--text-2); }
 .act-sub:empty { display: none; }
+.act-note { font-size: 12px; line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
+.act-item[data-state="fail"] .act-title { color: var(--text-1); }
 .act-ms { flex-shrink: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; padding-top: 2px; }
 .act-ms:empty { display: none; }
 .act-chev { margin-top: 5px; color: var(--text-2); }
@@ -161,7 +182,7 @@ button.act-toggle { min-height: 44px; margin: -10px 0; padding: 10px 0; }
 .sbx-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
 .sbx-prompt { color: var(--accent); margin-right: 4px; user-select: none; }
 .sbx-out {
-  margin: 0; max-height: 280px; overflow: auto; padding: 10px 12px;
+  margin: 0; max-height: 280px; overflow: auto; padding: 10px 12px; tab-size: 4;
   background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-sm);
   font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text-1);
   white-space: pre-wrap; overflow-wrap: anywhere;
@@ -237,7 +258,9 @@ button.act-toggle { min-height: 44px; margin: -10px 0; padding: 10px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .act-body, .act-caret, .act-chev, .appr { transition: none; }
-  .act-item[data-state="running"] .act-node::before { animation: none; border-top-color: var(--text-2); }
+  .act-item[data-state="running"] .act-node::after { animation: none; }
+  .act-item[data-state="running"] .act-title { animation: none; background: none; -webkit-text-fill-color: currentColor; color: var(--text-1); }
+  .act-item--enter, .act.is-live > .act-head .act-label::before { animation: none; }
 }
 
 /* ── Pictures and designs the assistant made (see renderMediaHtml in js/app.js) ── */
