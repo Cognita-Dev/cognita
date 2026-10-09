@@ -673,6 +673,12 @@ export async function handleChatRequest(request, env) {
   //   event: step   — one entry of the `steps` trace just completed
   //                    (data: the step object itself, same shape as
   //                    before: { type, name, provider, ok, summary })
+  //   event: step_start — a tool call has been accepted and is now running
+  //                    (data: { name, provider, providerLabel, kind, summary });
+  //                    always followed by one `step` for the same call
+  //   event: sandbox_call — the turn pauses so the browser can run code
+  //   event: media / ui / text / text_reset — pictures, components and
+  //                    streamed answer text
   //   event: error  — something failed after the stream opened, so it
   //                    could not come back as a normal HTTP error status
   //                    (data: { message, status })
@@ -685,6 +691,15 @@ export async function handleChatRequest(request, env) {
   const abortCtl = new AbortController();
   function _sseError(message, status) {
     return Object.assign(new Error(message), { __sseError: true, status });
+  }
+
+  // A short, safe line for a failed step. It is built from the error code only:
+  // the executor's own message is written for the model and must never be shown.
+  function _failReason(outcome) {
+    const code = outcome && outcome.code;
+    if (code === 'NOT_CONNECTED') return 'Not connected. Connect it in Account Settings.';
+    if (code === 'NEEDS_RECONNECT') return 'The connection expired. Reconnect it in Account Settings.';
+    return 'This could not be completed.';
   }
 
   async function _agent(emit) {
@@ -825,6 +840,7 @@ export async function handleChatRequest(request, env) {
               ...confirmedMeta,
               ms: Date.now() - confirmedT0,
               ok: !execOutcome.error,
+              ...(execOutcome.error ? { reason: _failReason(execOutcome) } : {}),
               summary: describeTool(confirmToolCall.name, confirmToolCall.args),
             });
             emit('step', steps[steps.length - 1]);
@@ -921,7 +937,7 @@ export async function handleChatRequest(request, env) {
             dOutcome = { ok: false, modelResult: 'Error: this could not be made right now. Tell the user plainly and suggest trying again shortly.' };
           }
           mediaCallsThisTurn++;
-          steps.push({ type: 'executed', name: 'create_design', provider: 'media', ...dMeta, ms: Date.now() - dT0, ok: !!dOutcome.ok, summary: dSummary });
+          steps.push({ type: 'executed', name: 'create_design', provider: 'media', ...dMeta, ms: Date.now() - dT0, ok: !!dOutcome.ok, ...(dOutcome.ok ? {} : { reason: 'This could not be made right now.' }), summary: dSummary });
           emit('step', steps[steps.length - 1]);
           if (dOutcome.ok && dOutcome.media) emit('media', dOutcome.media);
           console.log('[chat][media] tool=create_design (resumed after details) ok=' + !!dOutcome.ok);
@@ -1080,7 +1096,7 @@ export async function handleChatRequest(request, env) {
                 console.error('[chat][media] execute threw:', e && e.message);
                 mediaOutcome = { ok: false, modelResult: 'Error: this could not be made right now. Tell the user plainly and suggest trying again shortly.' };
               }
-              steps.push({ type: 'executed', name: call.name, provider: 'media', ...mediaMeta, ms: Date.now() - mediaT0, ok: !!mediaOutcome.ok, summary: mediaSummary });
+              steps.push({ type: 'executed', name: call.name, provider: 'media', ...mediaMeta, ms: Date.now() - mediaT0, ok: !!mediaOutcome.ok, ...(mediaOutcome.ok ? {} : { reason: 'This could not be made right now.' }), summary: mediaSummary });
               emit('step', steps[steps.length - 1]);
               if (mediaOutcome.ok && mediaOutcome.media) emit('media', mediaOutcome.media);
               console.log('[chat][media] tool=' + call.name + ' ok=' + !!mediaOutcome.ok);
@@ -1188,9 +1204,9 @@ export async function handleChatRequest(request, env) {
               // Plan, setup and allowance are checked here again, so a tampered or
               // hallucinated call can never reach Cloudflare without them.
               if (sbName === 'sandbox_browser_fetch' || (sbName === 'sandbox_browser_test' && sandboxProvider.site !== 'client')) {
-                emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', summary: describeTool(call.name, call.args) });
                 let cb;
                 if (sbName === 'sandbox_browser_test') {
+                  emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', summary: describeTool(call.name, call.args) });
                   cb = { ok: false, exitCode: 1, stdout: '', stderr: 'The local browser test is not available in this kind of workspace. Use sandbox_browser_fetch with html instead if you have it.', error: true };
                 } else {
                   const sbCharge2 = await checkAndIncrement(identity.uid, 'sandboxRuns', plan.limits.sandboxRunsPerDay, env);
@@ -1198,6 +1214,7 @@ export async function handleChatRequest(request, env) {
                     quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + sbCharge2.limit + ' runs per day). It resets at midnight UTC.';
                     break;
                   }
+                  emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', summary: describeTool(call.name, call.args) });
                   cb = await _cloudBrowser(sbArgs, { uid: identity.uid, planId: account.planId, plan, env });
                 }
                 const cbResult = sandboxTools.normalizeResult({
@@ -1340,6 +1357,7 @@ export async function handleChatRequest(request, env) {
               ...autoMeta,
               ms: Date.now() - autoT0,
               ok: !execOutcome.error,
+              ...(execOutcome.error ? { reason: _failReason(execOutcome) } : {}),
               summary: describeTool(call.name, call.args),
             });
             emit('step', steps[steps.length - 1]);
