@@ -20,7 +20,7 @@ const DB_NAME = 'cognita-sandbox';
 const STORE = 'workspaces';
 const KEEP_WORKSPACES = 5;                       // most recently used
 const KEEP_DAYS = 14;
-const HARD_EXTRA_MS = 15000;                     // grace over the call timeout before the frame is replaced
+const HARD_EXTRA_MS = 120000;                    // Python can take over a minute to download on a slow phone connection; activity also re-arms the watchdog                     // grace over the call timeout before the frame is replaced
 
 let _db = null;
 function _openDb() {
@@ -120,7 +120,7 @@ export class SandboxClient {
     this.frame = iframe;
     this.currentWorkspace = null;
     this.ready = new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('The sandbox did not start.')), 15000);
+      const t = setTimeout(() => reject(new Error('The sandbox did not start.')), 30000);
       this._readyResolve = () => { clearTimeout(t); resolve(); };
     });
     iframe.src = FRAME_URL;
@@ -200,13 +200,19 @@ export class SandboxClient {
         resolve(payload);
       };
       // If the frame itself stops answering (not just the code inside it), replace it.
-      const hardTimer = setTimeout(() => {
-        this._destroyFrame();
+      let hardTimer = null;
+      const armWatchdog = () => {
+        clearTimeout(hardTimer);
+        hardTimer = setTimeout(() => {
+        this._destroyFrame('The sandbox stopped responding and was reset.');
         finish({ result: { ..._failure(call, 'The sandbox stopped responding and was reset. Files from before this run are kept.'), exitCode: 124, durationMs: Math.round(performance.now() - started) }, cancelled: false });
-      }, timeoutMs + HARD_EXTRA_MS);
+        }, timeoutMs + HARD_EXTRA_MS);
+      };
+      armWatchdog();
 
       this.pending.set(call.id, {
-        onOutput: handlers.onOutput, onStatus: handlers.onStatus,
+        onOutput: (a, b) => { armWatchdog(); if (handlers.onOutput) handlers.onOutput(a, b); },
+        onStatus: (a) => { armWatchdog(); if (handlers.onStatus) handlers.onStatus(a); },
         resolve: async (m) => {
           if (m.snapshot) await _saveWorkspace(conversationId, m.snapshot);
           finish({ result: m.result, cancelled: !!(m.result && m.result.cancelled) });

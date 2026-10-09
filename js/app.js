@@ -2118,9 +2118,9 @@ function createLiveTurnIndicator() {
     if (wordEl && !thinkingOver) {
       wordEl.textContent = st === 'offline' ? 'You are offline' : st === 'stalled' ? 'Waiting for connection' : THINKING_WORDS[wordIdx];
     }
-    if (timerEl && !thinkingOver) timerEl.textContent = (thoughtMs / 1000).toFixed(1) + 's';
+    if (timerEl && !thinkingOver) timerEl.textContent = formatClock(thoughtMs);
     if (actTimeEl && workStartedAt !== null) {
-      actTimeEl.textContent = ((performance.now() - workStartedAt) / 1000).toFixed(1) + 's';
+      actTimeEl.textContent = formatClock(performance.now() - workStartedAt);
     }
   }, 100);
   activeThinkingTimers[id] = { wordInterval, timerInterval };
@@ -2207,7 +2207,7 @@ function createLiveTurnIndicator() {
     const outEl = item.querySelector('.sbx-out');
     const titleEl = item.querySelector('.act-title');
     const t0 = performance.now();
-    const tick = setInterval(() => { timeEl.textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    const tick = setInterval(() => { timeEl.textContent = formatClock(performance.now() - t0); }, 100);
     item.querySelector('.sbx-stop').addEventListener('click', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       ev.currentTarget.disabled = true;
@@ -2826,12 +2826,16 @@ const PROVIDER_GLYPHS = {
   figma: 'ph-figma-logo', canva: 'ph-paint-brush', google: 'ph-google-logo',
 };
 
+// Whole seconds under a minute ("56s"), then minutes and seconds ("2m 56s").
+function formatClock(ms) {
+  const total = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
+  if (total < 60) return total + 's';
+  return Math.floor(total / 60) + 'm ' + String(total % 60).padStart(2, '0') + 's';
+}
+
 function formatDuration(ms) {
   if (!Number.isFinite(ms) || ms < 100) return '';
-  const s = ms / 1000;
-  if (s < 60) return s.toFixed(1) + 's';
-  const m = Math.floor(s / 60);
-  return m + 'm ' + String(Math.round(s - m * 60)).padStart(2, '0') + 's';
+  return formatClock(ms);
 }
 
 function actItemHtml(o) {
@@ -4325,7 +4329,7 @@ function appendThinkingIndicator() {
     if (online) counted += now - lastTick;               // offline time is not thinking time
     lastTick = now;
     if (wordEl) wordEl.textContent = online ? THINKING_WORDS[wordIdx] : 'You are offline';
-    if (timerEl) timerEl.textContent = (counted / 1000).toFixed(1) + 's';
+    if (timerEl) timerEl.textContent = formatClock(counted);
   }, 100);
 
   activeThinkingTimers[id] = { wordInterval, timerInterval };
