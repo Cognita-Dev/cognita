@@ -185,6 +185,22 @@ function _mergeApproval(approvals, provider, scope, actionClass) {
 // `event: text_reset` tells the browser to drop what it showed for a model turn
 // that turned out not to be the final answer (tool call, grounding retry).
 // `done` still carries the full, final, validated result and replaces the preview.
+// Ids of the components shown earlier in this chat. The browser lists them inside each earlier assistant
+// message ("[Components already shown on screen ...]", see historyContent in js/app.js).
+function _earlierUiIds(history) {
+  const ids = new Set();
+  (Array.isArray(history) ? history : []).forEach((m) => {
+    if (!m || m.role !== 'assistant' || typeof m.content !== 'string') return;
+    const at = m.content.indexOf('[Components already shown on screen');
+    if (at === -1) return;
+    const re = /"id"\s*:\s*"([^"]{1,64})"/g;
+    let hit;
+    const seg = m.content.slice(at);
+    while ((hit = re.exec(seg))) ids.add(hit[1]);
+  });
+  return ids;
+}
+
 const _FENCE = '```cognita-ui';
 function _makeTurnStreamer(emit) {
   let raw = '';
@@ -1306,7 +1322,18 @@ export async function handleChatRequest(request, env) {
     ui = extracted.ui;
     uiPatches = extracted.patches || [];
     reply = extracted.text;
-    if ((ui.length || uiPatches.length) && !reply.trim()) reply = (ui[0] && ui[0].props && ui[0].props.title) || 'Done.';
+    // A short reply that sends a component the person already has (same id) is an edit, not a new
+    // answer: update the earlier component in place instead of drawing a second copy.
+    const earlierIds = _earlierUiIds(trimmedHistory);
+    if (ui.length && earlierIds.size && reply.trim().length < 400) {
+      const fresh = [];
+      ui.forEach((b) => {
+        if (b && b.id && earlierIds.has(b.id) && uiPatches.length < 8) uiPatches.push({ op: 'replace', target: b.id, node: b });
+        else fresh.push(b);
+      });
+      ui = fresh;
+    }
+    if ((ui.length || uiPatches.length) && !reply.trim()) reply = ui.length ? ((ui[0] && ui[0].props && ui[0].props.title) || 'Done.') : 'Updated.';
   } else {
     reply = extractUiBlocks(reply).text;
   }

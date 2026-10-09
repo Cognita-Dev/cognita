@@ -672,6 +672,163 @@ function sortOut(value, blocks, patches) {
   });
 }
 
+
+// ── Components a model wrote in its own tool-call syntax ──────────────
+// Some models ignore the cognita-ui fence and write their components as text in the tool-call
+// format they were trained on, for example
+//   <|tool_call_start|>[codegen(component_id='plan', type='steps', props={'items': [...]})]<|tool_call_end|>
+// or <tool_call>{"name": "...", "arguments": {...}}</tool_call>. Shown as-is that is a wall of
+// code. This reads those calls (Python-style literals included), turns them into the same
+// components and patches a cognita-ui block would hold, and removes the markup from the text.
+function pyParse(src) {
+  let i = 0;
+  const TRUNC = new Error('truncated');
+  const ws = () => { while (i < src.length && /\s/.test(src[i])) i++; };
+  const need = () => { if (i >= src.length) throw TRUNC; };
+  function str() {
+    const q = src[i++]; let out = '';
+    for (;;) {
+      need();
+      const c = src[i++];
+      if (c === q) return out;
+      if (c === '\\') {
+        need();
+        const e = src[i++];
+        if (e === 'n') out += '\n'; else if (e === 't') out += '\t'; else if (e === 'r') out += '\r';
+        else if (e === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i, i + 4))) { out += String.fromCharCode(parseInt(src.slice(i, i + 4), 16)); i += 4; }
+        else out += e;
+      } else out += c;
+    }
+  }
+  function seq(close) {
+    i++; const out = [];
+    for (;;) {
+      ws(); need();
+      if (src[i] === close) { i++; return out; }
+      out.push(value()); ws();
+      if (src[i] === ',') i++;
+    }
+  }
+  function dict() {
+    i++; const out = {};
+    for (;;) {
+      ws(); need();
+      if (src[i] === '}') { i++; return out; }
+      const k = value(); ws(); need();
+      if (src[i] !== ':') throw new Error('colon');
+      i++;
+      out[String(k)] = value(); ws();
+      if (src[i] === ',') i++;
+    }
+  }
+  function call(name) {
+    i++; const args = [], kwargs = {};
+    for (;;) {
+      ws(); need();
+      if (src[i] === ')') { i++; return { __call: name, args, kwargs }; }
+      const m = /^([A-Za-z_]\w*)\s*=(?!=)/.exec(src.slice(i, i + 80));
+      if (m) { i += m[0].length; kwargs[m[1]] = value(); } else args.push(value());
+      ws();
+      if (src[i] === ',') i++;
+    }
+  }
+  function value() {
+    ws(); need();
+    const c = src[i];
+    if (c === '{') return dict();
+    if (c === '[') return seq(']');
+    if (c === '(') return seq(')');
+    if (c === '"' || c === "'") return str();
+    const rest = src.slice(i, i + 40);
+    const n = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest);
+    if (n) { i += n[0].length; return Number(n[0]); }
+    const id = /^[A-Za-z_][\w.]*/.exec(rest);
+    if (!id) throw new Error('unexpected ' + c);
+    i += id[0].length; ws();
+    if (src[i] === '(') return call(id[0]);
+    const w = id[0];
+    if (w === 'True' || w === 'true') return true;
+    if (w === 'False' || w === 'false') return false;
+    if (w === 'None' || w === 'null') return null;
+    return w;
+  }
+  const calls = [];
+  try {
+    ws();
+    if (src[i] === '[') i++;
+    for (;;) {
+      ws();
+      if (i >= src.length || src[i] === ']') break;
+      const v = value();
+      if (v && v.__call) calls.push(v);
+      else if (v && typeof v === 'object' && !Array.isArray(v)) calls.push({ __call: 'json', args: [v], kwargs: {} });
+      ws();
+      if (src[i] === ',' || src[i] === ';') i++;
+    }
+  } catch (_e) { /* keep the calls that were complete */ }
+  return calls;
+}
+
+function callToItem(c) {
+  if (!c) return null;
+  const name = String(c.__call || c.name || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  let a = c.kwargs && Object.keys(c.kwargs).length ? c.kwargs : (c.args && c.args[0] && typeof c.args[0] === 'object' && !Array.isArray(c.args[0]) ? c.args[0] : {});
+  if (a.arguments && typeof a.arguments === 'object') a = a.arguments;
+  if (a.parameters && typeof a.parameters === 'object' && !a.type && !a.op) a = a.parameters;
+  if (name === 'patch' || UI_PATCH_OPS.includes(name)) {
+    const op = name === 'patch' ? a.op : name;
+    return UI_PATCH_OPS.includes(op) ? { ...a, op, target: a.target || a.component_id || a.id } : null;
+  }
+  if (typeof a.op === 'string' && UI_PATCH_OPS.includes(a.op) && !a.type) return { ...a, target: a.target || a.component_id || a.id };
+  if (name === 'cognita_ui' || name === 'cognitaui' || name === 'ui' || name === 'render_ui' || name === 'show_ui') {
+    if (Array.isArray(a.blocks)) return a.blocks;
+    if (typeof a.type === 'string') return callToItem({ __call: 'component', kwargs: a });
+    return null;
+  }
+  const type = typeof a.type === 'string' ? a.type : (UI_TYPES.includes(name) ? name : null);
+  if (!type) return null;
+  const props = a.props && typeof a.props === 'object' && !Array.isArray(a.props) ? a.props
+    : Object.fromEntries(Object.entries(a).filter(([k]) => !['type', 'id', 'component_id', 'target', 'mode', 'children', 'actions'].includes(k)));
+  const out = { id: a.component_id || a.id || a.target, type, props };
+  if (Array.isArray(a.children)) out.children = a.children;
+  if (Array.isArray(a.actions)) out.actions = a.actions;
+  return out;
+}
+
+const LEAK_PY = /<\|tool_call_start\|>([\s\S]*?)(?:<\|tool_call_end\|>|$)/g;
+const LEAK_XML = /<tool_call>([\s\S]*?)(?:<\/tool_call>|$)/g;
+const LEAK_STRAY = /<\|tool_call_(?:start|end)\|>|<\/?tool_call>/g;
+const LEAK_PREFIXES = ['<|tool_call_start|>', '<tool_call>'];
+
+function liftLeakedCalls(src, partial) {
+  if (!src.includes('<|tool_call') && !src.includes('<tool_call>') && !/<\|?t?o?o?l?_?c?a?l?l?_?s?t?a?r?t?\|?>?$|<t?o?o?l?_?c?a?l?l?>?$/.test(src.slice(-20))) return src;
+  const toFence = (items) => {
+    const list = [];
+    items.forEach((it) => { if (Array.isArray(it)) list.push(...it); else if (it) list.push(it); });
+    return list.length ? '\n\n```cognita-ui\n' + JSON.stringify(list) + '\n```\n\n' : '';
+  };
+  let out = src.replace(LEAK_PY, (_m, body) => toFence(pyParse(body).map(callToItem)));
+  out = out.replace(LEAK_XML, (_m, body) => {
+    const t = body.trim();
+    let items = [];
+    try {
+      const j = JSON.parse(t);
+      items = (Array.isArray(j) ? j : [j]).map((x) => callToItem({ name: x && x.name, kwargs: x && (x.arguments || x.parameters) || {} }));
+    } catch (_e) { items = pyParse(t).map(callToItem); }
+    return toFence(items);
+  });
+  out = out.replace(LEAK_STRAY, '');
+  if (partial) {
+    // A marker still being typed at the very end must not flash up as text.
+    for (const tok of LEAK_PREFIXES) {
+      for (let k = Math.min(tok.length - 1, out.length); k > 0; k--) {
+        if (tok.startsWith(out.slice(out.length - k))) { out = out.slice(0, out.length - k); break; }
+      }
+    }
+  }
+  return out;
+}
+
 const FENCE = /```[ \t]*cognita-ui[ \t]*\r?\n([\s\S]*?)(```|$)/g;
 
 /**
@@ -680,7 +837,8 @@ const FENCE = /```[ \t]*cognita-ui[ \t]*\r?\n([\s\S]*?)(```|$)/g;
  * fence that has not been closed yet (used while a reply is still arriving).
  */
 export function parseUiReply(reply, opts) {
-  const src = typeof reply === 'string' ? reply : '';
+  let src = typeof reply === 'string' ? reply : '';
+  src = liftLeakedCalls(src, !!(opts && opts.partial));
   if (!src.includes('cognita-ui')) return { text: src, ui: [], patches: [] };
   const rawBlocks = [], rawPatches = [];
   const rest = src.replace(FENCE, (_, body, close) => {
