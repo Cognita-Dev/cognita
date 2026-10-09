@@ -146,7 +146,7 @@ function normChart(type, p) {
 
 function normGroup(type, p, k) {
   const key = type === 'tabs' ? 'tabs' : 'sections';
-  const items = arr(p[key], 12).map((t) => {
+  const items = arr(Array.isArray(p[key]) ? p[key] : p.items, 12).map((t) => {   // `items` = already validated (the browser validates again)
     if (!t || typeof t !== 'object') return null;
     const label = str(type === 'tabs' ? t.label : (t.title || t.label));
     if (!label) return null;
@@ -527,7 +527,7 @@ export function validatePatch(raw) {
   if (op === 'append') {
     const data = {};
     ALL_APPEND_KEYS.forEach((key) => {
-      const v = Array.isArray(raw[key]) ? raw[key] : (raw.props && Array.isArray(raw.props[key]) ? raw.props[key] : null);
+      const v = Array.isArray(raw[key]) ? raw[key] : (raw.props && Array.isArray(raw.props[key]) ? raw.props[key] : (raw.data && Array.isArray(raw.data[key]) ? raw.data[key] : null));  // `data` = an already validated patch (the browser validates again)
       if (v) data[key] = plain(v, 4, L.text);
     });
     if (!Object.keys(data).length || sizeOf(data) > L.patchData) return null;
