@@ -2268,7 +2268,7 @@ function createLiveTurnIndicator() {
     }));
     const timeEl = item.querySelector('.act-ms');
     const outEl = item.querySelector('.sbx-out');
-    const titleEl = item.querySelector('.act-title');
+    const baseSub = /browser/i.test(String(call.name || '')) ? 'Browser' : 'Code';
     const t0 = performance.now();
     const tick = setInterval(() => { timeEl.textContent = formatClock(performance.now() - t0); }, 100);
     item.querySelector('.sbx-stop').addEventListener('click', (ev) => {
@@ -2296,7 +2296,12 @@ function createLiveTurnIndicator() {
         if (stick) outEl.scrollTop = outEl.scrollHeight;
         scrollToBottom();
       },
-      onStatus(text) { titleEl.textContent = text; },
+      onStatus(text) {
+        // The download or start-up message goes on the small line under the title, so "Running plot.py" stays readable.
+        const subEl = item.querySelector('.act-sub');
+        if (subEl) subEl.textContent = baseSub + (text ? ' \u00b7 ' + text : '');
+        say(text);
+      },
       finish(step) {
         clearInterval(tick);
         const settled = htmlToElement(renderSandboxStepHtml(step));
