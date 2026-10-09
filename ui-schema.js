@@ -445,13 +445,21 @@ function nodeList(raw, depth, budget, allowed) {
   return arr(raw, L.blocks * 2).map((c) => normNode(c, depth, budget)).filter((c) => c && (!allowed || allowed.includes(c.type)));
 }
 
+const NODE_KEYS = new Set(['id', 'type', 'props', 'children', 'actions', 'state']);
 function normNode(raw, depth, budget) {
   if (!raw || typeof raw !== 'object' || depth > L.depth) return null;
   if (budget.n >= L.nodes) return null;
   const type = typeof raw.type === 'string' ? raw.type : '';
   if (!Object.prototype.hasOwnProperty.call(REGISTRY, type)) return null;
   const def = REGISTRY[type];
-  const p = raw.props && typeof raw.props === 'object' ? raw.props : {};
+  // Models often write a component's props flat ({"type":"table","columns":[...]}) instead of under
+  // "props". Without this the whole component is silently dropped. Every value still goes through the
+  // same normalize() below, so nothing gets past validation that would not have before.
+  let p = raw.props && typeof raw.props === 'object' && !Array.isArray(raw.props) ? raw.props : null;
+  if (!p || !Object.keys(p).length) {
+    p = {};
+    for (const k of Object.keys(raw)) if (!NODE_KEYS.has(k)) p[k] = raw[k];
+  }
   budget.n++;
   const id = claimId(raw.id, type, budget);
   const allowed = Array.isArray(def.children) ? def.children : null;
