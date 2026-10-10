@@ -91,6 +91,8 @@
     return Promise.race([work, watchdog]).finally(function () { done = true; });
   }
 
+  function url0(h, f) { return h.base + f.file; }
+
   async function testHost(h) {
     var ok = true;
     for (var f of [{ file: 'pyodide.js', idle: 15000 }, { file: 'pyodide.asm.js', idle: 30000 }]) {
@@ -103,7 +105,20 @@
       } catch (e) {
         ok = false;
         log('  FAILED: ' + (e && e.name ? e.name + ': ' : '') + (e && e.message || e));
-        card(h.name + ': ' + f.file, false, String(e && e.message || e));
+        var why = String(e && e.message || e);
+        // A quick failure with no HTTP status usually means the browser refused the answer (CORS) or could
+        // not connect at all. A "no-cors" request tells the two apart: it succeeds when the server answered.
+        if (e && e.name === 'TypeError') {
+          try {
+            await fetch(url0(h, f), { mode: 'no-cors', cache: 'no-store' });
+            why = 'the server answered, but the browser refused it (CORS headers wrong, for example a repeated Access-Control-Allow-Origin)';
+            log('  probe: server reachable, answer refused by the browser -> check the Pages _headers file');
+          } catch (e2) {
+            why = 'could not connect to the server at all (DNS, network block or the site is not deployed)';
+            log('  probe: no connection to the server at all');
+          }
+        }
+        card(h.name + ': ' + f.file, false, why);
         break;
       }
     }
