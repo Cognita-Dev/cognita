@@ -16,6 +16,7 @@ import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-prov
 import * as sandboxTools from './sandbox-tools.js';
 import * as mediaTools from './media-tools.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
+import { stripToolLeaks, recoverLeakedCall } from './tool-leak.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Agent loop bounds (see Bug 2 in the audit doc). A user request can
@@ -227,7 +228,7 @@ function _earlierUiIds(history) {
 }
 
 const _FENCE = '```cognita-ui';
-function _makeTurnStreamer(emit) {
+function _makeTurnStreamer(emit, leakNames) {
   let raw = '';
   let sent = '';
   let ui = createUiStream();
@@ -252,7 +253,9 @@ function _makeTurnStreamer(emit) {
         }
       }
     }
-    return v;
+    // A tool call the model wrote as text (see tool-leak.js) is never shown. While the text is
+    // still arriving, anything that may turn into one is held back until it is clear what it is.
+    return stripToolLeaks(v, leakNames, !final);
   }
   function flushText(parsedText, final) {
     const v = visibleOf(parsedText, final);
@@ -703,7 +706,9 @@ export async function handleChatRequest(request, env) {
   }
 
   async function _agent(emit) {
-  const streamer = _makeTurnStreamer(emit);
+  // Every tool name the model could write out as text. Filled with this request's tools below.
+  const leakNames = new Set([...sandboxTools.SANDBOX_TOOL_NAMES, ...mediaTools.MEDIA_TOOL_NAMES]);
+  const streamer = _makeTurnStreamer(emit, leakNames);
   const streamOptions = Object.assign({ maxTokens: 4096 }, cacheOptions, { onText: streamer.onText, signal: abortCtl.signal });
   let result;
   let pendingToolCall = null;
@@ -773,6 +778,8 @@ export async function handleChatRequest(request, env) {
       }
       const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas() : [];
       const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas);
+      const offeredToolNames = new Set(tools.map((t) => t && t.function && t.function.name).filter(Boolean));
+      offeredToolNames.forEach((n) => leakNames.add(n));
       if (tools.length > 0 || sandboxLimitNote) {
         // The tools variant starts with the exact same text as the normal
         // chat prompt and adds the connected-app / sandbox rules after it,
@@ -959,6 +966,18 @@ export async function handleChatRequest(request, env) {
               if (result && result.toolCalls && result.toolCalls.length) {
                 const uiBlocks = _uiBlockFromPseudoCall(result.toolCalls[0], (n) => !!providerForTool(n) || mediaTools.isMediaTool(n));
                 if (uiBlocks) result = { ...result, toolCalls: null, text: (result.text || '').trimEnd() + '\n\n```cognita-ui\n' + JSON.stringify(uiBlocks) + '\n```' };
+              }
+              // A tool call written out as plain text instead of made as a real call: run it as the
+              // call it was meant to be, and keep the text clean either way.
+              if (result && !(result.toolCalls && result.toolCalls.length) && result.text) {
+                const rec = recoverLeakedCall(result.text, offeredToolNames, leakNames);
+                if (rec.call) {
+                  console.warn('[chat][leak] recovered a tool call written as text: ' + rec.call.name + ' uid=' + identity.uid);
+                  result = { ...result, toolCalls: [rec.call], text: rec.text };
+                } else if (rec.text !== result.text.trim()) {
+                  console.warn('[chat][leak] removed tool-call text from the reply uid=' + identity.uid);
+                  result = { ...result, text: rec.text };
+                }
               }
               // A turn that asks for a tool is internal: drop any preamble it streamed.
               if (result && result.toolCalls && result.toolCalls.length) streamer.reset();
@@ -1414,7 +1433,9 @@ export async function handleChatRequest(request, env) {
   }
 
   // The model's reasoning is never sent to the browser. An inline <think> block is stripped from the answer.
-  let reply = _stripThinking(result.text || '');
+  let reply = stripToolLeaks(_stripThinking(result.text || ''), leakNames, false).trim();
+  // Nothing left but a tool call written as text: the work itself is shown by the steps and files.
+  if (!reply && turnTrace.length && !pendingToolCall && !pendingDesignRequest && !pendingSandboxCall) reply = 'Done.';
 
   // When a write action is pending confirmation, prefer a clear
   // yes/no-shaped prompt over whatever (possibly empty, since some models

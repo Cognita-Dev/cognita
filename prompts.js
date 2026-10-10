@@ -157,7 +157,8 @@ const SANDBOX_RULES =
   'Offer each finished file with sandbox_offer_file. ' +
   'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +
   'Say what you did and found in plain words, name files by file name only, and ' +
-  'do not mention tools, sandboxes or workspaces.';
+  'do not mention tools, sandboxes or workspaces. ' +
+  'Tools are used only by calling them. Never type a tool name or a call such as name(...) or [name](...) in your reply.';
 
 // Only sent when the picture and design tools are offered (media-tools.js).
 const MEDIA_RULES =
