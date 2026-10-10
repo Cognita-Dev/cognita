@@ -21,6 +21,8 @@ Base URL for `loadPyodide({ indexURL })`: `https://pyodide.cognita.com.ng/v0.29.
 
 The sandbox iframe has an opaque origin and sends `Origin: null`, so responses carry `Access-Control-Allow-Origin: *` and `Cross-Origin-Resource-Policy: cross-origin`. Files under `/v0.29.5/` are cached as immutable for one year, so a version bump must use a new path.
 
+Important: Cloudflare Pages joins a header with a comma when two `_headers` rules match the same file, so `Access-Control-Allow-Origin: *` set in two blocks is sent as `*, *`, which browsers reject (Safari shows "Load failed"). Every header in `_headers` must be set by exactly one block. `node tests/pyodide-headers.test.mjs` checks this.
+
 ## Local build
 
 `node scripts/build-pyodide-bundle.mjs` (Node 18 or newer, no npm install needed).

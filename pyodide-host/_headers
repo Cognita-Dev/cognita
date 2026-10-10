@@ -1,22 +1,15 @@
+# Cloudflare Pages joins a header with a comma when MORE THAN ONE rule matches the same file
+# ("Access-Control-Allow-Origin: *" twice becomes "*, *"), and browsers reject that as invalid CORS.
+# So every header below is set by exactly ONE rule. Do not repeat a header in a second block.
+#
+# Block 1 (every file): the cross-origin headers the sandbox iframe needs (it sends "Origin: null").
+# Block 2 (versioned folder): caching only. Content-Type is left to Cloudflare, which already serves
+# .js, .json, .wasm and .zip with the right types.
+
 /*
   Access-Control-Allow-Origin: *
   Cross-Origin-Resource-Policy: cross-origin
   X-Content-Type-Options: nosniff
 
 /v0.29.5/*
-  Access-Control-Allow-Origin: *
-  Cross-Origin-Resource-Policy: cross-origin
-  X-Content-Type-Options: nosniff
   Cache-Control: public, max-age=31536000, immutable
-
-/v0.29.5/*.wasm
-  Content-Type: application/wasm
-
-/v0.29.5/*.json
-  Content-Type: application/json
-
-/v0.29.5/*.js
-  Content-Type: text/javascript
-
-/v0.29.5/*.zip
-  Content-Type: application/zip
