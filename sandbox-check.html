@@ -123,8 +123,16 @@
             // A plain script tag does not need CORS, so it shows whether the file is really there.
             var present = await scriptLoads(url0(h, f));
             if (present) {
-              why = 'the file is there, but the browser refused it because of the server CORS headers (for example a repeated Access-Control-Allow-Origin)';
-              log('  probe: file exists and is JavaScript, so the CORS headers are the problem');
+              // Same file, but at a brand-new address that no cache can have stored yet.
+              var fresh = false;
+              try { var rf = await fetch(url0(h, f) + '?fresh=' + Date.now(), { cache: 'no-store' }); fresh = rf.ok; } catch (e3) { fresh = false; }
+              if (fresh) {
+                why = 'the file works at a fresh address, so Cloudflare is serving an OLD cached copy with the wrong headers. Purge the cache for cognita.com.ng in Cloudflare (Caching, Configuration, Purge Everything)';
+                log('  probe: fresh address works -> old cached copy is being served');
+              } else {
+                why = 'the file is there, but the browser refused it because of the server CORS headers, even at a fresh address (a repeated or wrong Access-Control-Allow-Origin, or a Cloudflare rule on the domain adding one)';
+                log('  probe: fresh address fails too -> the headers themselves are wrong at the source');
+              }
             } else {
               why = 'the server answered but the file is missing or is not JavaScript (a 404 page?). The Cloudflare Pages deployment may be out of date or failed';
               log('  probe: server answered, but the file is NOT there (or is not JavaScript)');
