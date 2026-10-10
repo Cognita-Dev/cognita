@@ -367,8 +367,14 @@ export function resultForModel(normalized, offerHint) {
     : '';
   // Python could not even start on this device (a connection problem, not a mistake in the code). Trying
   // again in this conversation fails the same way and wastes the person's time, so say so plainly.
-  if (!r.ok && /Python did not finish starting|could not reach the Python server|Python stopped downloading|could not download Python/i.test(String(r.stderr || ''))) {
+  if (!r.ok && /Python did not finish starting|could not reach the Python server|Python stopped downloading|could not download Python|Python could not start/i.test(String(r.stderr || ''))) {
     tail += '\nPython is NOT available on this device right now (it could not be downloaded), and retrying will fail the same way. Do not call any Python or test tool again in this conversation. Use sandbox_run_javascript or plain SVG/HTML files instead, or answer without running code, and tell the user briefly that Python was unavailable.';
+  }
+  // JavaScript runs in a bare Web Worker. Code written for Node.js or for a web page fails with a plain
+  // "X is not defined". That is a mistake in the code, not a broken sandbox, so say so: otherwise the model
+  // concludes "the sandbox is unavailable on this device" and gives up on a working tool.
+  if (!r.ok && /(?:ReferenceError|TypeError)[^\n]*\b(?:require|process|module|exports|window|document|Buffer|__dirname|localStorage|XMLHttpRequest)\b[^\n]*(?:not defined|undefined|not a function)|Can't find variable: (?:require|process|module|exports|window|document|Buffer|__dirname|localStorage)\b/i.test(String(r.stderr || ''))) {
+    tail += '\nThis is an error in the code, not a problem with the device. The JavaScript sandbox is a plain Web Worker: there is no require(), import, process, window, document or Buffer. Use console.log for output and workspace.readText / writeText / exists / list for files, or run the work with sandbox_run_python instead. Fix the code and try again.';
   }
   return head + '\n' + JSON.stringify(r) + tail;
 }

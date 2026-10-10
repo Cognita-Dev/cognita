@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Cognita code check</title>
+<!--
+  A one-tap health check for the code sandbox (Python and JavaScript). Open https://app.cognita.com.ng/sandbox-check
+  on the device that has the problem and tap "Run check". It tests, with timings:
+    1. the Python server (pyodide.cognita.com.ng) and the backup (cdn.jsdelivr.net): can this device download the
+       small loader file and the 1 MB core file, and how fast;
+    2. a real Python start inside the same hidden frame the chat uses, printing every step it goes through;
+    3. a real JavaScript run that fails on purpose, to confirm the error message is readable.
+  Nothing here is secret and nothing is sent anywhere except to those two download hosts. Its security policy is
+  set in vercel.json (the "/sandbox-check" rule).
+-->
+<style>
+  :root { color-scheme: light dark; --bg: #fafaf7; --fg: #1d1d1b; --mut: #6b6b66; --card: #fff; --line: #dedbd3; --ok: #1a7f37; --bad: #c62828; --acc: #0f6b5c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141413; --fg: #ecebe6; --mut: #9a998f; --card: #1d1d1b; --line: #33322e; --ok: #4cc26b; --bad: #ff7b72; --acc: #4fc1ad; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 4px 0 6px; }
+  p { margin: 0 0 14px; color: var(--mut); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; }
+  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 20px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+  button:disabled { opacity: .55; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
+  .card b { display: block; margin-bottom: 2px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .mut { color: var(--mut); }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: 10px 0; max-height: 50vh; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cognita code check</h1>
+  <p>Tap the button and wait until it says <b>Finished</b> (up to about 2 minutes on a slow connection). Then tap <b>Copy report</b> and send it to whoever is helping you.</p>
+  <div class="row">
+    <button id="run" class="primary">Run check</button>
+    <button id="copy" disabled>Copy report</button>
+  </div>
+  <div id="summary"></div>
+  <pre id="log" aria-live="polite">Not started yet.</pre>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var HOSTS = [
+    { name: 'Cognita Python server', base: 'https://pyodide.cognita.com.ng/v0.29.5/' },
+    { name: 'Backup (jsDelivr)', base: 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/' }
+  ];
+  var logEl = document.getElementById('log'), sumEl = document.getElementById('summary');
+  var runBtn = document.getElementById('run'), copyBtn = document.getElementById('copy');
+  var lines = [], t0 = 0, results = [];
+
+  function stamp() { return ((Date.now() - t0) / 1000).toFixed(1).padStart(5, ' ') + 's'; }
+  function log(s) { lines.push(stamp() + '  ' + s); logEl.textContent = lines.join('\n'); logEl.scrollTop = logEl.scrollHeight; }
+  function card(title, ok, detail) {
+    var d = document.createElement('div'); d.className = 'card';
+    var b = document.createElement('b'); b.className = ok ? 'ok' : 'bad'; b.textContent = (ok ? 'OK  ' : 'PROBLEM  ') + title;
+    var p = document.createElement('span'); p.className = 'mut'; p.textContent = detail || '';
+    d.appendChild(b); d.appendChild(p); sumEl.appendChild(d);
+    results.push((ok ? 'OK      ' : 'PROBLEM ') + title + (detail ? ' - ' + detail : ''));
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function mb(n) { return (n / 1048576).toFixed(2) + ' MB'; }
+
+  // Downloads one file and gives up when no data has arrived for `idleMs`. The give-up does not depend on
+  // the browser honouring fetch's abort signal: the wait is raced against a timer.
+  function download(url, idleMs) {
+    var started = Date.now(), got = 0, last = Date.now(), ctl = new AbortController(), done = false;
+    var work = (async function () {
+      var res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      last = Date.now();
+      var firstByteMs = Date.now() - started;
+      var reader = res.body && res.body.getReader ? res.body.getReader() : null;
+      if (!reader) { var buf = await res.arrayBuffer(); got = buf.byteLength; return { bytes: got, ms: Date.now() - started, firstByteMs: firstByteMs, encoding: res.headers.get('content-encoding') || 'none' }; }
+      for (;;) { var r = await reader.read(); if (r.done) break; got += r.value.length; last = Date.now(); }
+      return { bytes: got, ms: Date.now() - started, firstByteMs: firstByteMs, encoding: res.headers.get('content-encoding') || 'none' };
+    })();
+    var watchdog = new Promise(function (_, reject) {
+      var iv = setInterval(function () {
+        if (done) { clearInterval(iv); return; }
+        if (Date.now() - last > idleMs) { clearInterval(iv); try { ctl.abort(); } catch (e) {} reject(new Error('no data for ' + Math.round(idleMs / 1000) + ' s (received ' + mb(got) + ')')); }
+      }, 1000);
+    });
+    return Promise.race([work, watchdog]).finally(function () { done = true; });
+  }
+
+  async function testHost(h) {
+    var ok = true;
+    for (var f of [{ file: 'pyodide.js', idle: 15000 }, { file: 'pyodide.asm.js', idle: 30000 }]) {
+      log('Downloading ' + f.file + ' from ' + h.name + ' ...');
+      try {
+        var r = await download(h.base + f.file, f.idle);
+        var kbps = r.ms > 0 ? Math.round(r.bytes / 1024 / (r.ms / 1000)) : 0;
+        log('  done: ' + mb(r.bytes) + ' in ' + (r.ms / 1000).toFixed(1) + ' s (first data after ' + (r.firstByteMs / 1000).toFixed(1) + ' s, about ' + kbps + ' KB/s, compression: ' + r.encoding + ')');
+        if (f.file === 'pyodide.asm.js') card(h.name + ': core file', true, mb(r.bytes) + ' in ' + (r.ms / 1000).toFixed(1) + ' s (' + kbps + ' KB/s)');
+      } catch (e) {
+        ok = false;
+        log('  FAILED: ' + (e && e.name ? e.name + ': ' : '') + (e && e.message || e));
+        card(h.name + ': ' + f.file, false, String(e && e.message || e));
+        break;
+      }
+    }
+    return ok;
+  }
+
+  // Runs one tool call in the real sandbox frame, exactly like the chat does, and reports every status line.
+  function frameRun(name, args, overallMs) {
+    return new Promise(function (resolve) {
+      var frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0;left:-10px;top:-10px';
+      var finished = false, callId = 'chk' + Date.now();
+      function end(v) { if (finished) return; finished = true; clearTimeout(tm); window.removeEventListener('message', on); try { frame.remove(); } catch (e) {} resolve(v); }
+      var tm = setTimeout(function () { end({ timedOut: true }); }, overallMs);
+      function on(ev) {
+        if (ev.source !== frame.contentWindow) return;
+        var m = ev.data; if (!m || typeof m !== 'object') return;
+        if (m.t === 'ready') frame.contentWindow.postMessage({ t: 'load', snapshot: {}, id: 'r1' }, '*');
+        else if (m.t === 'loaded') frame.contentWindow.postMessage({ t: 'call', call: { id: callId, name: name, args: args, limits: { timeoutMs: 20000, maxOutputChars: 4000, maxFileBytes: 1e6, maxWorkspaceBytes: 5e6 } } }, '*');
+        else if (m.t === 'status' && m.id === callId) log('  status: ' + m.text);
+        else if (m.t === 'result' && m.id === callId) end({ result: m.result });
+      }
+      window.addEventListener('message', on);
+      frame.src = '/sandbox-frame';
+      document.body.appendChild(frame);
+    });
+  }
+
+  async function run() {
+    runBtn.disabled = true; copyBtn.disabled = true; sumEl.textContent = ''; lines = []; results = []; t0 = Date.now();
+    log('Cognita code check');
+    log('Time: ' + new Date().toString());
+    log('Browser: ' + navigator.userAgent);
+    var c = navigator.connection;
+    log('Online: ' + navigator.onLine + (c ? ' | connection: ' + (c.effectiveType || '?') + ', ~' + (c.downlink || '?') + ' Mbps, ' + (c.rtt || '?') + ' ms round trip' + (c.saveData ? ', DATA SAVER ON' : '') : ' | connection details not available in this browser'));
+    log('');
+
+    var hostOk = [];
+    for (var h of HOSTS) { hostOk.push(await testHost(h)); log(''); }
+
+    log('Starting Python the way the chat does (this can take a minute the first time) ...');
+    var py = await frameRun('sandbox_run_python', { code: 'print("python works:", 6 * 7)' }, 150000);
+    if (py.timedOut) { log('  no answer after 150 s'); card('Full Python start', false, 'No answer after 150 seconds.'); }
+    else {
+      var r = py.result || {};
+      log('  exit code: ' + r.exitCode + ' | output: ' + String(r.stdout || '').trim().slice(0, 200) + (r.stderr ? ' | problem: ' + String(r.stderr).trim().slice(0, 600) : ''));
+      card('Full Python start', r.exitCode === 0 && /python works: 42/.test(String(r.stdout || '')), r.exitCode === 0 ? 'Python ran: ' + String(r.stdout || '').trim() : String(r.stderr || '').trim().slice(0, 300));
+    }
+    log('');
+
+    log('Running JavaScript that fails on purpose (checks that the error message is readable) ...');
+    var js = await frameRun('sandbox_run_javascript', { code: 'console.log("js works:", 6 * 7);\nnotDefinedOnPurpose();' }, 30000);
+    if (js.timedOut) { log('  no answer after 30 s'); card('JavaScript run', false, 'No answer after 30 seconds.'); }
+    else {
+      var j = js.result || {};
+      log('  output: ' + String(j.stdout || '').trim() + ' | error text: ' + String(j.stderr || '').trim().slice(0, 400));
+      var readable = /ReferenceError/.test(String(j.stderr || '')) && /js works: 42/.test(String(j.stdout || ''));
+      card('JavaScript run and readable errors', readable, readable ? 'The error message is shown in full.' : 'The error message is missing or unreadable.');
+    }
+
+    log('');
+    log('Finished.');
+    var head = 'COGNITA CODE CHECK REPORT\n' + results.join('\n') + '\n\n--- details ---\n';
+    window.__report = head + lines.join('\n');
+    runBtn.disabled = false; copyBtn.disabled = false; runBtn.textContent = 'Run check again';
+  }
+
+  runBtn.addEventListener('click', run);
+  copyBtn.addEventListener('click', async function () {
+    var text = window.__report || lines.join('\n');
+    try { await navigator.clipboard.writeText(text); copyBtn.textContent = 'Copied'; }
+    catch (e) {
+      // Some browsers refuse clipboard access: select the text so it can be copied by hand.
+      var rng = document.createRange(); rng.selectNodeContents(logEl);
+      var sel = getSelection(); sel.removeAllRanges(); sel.addRange(rng);
+      copyBtn.textContent = 'Text selected - tap Copy';
+    }
+    setTimeout(function () { copyBtn.textContent = 'Copy report'; }, 3000);
+  });
+})();
+</script>
+</body>
+</html>

@@ -110,9 +110,13 @@ attach it to the chat, which now goes straight into the workspace.
 - Usage is counted by the Worker only (`sandboxRuns`), never reported by the browser.
 - Everything the browser sends back is treated as untrusted data: re-shaped,
   size-capped, and shown to the model only as a tool result.
-- The frame's CSP allows scripts and connections only to `https://pyodide.cognita.com.ng`,
-  your own host. The public CDN is no longer allowed. Code could still send tiny
-  amounts of data to that one host as URL text, but it is a host you control and can log.
+- The frame's CSP allows scripts and connections only to `https://pyodide.cognita.com.ng`
+  (your own host) and `https://cdn.jsdelivr.net`, which is used only as a backup when your own host
+  cannot be reached (see "Start-up and the backup server"). Code could still send tiny amounts of data
+  to those hosts as URL text; on your own host you can see that in the logs, on jsDelivr you cannot.
+  If you prefer the strict setting, remove `https://cdn.jsdelivr.net` from the `/sandbox-frame` rule in
+  `vercel.json` and the second entry of `PY_BASES` in `sandbox-frame.html`; Python then depends on your
+  own host alone.
 - Known gap: browser limits are enforced inside the same page the person controls. A person who tampers with their own browser can only affect their own sandbox, and the Worker's run counter still applies.
 
 ## Plans (entitlements.js)
@@ -155,12 +159,42 @@ Allowed types: csv, tsv, txt, md, json, xlsx, png, jpg, svg, pdf, html, py, js (
 
 Built by `scripts/build-pyodide-bundle.mjs` (55 MB, 37 files, hash-checked, openpyxl vendored) and served by Cloudflare Pages.
 See `pyodide-host/README.md`. **Until the Pages site is live, Python in the sandbox will not load.**
-Rollback in one line: in `sandbox-frame.html` set `PYODIDE_BASE_URL` back to
-`https://cdn.jsdelivr.net/pyodide/v0.29.5/full/` and in `vercel.json` put `https://cdn.jsdelivr.net` back in the frame's `script-src` and `connect-src`. (openpyxl is then unavailable.)
+Rollback to the public CDN only: in `sandbox-frame.html` put the jsDelivr address first in `PY_BASES`
+(`https://cdn.jsdelivr.net/pyodide/v0.29.5/full/`). (openpyxl is then unavailable.)
+
+### Start-up and the backup server
+
+The page (`sandbox-frame.html`) starts one Python worker per server, in the order of `PY_BASES`: your own
+Cloudflare Pages host first, then jsDelivr. If the first one cannot be reached (connection refused, HTTP
+error, or no data for 30 seconds) the page throws that worker away and starts a fresh one on the backup.
+The server that worked is remembered for the rest of the session. A failure that is not a connection problem
+(for example the browser cannot run WebAssembly) does not switch servers.
+
+While a download is silent the worker reports "waiting for pyodide.asm.js (12 s)" every 2 seconds. A download
+that gets no data for 30 seconds is failed by a watchdog inside the worker, which does not rely on the
+browser honouring `fetch`'s abort signal (some mobile browsers do not deliver it while a response is still
+open). The page's own 45 second watchdog is only a last resort for a frozen worker.
+
+The backup copy has no openpyxl, so `import openpyxl` fails when Python came from the backup.
+
+### Checking a device that has trouble
+
+Open `https://app.cognita.com.ng/sandbox-check` on that device and tap "Run check". It times the download of
+the two core files from both servers, starts Python inside the real sandbox frame, and runs a JavaScript
+snippet that fails on purpose. "Copy report" copies the result. (`sandbox-check.html`, with its own rule in
+`vercel.json`.)
+
+### Cloudflare dashboard notes
+
+- The Pages "Metrics" tab only counts Pages Functions. This project is static files, so "No data" there is
+  normal and does not mean the site is unused or broken. Check "Deployments" (latest production deployment
+  says Success) and "Custom domains" (pyodide.cognita.com.ng says Active) instead.
+- Quick manual test: open `https://pyodide.cognita.com.ng/v0.29.5/pyodide-lock.json` in a browser. Readable
+  JSON means the host is up.
 
 ## Deploying
 
-1. Replace the files in the same paths. New files: `sandbox-tools.js`, `sandbox-intent.js`,
+1. Replace the files in the same paths. New files (latest change): `sandbox-check.html`, `tests/sandbox-fixes.test.mjs`. Earlier new files: `sandbox-tools.js`, `sandbox-intent.js`,
    `confirmation.js`, `sandbox-provider.js`, `sandbox-frame.html`, `css/activity.css`,
    `js/sandbox-client.js`, `js/sandbox-shell.js`, `scripts/`, `pyodide-host/`, `tests/*.test.mjs`.
 1b. In vercel.json the main page's `frame-src` must include `'self'`, otherwise the browser refuses to load the sandbox iframe (already done in the shipped file).
@@ -174,6 +208,7 @@ Rollback in one line: in `sandbox-frame.html` set `PYODIDE_BASE_URL` back to
 
 ## Tests
 
+`node tests/sandbox-fixes.test.mjs` (start-up logic, error wording, security headers) and
 `node tests/sandbox.test.mjs` (gate table of 40 phrases, confirmation card text, tool results) and
 `node tests/sandbox-chat.test.mjs` (the file-save route and usage keys through the real Worker).
 The chat test needs throwaway key files (`tests/key.pem`, `cert.pem`, `sa.pem`, never committed):
