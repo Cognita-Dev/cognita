@@ -546,6 +546,21 @@ async function boot() {
       }
       if (!loaderReady) importScripts(PYODIDE_BASE_URL + 'pyodide.js');
       post({ t: 'status', text: 'Starting Python\u2026 (2/3 core)' });
+      // In a worker Pyodide loads its core file (pyodide.asm.js, about 1 MB) with importScripts. That call
+      // blocks the worker and has no time limit, progress or way to stop it, so on a weak connection Python just
+      // sat on "starting" forever. Pyodide skips that step when _createPyodideModule already exists, so the file
+      // is downloaded here instead, with progress and a time limit.
+      if (nativeFetch && typeof self._createPyodideModule !== 'function') {
+        try {
+          var coreText = await (await self.fetch(PYODIDE_BASE_URL + 'pyodide.asm.js')).text();
+          (0, eval)(coreText + '\n;self._createPyodideModule = _createPyodideModule;');
+        } catch (e1) {
+          // A stalled download is a real answer: stop here and say so. Anything else (for example the
+          // request being refused) falls back to Pyodide's own loading below.
+          if (dl.failure === 'stalled') throw e1;
+          dl.failure = null; dl.detail = '';
+        }
+      }
       py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
     } catch (e) {
       var friendly = downloadProblem(e);

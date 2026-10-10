@@ -362,9 +362,14 @@ export function resultForModel(normalized, offerHint) {
   const r = Object.assign({}, normalized);
   delete r.fallback;
   const head = r.ok ? 'The command succeeded (exit code 0).' : 'The command FAILED (exit code ' + r.exitCode + '). Read stderr, fix the cause and try again.';
-  const tail = offerHint
+  let tail = offerHint
     ? '\nThe user asked for a file. Call sandbox_offer_file for it now so they get a download button, then tell them it is ready by its name only.'
     : '';
+  // Python could not even start on this device (a connection problem, not a mistake in the code). Trying
+  // again in this conversation fails the same way and wastes the person's time, so say so plainly.
+  if (!r.ok && /Python did not finish starting|could not reach the Python server|Python stopped downloading|could not download Python/i.test(String(r.stderr || ''))) {
+    tail += '\nPython is NOT available on this device right now (it could not be downloaded), and retrying will fail the same way. Do not call any Python or test tool again in this conversation. Use sandbox_run_javascript or plain SVG/HTML files instead, or answer without running code, and tell the user briefly that Python was unavailable.';
+  }
   return head + '\n' + JSON.stringify(r) + tail;
 }
 
