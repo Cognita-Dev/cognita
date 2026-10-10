@@ -17,7 +17,7 @@ console.log('\nWhat the model is told when Python cannot start');
 for (const s of [
   'Python did not finish starting: nothing happened for 45 seconds (last step: Starting Python (2/3 core)).',
   'Python stopped downloading: no data arrived for 30 seconds.',
-  'Cognita could not reach the Python server (pyodide.cognita.com.ng or cdn.jsdelivr.net).',
+  'Cognita could not reach the Python server (pyodide.cognita.com.ng).',
   'Cognita could not download Python. The Python server answered with an error (404).',
   'Python could not start: boom\nThis device or browser may not support running Python here.',
 ]) {
@@ -57,11 +57,12 @@ await test('thrown strings and objects are readable', async () => {
 });
 
 console.log('\nStart-up logic in the frame');
-await test('both servers are listed, own host first', async () => {
-  const m = frame.match(/var PY_BASES = \[\s*'([^']+)',\s*'([^']+)'\s*\]/);
+await test('only your own Python host is listed', async () => {
+  const m = frame.match(/var PY_BASES = \[\s*('[^']+'(?:\s*,\s*'[^']+')*)\s*\]/);
   ok(m, 'PY_BASES not found');
-  eq(m[1], 'https://pyodide.cognita.com.ng/v0.29.5/');
-  eq(m[2], 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/');
+  const list = m[1].split(',').map((x) => x.trim().replace(/'/g, ''));
+  eq(list.join(','), 'https://pyodide.cognita.com.ng/v0.29.5/');
+  ok(!/jsdelivr/i.test(frame), 'frame still mentions jsDelivr');
 });
 await test('the download guard exists and is wired into boot()', async () => {
   ok(/function guardDownloads\(inner\)/.test(frame));
@@ -76,11 +77,18 @@ await test('the 45 s page watchdog is longer than the 30 s download stall', asyn
 console.log('\nSecurity headers (vercel.json)');
 const rule = (src) => vercel.headers.find((h) => h.source.startsWith(src));
 const csp = (r) => r.headers.find((h) => h.key === 'Content-Security-Policy').value;
-await test('sandbox frame may load only the two Python hosts', async () => {
+await test('sandbox frame may load only your own Python host', async () => {
   const c = csp(rule('/sandbox-frame'));
   const hosts = (c.match(/https:\/\/[a-z0-9.-]+/g) || []).filter((h, i, a) => a.indexOf(h) === i).sort();
-  eq(hosts.join(','), 'https://cdn.jsdelivr.net,https://pyodide.cognita.com.ng');
+  eq(hosts.join(','), 'https://pyodide.cognita.com.ng');
   ok(/default-src 'none'/.test(c) && /frame-ancestors 'self'/.test(c));
+});
+await test('diagnostic page may connect only to your own Python host and loads no outside scripts', async () => {
+  const c = csp(rule('/sandbox-check'));
+  const script = (c.match(/script-src ([^;]*)/) || [])[1] || '';
+  ok(!/https?:/.test(script), 'script-src allows an outside host: ' + script);
+  eq((c.match(/connect-src ([^;]*)/) || [])[1], 'https://pyodide.cognita.com.ng');
+  ok(!/jsdelivr/i.test(fs.readFileSync(path.join(root, 'sandbox-check.html'), 'utf8')));
 });
 await test('diagnostic page has its own policy and is excluded from the global one', async () => {
   const g = vercel.headers[0].source;
