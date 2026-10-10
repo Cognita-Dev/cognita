@@ -529,30 +529,17 @@ async function boot() {
   if (loading) return loading;
   loading = (async function () {
     dl.failure = null; dl.phase = 'core';
-    post({ t: 'status', text: 'Starting Python\u2026 (1/3 loader)' });
+    post({ t: 'status', text: 'Starting Python\u2026' });
     var py;
     try {
-      // Preferred: download the loader with a time limit and progress, then run it. importScripts
-      // cannot be interrupted, so it is only the fallback if that download is refused.
-      var loaderReady = false;
-      if (nativeFetch) {
-        try {
-          var loaderText = await (await self.fetch(PYODIDE_BASE_URL + 'pyodide.js')).text();
-          // The loader starts with "use strict", so it is run together with the line that exports it.
-          (0, eval)(loaderText + '\n;self.loadPyodide = loadPyodide;');
-          loaderReady = typeof self.loadPyodide === 'function';
-        } catch (e0) { loaderReady = false; }
-        if (!loaderReady) { dl.failure = null; dl.detail = ''; }
-      }
-      if (!loaderReady) importScripts(PYODIDE_BASE_URL + 'pyodide.js');
-      post({ t: 'status', text: 'Starting Python\u2026 (2/3 core)' });
+      importScripts(PYODIDE_BASE_URL + 'pyodide.js');
       py = await self.loadPyodide({ indexURL: PYODIDE_BASE_URL });
     } catch (e) {
       var friendly = downloadProblem(e);
       if (friendly) { var err = new Error(friendly); err.kind = 'network'; throw err; }
       throw e;
     }
-    post({ t: 'status', text: 'Starting Python\u2026 (3/3 finishing)' });
+    post({ t: 'status', text: 'Starting Python\u2026' });
     dl.phase = 'libs';
     py.FS.mkdirTree('/workspace');
     // Built-in helper so the model can make real .docx and .pdf files
@@ -736,9 +723,7 @@ self.onmessage = async function (ev) {
   var pyUrl = null, jsUrl = null;
 
   // ── Python worker lifecycle ─────────────────────────────────────
-  var bootTimer = null;
   function killPy() {
-    clearTimeout(bootTimer); pyBooting = false;
     if (pyWorker) { try { pyWorker.terminate(); } catch (e) {} }
     pyWorker = null; pyReady = null; pySyncedVersion = -1;
   }
@@ -754,27 +739,14 @@ self.onmessage = async function (ev) {
     var w = pyWorker;
     pyBooting = true; lastPyStatus = '';
     pyReady = new Promise(function (resolve, reject) {
-      // If nothing at all is heard from the worker for this long, Python is not going to start.
-      // Say where it got stuck instead of letting the clock run forever.
-      function armBoot() {
-        clearTimeout(bootTimer);
-        bootTimer = setTimeout(function () {
-          if (!pyBooting || pyWorker !== w) return;
-          var stage = (lastPyStatus || 'starting').replace(/\u2026/g, '').trim();
-          killPy();
-          var te = new Error('Python did not finish starting: nothing happened for 45 seconds (last step: ' + stage + '). The connection to the Python server (' + 'pyodide.cognita.com.ng' + ') may be blocked or very slow. Please try again.');
-          te.kind = 'network'; reject(te);
-        }, 45000);
-      }
       function onMsg(ev) {
         var m = ev.data;
-        if (m.t === 'status') { armBoot(); lastPyStatus = m.text; send({ t: 'status', id: active && active.id, text: m.text }); }
-        else if (m.t === 'ready') { clearTimeout(bootTimer); pyBooting = false; w.removeEventListener('message', onMsg); resolve(w); }
-        else if (m.t === 'boot_error') { clearTimeout(bootTimer); pyBooting = false; w.removeEventListener('message', onMsg); killPy(); var be = new Error(m.message); be.kind = m.kind; reject(be); }
+        if (m.t === 'status') { lastPyStatus = m.text; send({ t: 'status', id: active && active.id, text: m.text }); }
+        else if (m.t === 'ready') { pyBooting = false; w.removeEventListener('message', onMsg); resolve(w); }
+        else if (m.t === 'boot_error') { pyBooting = false; w.removeEventListener('message', onMsg); killPy(); var be = new Error(m.message); be.kind = m.kind; reject(be); }
       }
       w.addEventListener('message', onMsg);
       w.onerror = function (e) { pyBooting = false; killPy(); reject(new Error(e && e.message || 'Python worker failed to start')); };
-      armBoot();
       w.postMessage({ t: 'warm' });
     });
     return pyReady;
@@ -797,15 +769,10 @@ self.onmessage = async function (ev) {
   // Runs one Python invocation in the worker and applies its file changes to the workspace.
   async function runPython(spec, io, limits, id) {
     var w;
-    // Stop must work while Python is still loading, so the run is made cancellable before the wait starts.
-    var stopped = false, stopBoot = null;
-    var stopP = new Promise(function (r) { stopBoot = r; });
-    active = { id: id, kill: function () { stopped = true; killPy(); stopBoot(); } };
     // Python may already be loading (started ahead of time): show where it is right away.
     if (pyBooting && lastPyStatus) send({ t: 'status', id: id, text: lastPyStatus });
-    try { w = await Promise.race([getPy(), stopP.then(function () { throw new Error('stopped'); })]); }
+    try { w = await getPy(); }
     catch (e) {
-      if (stopped) { io.err('Stopped.\n'); return 130; }
       if (e && e.kind === 'network') io.err(e.message + '\n');
       else io.err('Python could not start: ' + e.message + '\nThis device or browser may not support running Python here.\n');
       return 127;
