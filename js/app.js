@@ -3788,7 +3788,7 @@ function renderMessage(msg, index) {
         // above has finished) fills it in. This avoids a flash of the
         // full text before the typing animation takes over.
         visualHtml +
-        (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(msg.content, isUser ? null : meta.sources)) + '</div>' : '') +
+        (msg.content && !visualHtml ? '<div class="message-content">' + (!isUser && index === freshAssistantIndex ? '' : renderMarkdownLite(isUser ? msg.content : stripLeakedToolText(msg.content), isUser ? null : meta.sources)) + '</div>' : '') +
         (!isUser && meta.ui && meta.ui.length ? renderUiHtml(meta.ui, index, index === freshAssistantIndex && !(streamResume && streamResume.index === index && streamResume.hadUi)) : '') +
         (!isUser ? renderDesignRequestHtml(meta, index) : '') +
         (!isUser ? renderFigureGridHtml(meta) : '') +
@@ -4678,6 +4678,14 @@ function _renderMarkdownLists(text) {
 
 // `idPrefix` (optional) makes the generated code/math element ids stable between
 // renders of a growing reply; without it ids are random, as before.
+// Chats saved before the Worker started removing tool calls written as text still contain lines such as
+// [sandbox_offer_file](path="...", title="..."). They are never an answer, so they are dropped when an
+// old message is drawn. New replies arrive already clean (tool-leak.js).
+const _LEAKED_CALL_RE = /\[\s*(?:(?:sandbox|github|google|figma|canva|meta|drive|gmail|calendar)_[a-z0-9_]+|generate_image|create_design)\s*\]\((?:[^()"']|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')*\)[ \t]*\n?/g;
+function stripLeakedToolText(text) {
+  return typeof text === 'string' && text.indexOf('](') !== -1 ? text.replace(_LEAKED_CALL_RE, '').replace(/\s+$/, '') : text;
+}
+
 function renderMarkdownLite(text, sources, idPrefix) {
   let raw = escapeHtml(text);
   raw = _unescapeAllowedTags(raw);
