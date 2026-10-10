@@ -110,13 +110,9 @@ attach it to the chat, which now goes straight into the workspace.
 - Usage is counted by the Worker only (`sandboxRuns`), never reported by the browser.
 - Everything the browser sends back is treated as untrusted data: re-shaped,
   size-capped, and shown to the model only as a tool result.
-- The frame's CSP allows scripts and connections only to `https://pyodide.cognita.com.ng`
-  (your own host) and `https://cdn.jsdelivr.net`, which is used only as a backup when your own host
-  cannot be reached (see "Start-up and the backup server"). Code could still send tiny amounts of data
-  to those hosts as URL text; on your own host you can see that in the logs, on jsDelivr you cannot.
-  If you prefer the strict setting, remove `https://cdn.jsdelivr.net` from the `/sandbox-frame` rule in
-  `vercel.json` and the second entry of `PY_BASES` in `sandbox-frame.html`; Python then depends on your
-  own host alone.
+- The frame's CSP allows scripts and connections only to `https://pyodide.cognita.com.ng` (your own host).
+  There is no public backup, so code run in the sandbox can reach no third-party server. Code could still send tiny
+  amounts of data to your own host as URL text; you can see that in its logs.
 - Known gap: browser limits are enforced inside the same page the person controls. A person who tampers with their own browser can only affect their own sandbox, and the Worker's run counter still applies.
 
 ## Plans (entitlements.js)
@@ -159,28 +155,25 @@ Allowed types: csv, tsv, txt, md, json, xlsx, png, jpg, svg, pdf, html, py, js (
 
 Built by `scripts/build-pyodide-bundle.mjs` (55 MB, 37 files, hash-checked, openpyxl vendored) and served by Cloudflare Pages.
 See `pyodide-host/README.md`. **Until the Pages site is live, Python in the sandbox will not load.**
-Rollback to the public CDN only: in `sandbox-frame.html` put the jsDelivr address first in `PY_BASES`
-(`https://cdn.jsdelivr.net/pyodide/v0.29.5/full/`). (openpyxl is then unavailable.)
+There is deliberately no public CDN fallback. Python depends on this one host being up (Cloudflare Pages).
 
-### Start-up and the backup server
+### Start-up
 
-The page (`sandbox-frame.html`) starts one Python worker per server, in the order of `PY_BASES`: your own
-Cloudflare Pages host first, then jsDelivr. If the first one cannot be reached (connection refused, HTTP
-error, or no data for 30 seconds) the page throws that worker away and starts a fresh one on the backup.
-The server that worked is remembered for the rest of the session. A failure that is not a connection problem
-(for example the browser cannot run WebAssembly) does not switch servers.
+The page (`sandbox-frame.html`) starts one Python worker on the host in `PY_BASES` (your own Cloudflare Pages host).
+If that host cannot be reached (connection refused, a browser-rejected answer such as wrong CORS headers, an HTTP
+error, or no data for 30 seconds) the worker stops at once and the person sees a clear message; the model is told
+not to keep retrying Python. A failure that is not a connection problem (for example the browser cannot run
+WebAssembly) is reported as it is.
 
 While a download is silent the worker reports "waiting for pyodide.asm.js (12 s)" every 2 seconds. A download
 that gets no data for 30 seconds is failed by a watchdog inside the worker, which does not rely on the
 browser honouring `fetch`'s abort signal (some mobile browsers do not deliver it while a response is still
 open). The page's own 45 second watchdog is only a last resort for a frozen worker.
 
-The backup copy has no openpyxl, so `import openpyxl` fails when Python came from the backup.
-
 ### Checking a device that has trouble
 
 Open `https://app.cognita.com.ng/sandbox-check` on that device and tap "Run check". It times the download of
-the two core files from both servers, starts Python inside the real sandbox frame, and runs a JavaScript
+the two core files from the Python server, starts Python inside the real sandbox frame, and runs a JavaScript
 snippet that fails on purpose. "Copy report" copies the result. (`sandbox-check.html`, with its own rule in
 `vercel.json`.)
 

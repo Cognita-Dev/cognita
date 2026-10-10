@@ -411,9 +411,8 @@ def pdf(path, blocks, title=None, page="A4"):
 /* Pyodide worker. One long-lived interpreter; every run gets fresh globals. */
 // Where Pyodide is loaded from. The page starts one worker per server and tells it which one to use
 // (self.PYODIDE_BASE, set by blobUrl() below). The first choice is Cognita's own Cloudflare Pages site
-// (built by scripts/build-pyodide-bundle.mjs); if that cannot be reached, the page starts a fresh worker
-// on the public backup (see PY_BASES in the page script). The iframe CSP in vercel.json allows exactly
-// those two hosts.
+// (built by scripts/build-pyodide-bundle.mjs). It is the only host: the iframe CSP in vercel.json allows exactly
+// this one host. If it cannot be reached, the person gets a clear message (see downloadProblem below).
 var PYODIDE_BASE_URL = self.PYODIDE_BASE || 'https://pyodide.cognita.com.ng/v0.29.5/';
 var pyodide = null;
 var loading = null;
@@ -585,7 +584,7 @@ async function boot() {
         } catch (e0) {
           loaderReady = false;
           // The request itself failed (blocked, CORS, DNS, stalled, HTTP error). Pyodide needs fetch for everything
-          // that follows, so carrying on only wastes time: stop now and let the page try the backup server.
+          // that follows, so carrying on only wastes time: stop now and report the problem.
           if (dl.failure) throw e0;
         }
         if (!loaderReady) { dl.failure = null; dl.detail = ''; }
@@ -809,13 +808,11 @@ self.onmessage = async function (ev) {
 
   function send(m, transfer) { parentWin.postMessage(m, '*', transfer || []); }
 
-  // Where Python can be downloaded from, in order of preference. The first is Cognita's own Cloudflare Pages
-  // host; the second is the public jsDelivr copy of the same Pyodide version, used only when the first one
-  // cannot be reached (blocked by a network, DNS trouble, a stalled connection). Both hosts must also be
-  // listed in this page's Content-Security-Policy in vercel.json. The backup has no openpyxl.
+  // Where Python is downloaded from: Cognita's own Cloudflare Pages host and nothing else. The Content-Security-Policy
+  // in vercel.json allows exactly this one host, so model-written code cannot reach any other server either.
+  // (The list form is kept so a second Cognita-owned host could be added later; if you do, add it to that policy too.)
   var PY_BASES = [
-    'https://pyodide.cognita.com.ng/v0.29.5/',
-    'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/'
+    'https://pyodide.cognita.com.ng/v0.29.5/'
   ];
   var pyBaseIdx = 0;                // the server that worked last starts first next time
   function hostOf(i) { return PY_BASES[i].replace(/^https?:\/\//, '').split('/')[0]; }
@@ -920,7 +917,7 @@ self.onmessage = async function (ev) {
           if (!e || e.kind !== 'network') { pyBooting = false; throw e; }
           fails.push({ idx: idx, e: e });
           if (k < order.length - 1) {
-            lastPyStatus = 'Python server did not answer, trying the backup…';
+            lastPyStatus = 'Python server did not answer, trying again…';
             send({ t: 'status', id: active && active.id, text: lastPyStatus });
           }
         }

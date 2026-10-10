@@ -8,7 +8,7 @@
 <!--
   A one-tap health check for the code sandbox (Python and JavaScript). Open https://app.cognita.com.ng/sandbox-check
   on the device that has the problem and tap "Run check". It tests, with timings:
-    1. the Python server (pyodide.cognita.com.ng) and the backup (cdn.jsdelivr.net): can this device download the
+    1. the Python server (pyodide.cognita.com.ng): can this device download the
        small loader file and the 1 MB core file, and how fast;
     2. a real Python start inside the same hidden frame the chat uses, printing every step it goes through;
     3. a real JavaScript run that fails on purpose, to confirm the error message is readable.
@@ -49,8 +49,7 @@
 (function () {
   'use strict';
   var HOSTS = [
-    { name: 'Cognita Python server', base: 'https://pyodide.cognita.com.ng/v0.29.5/' },
-    { name: 'Backup (jsDelivr)', base: 'https://cdn.jsdelivr.net/pyodide/v0.29.5/full/' }
+    { name: 'Cognita Python server', base: 'https://pyodide.cognita.com.ng/v0.29.5/' }
   ];
   var logEl = document.getElementById('log'), sumEl = document.getElementById('summary');
   var runBtn = document.getElementById('run'), copyBtn = document.getElementById('copy');
@@ -92,15 +91,6 @@
   }
 
   function url0(h, f) { return h.base + f.file; }
-  function scriptLoads(url) {
-    return new Promise(function (resolve) {
-      var el = document.createElement('script'), t = setTimeout(function () { resolve(false); }, 15000);
-      el.onload = function () { clearTimeout(t); resolve(true); };
-      el.onerror = function () { clearTimeout(t); resolve(false); };
-      el.src = url; document.head.appendChild(el);
-    });
-  }
-
   async function testHost(h) {
     var ok = true;
     for (var f of [{ file: 'pyodide.js', idle: 15000 }, { file: 'pyodide.asm.js', idle: 30000 }]) {
@@ -120,22 +110,15 @@
           try {
             await fetch(url0(h, f), { mode: 'no-cors', cache: 'no-store' });
             // The server answered, but a "no-cors" request succeeds for any answer, even "not found".
-            // A plain script tag does not need CORS, so it shows whether the file is really there.
-            var present = await scriptLoads(url0(h, f));
-            if (present) {
-              // Same file, but at a brand-new address that no cache can have stored yet.
-              var fresh = false;
-              try { var rf = await fetch(url0(h, f) + '?fresh=' + Date.now(), { cache: 'no-store' }); fresh = rf.ok; } catch (e3) { fresh = false; }
-              if (fresh) {
-                why = 'the file works at a fresh address, so Cloudflare is serving an OLD cached copy with the wrong headers. Purge the cache for cognita.com.ng in Cloudflare (Caching, Configuration, Purge Everything)';
-                log('  probe: fresh address works -> old cached copy is being served');
-              } else {
-                why = 'the file is there, but the browser refused it because of the server CORS headers, even at a fresh address (a repeated or wrong Access-Control-Allow-Origin, or a Cloudflare rule on the domain adding one)';
-                log('  probe: fresh address fails too -> the headers themselves are wrong at the source');
-              }
+            // Same file at a brand-new address that no cache can have stored yet:
+            var fresh = false;
+            try { var rf = await fetch(url0(h, f) + '?fresh=' + Date.now(), { cache: 'no-store' }); fresh = rf.ok; } catch (e3) { fresh = false; }
+            if (fresh) {
+              why = 'the file works at a fresh address, so Cloudflare is serving an OLD cached copy with the wrong headers. Purge the cache for cognita.com.ng in Cloudflare (Caching, Configuration, Purge Everything)';
+              log('  probe: fresh address works -> old cached copy is being served');
             } else {
-              why = 'the server answered but the file is missing or is not JavaScript (a 404 page?). The Cloudflare Pages deployment may be out of date or failed';
-              log('  probe: server answered, but the file is NOT there (or is not JavaScript)');
+              why = 'the server answered, but the browser refused the file even at a fresh address: wrong or repeated CORS headers (Access-Control-Allow-Origin), a Cloudflare rule adding one, or the file is missing (404)';
+              log('  probe: fresh address fails too -> check the Pages _headers file, Transform Rules and that the file exists');
             }
           } catch (e2) {
             why = 'could not connect to the server at all (DNS, network block or the site is not deployed)';
