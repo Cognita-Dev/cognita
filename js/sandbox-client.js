@@ -218,6 +218,11 @@ export class SandboxClient {
           finish({ result: m.result, cancelled: !!(m.result && m.result.cancelled) });
         },
         reject: (err) => finish({ result: _failure(call, err.message), cancelled: false }),
+        // Used when Stop is pressed and the sandbox does not answer: end the run here and reset the frame.
+        forceStop: () => {
+          finish({ result: { ..._failure(call, 'Stopped.'), exitCode: 130, cancelled: true, durationMs: Math.round(performance.now() - started) }, cancelled: true });
+          this._destroyFrame('Stopped');
+        },
       });
       try {
         this._post({ t: 'call', call: { id: call.id, name: call.name, args: call.args, limits: call.limits } });
@@ -230,6 +235,11 @@ export class SandboxClient {
   /** Stops the call that is running (used by the Stop button). */
   cancel(callId) {
     try { this._post({ t: 'cancel', id: callId }); } catch (_) { /* nothing running */ }
+    // The sandbox normally ends the run within a moment. If it has not (it is stuck), end it here.
+    setTimeout(() => {
+      const h = this.pending.get(callId);
+      if (h && h.forceStop) h.forceStop();
+    }, 2500);
   }
 
   /** Starts loading Python ahead of the first run so it feels faster. Safe to ignore failure. */
