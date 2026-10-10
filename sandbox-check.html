@@ -92,6 +92,14 @@
   }
 
   function url0(h, f) { return h.base + f.file; }
+  function scriptLoads(url) {
+    return new Promise(function (resolve) {
+      var el = document.createElement('script'), t = setTimeout(function () { resolve(false); }, 15000);
+      el.onload = function () { clearTimeout(t); resolve(true); };
+      el.onerror = function () { clearTimeout(t); resolve(false); };
+      el.src = url; document.head.appendChild(el);
+    });
+  }
 
   async function testHost(h) {
     var ok = true;
@@ -111,8 +119,16 @@
         if (e && e.name === 'TypeError') {
           try {
             await fetch(url0(h, f), { mode: 'no-cors', cache: 'no-store' });
-            why = 'the server answered, but the browser refused it (CORS headers wrong, for example a repeated Access-Control-Allow-Origin)';
-            log('  probe: server reachable, answer refused by the browser -> check the Pages _headers file');
+            // The server answered, but a "no-cors" request succeeds for any answer, even "not found".
+            // A plain script tag does not need CORS, so it shows whether the file is really there.
+            var present = await scriptLoads(url0(h, f));
+            if (present) {
+              why = 'the file is there, but the browser refused it because of the server CORS headers (for example a repeated Access-Control-Allow-Origin)';
+              log('  probe: file exists and is JavaScript, so the CORS headers are the problem');
+            } else {
+              why = 'the server answered but the file is missing or is not JavaScript (a 404 page?). The Cloudflare Pages deployment may be out of date or failed';
+              log('  probe: server answered, but the file is NOT there (or is not JavaScript)');
+            }
           } catch (e2) {
             why = 'could not connect to the server at all (DNS, network block or the site is not deployed)';
             log('  probe: no connection to the server at all');
