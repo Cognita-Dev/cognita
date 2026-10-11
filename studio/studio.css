@@ -35,7 +35,7 @@
 .st-source { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; font-size: var(--text-sm); }
 .st-lbl { font-size: var(--text-sm); color: var(--text-secondary, #6f6f6a); }
 .st-compose-foot { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
-.st-more summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary, #6f6f6a); min-height: 38px; display: flex; align-items: center; }
+.st-more summary { gap: 6px; list-style: none; cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary, #6f6f6a); min-height: 38px; display: flex; align-items: center; }
 .st-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin: 8px 0 4px; }
 .st-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-secondary, #6f6f6a); }
 .st-compose select, .st-field select, .st-field input:not([type=range]):not([type=color]), .st-field textarea, .st-ask textarea { font: inherit; font-size: var(--text-sm); padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elevated); color: inherit; min-height: 38px; box-sizing: border-box; width: 100%; }
@@ -155,3 +155,7 @@
 .st-ai { position: absolute; right: 2px; bottom: 2px; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; background: var(--accent); color: #fff; }
 #pImgPrompt { font: inherit; font-size: var(--text-sm); padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elevated); color: inherit; box-sizing: border-box; width: 100%; margin-top: 6px; }
 .st-steps small { display: inline; }
+
+.st-more summary::-webkit-details-marker { display: none; }
+.st-more summary::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); margin-left: 2px; transition: transform .15s; }
+.st-more[open] summary::after { transform: rotate(-135deg); }

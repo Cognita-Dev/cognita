@@ -22,6 +22,7 @@ export const NARR_LEAD = 0.15;   // seconds of silence before a scene's narratio
 export const NARR_TAIL = 0.5;    // seconds kept after the narration ends
 const XFADE = 0.5;
 
+const lum = (hex) => { const m = /^#([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null; const n = parseInt(m[1], 16); return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255; };
 const clamp01 = (n) => Math.min(1, Math.max(0, n));
 const easeOut = (t) => 1 - Math.pow(1 - clamp01(t), 3);
 const spring = (t) => { t = clamp01(t); return 1 - Math.exp(-7 * t) * Math.cos(11 * t); };
@@ -43,6 +44,13 @@ export function sceneAt(p, t) {
     acc += d;
   }
   return { index: 0, local: 0, start: 0, dur: 1 };
+}
+// A paused preview or thumbnail should show the scene once its entrance animation has finished, not the empty first frame.
+export const SETTLE = 2.4;
+export function settleTime(p, t) {
+  const { local, start, dur } = sceneAt(p, t);
+  if (local >= SETTLE) return t;
+  return start + Math.max(local, Math.min(SETTLE, dur - 0.05));
 }
 export function sceneStart(p, index) { let a = 0; for (let i = 0; i < index; i++) a += sceneDur(p, p.scenes[i]); return a; }
 
@@ -86,10 +94,13 @@ const numOf = (v) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''))
 function drawCaption(ctx, W, H, scene, local, d, project, th, u, portrait, pad) {
   const text = scene.caption; if (!text) return;
   const cp = easeOut((local - 0.25) / 0.5); if (cp <= 0) return;
-  const cs = u * (portrait ? 3.6 : 2.9);
+  let cs = u * (portrait ? 3.6 : 2.9);
+  const minCs = cs * 0.72;
   ctx.save(); ctx.globalAlpha *= cp; ctx.font = `500 ${cs}px ${SANS}`;
   const maxW = W - pad * 2 - u * 6;
-  const lines = wrap(ctx, text, maxW).slice(0, 3);
+  let lines = wrap(ctx, text, maxW);
+  while (lines.length > 3 && cs > minCs) { cs *= 0.94; ctx.font = `500 ${cs}px ${SANS}`; lines = wrap(ctx, text, maxW); }
+  lines = lines.slice(0, 4);
   const bh = lines.length * cs * 1.3 + u * 3.6;
   const by = H - bh - u * (portrait ? 7 : 4.5);
   ctx.fillStyle = th.bar;
@@ -101,7 +112,7 @@ function drawCaption(ctx, W, H, scene, local, d, project, th, u, portrait, pad) 
   const prog = spoken ? clamp01((local - NARR_LEAD) / Math.max(0.1, scene.narr.dur)) : -1;
   let seen = 0;
   lines.forEach((l, i) => {
-    const y = by + u * 1.8 + i * cs * 1.3;
+    const y = by + u * 1.8 + cs * 0.12 + i * cs * 1.3;
     if (!spoken) { ctx.fillStyle = th.barText; ctx.textAlign = 'center'; ctx.fillText(l, W / 2, y); seen += l.length + 1; return; }
     const words = l.split(' ');
     const widths = words.map((w) => ctx.measureText(w).width); const sp = ctx.measureText(' ').width;
@@ -142,8 +153,12 @@ function drawScene(ctx, W, H, scene, local, project, images, frames) {
     if (ok) { const sh = ctx.createLinearGradient(0, H * 0.35, 0, H); sh.addColorStop(0, 'rgba(0,0,0,0)'); sh.addColorStop(1, 'rgba(0,0,0,0.72)'); ctx.fillStyle = sh; ctx.fillRect(0, 0, W, H); }
     ctx.restore();
   }
-  const fg = onMedia ? '#ffffff' : th.fg;
-  const mute = onMedia ? 'rgba(255,255,255,0.82)' : th.mute;
+  const bgL = !onMedia && scene.bg ? lum(scene.bg) : null;
+  const flip = bgL !== null && ((project.style === 'dark' || project.style === 'bold') ? bgL > 0.6 : bgL < 0.45);
+  const lightText = onMedia || (flip ? !(project.style === 'dark' || project.style === 'bold') : (bgL === null && false));
+  const darkText = flip && (project.style === 'dark' || project.style === 'bold');
+  const fg = lightText ? '#ffffff' : darkText ? '#171717' : (onMedia ? '#ffffff' : th.fg);
+  const mute = lightText ? 'rgba(255,255,255,0.82)' : darkText ? 'rgba(23,23,23,0.7)' : th.mute;
 
   let dy = 0, sc = 1;
   if (scene.anim === 'slide') dy = (1 - p) * u * 6;

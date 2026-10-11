@@ -72,7 +72,7 @@ function makeThumb() {
   try {
     const { width, height } = eng.dimsFor(S.project.aspect, 160);
     const c = document.createElement('canvas'); c.width = width; c.height = height;
-    eng.drawFrame(c.getContext('2d'), width, height, S.project, Math.min(1.2, dur(S.project.scenes[0]) - 0.01), S.images, thumbFrames);
+    eng.drawFrame(c.getContext('2d'), width, height, S.project, eng.settleTime(S.project, 0), S.images, thumbFrames);
     return c.toDataURL('image/jpeg', 0.7);
   } catch (_) { return ''; }
 }
@@ -98,8 +98,8 @@ export async function mount() {
   root = document.getElementById('studioRoot'); mounted = true;
   try { S.projects = await store.listProjects(); } catch (_) { S.projects = []; S.storageOff = true; }
   window.addEventListener('online', () => { renderStatus(); refreshStatus(); }); window.addEventListener('offline', renderStatus);
-  document.addEventListener('keydown', onKey);
-  window.addEventListener('beforeunload', (e) => { if (S.dirty || S.exportState === 'rendering' || S.narrJob) { e.preventDefault(); e.returnValue = ''; } });
+  document.addEventListener('keydown', onKey); document.addEventListener('keydown', onModalKey);
+  window.addEventListener('beforeunload', (e) => { if (S.dirty || S.busy || S.exportState === 'rendering' || S.narrJob) { e.preventDefault(); e.returnValue = ''; } });
   render(); refreshStatus(); checkHandoff();
 }
 export function activate() { checkHandoff(); refreshStatus(); }
@@ -122,9 +122,10 @@ function renderHome() {
   pause();
   const o = S.opts, ns = nStatus();
   const modes = [['prompt', 'ph-sparkle', 'From a prompt'], ['document', 'ph-file-text', 'From a document'], ['images', 'ph-images', 'From images'], ['footage', 'ph-film-strip', 'From footage']];
-  const sel = (name, list) => `<select data-opt="${name}" aria-label="${name}">${list.map(([v, l, dis]) => `<option value="${v}"${String(o[name]) === String(v) ? ' selected' : ''}${dis ? ' disabled' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  const sel = (name, list, cur = o[name]) => `<select data-opt="${name}" aria-label="${name}">${list.map(([v, l, dis]) => `<option value="${v}"${String(cur) === String(v) ? ' selected' : ''}${dis ? ' disabled' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const narrOptions = [[true, 'Narrate with a voice', !ns.allowed], [false, 'No narration']];
-  if (!ns.allowed && o.narrate) o.narrate = false;
+  const keep = { open: !!root.querySelector('details.st-more[open]'), id: document.activeElement && root.contains(document.activeElement) ? document.activeElement.id : '', opt: document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.opt : '', a: 0, b: 0, top: (root.querySelector('.st-home') || {}).scrollTop || 0 };
+  try { keep.a = document.activeElement.selectionStart; keep.b = document.activeElement.selectionEnd; } catch (_) { /* not a text field */ }
   root.innerHTML = `
   <div class="st-home"><div class="st-home-inner">
     <h2 class="st-title">What should we make?</h2>
@@ -139,14 +140,14 @@ function renderHome() {
       ${S.clarify ? `<div class="st-note" role="status"><i class="ph ph-chat-circle-text"></i><div><strong>One question first</strong><p>${esc(S.clarify)}</p><span>Add your answer to the description above and press Create.</span></div></div>` : ''}
       ${S.error ? `<div class="st-note st-note--err" role="alert"><i class="ph ph-warning-circle"></i><div><strong>Could not create the video</strong><p>${esc(S.error)}</p></div></div>` : ''}
       <div class="st-compose-foot">
-        <details class="st-more"><summary>Settings</summary><div class="st-grid">
+        <details class="st-more"><summary><i class="ph ph-sliders-horizontal" aria-hidden="true"></i> Settings</summary><div class="st-grid">
           <label>Format${sel('aspect', [['9:16', 'Vertical 9:16'], ['16:9', 'Landscape 16:9'], ['1:1', 'Square 1:1']])}</label>
           <label>Length${sel('duration', [[20, 'About 20 s'], [30, 'About 30 s'], [45, 'About 45 s'], [60, 'About 1 min'], [90, 'About 1.5 min'], [120, 'About 2 min']])}</label>
           <label>Look${sel('style', [['clean', 'Clean light'], ['dark', 'Dark'], ['bold', 'Bold colour']])}</label>
           <label>Music${sel('music', [['calm', 'Calm'], ['upbeat', 'Upbeat'], ['none', 'None']])}</label>
           <label>Language${sel('language', [['English (Nigeria)', 'English (Nigeria)'], ['English (UK)', 'English (UK)'], ['English (US)', 'English (US)'], ['French', 'French'], ['Yoruba', 'Yoruba (captions only)'], ['Hausa', 'Hausa (captions only)'], ['Igbo', 'Igbo (captions only)']])}</label>
           <label>Subtitles${sel('captions', [[true, 'Show subtitles'], [false, 'No subtitles']])}</label>
-          <label>Narration${sel('narrate', narrOptions)}${!ns.allowed ? `<small class="st-muted">${ns.offline ? 'Offline' : ns.error ? 'Could not check your plan' : 'Narration is part of the Studio plan'}</small>` : ''}</label>
+          <label>Narration${sel('narrate', narrOptions, ns.allowed ? o.narrate : false)}${!ns.allowed ? `<small class="st-muted">${ns.offline ? 'Offline' : ns.error ? 'Could not check your plan' : 'Narration is part of the Studio plan'}</small>` : ''}</label>
           <label>Pictures${sel('aiImages', [[true, 'AI pictures for up to 4 scenes'], [false, 'Only my own images']])}</label>
         </div></details>
         <button type="button" class="st-btn st-btn--primary" id="stCreate"${S.busy ? ' disabled' : ''}><i class="ph ph-magic-wand"></i>Create video</button>
@@ -155,6 +156,10 @@ function renderHome() {
     ${renderLibrary()}
   </div></div>`;
   wireHome();
+  if (keep.open) { const d = $('details.st-more'); if (d) d.open = true; }
+  const h = $('.st-home'); if (h) h.scrollTop = keep.top;
+  const f = keep.id ? document.getElementById(keep.id) : (keep.opt ? $('[data-opt="' + keep.opt + '"]') : null);
+  if (f && root.contains(f)) { f.focus({ preventScroll: true }); try { if (keep.a != null) f.setSelectionRange(keep.a, keep.b); } catch (_) { /* not a text field */ } }
 }
 
 function renderLibrary() {
@@ -276,7 +281,7 @@ async function generate() {
     const vlist = ns.voices || [];
     const v0 = lang ? (vlist.find((v) => v.lang === lang && v.default) || vlist.find((v) => v.lang === lang)) : null;
     base.voice = v0 ? v0.id : '';
-    const project = sb.normaliseProject(raw, base, imageIds.filter(Boolean), videoIds.filter(Boolean));
+    const project = sb.normaliseProject(raw, base, imageIds, videoIds);
     // The model numbers images and clips by position; map those positions to stored assets.
     (raw.scenes || []).slice(0, project.scenes.length).forEach((rs, i) => {
       const sc = project.scenes[i];
@@ -380,7 +385,7 @@ function renderEditor() {
       <div class="st-bar-act">
         <button type="button" class="st-icon" id="stUndo" aria-label="Undo"><i class="ph ph-arrow-counter-clockwise"></i></button>
         <button type="button" class="st-icon" id="stRedo" aria-label="Redo"><i class="ph ph-arrow-clockwise"></i></button>
-        <button type="button" class="st-btn st-btn--primary" id="stExport"><i class="ph ph-export"></i><span>Export</span></button>
+        <button type="button" class="st-btn st-btn--primary" id="stExport" aria-label="Export video"><i class="ph ph-export"></i><span>Export</span></button>
       </div>
     </div>
     <aside class="st-left" aria-label="Scenes"><div class="st-panel-h"><span>Scenes</span><button type="button" class="st-icon" id="stAddScene" aria-label="Add scene"><i class="ph ph-plus"></i></button></div><ol class="st-scenes" id="stScenes"></ol></aside>
@@ -418,6 +423,8 @@ function wireEditor() {
 function onKey(e) {
   if (!mounted || S.screen !== 'editor' || document.getElementById('view-studio').hidden) return;
   const tag = (e.target.tagName || '').toLowerCase(); if (['input', 'textarea', 'select'].includes(tag)) return;
+  const m = $('#stModal'); if (m && !m.hidden) return;
+  if (e.key === ' ' && (['button', 'a', 'summary'].includes(tag) || e.target.isContentEditable)) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (e.key === ' ') { e.preventDefault(); S.playing ? pause() : play(); }
 }
@@ -436,7 +443,7 @@ function drawThumbs() {
     const i = Number(c.dataset.thumb); const s = S.project.scenes[i]; if (!s) return;
     const { width, height } = eng.dimsFor(S.project.aspect, 72); c.width = width; c.height = height;
     const st = eng.sceneStart(S.project, i);
-    eng.drawFrame(c.getContext('2d'), width, height, S.project, Math.min(st + 1.2, st + dur(s) - 0.01), S.images, thumbFrames);
+    eng.drawFrame(c.getContext('2d'), width, height, S.project, eng.settleTime(S.project, st), S.images, thumbFrames);
   });
 }
 function selectScene(i, seek) {
@@ -516,7 +523,7 @@ function renderProps() {
   bind('pAnim', (e) => upd({ anim: e.target.value })); bind('pTr', (e) => upd({ transition: e.target.value }));
   bind('pBul', (e) => upd({ bullets: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 5) }));
   bind('pStat', (e) => upd({ stat: e.target.value.trim() }));
-  bind('pData', (e) => { const rows = e.target.value.split('\n').map((l) => { const m = l.split(':'); const v = Number((m[1] || '').replace(/[^0-9.\-]/g, '')); return m.length > 1 && m[0].trim() && Number.isFinite(v) ? { label: m[0].trim().slice(0, 30), value: v } : null; }).filter(Boolean).slice(0, 6); if (rows.length < 2) { showToast('Add at least two rows like "Term 1: 72".'); return; } upd({ data: rows }); });
+  bind('pData', (e) => { const rows = e.target.value.split('\n').map((l) => { const i = l.lastIndexOf(':'); if (i < 1) return null; const num = l.slice(i + 1).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); const v = num ? Number(num[0]) : NaN; return l.slice(0, i).trim() && Number.isFinite(v) ? { label: l.slice(0, i).trim().slice(0, 30), value: v } : null; }).filter(Boolean).slice(0, 6); if (rows.length < 2) { showToast('Add at least two rows like "Term 1: 72".'); return; } upd({ data: rows }); e.target.value = rows.map((r) => r.label + ': ' + r.value).join('\n'); });
   bind('pDur', (e) => { s.duration = Number(e.target.value); $('#pDurO', el).textContent = fixed(s.duration); markDirty(); drawNow(); renderTimeline(); $('#stTotal').textContent = fmt(eng.totalDuration(p)); }, 'input'); bind('pDur', () => { commit(); renderScenes(); renderProps(); });
   bind('pBg', (e) => { s.bg = e.target.value; markDirty(); drawNow(); }, 'input'); bind('pBg', () => { commit(); renderProps(); }); bind('pBgReset', () => { s.bg = ''; commit(); renderProps(); drawNow(); }, 'click');
   bind('pImgClear', () => { s.image = null; if (s.layout === 'image') s.layout = 'title'; commit(); renderEditor(); }, 'click');
@@ -604,14 +611,15 @@ function renderAssistant(el) {
   el.innerHTML = `<p class="st-muted st-small">Ask for a change in plain words. Changes are applied to the project and can be undone. Each request uses one message from your daily allowance.</p>
   <div class="st-chips">${['Make the intro shorter', 'Use the dark look', 'Make every scene 4 seconds', 'Switch to vertical format', 'Use slide transitions'].map((t) => `<button type="button" class="st-chip" data-chip="${esc(t)}">${esc(t)}</button>`).join('')}</div>
   <div class="st-log" id="stLog" aria-live="polite">${S.assistantLog.map((m) => `<div class="st-msg st-msg--${m.k}">${esc(m.t)}</div>`).join('')}</div>
-  <div class="st-ask"><textarea id="stAsk" rows="2" placeholder="e.g. Add a chart scene about pass rates" aria-label="Edit instruction"></textarea><button type="button" class="st-btn st-btn--primary" id="stAskGo"${S.busy ? ' disabled' : ''}>Apply</button></div>`;
+  <div class="st-ask"><textarea id="stAsk" rows="2" placeholder="e.g. Add a chart scene about pass rates" aria-label="Edit instruction">${esc(S.askDraft || '')}</textarea><button type="button" class="st-btn st-btn--primary" id="stAskGo"${S.busy ? ' disabled' : ''}>Apply</button></div>`;
   el.querySelectorAll('[data-chip]').forEach((c) => c.addEventListener('click', () => { $('#stAsk', el).value = c.dataset.chip; }));
+  $('#stAsk', el).addEventListener('input', (e) => { S.askDraft = e.target.value; });
   $('#stAskGo', el).addEventListener('click', runAssistant);
   $('#stAsk', el).addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAssistant(); } });
 }
 async function runAssistant() {
   const ta = $('#stAsk'); const text = ta.value.trim(); if (!text || S.busy) return;
-  S.assistantLog.push({ k: 'u', t: text }); S.busy = true; ta.value = ''; S.assistantLog.push({ k: 'w', t: 'Working on it…' }); renderProps();
+  S.assistantLog.push({ k: 'u', t: text }); S.busy = true; ta.value = ''; S.askDraft = ''; S.assistantLog.push({ k: 'w', t: 'Working on it…' }); renderProps();
   try {
     const r = await sb.editProject(S.project, text, (S.project.assets || []).filter((a) => a.kind !== 'video').map((a) => a.id), (S.project.assets || []).filter((a) => a.kind === 'video').map((a) => a.id));
     S.assistantLog.pop();
@@ -641,7 +649,7 @@ function drawNow() {
   if (!ctx || !S.project) return;
   const T = eng.totalDuration(S.project); S.t = Math.min(S.t, T - 0.001);
   if (pv) { const { index, local } = eng.sceneAt(S.project, S.t); pv.sync(S.project.scenes[index], local, S.playing); }
-  eng.drawFrame(ctx, canvas.width, canvas.height, S.project, S.t, S.images, pv ? pv.frames : null);
+  eng.drawFrame(ctx, canvas.width, canvas.height, S.project, S.playing ? S.t : eng.settleTime(S.project, S.t), S.images, pv ? pv.frames : null);
   const tm = $('#stTime'); if (tm) tm.textContent = fmt(S.t);
   const sk = $('#stSeek'); if (sk && document.activeElement !== sk) sk.value = Math.round((S.t / T) * 1000);
   updateHead();
@@ -687,8 +695,20 @@ function pause() {
 }
 
 // ───────────── Export ─────────────
-function modal(html) { const m = $('#stModal'); m.hidden = false; m.innerHTML = `<div class="st-dialog" role="dialog" aria-modal="true" aria-labelledby="stDlgT">${html}</div>`; const f = m.querySelector('button, select, a'); if (f) f.focus(); return m; }
-function closeModal() { const m = $('#stModal'); if (m) { m.hidden = true; m.innerHTML = ''; } }
+let modalOpener = null;
+function modal(html) { const m = $('#stModal'); if (m.hidden) modalOpener = document.activeElement; m.hidden = false; m.innerHTML = `<div class="st-dialog" role="dialog" aria-modal="true" aria-labelledby="stDlgT">${html}</div>`; const f = m.querySelector('button, select, a'); if (f) f.focus(); return m; }
+function closeModal() { const m = $('#stModal'); if (m) { m.hidden = true; m.innerHTML = ''; } if (modalOpener && document.contains(modalOpener)) { try { modalOpener.focus(); } catch (_) { /* ignore */ } } modalOpener = null; }
+function onModalKey(e) {
+  const m = document.getElementById('stModal'); if (!m || m.hidden || !mounted) return;
+  if (e.key === 'Escape') { if (S.exportState === 'rendering') return; e.preventDefault(); closeModal(); return; }
+  if (e.key !== 'Tab') return;
+  const f = [...m.querySelectorAll('button, a[href], select, input, video[controls]')].filter((x) => !x.disabled && x.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!m.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
 const EXPORT_HINTS = {
   NARR_MISSING: 'Open the Project tab and generate the narration again, then export.',
   NO_ENCODER: 'Try 720p or 480p. Some phones cannot encode large videos.',
