@@ -11,6 +11,7 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
+import { canPreview, previewLabel, fileIconClass, isHtmlFile, openFilePreview, isFilePreviewOpen } from './file-viewer.js';
 import { renderUiHtml, wireUi, refreshUi, liveUiUpdate, skeletonHtml } from './ui-render.js';
 import { validateUi, applyPatches, findUiNode } from '../ui-schema.js';
 import { shouldOfferSandbox } from '../sandbox-intent.js';
@@ -1861,6 +1862,7 @@ async function runStreamedTurn(payload, resume) {
     uiTouched.forEach((i) => { if (conversationMeta[i]) refreshUi(document, i, conversationMeta[i].ui); });
     refreshUsage();
     persistCurrentConversation();
+    autoOpenPreview(freshAssistantIndex);
   };
 
   try {
@@ -2480,19 +2482,98 @@ function renderDeliverablesHtml(meta, msgIndex) {
   const chips = files.map((f) => {
     const name = f.path.split('/').pop();
     const saved = savedRecordFor(msgIndex, f.path);
-    if (saved) return '<span class="deliv-item">' + savedChipHtml(saved) + '</span>';
+    const previewable = canPreview(name);
+    const label = f.title || name;
+    // A file that can be shown here opens in the preview sheet; the download stays one tap away.
+    const card = (attrs) => '<button type="button" class="deliv-card" ' + attrs + '>' +
+        '<span class="deliv-card-icon"><i class="ph ' + fileIconClass(name) + '" aria-hidden="true"></i></span>' +
+        '<span class="deliv-card-text"><span class="deliv-card-name">' + escapeHtml(label) + '</span>' +
+          '<span class="deliv-card-sub">' + escapeHtml(previewLabel(name) + (f.size != null ? ' · ' + formatBytes(f.size) : '')) + '</span></span>' +
+        '<span class="deliv-card-cta">Preview</span>' +
+      '</button>';
+    if (saved) {
+      return '<span class="deliv-item">' +
+        (previewable ? card('data-saved-preview="1" data-conversation-id="' + escapeHtml(saved.conversationId || '') + '" data-file-id="' + escapeHtml(saved.fileId || '') +
+          '" data-filename="' + escapeHtml(saved.filename || name) + '" data-mime="' + escapeHtml(saved.mimeType || '') + '" data-title="' + escapeHtml(f.title || '') + '" data-size="' + (f.size != null ? f.size : '') + '"') : '') +
+        savedChipHtml(saved) + '</span>';
+    }
+    const attrs = 'data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(name) + '"';
+    const saveBtn = '<button type="button" class="deliv-save" data-msg-index="' + msgIndex + '" ' + attrs + '>' +
+        '<i class="ph ph-cloud-arrow-up" aria-hidden="true"></i> Save to Cognita' +
+      '</button>';
+    if (previewable) {
+      return '<span class="deliv-item">' +
+        card('data-preview-path="' + escapeHtml(f.path) + '" data-msg-index="' + msgIndex + '" data-sbx-name="' + escapeHtml(name) +
+          '" data-title="' + escapeHtml(f.title || '') + '" data-size="' + (f.size != null ? f.size : '') + '"') +
+        '<button type="button" class="deliv-dl" ' + attrs + ' aria-label="Download ' + escapeHtml(label) + '" title="Download">' +
+          '<i class="ph ph-download-simple" aria-hidden="true"></i></button>' +
+        saveBtn +
+      '</span>';
+    }
     return '<span class="deliv-item">' +
-      '<button type="button" class="deliv-file" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(name) + '">' +
+      '<button type="button" class="deliv-file" ' + attrs + '>' +
         '<i class="ph ph-file-arrow-down" aria-hidden="true"></i>' +
-        '<span class="deliv-file-name">' + escapeHtml(f.title || name) + '</span>' +
+        '<span class="deliv-file-name">' + escapeHtml(label) + '</span>' +
         (f.size != null ? '<span class="deliv-file-size">' + escapeHtml(formatBytes(f.size)) + '</span>' : '') +
       '</button>' +
-      '<button type="button" class="deliv-save" data-msg-index="' + msgIndex + '" data-sbx-path="' + escapeHtml(f.path) + '" data-sbx-name="' + escapeHtml(name) + '">' +
-        '<i class="ph ph-cloud-arrow-up" aria-hidden="true"></i> Save to Cognita' +
-      '</button>' +
+      saveBtn +
     '</span>';
   }).join('');
   return '<div class="deliv" role="group" aria-label="Files">' + chips + '</div>';
+}
+
+/* ── Previewing a file in the sheet (js/file-viewer.js) ────────────────
+ * Local files come from this browser's workspace. Files already saved to
+ * Cognita are fetched the same way their download chip fetches them. */
+async function fetchSavedFileBlob(conversationId, fileId, filename, mimeType) {
+  if (!conversationId || !fileId || !filename) return null;
+  try {
+    const url = WORKER_URL + '/api/files/' + encodeURIComponent(conversationId) +
+      '/' + encodeURIComponent(fileId) + '?filename=' + encodeURIComponent(filename);
+    const res = await window.Auth.authedFetch(url);
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (!res.ok || !data || !data.content) return null;
+    const bin = atob(data.content);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+  } catch (_) { return null; }
+}
+
+function previewDeliverable({ path, name, title, size, msgIndex }) {
+  const canSave = Number.isInteger(msgIndex) && !savedRecordFor(msgIndex, path);
+  return openFilePreview({
+    name,
+    title: title || '',
+    size: Number.isFinite(size) ? size : undefined,
+    getBlob: () => getSandbox().exportFile(ensureConversationId(), path),
+    save: canSave ? {
+      attrs: { 'data-msg-index': String(msgIndex), 'data-sbx-path': path, 'data-sbx-name': name },
+      run: (b) => saveFileToCognita(b),
+    } : null,
+  });
+}
+
+function previewSavedFile(btn) {
+  const d = btn.dataset;
+  return openFilePreview({
+    name: d.filename || 'file',
+    title: d.title || '',
+    size: d.size ? Number(d.size) : undefined,
+    getBlob: () => fetchSavedFileBlob(d.conversationId, d.fileId, d.filename, d.mime),
+    save: null,
+  });
+}
+
+// A page the person asked for (a calculator, a form, a small tool) is for using, so it opens by
+// itself once, when the answer arrives. Documents and sheets wait for a tap.
+function autoOpenPreview(msgIndex) {
+  const meta = conversationMeta[msgIndex];
+  if (!meta || isFilePreviewOpen() || document.visibilityState !== 'visible') return;
+  const f = (Array.isArray(meta.deliverables) ? meta.deliverables : []).find((d) => isHtmlFile(d.path));
+  if (!f) return;
+  previewDeliverable({ path: f.path, name: f.path.split('/').pop(), title: f.title, size: f.size, msgIndex });
 }
 
 /* ── Keeping a file in Cognita ─────────────────────────────────────────
@@ -2537,7 +2618,7 @@ async function saveFileToCognita(btn) {
   const path = btn.dataset.sbxPath;
   const name = btn.dataset.sbxName || path.split('/').pop();
   const meta = conversationMeta[msgIndex];
-  if (!meta || btn.disabled) return;
+  if (!meta || btn.disabled) return false;
 
   const label = btn.innerHTML;
   btn.disabled = true;
@@ -2547,12 +2628,12 @@ async function saveFileToCognita(btn) {
   try {
     const conversationId = ensureConversationId();
     const blob = await getSandbox().exportFile(conversationId, path);
-    if (!blob) { showToast('That file is no longer on this device. Ask Cognita to make it again.'); restore(); return; }
+    if (!blob) { showToast('That file is no longer on this device. Ask Cognita to make it again.'); restore(); return false; }
     const maxMB = currentSandboxLimits && currentSandboxLimits.artifactMaxMB;
     if (maxMB && blob.size > maxMB * 1024 * 1024) {
       showToast('That file is larger than the ' + maxMB + ' MB your plan can save.');
       restore();
-      return;
+      return false;
     }
     const content = await blobToBase64(blob);
     const res = await window.Auth.authedFetch(WORKER_URL + '/api/files/' + encodeURIComponent(conversationId), {
@@ -2565,7 +2646,7 @@ async function saveFileToCognita(btn) {
     if (!res.ok || !data || !data.fileId) {
       showToast((data && data.error) || 'Could not save that file. Please try again.');
       restore();
-      return;
+      return false;
     }
 
     const rec = { path, fileId: data.fileId, filename: data.filename, mimeType: data.mimeType, conversationId: data.conversationId || conversationId };
@@ -2580,10 +2661,12 @@ async function saveFileToCognita(btn) {
     persistCurrentConversation();
     renderConversation();
     showToast('Saved to Cognita.');
+    return true;
   } catch (e) {
     console.error('[app] Could not save file:', e.message);
     showToast('Could not reach Cognita. Please try again.');
     restore();
+    return false;
   }
 }
 
@@ -3915,6 +3998,21 @@ function wireMessageActionButtons() {
   });
   document.querySelectorAll('.sbx-save, .deliv-save').forEach((btn) => {
     btn.addEventListener('click', () => saveFileToCognita(btn));
+  });
+  document.querySelectorAll('.deliv-card[data-preview-path]').forEach((btn) => {
+    btn.addEventListener('click', () => previewDeliverable({
+      path: btn.dataset.previewPath, name: btn.dataset.sbxName, title: btn.dataset.title,
+      size: btn.dataset.size ? Number(btn.dataset.size) : undefined, msgIndex: parseInt(btn.dataset.msgIndex, 10),
+    }));
+  });
+  document.querySelectorAll('.deliv-card[data-saved-preview]').forEach((btn) => {
+    btn.addEventListener('click', () => previewSavedFile(btn));
+  });
+  document.querySelectorAll('.deliv-dl').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const ok = await getSandbox().downloadFile(ensureConversationId(), btn.dataset.sbxPath, btn.dataset.sbxName);
+      if (!ok) showToast('That file is no longer on this device. Ask Cognita to make it again.');
+    });
   });
   document.querySelectorAll('.sbx-retry').forEach((btn) => {
     btn.addEventListener('click', () => { if (!isSending) sendMessage('That did not work. Please fix the problem and try again.'); });
