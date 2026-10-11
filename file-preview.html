@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cognita file preview</title>
+<!--
+  Read-only viewer for files the assistant made: PDF, Excel, Word, PowerPoint (text outline), CSV and
+  plain text. It is only ever loaded inside <iframe sandbox="allow-scripts" src="/file-preview"> (see
+  js/file-viewer.js), so:
+    - it has an opaque origin: no cookies, no storage, no access to the Cognita page;
+    - its Content-Security-Policy (vercel.json) blocks every network request. The only thing it may
+      load is the viewer library for the file type being shown, from cdnjs;
+    - the parent sends it one message with the file's bytes; nothing is ever sent back but "ready".
+  File text is always put on the page with textContent. Word output is cleaned before it is used.
+  Nothing here is a secret, a token or a key.
+-->
+<style>
+  :root { --bg:#fff; --fg:#161615; --muted:#5f5f5a; --line:rgba(22,22,21,.12); --soft:#f1f0ec; --accent:#3f6b5b; }
+  html, body { margin:0; min-height:100%; background:var(--bg); color:var(--fg);
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; -webkit-text-size-adjust:100%; }
+  #root { padding:12px; box-sizing:border-box; }
+  .note { margin:0 0 12px; padding:8px 12px; border-radius:8px; background:var(--soft); color:var(--muted); font-size:13px; }
+  .msg { padding:32px 16px; text-align:center; color:var(--muted); }
+  .msg.err { color:#b3261e; }
+  .spin { display:inline-block; width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent);
+    border-radius:50%; animation:sp .8s linear infinite; vertical-align:-4px; margin-right:8px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
+
+  /* pdf */
+  .pdf-page { display:block; margin:0 auto 12px; max-width:100%; height:auto; background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.25); }
+
+  /* tables (excel, csv) */
+  .tabs { display:flex; gap:6px; overflow-x:auto; padding:0 0 10px; position:sticky; top:0; background:var(--bg); z-index:2; }
+  .tab { flex:0 0 auto; min-height:36px; padding:0 14px; border:1px solid var(--line); border-radius:999px;
+    background:transparent; color:var(--muted); font:inherit; cursor:pointer; }
+  .tab[aria-selected="true"] { background:var(--fg); border-color:var(--fg); color:var(--bg); }
+  .tab:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .grid-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:calc(100vh - 80px); }
+  table { border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; min-width:100%; }
+  th, td { padding:6px 10px; border-bottom:1px solid var(--line); border-right:1px solid var(--line);
+    text-align:left; white-space:nowrap; max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+  thead th { position:sticky; top:0; background:var(--soft); font-weight:600; z-index:1; }
+  th.rn, td.rn { position:sticky; left:0; background:var(--soft); color:var(--muted); text-align:right; font-weight:400; min-width:34px; }
+  thead th.rn { z-index:3; }
+  td.f { font-style:italic; color:var(--muted); }
+
+  /* word */
+  .doc { max-width:760px; margin:0 auto; padding:4px 4px 24px; overflow-wrap:anywhere; }
+  .doc h1,.doc h2,.doc h3,.doc h4 { line-height:1.25; margin:1.2em 0 .5em; }
+  .doc p { margin:0 0 .8em; }
+  .doc img { max-width:100%; height:auto; }
+  .doc table { margin:0 0 1em; }
+  .doc td, .doc th { white-space:normal; max-width:none; }
+
+  /* powerpoint outline */
+  .slide { border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:0 0 10px; background:var(--soft); }
+  .slide h3 { margin:0 0 6px; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .slide p { margin:0 0 4px; overflow-wrap:anywhere; }
+
+  /* text */
+  pre.txt { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+</style>
+</head>
+<body>
+<div id="root"><div class="msg"><span class="spin"></span>Opening preview…</div></div>
+<script>
+(function () {
+  'use strict';
+  var root = document.getElementById('root');
+  var started = false;
+  var CDN = 'https://cdnjs.cloudflare.com/ajax/libs/';
+  var LIBS = {
+    pdf:   [CDN + 'pdf.js/3.11.174/pdf.min.js', CDN + 'pdf.js/3.11.174/pdf.worker.min.js'],
+    sheet: [CDN + 'xlsx/0.18.5/xlsx.full.min.js'],
+    word:  [CDN + 'mammoth/1.6.0/mammoth.browser.min.js'],
+    zip:   [CDN + 'jszip/3.10.1/jszip.min.js']
+  };
+  var MAX_ROWS = 500, MAX_COLS = 40, MAX_PAGES = 40, MAX_TEXT = 1000000;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function show(node) { root.textContent = ''; root.appendChild(node); }
+  function say(text, err) { var d = el('div', 'msg' + (err ? ' err' : ''), text); show(d); }
+  function note(text) { return el('p', 'note', text); }
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src; s.async = false;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error('Could not load the viewer. Check your connection.')); };
+      document.head.appendChild(s);
+    });
+  }
+  function need(name) {
+    return LIBS[name].reduce(function (p, src) { return p.then(function () { return loadScript(src); }); }, Promise.resolve());
+  }
+  function decode(buf) {
+    var bytes = new Uint8Array(buf);
+    var cut = bytes.length > MAX_TEXT;
+    var text = new TextDecoder('utf-8').decode(cut ? bytes.subarray(0, MAX_TEXT) : bytes);
+    return { text: text, cut: cut };
+  }
+
+  // ── Tables ─────────────────────────────────────────────────────────────
+  function colName(i) { var s = ''; i++; while (i > 0) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+
+  // rows: array of arrays of {t: text, f: bool}. Draws a spreadsheet-like table.
+  function tableFrom(rows, cutRows, cutCols) {
+    var wrap = el('div', 'grid-wrap');
+    var table = el('table');
+    var cols = 0;
+    rows.forEach(function (r) { if (r.length > cols) cols = r.length; });
+    cols = Math.min(cols, MAX_COLS);
+    var thead = el('thead'), hr = el('tr');
+    hr.appendChild(el('th', 'rn', ''));
+    for (var c = 0; c < cols; c++) hr.appendChild(el('th', '', colName(c)));
+    thead.appendChild(hr); table.appendChild(thead);
+    var tbody = el('tbody');
+    rows.forEach(function (r, i) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'rn', String(i + 1)));
+      for (var c = 0; c < cols; c++) {
+        var cell = r[c];
+        var td = el('td', cell && cell.f ? 'f' : '', cell ? cell.t : '');
+        if (cell && cell.t) td.title = cell.t;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); wrap.appendChild(table);
+    var box = el('div');
+    if (cutRows || cutCols) box.appendChild(note('Showing the first ' + (cutRows ? MAX_ROWS + ' rows' : '') + (cutRows && cutCols ? ' and ' : '') + (cutCols ? MAX_COLS + ' columns' : '') + '. Download the file to see everything.'));
+    box.appendChild(wrap);
+    return box;
+  }
+
+  function parseCsv(text, delim) {
+    var rows = [], row = [], cur = '', q = false, i = 0, n = text.length;
+    while (i < n) {
+      var ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+        else cur += ch;
+      } else if (ch === '"' && cur === '') q = true;
+      else if (ch === delim) { row.push(cur); cur = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); rows.push(row); row = []; cur = '';
+        if (rows.length > MAX_ROWS) break;
+      } else cur += ch;
+      i++;
+    }
+    if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+
+  function renderCsv(m) {
+    var d = decode(m.buffer);
+    var delim = /\.tsv$/i.test(m.name) ? '\t' : ',';
+    var rows = parseCsv(d.text, delim);
+    var cutRows = rows.length > MAX_ROWS || d.cut;
+    rows = rows.slice(0, MAX_ROWS).map(function (r) { return r.map(function (t) { return { t: t }; }); });
+    var cutCols = rows.some(function (r) { return r.length > MAX_COLS; });
+    show(tableFrom(rows, cutRows, cutCols));
+  }
+
+  function renderSheet(m) {
+    return need('sheet').then(function () {
+      var wb = XLSX.read(m.buffer, { type: 'array', sheetRows: MAX_ROWS + 1, sheetStubs: true });
+      var names = wb.SheetNames.slice(0, 12);
+      if (!names.length) return say('This workbook has no sheets.');
+      var box = el('div'), tabs = el('div', 'tabs'), body = el('div');
+      tabs.setAttribute('role', 'tablist');
+      var anyFormula = false;
+      function draw(name, btn) {
+        Array.prototype.forEach.call(tabs.children, function (b) { b.setAttribute('aria-selected', b === btn ? 'true' : 'false'); });
+        var ws = wb.Sheets[name];
+        body.textContent = '';
+        if (!ws || !ws['!ref']) { body.appendChild(el('div', 'msg', 'This sheet is empty.')); return; }
+        var rg = XLSX.utils.decode_range(ws['!ref']);
+        var cutRows = rg.e.r - rg.s.r + 1 > MAX_ROWS, cutCols = rg.e.c - rg.s.c + 1 > MAX_COLS;
+        var rows = [];
+        for (var r = rg.s.r; r <= Math.min(rg.e.r, rg.s.r + MAX_ROWS - 1); r++) {
+          var line = [];
+          for (var c = rg.s.c; c <= Math.min(rg.e.c, rg.s.c + MAX_COLS - 1); c++) {
+            var cell = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+            if (!cell) { line.push(null); continue; }
+            // A formula nobody has calculated yet (files made by code) has no stored value.
+            if (cell.f && (cell.t === 'z' || cell.v === undefined || cell.v === null || cell.v === '')) { anyFormula = true; line.push({ t: '=' + cell.f, f: true }); }
+            else if (cell.t === 'z' || cell.v === undefined || cell.v === null) line.push(null);
+            else line.push({ t: String(cell.w != null ? cell.w : cell.v) });
+          }
+          rows.push(line);
+        }
+        body.appendChild(tableFrom(rows, cutRows, cutCols));
+        if (anyFormula) body.insertBefore(note('Some cells are formulas that have not been calculated yet. They show the formula. Excel calculates them when you open the file.'), body.firstChild);
+      }
+      names.forEach(function (name) {
+        var b = el('button', 'tab', name);
+        b.type = 'button'; b.setAttribute('role', 'tab');
+        b.addEventListener('click', function () { draw(name, b); });
+        tabs.appendChild(b);
+      });
+      if (names.length > 1) box.appendChild(tabs);
+      box.appendChild(body);
+      show(box);
+      draw(names[0], tabs.children[0]);
+    });
+  }
+
+  // ── PDF ────────────────────────────────────────────────────────────────
+  function renderPdf(m) {
+    return need('pdf').then(function () {
+      var lib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
+      if (!lib) throw new Error('The PDF viewer did not start.');
+      lib.GlobalWorkerOptions.workerSrc = LIBS.pdf[1];
+      return lib.getDocument({ data: new Uint8Array(m.buffer), isEvalSupported: false }).promise.then(function (pdf) {
+        var box = el('div');
+        if (pdf.numPages > MAX_PAGES) box.appendChild(note('Showing the first ' + MAX_PAGES + ' of ' + pdf.numPages + ' pages. Download the file to see the rest.'));
+        show(box);
+        var total = Math.min(pdf.numPages, MAX_PAGES);
+        var width = Math.max(260, (document.documentElement.clientWidth || 360) - 24);
+        var ratio = Math.min(window.devicePixelRatio || 1, 2);
+        var chain = Promise.resolve();
+        for (var p = 1; p <= total; p++) (function (num) {
+          chain = chain.then(function () {
+            return pdf.getPage(num).then(function (page) {
+              var base = page.getViewport({ scale: 1 });
+              var scale = Math.min(width / base.width, 2.5);
+              var vp = page.getViewport({ scale: scale * ratio });
+              var canvas = el('canvas', 'pdf-page');
+              canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+              canvas.style.width = Math.floor(vp.width / ratio) + 'px';
+              canvas.setAttribute('aria-label', 'Page ' + num + ' of ' + pdf.numPages);
+              box.appendChild(canvas);
+              return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+            });
+          });
+        })(p);
+        return chain;
+      });
+    }).catch(function (e) {
+      if (e && e.name === 'PasswordException') return say('This PDF is password protected. Download it to open it.', true);
+      throw e;
+    });
+  }
+
+  // ── Word ───────────────────────────────────────────────────────────────
+  function clean(html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script,style,iframe,object,embed,link,meta,form,base,svg,math').forEach(function (n) { n.remove(); });
+    doc.querySelectorAll('*').forEach(function (n) {
+      Array.prototype.slice.call(n.attributes).forEach(function (a) {
+        var k = a.name.toLowerCase();
+        if (k.indexOf('on') === 0 || k === 'style' || k === 'srcset') n.removeAttribute(a.name);
+      });
+      if (n.tagName === 'IMG' && !/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(n.getAttribute('src') || '')) n.remove();
+    });
+    doc.querySelectorAll('a').forEach(function (a) { var s = document.createElement('span'); s.textContent = a.textContent; a.replaceWith(s); });
+    return doc.body.innerHTML;
+  }
+  function renderWord(m) {
+    return need('word').then(function () {
+      return mammoth.convertToHtml({ arrayBuffer: m.buffer });
+    }).then(function (res) {
+      var box = el('div');
+      box.appendChild(note('Simplified preview. Fonts and layout can differ slightly from the Word file.'));
+      var doc = el('div', 'doc');
+      doc.innerHTML = clean(res.value || '');
+      if (!doc.textContent.trim() && !doc.querySelector('img')) doc.appendChild(el('div', 'msg', 'This document looks empty.'));
+      box.appendChild(doc);
+      show(box);
+    });
+  }
+
+  // ── PowerPoint (text outline) ──────────────────────────────────────────
+  function unxml(s) { return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'); }
+  function renderSlides(m) {
+    return need('zip').then(function () { return JSZip.loadAsync(m.buffer); }).then(function (zip) {
+      var files = Object.keys(zip.files).filter(function (n) { return /^ppt\/slides\/slide\d+\.xml$/.test(n); })
+        .sort(function (a, b) { return parseInt(a.replace(/\D/g, ''), 10) - parseInt(b.replace(/\D/g, ''), 10); });
+      if (!files.length) return say('No slides found in this file.', true);
+      var box = el('div');
+      box.appendChild(note('Text outline only. Download the file to see the design, pictures and layout.'));
+      show(box);
+      return files.slice(0, 60).reduce(function (chain, name, i) {
+        return chain.then(function () { return zip.file(name).async('string'); }).then(function (xml) {
+          var card = el('div', 'slide');
+          card.appendChild(el('h3', '', 'Slide ' + (i + 1)));
+          var paras = xml.split('</a:p>'), any = false;
+          paras.forEach(function (p) {
+            var parts = [], re = /<a:t[^>]*>([\s\S]*?)<\/a:t>/g, mt;
+            while ((mt = re.exec(p))) parts.push(unxml(mt[1]));
+            var line = parts.join('').trim();
+            if (line) { any = true; card.appendChild(el('p', '', line)); }
+          });
+          if (!any) card.appendChild(el('p', '', '(no text on this slide)'));
+          box.appendChild(card);
+        });
+      }, Promise.resolve());
+    });
+  }
+
+  // ── Text and code ──────────────────────────────────────────────────────
+  function renderText(m) {
+    var d = decode(m.buffer), text = d.text;
+    if (/\.json$/i.test(m.name) && !d.cut) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* show as written */ } }
+    var box = el('div');
+    if (d.cut) box.appendChild(note('The file is long. Showing the first part. Download it to see everything.'));
+    box.appendChild(el('pre', 'txt', text));
+    show(box);
+  }
+
+  function applyTheme(t) {
+    if (!t || typeof t !== 'object') return;
+    var map = { bg: '--bg', fg: '--fg', muted: '--muted', line: '--line', soft: '--soft', accent: '--accent' };
+    Object.keys(map).forEach(function (k) {
+      if (typeof t[k] === 'string' && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(t[k])) document.documentElement.style.setProperty(map[k], t[k]);
+    });
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (started || ev.source !== parent) return;
+    var m = ev.data;
+    if (!m || m.t !== 'file' || !(m.buffer instanceof ArrayBuffer) || typeof m.kind !== 'string') return;
+    started = true;
+    applyTheme(m.theme);
+    var name = typeof m.name === 'string' ? m.name : '';
+    var job;
+    try {
+      var msg = { buffer: m.buffer, name: name };
+      if (m.kind === 'pdf') job = renderPdf(msg);
+      else if (m.kind === 'sheet') job = renderSheet(msg);
+      else if (m.kind === 'csv') job = Promise.resolve(renderCsv(msg));
+      else if (m.kind === 'word') job = renderWord(msg);
+      else if (m.kind === 'slides') job = renderSlides(msg);
+      else if (m.kind === 'text') job = Promise.resolve(renderText(msg));
+      else job = Promise.reject(new Error('This kind of file cannot be previewed.'));
+    } catch (e) { job = Promise.reject(e); }
+    job.catch(function (e) {
+      say((e && e.message && /connection|viewer|password|cannot/i.test(e.message)) ? e.message : 'This file could not be previewed. You can still download it.', true);
+    });
+  });
+  window.addEventListener('keydown', function (e) { if (e.key === 'Escape') { try { parent.postMessage({ t: 'file-preview-escape' }, '*'); } catch (x) { /* no parent */ } } });
+  try { parent.postMessage({ t: 'file-preview-ready' }, '*'); } catch (e) { /* no parent */ }
+})();
+</script>
+</body>
+</html>
