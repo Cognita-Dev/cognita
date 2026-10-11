@@ -1,0 +1,100 @@
+/* css/file-viewer.css
+   The preview sheet for files the assistant made (js/file-viewer.js), and the
+   file card under an answer. Phone: a sheet that rises from the bottom.
+   Wide screen: a side panel, so the conversation stays where it is.
+   Uses only the tokens from shared.css. */
+
+/* ── The sheet ─────────────────────────────────────────────────────── */
+.fv { position: fixed; inset: 0; z-index: 1300; display: flex; align-items: flex-end; justify-content: center; }
+.fv-scrim { position: absolute; inset: 0; background: var(--bg-overlay); animation: fv-fade .2s ease-out both; }
+.fv-panel {
+  position: relative; display: flex; flex-direction: column; width: 100%; max-width: 760px;
+  height: 94vh; height: 94dvh; min-height: 0;
+  background: var(--bg-elevated); color: var(--text-1);
+  border: 1px solid var(--border); border-bottom: 0; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, .25); overflow: hidden;
+  animation: fv-up .24s cubic-bezier(.2, .8, .2, 1) both;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.fv.is-closing .fv-panel { animation: fv-down .16s ease-in both; }
+.fv.is-closing .fv-scrim { animation: fv-fade-out .16s ease-in both; }
+
+.fv-bar {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  min-height: 60px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--border);
+}
+.fv-kind { flex: 0 0 auto; font-size: 22px; color: var(--text-2); }
+.fv-title { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.fv-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+.fv-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-2); }
+.fv-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.fv-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 44px; min-height: 44px; padding: 0 10px;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-md);
+  color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer;
+}
+.fv-btn i { font-size: 20px; }
+.fv-btn span { display: none; }
+.fv-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text-1); }
+.fv-btn:disabled { opacity: .5; cursor: default; }
+.fv-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fv-save, .fv-dl { border-color: var(--border); }
+
+.fv-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--bg-elevated); }
+.fv-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+.fv-frame-page { background: #fff; }
+.fv-image { height: 100%; overflow: auto; display: grid; place-items: center; padding: 12px; background: #fff; }
+.fv-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.fv-state { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; padding: 24px; text-align: center; color: var(--text-2); font-size: 14px; }
+.fv-state-err { color: var(--text-1); }
+
+@media (min-width: 480px) { .fv-save span, .fv-dl span { display: inline; } }
+
+/* Wide screens: a panel on the right, full height. */
+@media (min-width: 900px) {
+  .fv { align-items: stretch; justify-content: flex-end; }
+  .fv-scrim { background: rgba(0, 0, 0, .18); }
+  .fv-panel {
+    width: min(760px, 56vw); max-width: none; height: 100%;
+    border: 0; border-left: 1px solid var(--border); border-radius: 0;
+    box-shadow: -8px 0 40px rgba(0, 0, 0, .18);
+    animation-name: fv-in;
+  }
+  .fv.is-closing .fv-panel { animation-name: fv-out; }
+}
+
+@keyframes fv-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fv-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes fv-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fv-down { from { transform: none; opacity: 1; } to { transform: translateY(24px); opacity: 0; } }
+@keyframes fv-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fv-out { from { transform: none; opacity: 1; } to { transform: translateX(32px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .fv-scrim, .fv-panel, .fv.is-closing .fv-panel, .fv.is-closing .fv-scrim { animation: none; }
+}
+
+/* ── The file card under an answer ─────────────────────────────────── */
+.deliv-card {
+  display: inline-flex; align-items: center; gap: 12px; max-width: 100%; min-height: 56px; padding: 8px 14px 8px 12px;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  color: var(--text-1); font: inherit; text-align: left; cursor: pointer;
+}
+.deliv-card:hover { border-color: var(--text-3); }
+.deliv-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.deliv-card:disabled { opacity: .6; cursor: default; }
+.deliv-card-icon {
+  flex: 0 0 auto; display: grid; place-items: center; width: 40px; height: 40px;
+  background: var(--bg-subtle); border-radius: var(--radius-md); font-size: 22px; color: var(--text-2);
+}
+.deliv-card-text { display: flex; flex-direction: column; min-width: 0; }
+.deliv-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.deliv-card-sub { font-size: 12px; color: var(--text-2); }
+.deliv-card-cta { flex: 0 0 auto; margin-left: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.deliv-dl {
+  display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-md);
+  color: var(--text-2); font-size: 18px; cursor: pointer;
+}
+.deliv-dl:hover { border-color: var(--text-3); color: var(--text-1); }
+.deliv-dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
