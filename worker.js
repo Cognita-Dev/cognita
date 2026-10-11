@@ -85,6 +85,7 @@ import { runInsightsDigestScheduler } from './insights-digest.js';
 import { handleEmailUnsubscribe } from './emails/unsubscribe.js';
 import { handleLearnaRequest } from './learna-endpoint.js';
 import { handleLearnaAdminRequest } from './learna-admin-endpoint.js';
+import { handleStudioRequest } from './studio/server/endpoint.js';
 import { runLearnaNudges } from './learna/nudges.js';
 
 function _corsPreflight(env) {
@@ -109,6 +110,8 @@ const _app = {
   if (url.pathname.startsWith('/api/learna/')) return handleLearnaRequest(request, env);
   // Learna admin: course editor, review queue, certificate revocation, code re-run data. Role checks live in learna-admin-endpoint.js.
   if (url.pathname.startsWith('/api/admin/learna/')) return handleLearnaAdminRequest(request, env);
+  // Cognita Studio (video narration, plan status). Plan checks live in studio/server/endpoint.js.
+  if (url.pathname.startsWith('/api/studio/')) return handleStudioRequest(request, env);
 
   if (request.method === 'GET' && url.pathname === '/api/note-quota') return handleNoteQuota(request, env);
   if (request.method === 'POST' && url.pathname === '/api/note-sessions') return handleNoteSessionCreate(request, env);
@@ -514,7 +517,7 @@ function _isExemptFromBodyCap(path) {
 const SMALL_BODY_PREFIXES = [
   '/api/auth/', '/api/payment/initialize', '/api/subscription/', '/api/account/',
   '/api/reminders', '/api/inbox', '/api/admin/roles', '/api/connectors/',
-  '/api/insights/schedule',
+  '/api/insights/schedule', '/api/studio/',
 ];
 
 function _maxBodyBytes(path) {
@@ -544,6 +547,7 @@ function _isHeavyRoute(method, path) {
     path === '/api/note-compare' ||
     /^\/api\/learna\/courses\/[^/]+\/(tutor|submit|assignments\/submit)$/.test(path) ||
     path === '/api/learna/speech/tts' ||
+    path === '/api/studio/tts' ||
     /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media';
 }

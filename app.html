@@ -26,6 +26,7 @@
 <link rel="stylesheet" href="/css/scheduler.css">
 <link rel="stylesheet" href="/css/inbox.css">
 <link rel="stylesheet" href="/css/insights.css">
+<link rel="stylesheet" href="/studio/studio.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -106,6 +107,10 @@
       <a href="/app.html?view=reminders" class="sidebar-history-item" data-view="reminders" title="Reminders">
         <i class="ph ph-bell"></i>
         <span>Reminders</span>
+      </a>
+      <a href="/app.html?view=studio" class="sidebar-history-item" data-view="studio" title="Video Studio">
+        <i class="ph ph-film-slate"></i>
+        <span>Video Studio</span>
       </a>
       <!-- Only shown for admins/moderators — app.js unhides this once
            /api/account reports a role, so regular users never see a
@@ -895,6 +900,20 @@
   <!-- ══════════════════════════════════════════════════════
        AI INSIGHTS DIGEST VIEW
   ══════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════
+       VIDEO STUDIO VIEW (code lives in /studio)
+  ══════════════════════════════════════════════════════ -->
+  <main class="app-main" id="view-studio" hidden>
+    <header class="app-topbar">
+      <button class="mobile-sidebar-btn" aria-label="Open sidebar">
+        <i class="ph ph-list"></i>
+      </button>
+      <h1 class="conversation-title">Video Studio</h1>
+      <div class="topbar-spacer"></div>
+    </header>
+    <div id="studioRoot"></div>
+  </main>
+
   <main class="app-main" id="view-insights" hidden>
 
     <header class="app-topbar">

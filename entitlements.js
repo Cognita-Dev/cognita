@@ -83,6 +83,9 @@ export const PLANS = {
       learnaSubmissionMB: 0,
       learnaVideoSeconds: 0,
       learnaTtsCharsPerDay: 0,
+      // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
+      // Studio plan and the admin override only: 0 means narration is not part of the plan.
+      studioTtsCharsPerDay: 0,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -163,6 +166,9 @@ export const PLANS = {
       learnaSubmissionMB: 8,
       learnaVideoSeconds: 60,
       learnaTtsCharsPerDay: 4000,
+      // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
+      // Studio plan and the admin override only: 0 means narration is not part of the plan.
+      studioTtsCharsPerDay: 0,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -236,6 +242,9 @@ export const PLANS = {
       learnaSubmissionMB: 20,
       learnaVideoSeconds: 180,
       learnaTtsCharsPerDay: 20000,
+      // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
+      // Studio plan and the admin override only: 0 means narration is not part of the plan.
+      studioTtsCharsPerDay: 40000,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -319,6 +328,9 @@ export const PLANS = {
       learnaSubmissionMB: 30,
       learnaVideoSeconds: 180,
       learnaTtsCharsPerDay: UNLIMITED,
+      // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
+      // Studio plan and the admin override only: 0 means narration is not part of the plan.
+      studioTtsCharsPerDay: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Video Studio · Cognita</title>
+<noscript><meta http-equiv="refresh" content="0; url=/app.html?view=studio"></noscript>
+<link rel="icon" href="/assets/cognita.png">
+</head>
+<body>
+<script>
+  // Forward any query string (e.g. the ?connector=...&status=... an OAuth
+  // provider redirects back with) so it survives the hop into app.html.
+  var params = new URLSearchParams(window.location.search);
+  params.set('view', 'studio');
+  window.location.replace('/app.html?' + params.toString());
+</script>
+<p>Redirecting to <a href="/app.html?view=studio">Video Studio</a>…</p>
+</body>
+</html>
