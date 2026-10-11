@@ -1,6 +1,6 @@
 // js/router.js
 // Switches between the chat / learna / reminders / account /
-// scheduler / inbox / insights views inside app.html
+// scheduler / inbox / insights / studio views inside app.html
 // without a full page navigation. Uses a `?view=` query param on the
 // one real file (not a fake path) so refresh, back/forward and shared
 // links all keep working with no server rewrite rules needed.
@@ -35,6 +35,10 @@ const VIEWS = {
   insights: {
     containerId: 'view-insights',
     load: () => import('./insights.js'),
+  },
+  studio: {
+    containerId: 'view-studio',
+    load: () => import('../studio/studio.js'),
   },
 };
 

@@ -1707,8 +1707,21 @@ function warmSandboxIfUseful(text, hasDataFile) {
   }
 }
 
+// Hands "make me a video" requests to Cognita Studio, which renders on the person's device.
+const VIDEO_REQUEST_RE = /^\s*(?:please\s+)?(?:(?:can|could|will|would) you\s+|i(?:'d| would) like (?:you )?to\s+|i want (?:you )?to\s+)?(?:create|make|generate|produce|build|render|turn)\b[^.?!\n]{0,100}?\b(?:video|reel|slideshow|promo)s?\b(?!\s*(?:script|idea|title|description|caption|game|tutorial|editing|editor|software|app\b))/i;
+function maybeHandOffToStudio(text) {
+  if (!text || pendingAttachments.length > 0 || !VIDEO_REQUEST_RE.test(text)) return false;
+  try { sessionStorage.setItem('cognita.studio.handoff', text); } catch (_) { return false; }
+  const input = document.getElementById('composerInput');
+  if (input) { input.value = ''; input.style.height = 'auto'; }
+  showToast('Opening Video Studio to build your video…');
+  import('./router.js').then((m) => m.navigate('studio')).catch(() => showToast('Could not open Video Studio.'));
+  return true;
+}
+
 async function sendMessage(text) {
   if (isSending || (!text && pendingAttachments.length === 0)) return;
+  if (maybeHandOffToStudio(text)) return;
   if (loadingConversationId && loadingConversationId === currentConversationId) {
     // The saved messages haven't downloaded yet. Sending now would save a
     // new conversation over the real one.
