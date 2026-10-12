@@ -14,6 +14,7 @@ import { narrKey } from '../engine.js';
 
 const STORY_ROLES = { storyboard: ['video', 'Storyboard'], storyCaptions: ['caption', 'Captions'], narration: ['audio', 'Narration'], music: ['audio', 'Music'] };
 export const nStatus = () => (S.status && S.status.narration) || { allowed: false, voices: [] };
+export const sttStatus = () => (S.status ? S.status.transcription || { allowed: false, notDeployed: true } : { allowed: false, unknown: true });
 export async function refreshStatus() { try { S.status = await nar.loadStatus(); } catch (_) { S.status = null; } emit('status-narr'); }
 let log = []; let busy = false; let draft = { story: '', ask: '', pic: '' };
 
@@ -98,9 +99,9 @@ export function renderAI(b) {
   <div class="st-inline st-wrap"><button type="button" class="st-btn" id="aiScenes"${vids.length ? '' : ' disabled'}>Detect scene cuts in selected clip</button></div>
   <div class="st-inline st-wrap"><span class="st-muted st-small">Reframe all video and pictures:</span><button type="button" class="st-btn" data-fit="fill">Fill (centre crop)</button><button type="button" class="st-btn" data-fit="fit">Fit</button><button type="button" class="st-btn" data-fit="fitblur">Fit on blurred background</button></div>
   <p class="st-muted st-small">Chroma key lives in the clip inspector (Chroma key section) and the beat tools are in the Audio tab.</p>
-  <h4 class="st-h">Needs a service</h4><div class="st-list"><div class="st-row-item"><div><b>Background removal <span class="st-tag st-tag--svc">NEEDS SERVICE</span></b><small>Not connected. Cognita has no image segmentation service yet.</small></div><button type="button" class="st-btn" disabled>Remove background</button></div>
-  <div class="st-row-item"><div><b>Transcription <span class="st-tag st-tag--svc">NEEDS SERVICE</span></b><small>Not connected. Import an SRT or VTT file in Captions instead.</small></div><button type="button" class="st-btn" disabled>Transcribe</button></div></div>`;
-  const q = (s) => b.querySelector(s);
+  <h4 class="st-h">Needs a service</h4><div class="st-list"><div class="st-row-item"><div><b>Background removal <span class="st-tag st-tag--svc">NEEDS SERVICE</span></b><small>Not available. Cognita has no image segmentation service, and a model that runs in the browser would need a change to the site\u2019s security policy that has not been approved. Chroma key (Inspector) removes a plain green or blue background locally.</small></div><button type="button" class="st-btn" disabled>Remove background</button></div>
+  <div class="st-row-item"><div><b>Automatic captions <span class="st-tag st-tag--svc">NEEDS SERVICE</span></b><small>Turns the speech in a clip into caption cues. Part of the Studio plan. Only the sound is sent, in short pieces.</small></div><button type="button" class="st-btn" id="goCaps">Open Captions</button></div>`;
+  const q = (s) => b.querySelector(s); const gc = b.querySelector('#goCaps'); if (gc) gc.addEventListener('click', () => import('./library.js').then((m) => m.setTab('captions')));
   q('#aiStory').addEventListener('input', (e) => { draft.story = e.target.value; }); q('#aiAsk').addEventListener('input', (e) => { draft.ask = e.target.value; }); q('#aiPic').addEventListener('input', (e) => { draft.pic = e.target.value; });
   q('#aiGo').addEventListener('click', async () => { const text = draft.story.trim(); if (text.length < 8) { toast('Describe the video in a little more detail.'); return; } busy = true; q('#aiGo').disabled = true; q('#aiGo').textContent = 'Working…';
     try { const raw = await sb.generateStoryboard({ prompt: text, mode: 'prompt', options: { aspect: p.settings.aspect === '16:9' ? '16:9' : p.settings.aspect === '1:1' ? '1:1' : '9:16', duration: 30, style: p.style, music: 'calm', language: p.language, captions: true, aiImages: q('#aiImgs').checked }, imageCount: 0, videoClips: [], sourceText: '' }); if (raw.clarify && !(raw.scenes && raw.scenes.length)) { toast(String(raw.clarify).slice(0, 200)); } else { const w = await appendStoryboard(raw, { aiImages: q('#aiImgs').checked }); toast(w[0] || 'Scenes added to the timeline.'); draft.story = ''; } }

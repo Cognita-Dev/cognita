@@ -2,7 +2,7 @@
 // Canvas multitrack timeline (smooth with hundreds of clips: it only paints what is on screen) with DOM track headers.
 // Pointer events with setPointerCapture: mouse, touch and pen. Two fingers pinch-zoom; one finger on empty space pans.
 
-import { S, P, on, emit, dur, fps, clipById, trackById, select, clearSel, selClips, moveClips, trimEdge, splitAt, deleteClips, setTrack, addTrack, removeTrack, moveTrack, addMarker, toast, withLinked, snapT, overlaps, transact } from './state.js';
+import { S, P, on, emit, dur, fps, clipById, trackById, select, clearSel, selClips, moveClips, trimEdge, splitAt, deleteClips, setTrack, addTrack, removeTrack, moveTrack, addMarker, toast, withLinked, snapT, overlaps, transact, beginLive, commitLive } from './state.js';
 import * as M from '../model.js';
 import { seek } from './preview.js';
 import { placeDrop, importAndPlace } from './library.js';
@@ -85,10 +85,18 @@ function buildHeads(onlyPos) {
         <button type="button" data-k="${audio ? 'mute' : 'hide'}" class="${(audio ? t.muted : t.hidden) ? 'is-on' : ''}" aria-label="${audio ? (t.muted ? 'Unmute' : 'Mute') : (t.hidden ? 'Show' : 'Hide')} ${esc(t.name)}" aria-pressed="${audio ? t.muted : t.hidden}"><i class="ph ${audio ? (t.muted ? 'ph-speaker-slash' : 'ph-speaker-high') : (t.hidden ? 'ph-eye-slash' : 'ph-eye')}"></i></button>
         ${audio ? `<button type="button" data-k="solo" class="${t.solo ? 'is-on' : ''}" aria-label="Solo ${esc(t.name)}" aria-pressed="${t.solo}">S</button>` : ''}
         <button type="button" data-k="up" aria-label="Move ${esc(t.name)} up"><i class="ph ph-caret-up"></i></button><button type="button" data-k="down" aria-label="Move ${esc(t.name)} down"><i class="ph ph-caret-down"></i></button>
-        <button type="button" data-k="del" aria-label="Delete ${esc(t.name)}"><i class="ph ph-x"></i></button></span>`;
+        <button type="button" data-k="del" aria-label="Delete ${esc(t.name)}"><i class="ph ph-x"></i></button></span>
+        <div class="st-th-rz" data-rz role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Resize ${esc(t.name)}. Drag, or press the up and down arrow keys." title="Drag to change the track height"></div>`;
       headList.appendChild(d);
     });
     headList.onclick = (e) => { const b = e.target.closest('button[data-k]'); if (!b) return; const id = b.closest('.st-th').dataset.id; const t = trackById(id); const k = b.dataset.k; if (k === 'lock') setTrack(id, { locked: !t.locked }); else if (k === 'mute') setTrack(id, { muted: !t.muted }); else if (k === 'hide') setTrack(id, { hidden: !t.hidden }); else if (k === 'solo') setTrack(id, { solo: !t.solo }); else if (k === 'up') moveTrack(id, -1); else if (k === 'down') moveTrack(id, 1); else if (k === 'del') { if (!S.project.clips.some((c) => c.trackId === id) || window.confirm('Delete this track and the clips on it? You can undo this.')) removeTrack(id); } };
+    // Track height: drag the thin bar under a track name (mouse, touch or pen) or use the arrow keys when it has focus. One drag = one Undo step.
+    const RZ_MIN = 28, RZ_MAX = 160; let rz = null;
+    headList.onpointerdown = (e) => { const h = e.target.closest('.st-th-rz'); if (!h) return; const id = h.closest('.st-th').dataset.id; const t = trackById(id); if (!t) return; e.preventDefault(); try { h.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } rz = { id, t, y0: e.clientY, h0: t.height, before: beginLive(), pid: e.pointerId }; };
+    headList.onpointermove = (e) => { if (!rz || e.pointerId !== rz.pid) return; rz.t.height = M.clamp(Math.round(rz.h0 + (e.clientY - rz.y0)), RZ_MIN, RZ_MAX); buildHeads(true); schedule(); };
+    const endRz = (e) => { if (!rz || (e && e.pointerId !== rz.pid)) return; const r = rz; rz = null; commitLive('Resize track', r.before, 'rz:' + r.id); };
+    headList.onpointerup = endRz; headList.onpointercancel = endRz;
+    headList.onkeydown = (e) => { const h = e.target.closest && e.target.closest('.st-th-rz'); if (!h || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return; e.preventDefault(); const id = h.closest('.st-th').dataset.id; const t = trackById(id); if (!t) return; setTrack(id, { height: M.clamp(t.height + (e.key === 'ArrowDown' ? 8 : -8), RZ_MIN, RZ_MAX) }, 'Resize track'); const again = headList.querySelector('.st-th[data-id="' + id + '"] .st-th-rz'); if (again) again.focus(); };
     headList.onchange = (e) => { if (e.target.classList.contains('st-th-name')) { const id = e.target.closest('.st-th').dataset.id; setTrack(id, { name: e.target.value.trim() || 'Track' }); } };
   }
   [...headList.children].forEach((d, i) => { const r = rs[i]; if (r) { d.style.transform = `translateY(${r.y - RULER}px)`; d.style.height = r.h + 'px'; } });

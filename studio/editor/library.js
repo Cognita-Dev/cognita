@@ -10,7 +10,8 @@ import * as store from '../store.js';
 import * as CP from '../captions.js';
 import { detectBeats } from '../audio.js';
 import { esc, fmtSize, fmtDur, download, safeName } from './util.js';
-import { renderAI } from './ai.js';
+import { renderAI, sttStatus } from './ai.js';
+import * as TR from '../transcribe.js';
 
 export const TABS = [['media', 'ph-folder-simple', 'Media'], ['audio', 'ph-waveform', 'Audio'], ['text', 'ph-text-t', 'Text'], ['stickers', 'ph-smiley-sticker', 'Stickers'], ['effects', 'ph-sparkle', 'Effects'], ['transitions', 'ph-arrows-left-right', 'Transitions'], ['filters', 'ph-drop-half', 'Filters'], ['captions', 'ph-subtitles', 'Captions'], ['templates', 'ph-layout', 'Templates'], ['ai', 'ph-magic-wand', 'AI']];
 let busWired = false, root = null, view = { q: '', kind: 'all', mode: 'grid' }, imports = [], rec = null;
@@ -19,7 +20,7 @@ export function mountLibrary(host) {
   root = host; host.innerHTML = `<div class="st-tabs st-tabs--lib" role="tablist" aria-label="Library">${TABS.map(([k, ic, l]) => `<button type="button" role="tab" class="st-tab" data-tab="${k}" aria-selected="false"><i class="ph ${ic}" aria-hidden="true"></i><span>${l}</span></button>`).join('')}</div><div class="st-lib-body" id="stLibBody"></div>`;
   host.querySelector('.st-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
   host.addEventListener('dragstart', (e) => { const it = e.target.closest('[data-drag]'); if (it) { e.dataTransfer.setData('application/x-cognita-item', it.dataset.drag); e.dataTransfer.effectAllowed = 'copy'; } });
-  if (!busWired) { busWired = true; on('assets', () => { if (['media', 'audio'].includes(S.tab)) renderBody(); }); on('sel', () => { if (['effects', 'transitions', 'filters'].includes(S.tab)) syncHint(); }); }
+  if (!busWired) { busWired = true; on('assets', () => { if (['media', 'audio'].includes(S.tab)) renderBody(); }); on('sel', () => { if (['effects', 'transitions', 'filters'].includes(S.tab)) syncHint(); if (S.tab === 'captions' && !stt.running) paintStt(); }); on('status-narr', () => { if (S.tab === 'captions') paintStt(); }); }
   setTab(S.tab || 'media');
 }
 export function setTab(k) { S.tab = k; root.querySelectorAll('[data-tab]').forEach((b) => { const on_ = b.dataset.tab === k; b.classList.toggle('is-on', on_); b.setAttribute('aria-selected', on_); }); renderBody(); emit('libtab', k); }
@@ -95,7 +96,7 @@ function wireAssets(b) {
   b.querySelectorAll('[data-add]').forEach((x) => x.addEventListener('click', () => { const a = M.assetOf(P(), x.dataset.add); if (a) placeAsset(a); }));
   b.querySelectorAll('[data-ren]').forEach((x) => x.addEventListener('click', () => { const a = M.assetOf(P(), x.dataset.ren); const n = window.prompt('Rename this media', a.name); if (n && n.trim()) { a.name = n.trim().slice(0, 120); bump(); emit('assets'); emit('project'); import('./state.js').then((m) => m.markDirty()); } }));
   b.querySelectorAll('[data-del]').forEach((x) => x.addEventListener('click', async () => { const a = M.assetOf(P(), x.dataset.del); const n = usageOf(a.id).length; if (window.confirm(n ? `"${a.name}" is used by ${n} clip${n > 1 ? 's' : ''}. Deleting it removes those clips too. This cannot be undone.` : `Delete "${a.name}" from this project? This cannot be undone.`)) { await removeAsset(a.id); toast('Media deleted'); } }));
-  b.querySelectorAll('[data-rep]').forEach((x) => x.addEventListener('change', async () => { const f = x.files[0]; if (!f) return; const old = M.assetOf(P(), x.dataset.rep); if (media.kindOfFile(f) !== old.kind) { toast('Choose a ' + old.kind + ' file to replace this one.'); return; } try { const na = await media.importFile(f, { actx: S.hub.ctx() }); relinkAsset(old.id, na); if (na._buf) S.hub.audio.set(na.id, na._buf); await S.hub.ensure(M.assetOf(P(), na.id)); store.sweepOrphans().catch(() => {}); toast('Replaced. Every clip now uses the new file.'); emit('project'); } catch (e) { toast(e.message || 'Could not replace the file.'); } }));
+  b.querySelectorAll('[data-rep]').forEach((x) => x.addEventListener('change', async () => { const f = x.files[0]; if (!f) return; const old = M.assetOf(P(), x.dataset.rep); if (media.kindOfFile(f) !== old.kind) { toast('Choose a ' + old.kind + ' file to replace this one.'); return; } try { const na = await media.importFile(f, { actx: S.hub.ctx() }); relinkAsset(old.id, na); if (na._buf) S.hub.audio.set(na.id, na._buf); await S.hub.ensure(M.assetOf(P(), na.id)); import('./state.js').then((m) => m.save()).then(() => store.sweepOrphans()).catch(() => {}); /* save first: the sweep deletes any file the SAVED project does not list, which would delete the file just added */ toast('Replaced. Every clip now uses the new file.'); emit('project'); } catch (e) { toast(e.message || 'Could not replace the file.'); } }));
   const imp = b.querySelector('#stImp'); if (imp) imp.addEventListener('change', async () => { await importFiles([...imp.files]); imp.value = ''; });
 }
 function media_(b, kinds, accept, label) {
@@ -207,7 +208,7 @@ function captions(b) {
     <p class="st-muted st-small">Position: select a cue, then drag it on the preview or use Position in the inspector. Keep text inside the safe area (toggle it under the preview).</p>
     <h4 class="st-h">Cues <span class="st-muted">${cs.length}</span></h4><div class="st-cues" id="capList">${cs.slice(0, 300).map((c) => `<div class="st-cue${S.sel.has(c.id) ? ' is-on' : ''}" data-id="${c.id}"><button type="button" class="st-cue-t" data-go="${c.id}" aria-label="Go to cue at ${M.fmtShort(c.start)}">${M.fmtShort(c.start)}</button><textarea rows="2" data-txt="${c.id}" aria-label="Caption text">${esc(c.text.content)}</textarea><div class="st-cue-tm"><input type="number" step="0.1" min="0" value="${c.start.toFixed(2)}" data-st="${c.id}" aria-label="Start seconds"><input type="number" step="0.1" min="0.1" value="${c.duration.toFixed(2)}" data-du="${c.id}" aria-label="Duration seconds"></div></div>`).join('')}${cs.length > 300 ? '<p class="st-muted st-small">Showing the first 300 cues.</p>' : ''}</div>
     <div class="st-inline"><button type="button" class="st-btn" id="capMerge">Merge selected cues</button><button type="button" class="st-btn" id="capSplit">Split at playhead</button></div>
-    <h4 class="st-h">Auto-captions <span class="st-tag st-tag--svc">NEEDS SERVICE</span></h4><p class="st-muted st-small">Transcribing speech needs a speech-to-text service that is not connected, so this is off. Import a subtitle file or type cues instead.</p><button type="button" class="st-btn" disabled>Generate captions</button>`;
+    <h4 class="st-h">Auto-captions <span class="st-tag st-tag--svc">NEEDS SERVICE</span></h4><div id="sttBox" aria-live="polite"></div>`;
   b.querySelector('#capAdd').addEventListener('click', () => { const tr = ensureCaptionTrack(); addClip('caption', { name: 'Caption', text: { ...M.defaultText(), content: 'New caption', size: 64, weight: 700 }, cap: { preset: P().captionStyle.preset, lead: 0, dur: 0 }, transform: { y: 0.3 } }, S.t, 2.5, tr && tr.id); });
   b.querySelector('#capImp').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; if (f.size > CP.MAX_SUB_BYTES) { toast('That subtitle file is too large (over 2 MB).'); return; } try { const { cues, warnings } = CP.parseSubtitles(await f.text()); importCues(cues); toast(cues.length + ' cues imported.' + (warnings[0] ? ' ' + warnings[0] : '')); } catch (err) { toast(err.message || 'Could not read that subtitle file.'); } });
   const exp = (fmt) => { const cues = cs.map((c) => ({ start: c.start, end: c.start + c.duration, text: c.text.content })); download(new Blob([fmt === 'srt' ? CP.toSRT(cues) : CP.toVTT(cues)], { type: 'text/plain' }), safeName(p.title) + '.' + fmt); };
@@ -215,10 +216,54 @@ function captions(b) {
   b.querySelector('#capStyle').addEventListener('change', (e) => transact('Caption style', (pp) => { pp.captionStyle.preset = e.target.value; pp.clips.forEach((c) => { if (c.kind === 'caption' && c.cap && c.cap.preset !== 'karaoke') c.cap.preset = e.target.value; else if (c.kind === 'caption' && c.cap && e.target.value !== 'karaoke') c.cap.preset = e.target.value; }); }));
   b.querySelector('#capBurn').addEventListener('change', (e) => transact('Burn captions', (pp) => { pp.export.burnCaptions = e.target.checked; }));
   b.querySelector('#capMerge').addEventListener('click', () => import('./state.js').then((m) => m.mergeCaptions())); b.querySelector('#capSplit').addEventListener('click', () => { const c = selClips().filter((x) => x.kind === 'caption'); import('./state.js').then((m) => m.splitAt(S.t, c.map((x) => x.id))); });
+  paintStt();
   const list = b.querySelector('#capList');
   list.addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) { const c = clipById(g.dataset.go); select([c.id]); import('./preview.js').then((m) => m.seek(c.start + 0.01)); } });
   list.addEventListener('change', (e) => { const t = e.target; if (t.dataset.txt) setClip(t.dataset.txt, (c) => { c.text.content = t.value.slice(0, 500); if (c.cap) c.cap.dur = 0; }, 'Edit caption'); else if (t.dataset.st) setClip(t.dataset.st, (c) => { c.start = Math.max(0, M.quant(P(), Number(t.value) || 0)); }, 'Caption timing'); else if (t.dataset.du) setClip(t.dataset.du, (c) => { c.duration = Math.max(0.1, M.quant(P(), Number(t.value) || 0.5)); if (c.cap) c.cap.dur = 0; }, 'Caption timing'); });
   list.addEventListener('focusin', (e) => { const row = e.target.closest('.st-cue'); if (row && !S.sel.has(row.dataset.id)) { S.sel = new Set([row.dataset.id]); emit('sel'); } });
+}
+
+// ───────── Auto-captions (NEEDS SERVICE: Cognita Worker, Studio plan) ─────────
+const stt = { running: false, abort: null, stage: '', frac: 0, result: '', lang: 'project' };
+const STT_LANGS = [['project', 'Same as the project'], ['auto', 'Detect automatically'], ['en-NG', 'English'], ['fr-FR', 'French'], ['yo-NG', 'Yoruba'], ['ha-NG', 'Hausa']];
+const sttLang = () => (stt.lang === 'project' ? ((P().lang && TR_LANGS.includes(P().lang)) ? P().lang : 'en-NG') : stt.lang);
+const TR_LANGS = ['en-NG', 'en-GB', 'en-US', 'fr-FR'];
+const sttTarget = () => { const cs = selClips().filter((c) => c.kind === 'video' || c.kind === 'audio'); if (cs.length > 1) return { ok: false, reason: 'Select just one clip to transcribe.' }; const c = cs[0] || null; const chk = TR.canTranscribe(c, P()); return chk.ok ? { ...chk, clip: c } : chk; };
+const mins = (sec) => (sec < 90 ? Math.max(1, Math.round(sec)) + ' sec' : Math.round(sec / 60) + ' min');
+function sttHtml() {
+  const st = sttStatus(); const dis = (why) => `<p class="st-muted st-small">${esc(why)}</p><button type="button" class="st-btn" disabled>Generate captions</button>`;
+  if (!st.allowed) return dis(st.offline ? 'You appear to be offline, so automatic captions cannot be checked.' : st.error ? 'Could not check your plan right now. Reopen Studio to try again.' : st.notDeployed ? 'Automatic captions are not available on this server yet.' : st.unknown ? 'Checking what your plan allows…' : TR.MESSAGES.PLAN_REQUIRED + ' You can still type cues or import a subtitle file.');
+  if (st.available === false) return dis(TR.MESSAGES.STT_NOT_CONFIGURED);
+  const left = st.unlimited ? 'No daily limit on your account.' : st.secondsLeft != null ? 'About ' + mins(st.secondsLeft) + ' of speech left today (resets at midnight UTC).' : '';
+  const tg = sttTarget();
+  const opts = STT_LANGS.map(([v, l]) => `<option value="${v}"${stt.lang === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const pct = Math.round(stt.frac * 100);
+  return `<p class="st-muted st-small">Select a video or audio clip, then press Generate. <b>Only its sound</b> (not the picture) is sent to Cognita's speech service in short pieces, and nothing is kept. ${esc(left)}</p>
+    <div class="st-field"><label for="sttLang">Language spoken</label><select id="sttLang"${stt.running ? ' disabled' : ''}>${opts}</select></div>
+    ${tg.ok ? `<p class="st-small">Clip: <b>${esc(tg.clip.name || 'Selected clip')}</b>. This will use about <b>${mins(tg.seconds)}</b> of today's allowance.</p>` : `<p class="st-muted st-small">${esc(tg.reason)}</p>`}
+    <div class="st-inline"><button type="button" class="st-btn st-btn--primary" id="sttGo"${tg.ok && !stt.running ? '' : ' disabled'}><i class="ph ph-closed-captioning"></i>Generate captions</button>${stt.running ? '<button type="button" class="st-btn" id="sttStop">Cancel</button>' : ''}</div>
+    ${stt.running ? `<div class="st-bar" role="progressbar" aria-label="Automatic captions progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="st-muted st-small" role="status">${esc(stt.stage)}</p>` : ''}
+    ${stt.result ? `<p class="st-small" role="status">${esc(stt.result)}</p>` : ''}`;
+}
+function paintStt() {
+  const box = root && root.querySelector('#sttBox'); if (!box) return;
+  const keep = document.activeElement && document.activeElement.id; box.innerHTML = sttHtml();
+  const go = box.querySelector('#sttGo'), stop = box.querySelector('#sttStop'), lg = box.querySelector('#sttLang');
+  if (lg) lg.addEventListener('change', () => { stt.lang = lg.value; });
+  if (go) go.addEventListener('click', runStt); if (stop) stop.addEventListener('click', () => { stop.disabled = true; if (stt.abort) stt.abort.abort(); });
+  if (keep) { const el = box.querySelector('#' + keep); if (el && !el.disabled) el.focus(); }
+}
+async function runStt() {
+  const tg = sttTarget(); if (!tg.ok || stt.running) return;
+  stt.running = true; stt.abort = new AbortController(); stt.frac = 0; stt.stage = 'Reading the sound'; stt.result = ''; paintStt();
+  try {
+    const r = await TR.transcribeClip({ project: P(), clip: tg.clip, hub: S.hub, lang: sttLang(), signal: stt.abort.signal, onProgress: (p) => { stt.stage = p.stage; stt.frac = p.frac; paintStt(); } });
+    if (r.cues.length) importCues(r.cues);
+    const st = S.status && S.status.transcription; if (st && r.secondsLeft != null) { st.secondsLeft = r.secondsLeft; st.secondsUsed = (st.secondsPerDay || 0) - r.secondsLeft; }
+    stt.result = (r.cues.length ? r.cues.length + ' caption cue' + (r.cues.length === 1 ? '' : 's') + ' added. ' : (r.partial ? '' : 'No speech was found in this clip. ')) + (r.skipped ? r.skipped + ' silent part' + (r.skipped === 1 ? ' was' : 's were') + ' skipped. ' : '') + (r.partial ? 'Stopped early: ' + r.error + ' Time already processed still counts toward today’s allowance.' : '');
+    if (r.cues.length) toast(r.cues.length + ' captions added. Check the spelling of names.');
+  } catch (e) { stt.result = e && e.name === 'AbortError' ? 'Cancelled.' : (e && e.message) || 'Automatic captions failed.'; }
+  finally { stt.running = false; stt.abort = null; paintStt(); }
 }
 export function importCues(cues) {
   const p = P(); const tr = ensureCaptionTrack() || null; const style = p.captionStyle.preset;
