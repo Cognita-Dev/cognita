@@ -128,9 +128,21 @@ function drawCaption(ctx, W, H, scene, local, d, project, th, u, portrait, pad) 
   ctx.restore();
 }
 
+// Legacy v1 scene renderer (kept for projects that have not been opened since the v2 timeline arrived).
 function drawScene(ctx, W, H, scene, local, project, images, frames) {
-  const th = THEMES[project.style] || THEMES.clean;
   const d = sceneDur(project, scene);
+  drawSceneCore(ctx, W, H, scene, local, d, project.style, !!(project.captions && scene.caption), images, frames);
+  if (project.captions) {
+    const th = THEMES[project.style] || THEMES.clean; const u = Math.min(W, H) / 100; const portrait = H > W * 1.2;
+    drawCaption(ctx, W, H, scene, local, d, project, th, u, portrait, u * (portrait ? 9 : 8));
+  }
+}
+
+// Draws one storyboard scene (background, layout, picture or footage) WITHOUT its caption. The v2 renderer calls this for
+// "scene" clips, so AI storyboards look exactly as before. `images` needs get(id); `frames(scene)` returns a footage frame or null.
+export function drawSceneCore(ctx, W, H, scene, local, d, style, hasCaption, images, frames) {
+  const project = { style };
+  const th = THEMES[project.style] || THEMES.clean;
   const u = Math.min(W, H) / 100;
   const portrait = H > W * 1.2;
   const pad = u * (portrait ? 9 : 8);
@@ -166,7 +178,7 @@ function drawScene(ctx, W, H, scene, local, project, images, frames) {
   ctx.save();
   ctx.translate(W / 2, H / 2); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2 + dy);
   ctx.globalAlpha *= p;
-  const capSpace = project.captions && scene.caption ? u * (portrait ? 20 : 16) : 0;
+  const capSpace = hasCaption ? u * (portrait ? 20 : 16) : 0;
   const usableH = H - capSpace;
   const L = scene.layout;
 
@@ -251,10 +263,10 @@ function drawScene(ctx, W, H, scene, local, project, images, frames) {
     block(ctx, scene.text, pad, y1 + u * 1.5, maxW, u * 3.2, 1.35, 2, SANS, 400, mute, 'left', 1);
   }
   ctx.restore();
-  if (project.captions) drawCaption(ctx, W, H, scene, local, d, project, th, u, portrait, pad);
   ctx.restore();
 }
 
+// v1 renderer. The v2 timeline renderer lives in render.js and is the one the editor and exporter use.
 export function drawFrame(ctx, W, H, project, t, images, frames) {
   const { index, local, dur } = sceneAt(project, t);
   const scene = project.scenes[index];

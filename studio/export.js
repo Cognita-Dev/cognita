@@ -1,229 +1,183 @@
 // studio/export.js
-// Exporters. Two paths, chosen automatically:
-//   WebCodecs (preferred): frames are rendered one by one and handed to the hardware encoder, then muxed to MP4 (or WebM) by Mediabunny.
-//     Faster than real time, frame-exact, and the audio is mixed offline so narration and music line up with the picture.
-//   MediaRecorder (compatibility): records a canvas live. Real time, and it needs the tab in front. Used only when the browser has no
-//     usable WebCodecs encoder for the project.
+// Exporters. The picture comes from render.drawFrame and the sound from audio.scheduleProject, the same two functions the live
+// preview uses, so the exported file is the timeline rendered, never a screen capture.
+//   WebCodecs (preferred): frames are rendered in order and handed to the encoder, muxed to MP4 (H.264 + AAC) or WebM (VP9/AV1/VP8 + Opus)
+//     by Mediabunny. Codecs are probed on this device first and the real container and codec are reported.
+//   MediaRecorder (compatibility): records the canvas in real time when WebCodecs cannot encode. Its container label comes from what
+//     the recorder actually produced, and the result says so when it is not a plain H.264/AAC file.
+// A failed or cancelled export never touches the project.
 
-import * as eng from './engine.js';
-import { loadMediabunny, ExportVideos } from './media.js';
-import { loadBuffers } from './narration.js';
+import { drawFrame } from './render.js';
+import { scheduleProject, needsSound } from './audio.js';
+import { loadMediabunny, ExportFrames } from './media.js';
+import { projectDuration, even } from './model.js';
+import { audioContextClass } from './engine.js';
 
 export const webCodecsPresent = () => typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+const fail = (msg, code) => Object.assign(new Error(msg), { code });
+const yieldNow = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); });
+async function holdAwake() { try { if (navigator.wakeLock) return await navigator.wakeLock.request('screen'); } catch (_) { /* optional */ } return null; }
 
-const MIME_CANDIDATES = [['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'mp4'], ['video/mp4', 'mp4'], ['video/webm;codecs=vp9,opus', 'webm'], ['video/webm;codecs=vp8,opus', 'webm'], ['video/webm', 'webm']];
+export const QUALITY = { low: { label: 'Small file', f: 0.04 }, medium: { label: 'Balanced', f: 0.07 }, high: { label: 'High quality', f: 0.12 } };
+export const RES_OPTIONS = [[480, '480p'], [720, '720p'], [1080, '1080p'], [1440, '1440p (2K)'], [2160, '2160p (4K)'], [0, 'Project size']];
+
+const MIME_CANDIDATES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 export function recorderSupport() {
   if (typeof MediaRecorder === 'undefined') return { ok: false, reason: 'This browser cannot record video.' };
-  const c = document.createElement('canvas');
-  if (!c.captureStream) return { ok: false, reason: 'This browser cannot capture canvas frames.' };
-  for (const [mime, ext] of MIME_CANDIDATES) if (MediaRecorder.isTypeSupported(mime)) return { ok: true, mime, ext };
-  return { ok: true, mime: '', ext: 'webm' };
+  const c = document.createElement('canvas'); if (!c.captureStream) return { ok: false, reason: 'This browser cannot capture canvas frames.' };
+  for (const m of MIME_CANDIDATES) if (MediaRecorder.isTypeSupported(m)) return { ok: true, mime: m };
+  return { ok: true, mime: '' };
 }
-export function exportSupport() {
-  const r = recorderSupport();
-  if (webCodecsPresent()) return { ok: true, engine: 'webcodecs', fallback: r.ok };
-  return r.ok ? { ok: true, engine: 'recorder', ext: r.ext, mime: r.mime } : { ok: false, reason: r.reason };
+export function outputSize(project, short) {
+  const { width: pw, height: ph } = project.settings;
+  if (!short) return { width: even(pw), height: even(ph) };
+  const k = short / Math.min(pw, ph); return { width: even(pw * k), height: even(ph * k) };
 }
-
-const yieldNow = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); });
-async function holdScreenAwake() { try { if (navigator.wakeLock) return await navigator.wakeLock.request('screen'); } catch (_) { /* optional */ } return null; }
-const fail = (msg, code) => Object.assign(new Error(msg), { code });
-
-export function wantsAudio(project, o) {
-  const narr = o.includeNarration && eng.narrationRanges(project).length > 0;
-  const music = o.includeMusic && project.music !== 'none';
-  const foot = project.scenes.some((s) => s.layout === 'video' && s.video && s.keepAudio);
-  return { narr, music, foot, any: narr || music || foot };
+export const fsSaveSupported = () => typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+export async function pickSaveHandle(name, ext) {
+  const types = ext === 'mp4' ? [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] : [{ description: 'WebM video', accept: { 'video/webm': ['.webm'] } }];
+  return await window.showSaveFilePicker({ suggestedName: name + '.' + ext, types });
 }
 
-// ── WebCodecs path ──
+// Capability report, run before the person presses Start. Never throws.
+export async function planExport(project, o) {
+  const warnings = []; const { width, height } = outputSize(project, o.short);
+  const dur = Math.max(0, (o.range ? o.range.end - o.range.start : projectDuration(project)));
+  const fps = o.fps || project.settings.fps;
+  const bitrate = o.customMbps ? Math.round(o.customMbps * 1e6) : Math.round(Math.min(40e6, Math.max(1e6, width * height * fps * (QUALITY[o.quality] || QUALITY.medium).f)));
+  const abr = 128000; const sr = o.sampleRate || 48000; const sound = o.audio !== false && needsSound(project, { audio: true, music: true });
+  const plan = { ok: false, engine: '', ext: '', container: '', vcodec: '', acodec: '', width, height, fps, bitrate, sampleRate: sr, hasSound: sound, duration: dur, warnings, sizeBytes: Math.round(((bitrate + (sound ? abr : 0)) / 8) * dur), resOk: {} };
+  if (!(dur > 0)) { plan.reason = 'The timeline is empty. Add some clips first.'; return plan; }
+  if (sound) { const bytes = Math.ceil(dur * sr) * 2 * 4; if (bytes > 700 * 1048576) { plan.reason = 'The audio for this range would need about ' + Math.round(bytes / 1048576) + ' MB of memory to mix. Export a shorter range or turn audio off.'; return plan; } }
+  if (webCodecsPresent()) {
+    try {
+      const mb = await loadMediabunny();
+      const avc = await mb.getFirstEncodableVideoCodec(['avc'], { width, height, bitrate });
+      const aac = sound ? await mb.getFirstEncodableAudioCodec(['aac'], { numberOfChannels: 2, sampleRate: sr, bitrate: abr }) : null;
+      const vw = await mb.getFirstEncodableVideoCodec(['vp9', 'av1', 'vp8'], { width, height, bitrate });
+      const op = sound ? await mb.getFirstEncodableAudioCodec(['opus'], { numberOfChannels: 2, sampleRate: sr, bitrate: abr }) : null;
+      for (const [s] of RES_OPTIONS) { if (!s) continue; const sz = outputSize(project, s); try { plan.resOk[s] = !!(await mb.getFirstEncodableVideoCodec(['avc', 'vp9', 'av1', 'vp8'], { width: sz.width, height: sz.height, bitrate: Math.round(sz.width * sz.height * fps * 0.07) })); } catch (_) { plan.resOk[s] = false; } }
+      const mp4Ok = !!avc && (!sound || !!aac), webOk = !!vw && (!sound || !!op);
+      let pick = o.container === 'webm' ? (webOk ? 'webm' : '') : o.container === 'mp4' ? (mp4Ok ? 'mp4' : '') : (mp4Ok ? 'mp4' : webOk ? 'webm' : '');
+      if (!pick && o.container === 'mp4' && webOk) { pick = 'webm'; warnings.push('This device has no H.264 + AAC encoder, so the file will be WebM (' + vw + ' + Opus) instead of MP4.'); }
+      if (!pick && o.container === 'webm' && mp4Ok) { pick = 'mp4'; warnings.push('This device cannot encode WebM at this size, so the file will be MP4.'); }
+      if (pick === 'mp4') Object.assign(plan, { ok: true, engine: 'webcodecs', ext: 'mp4', container: 'MP4', vcodec: 'H.264 (avc)', acodec: sound ? 'AAC' : '', _v: 'avc', _a: aac });
+      else if (pick === 'webm') { if (o.container === 'auto' && !mp4Ok) warnings.push('This device cannot encode H.264 + AAC, so the file will be WebM. Most phones, WhatsApp and editors open WebM, but some older apps do not.'); Object.assign(plan, { ok: true, engine: 'webcodecs', ext: 'webm', container: 'WebM', vcodec: vw.toUpperCase(), acodec: sound ? 'Opus' : '', _v: vw, _a: op }); }
+    } catch (e) { warnings.push('Could not probe the encoder: ' + (e.message || e)); }
+  }
+  if (!plan.ok) {
+    const r = recorderSupport();
+    if (!r.ok) { plan.reason = r.reason; return plan; }
+    const mime = r.mime || 'video/webm'; const ext = /mp4/.test(mime) ? 'mp4' : 'webm'; const codecs = (/codecs=([^;]+)/.exec(mime) || [, ''])[1];
+    Object.assign(plan, { ok: true, engine: 'recorder', ext, container: ext.toUpperCase(), vcodec: codecs ? codecs.split(',')[0] : 'browser default', acodec: sound ? (codecs.split(',')[1] || 'browser default') : '', _mime: r.mime });
+    warnings.push('Compatibility mode: this device cannot encode with WebCodecs, so the video is recorded in real time (' + Math.round(dur) + ' s). Keep this tab in front. Footage sound and exact frame timing are best-effort.');
+    if (ext === 'mp4' && /vp9|vp8|av1/.test(codecs)) warnings.push('This browser stores ' + codecs + ' inside an MP4 container. Some players cannot open it. Choose WebM if the file will not play.');
+  }
+  return plan;
+}
+
+// ───────── WebCodecs path ─────────
 export class WebCodecsExporter {
   constructor() { this.cancelled = false; this.output = null; }
   cancel() { this.cancelled = true; }
-
-  async run(o) {
-    const { project, images, shortSide, fps, volume, onProgress, onStage } = o;
-    if (!webCodecsPresent()) throw fail('WebCodecs is not available in this browser.', 'NO_WEBCODECS');
-    const mb = await loadMediabunny();
-    const { width, height } = eng.dimsFor(project.aspect, shortSide);
-    const total = eng.totalDuration(project);
-    const frames = Math.max(1, Math.round(total * fps));
-    const au = wantsAudio(project, o);
-    const bitrate = Math.round(Math.min(14e6, Math.max(1.5e6, width * height * fps * 0.07)));
-
-    // 1. pick codecs this device can really encode
-    let fmt = null;
-    const vAvc = await mb.getFirstEncodableVideoCodec(['avc'], { width, height, bitrate });
-    const aAac = au.any ? await mb.getFirstEncodableAudioCodec(['aac'], { numberOfChannels: 2, sampleRate: 48000, bitrate: 128000 }) : null;
-    if (vAvc && (!au.any || aAac)) fmt = { f: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }), v: 'avc', a: aAac, ext: 'mp4' };
-    if (!fmt) {
-      const vW = await mb.getFirstEncodableVideoCodec(['vp9', 'vp8', 'av1'], { width, height, bitrate });
-      const aOp = au.any ? await mb.getFirstEncodableAudioCodec(['opus'], { numberOfChannels: 2, sampleRate: 48000, bitrate: 128000 }) : null;
-      if (vW && (!au.any || aOp)) fmt = { f: new mb.WebMOutputFormat(), v: vW, a: aOp, ext: 'webm' };
-    }
-    if (!fmt) throw fail('This device cannot encode ' + width + '\u00D7' + height + ' video' + (au.any ? ' with sound' : '') + ' using WebCodecs.', 'NO_ENCODER');
-
-    // 2. open footage decoders and set up the output
-    const videos = new ExportVideos(project, width, height);
-    let wake = null;
+  async run(o, plan) {
+    const { project, hub, range, onProgress, onStage, fileHandle } = o; const mb = await loadMediabunny();
+    const { width, height, fps, bitrate, sampleRate } = plan; const start = range ? range.start : 0, end = range ? range.end : projectDuration(project);
+    const total = end - start; const nFrames = Math.max(1, Math.round(total * fps)); const burn = o.burnCaptions !== false;
+    const frames = new ExportFrames(project, width, height); let wake = null; let writable = null;
     try {
-      onStage && onStage('Preparing');
-      await videos.open();
-      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-      const ctx = canvas.getContext('2d', { alpha: false });
-      const output = new mb.Output({ format: fmt.f, target: new mb.BufferTarget() });
-      this.output = output;
-      const vs = new mb.CanvasSource(canvas, { codec: fmt.v, bitrate, keyFrameInterval: 2 });
-      output.addVideoTrack(vs, { frameRate: fps });
-      let as = null;
-      if (au.any) { as = new mb.AudioBufferSource({ codec: fmt.a, bitrate: 128000 }); output.addAudioTrack(as); }
-      await output.start();
-      wake = await holdScreenAwake();
-
-      // 3. audio, mixed offline so it is exact
+      onStage && onStage('Preparing media'); await frames.open(); if (this.cancelled) throw fail('cancelled', 'CANCELLED');
+      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d', { alpha: false });
+      let target; if (fileHandle) { writable = await fileHandle.createWritable(); target = new mb.StreamTarget(writable, { chunked: true, chunkSize: 16 * 1048576 }); } else target = new mb.BufferTarget();
+      const format = plan.ext === 'mp4' ? new mb.Mp4OutputFormat({ fastStart: fileHandle ? false : 'in-memory' }) : new mb.WebMOutputFormat();
+      const output = new mb.Output({ format, target }); this.output = output;
+      const vs = new mb.CanvasSource(canvas, { codec: plan._v, bitrate, keyFrameInterval: 2 }); output.addVideoTrack(vs, { frameRate: fps });
+      let as = null; if (plan.hasSound) { as = new mb.AudioBufferSource({ codec: plan._a, bitrate: 128000 }); output.addAudioTrack(as); }
+      await output.start(); wake = await holdAwake();
       if (as) {
-        onStage && onStage('Mixing audio');
-        const mixed = await this.mix(project, o, au, videos, total, volume);
-        if (this.cancelled) throw fail('cancelled', 'CANCELLED');
-        await as.add(mixed);
-        as.close && as.close();
+        onStage && onStage('Mixing audio'); await hub.ensureSounds(project);
+        const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!OAC) throw fail('This browser cannot mix audio offline.', 'NO_AUDIO');
+        const off = new OAC(2, Math.max(1, Math.ceil(total * sampleRate)), sampleRate);
+        scheduleProject(off, off.destination, project, hub.bufs, { from: start, startAt: 0, total: end });
+        const mixed = await off.startRendering(); if (this.cancelled) throw fail('cancelled', 'CANCELLED');
+        await as.add(mixed); as.close && as.close();
       }
-
-      // 4. frames
-      onStage && onStage('Rendering frames');
-      for (let i = 0; i < frames; i++) {
+      onStage && onStage('Rendering frames'); const t0 = performance.now();
+      for (let i = 0; i < nFrames; i++) {
         if (this.cancelled) throw fail('cancelled', 'CANCELLED');
-        const t = i / fps;
-        await videos.prepare(t);
-        eng.drawFrame(ctx, width, height, project, Math.min(t, total - 0.001), images, videos.frames);
-        await vs.add(t, 1 / fps);
-        if (i % 6 === 0) { onProgress && onProgress(i / frames, i, frames); await yieldNow(); }
+        const t = start + Math.min(i / fps, total - 1e-4); await frames.prepare(t);
+        drawFrame(ctx, width, height, project, t, frames.res, { burnCaptions: burn });
+        await vs.add(i / fps, 1 / fps);
+        if (i % 4 === 0) { const el = (performance.now() - t0) / 1000; onProgress && onProgress(i / nFrames, i, nFrames, i > 8 ? (el / i) * (nFrames - i) : null); await yieldNow(); }
       }
-      vs.close && vs.close();
-      onStage && onStage('Finishing file');
-      await output.finalize();
-      const buf = output.target.buffer;
-      if (!buf || !buf.byteLength) throw fail('The encoder produced an empty file.', 'EMPTY');
-      onProgress && onProgress(1, frames, frames);
-      return { blob: new Blob([buf], { type: fmt.ext === 'mp4' ? 'video/mp4' : 'video/webm' }), ext: fmt.ext, width, height, duration: total, audio: au.any, engine: 'webcodecs', missingFootage: videos.missing() };
+      vs.close && vs.close(); onStage && onStage('Finishing file'); await output.finalize();
+      onProgress && onProgress(1, nFrames, nFrames, 0);
+      const missing = frames.missingCount();
+      if (fileHandle) return { savedToFile: true, name: fileHandle.name, ext: plan.ext, width, height, duration: total, audio: plan.hasSound, engine: 'webcodecs', plan, missingFootage: missing };
+      const buf = output.target.buffer; if (!buf || !buf.byteLength) throw fail('The encoder produced an empty file.', 'EMPTY');
+      return { blob: new Blob([buf], { type: plan.ext === 'mp4' ? 'video/mp4' : 'video/webm' }), ext: plan.ext, width, height, duration: total, audio: plan.hasSound, engine: 'webcodecs', plan, missingFootage: missing };
     } catch (e) {
       try { if (this.output && this.output.state !== 'finalized' && this.output.state !== 'canceled') await this.output.cancel(); } catch (_) { /* ignore */ }
-      if (e && e.code === 'CANCELLED') return { cancelled: true };
-      throw e;
-    } finally {
-      videos.close();
-      try { wake && wake.release && (await wake.release()); } catch (_) { /* ignore */ }
-    }
-  }
-
-  async mix(project, o, au, videos, total, volume) {
-    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    if (!OAC) throw fail('This browser cannot mix audio offline.', 'NO_AUDIO');
-    const sr = 48000;
-    const off = new OAC(2, Math.max(1, Math.ceil(total * sr)), sr);
-    const bus = off.createGain(); bus.gain.value = 0.92; bus.connect(off.destination);
-    const ranges = [];
-    if (au.narr) {
-      const { buffers, missing } = await loadBuffers(project);
-      if (missing.length) throw fail('Narration audio for ' + missing.length + ' scene(s) is no longer stored on this device. Generate narration again.', 'NARR_MISSING');
-      eng.scheduleNarration(off, bus, project, buffers);
-      eng.narrationRanges(project).forEach((r) => ranges.push(r));
-    }
-    if (au.music) eng.scheduleMusic(off, bus, { kind: project.music, volume, total, duck: ranges });
-    if (au.foot) {
-      const clips = await videos.audioClips();
-      clips.forEach((c) => c.items.forEach((it) => {
-        let begin = c.start + (it.timestamp - c.trimStart); let offset = 0;
-        if (begin < c.start) { offset = c.start - begin; begin = c.start; }
-        const room = c.start + c.dur - begin; if (room <= 0 || offset >= it.buffer.duration) return;
-        const src = off.createBufferSource(); src.buffer = it.buffer; src.connect(bus);
-        src.start(begin, offset, Math.min(it.buffer.duration - offset, room));
-      }));
-    }
-    return await off.startRendering();
+      try { writable && (await writable.abort()); } catch (_) { /* ignore */ }
+      if (e && e.code === 'CANCELLED') return { cancelled: true }; throw e;
+    } finally { await frames.close(); try { wake && wake.release && (await wake.release()); } catch (_) { /* ignore */ } }
   }
 }
 
-// ── MediaRecorder path ──
+// ───────── MediaRecorder path ─────────
 export class RecorderExporter {
   constructor() { this.cancelled = false; this.raf = 0; }
   cancel() { this.cancelled = true; }
-  async run(o) {
-    const sup = recorderSupport(); if (!sup.ok) throw fail(sup.reason, 'NO_RECORDER');
-    const { project, images, shortSide, fps, volume, onProgress, onStage, previewVideos } = o;
-    const { width, height } = eng.dimsFor(project.aspect, shortSide);
-    const total = eng.totalDuration(project);
-    const au = wantsAudio(project, { ...o, includeNarration: o.includeNarration });
-    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    const stream = canvas.captureStream(fps);
-    let actx = null, bus = null;
-    const footageSkipped = au.foot;
-    if (au.narr || au.music) {
-      const AC = eng.audioContextClass(); actx = new AC(); if (actx.state === 'suspended') await actx.resume();
-      const dest = actx.createMediaStreamDestination(); bus = actx.createGain(); bus.gain.value = 0.92; bus.connect(dest);
-      const ranges = [];
-      if (au.narr) { const { buffers, missing } = await loadBuffers(project); if (missing.length) { actx.close(); throw fail('Narration audio for ' + missing.length + ' scene(s) is no longer stored on this device. Generate narration again.', 'NARR_MISSING'); } eng.scheduleNarration(actx, bus, project, buffers, { startAt: actx.currentTime + 0.15 }); eng.narrationRanges(project).forEach((r) => ranges.push(r)); }
-      if (au.music) eng.scheduleMusic(actx, bus, { kind: project.music, volume, total, startAt: actx.currentTime + 0.15, duck: ranges });
-      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+  async run(o, plan) {
+    const { project, hub, range, onProgress, onStage } = o; const { width, height, fps } = plan;
+    const start = range ? range.start : 0, end = range ? range.end : projectDuration(project), total = end - start;
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d');
+    const stream = canvas.captureStream(fps); let actx = null;
+    await hub.ensureAll(project);
+    if (plan.hasSound) {
+      await hub.ensureSounds(project); const AC = audioContextClass(); actx = new AC(); if (actx.state === 'suspended') await actx.resume();
+      const dest = actx.createMediaStreamDestination(); scheduleProject(actx, dest, project, hub.bufs, { from: start, startAt: actx.currentTime + 0.15, total: end }); dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
     }
-    const chunks = []; let recErr = null;
-    const rec = new MediaRecorder(stream, Object.assign(sup.mime ? { mimeType: sup.mime } : {}, { videoBitsPerSecond: Math.round(Math.min(12e6, Math.max(2e6, width * height * fps * 0.09))) }));
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    rec.onerror = (e) => { recErr = e.error || new Error('Recording failed'); };
-    const stopped = new Promise((r) => { rec.onstop = r; });
-    const frames = previewVideos ? previewVideos.frames : null;
-    const wake = await holdScreenAwake();
-    onStage && onStage('Recording in real time');
-    drawFrameSafe(ctx, width, height, project, 0, images, frames);
-    rec.start(1000);
-    const t0 = performance.now() + 150;
+    const chunks = []; let recErr = null; const burn = o.burnCaptions !== false;
+    const rec = new MediaRecorder(stream, Object.assign(plan._mime ? { mimeType: plan._mime } : {}, { videoBitsPerSecond: plan.bitrate }));
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); }; rec.onerror = (e) => { recErr = e.error || new Error('Recording failed'); };
+    const stopped = new Promise((r) => { rec.onstop = r; }); const wake = await holdAwake();
+    onStage && onStage('Recording in real time'); hub.syncVideo(project, start, true); drawFrame(ctx, width, height, project, start, hub.res, { burnCaptions: burn });
+    rec.start(1000); const t0 = performance.now() + 150;
     try {
       await new Promise((resolve) => {
         const tick = () => {
-          if (this.cancelled || recErr) return resolve();
-          const t = Math.max(0, (performance.now() - t0) / 1000);
-          if (t >= total) { drawFrameSafe(ctx, width, height, project, total - 0.001, images, frames); return resolve(); }
-          if (previewVideos) { const { index, local } = eng.sceneAt(project, t); previewVideos.sync(project.scenes[index], local, true, 0); }
-          drawFrameSafe(ctx, width, height, project, t, images, frames);
-          onProgress && onProgress(t / total, Math.round(t * fps), Math.round(total * fps));
-          this.raf = requestAnimationFrame(tick);
-        };
-        tick();
+          if (this.cancelled || recErr) return resolve(); const t = start + Math.max(0, (performance.now() - t0) / 1000);
+          if (t >= end) { drawFrame(ctx, width, height, project, end - 1e-3, hub.res, { burnCaptions: burn }); return resolve(); }
+          hub.syncVideo(project, t, true); drawFrame(ctx, width, height, project, t, hub.res, { burnCaptions: burn });
+          onProgress && onProgress((t - start) / total, Math.round((t - start) * fps), Math.round(total * fps), end - t); this.raf = requestAnimationFrame(tick);
+        }; tick();
       });
-    } finally { cancelAnimationFrame(this.raf); previewVideos && previewVideos.pauseAll(); }
-    await new Promise((r) => setTimeout(r, 250));
-    if (rec.state !== 'inactive') rec.stop();
-    await stopped;
-    stream.getTracks().forEach((t) => t.stop());
-    if (actx) { try { await actx.close(); } catch (_) { /* ignore */ } }
-    try { wake && wake.release && (await wake.release()); } catch (_) { /* ignore */ }
-    if (this.cancelled) return { cancelled: true };
-    if (recErr) throw recErr;
-    const type = (rec.mimeType || sup.mime || 'video/webm').split(';')[0];
-    const blob = new Blob(chunks, { type });
+    } finally { cancelAnimationFrame(this.raf); hub.pauseAll(); }
+    await new Promise((r) => setTimeout(r, 250)); if (rec.state !== 'inactive') rec.stop(); await stopped;
+    stream.getTracks().forEach((t) => t.stop()); if (actx) { try { await actx.close(); } catch (_) { /* ignore */ } } try { wake && wake.release && (await wake.release()); } catch (_) { /* ignore */ }
+    if (this.cancelled) return { cancelled: true }; if (recErr) throw recErr;
+    const type = (rec.mimeType || plan._mime || 'video/webm').split(';')[0]; const blob = new Blob(chunks, { type });
     if (!blob.size) throw fail('The recording was empty. Keep this tab in front while rendering and try again.', 'EMPTY');
-    return { blob, ext: type.includes('mp4') ? 'mp4' : 'webm', width, height, duration: total, audio: au.narr || au.music, engine: 'recorder', footageSoundSkipped: footageSkipped };
+    const real = rec.mimeType || ''; const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    return { blob, ext, width, height, duration: total, audio: plan.hasSound, engine: 'recorder', plan: { ...plan, ext, vcodec: (/codecs=([^;]+)/.exec(real) || [, plan.vcodec])[1].split(',')[0], container: ext.toUpperCase() }, footageSoundNote: plan.hasSound };
   }
 }
-function drawFrameSafe(ctx, W, H, project, t, images, frames) { eng.drawFrame(ctx, W, H, project, t, images, frames); }
 
-export async function exportVideo(o) {
-  const sup = exportSupport(); if (!sup.ok) throw fail(sup.reason, 'NO_EXPORT');
-  const handle = { ex: null, stopped: false, cancel() { this.stopped = true; this.ex && this.ex.cancel(); } };
-  const p = (async () => {
-    if (sup.engine === 'webcodecs') {
+export async function exportProject(o) {
+  let plan = o.plan || (await planExport(o.project, o)); if (!plan.ok) throw fail(plan.reason || 'Export is not available on this device.', 'NO_EXPORT');
+  const handle = { ex: null, stopped: false, plan, cancel() { this.stopped = true; this.ex && this.ex.cancel(); } };
+  handle.promise = (async () => {
+    if (plan.engine === 'webcodecs') {
       handle.ex = new WebCodecsExporter();
-      try { return await handle.ex.run(o); }
+      try { return await handle.ex.run(o, plan); }
       catch (e) {
-        if (!(e && (e.code === 'NO_ENCODER' || e.code === 'NO_WEBCODECS')) || !sup.fallback) throw e;
-        o.onStage && o.onStage('Switching to compatibility mode');
+        if (!(e && (e.code === 'NO_ENCODER' || e.code === 'NO_WEBCODECS')) || o.fileHandle) throw e;
+        const rp = recorderSupport(); if (!rp.ok) throw e; o.onStage && o.onStage('Switching to compatibility mode');
+        plan = { ...plan, engine: 'recorder', _mime: rp.mime };
       }
     }
-    handle.ex = new RecorderExporter();
-    if (handle.stopped) handle.ex.cancel();
-    return await handle.ex.run(o);
+    handle.ex = new RecorderExporter(); if (handle.stopped) handle.ex.cancel(); return await handle.ex.run(o, plan);
   })();
-  handle.promise = p;
   return handle;
 }
