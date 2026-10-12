@@ -108,7 +108,7 @@
 /* Timeline */
 .st-tl-tools { display: flex; align-items: center; gap: 2px; padding: 3px 8px; border-bottom: 1px solid var(--border); flex-wrap: wrap; } .st-tl-tools .st-icon { width: 34px; height: 34px; } .st-tl-tools .is-on, .st-icon.is-on { background: var(--accent-subtle); color: var(--accent-hover); } #tlZoom { width: 90px; accent-color: var(--accent); }
 .st-tl-body { flex: 1; min-height: 0; display: flex; } .st-tl-heads { width: 148px; flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; } .st-tl-corner { height: 30px; flex: none; border-bottom: 1px solid var(--border); } .st-tl-headlist { overflow: hidden; position: relative; }
-.st-th { display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--border); box-sizing: border-box; } .st-th.is-lock { opacity: .7; } .st-th-ico { color: var(--text-muted, #8c8c86); } .st-th-name { flex: 1; min-width: 0; font: inherit; font-size: var(--text-xs); border: 0; background: transparent; color: inherit; } .st-th-btns { display: flex; } .st-th-btns button { width: 22px; height: 22px; border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 4px; font-size: 13px; padding: 0; } .st-th-btns .is-on { color: var(--accent); } .st-th-btns button:focus-visible, .st-th-name:focus-visible { outline: 2px solid var(--accent); }
+.st-th { position: relative; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--border); box-sizing: border-box; } .st-th.is-lock { opacity: .7; } .st-th-ico { color: var(--text-muted, #8c8c86); } .st-th-name { flex: 1; min-width: 0; font: inherit; font-size: var(--text-xs); border: 0; background: transparent; color: inherit; } .st-th-btns { display: flex; } .st-th-btns button { width: 22px; height: 22px; border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 4px; font-size: 13px; padding: 0; } .st-th-btns .is-on { color: var(--accent); } .st-th-btns button:focus-visible, .st-th-name:focus-visible { outline: 2px solid var(--accent); }
 .st-tl-wrap { flex: 1; min-width: 0; position: relative; overflow: hidden; } #tlCv { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; } #tlCv:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 /* Dialogs */
 .st-modal { position: fixed; inset: 0; background: var(--bg-overlay, rgba(0,0,0,.5)); display: grid; place-items: center; padding: 16px; z-index: 200; } .st-modal[hidden] { display: none; }
@@ -128,3 +128,23 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   .st-hide-m, .st-top .st-btn span { display: none; } .st-tl-heads { width: 96px; } .st-th-name { display: none; } .st-status { display: none; } .st-ctl-row { grid-template-columns: 80px minmax(0, 1fr) 46px 28px; } .st-left, .st-right { border: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Track height handle: a thin bar on the bottom edge of every track name. Wider on touch screens. */
+.st-th-rz { position: absolute; left: 0; right: 0; bottom: -3px; height: 7px; cursor: row-resize; touch-action: none; z-index: 2; border-radius: 3px; }
+.st-th-rz:hover, .st-th-rz:focus-visible { background: var(--accent); opacity: .55; outline: none; }
+@media (pointer: coarse) { .st-th-rz { height: 18px; bottom: -9px; } }
+
+/* Laptop fit (the Studio sits beside the app sidebar, so it often has only about 1100px) */
+.st-tabs--lib { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.st-tabs--lib .st-tab { flex: 0 0 auto; min-width: 62px; }
+.st-ed { grid-template-rows: minmax(0, 1fr) clamp(190px, 30vh, 320px); }
+@media (min-width: 901px) and (max-width: 1280px) { .st-ed { grid-template-columns: 250px minmax(0, 1fr) 290px; } }
+.st-tl-heads { width: 168px; }
+.st-th { flex-wrap: wrap; align-content: center; row-gap: 0; padding: 0 6px; }
+.st-th-name { flex: 1 1 60px; min-width: 0; }
+.st-th-btns { flex: 1 1 100%; flex-wrap: wrap; }
+.st-ctl-row { grid-template-columns: 78px minmax(70px, 1fr) 44px 26px; }
+@media (pointer: coarse) { .st-th-btns button { width: 30px; height: 30px; } .st-tab { min-height: 48px; } .st-tl-tools .st-icon { width: 40px; height: 40px; } }
+@media (max-width: 900px) { .st-tl-heads { width: 112px; } .st-th-btns { gap: 0; } .st-ctl-row { grid-template-columns: 78px minmax(0, 1fr) 44px 26px; } }
+.st-lib-filter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .st-lib-filter input[type=search] { flex: 1 1 120px; min-width: 0; }
+.st-lib-act { flex-wrap: wrap; }

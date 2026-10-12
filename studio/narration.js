@@ -12,12 +12,12 @@ export const langCodeFor = (name) => LANG_CODES[name] || null;
 const authed = (path, init) => window.Auth.authedFetch(WORKER_URL + path, init);
 
 export async function loadStatus() {
-  if (!navigator.onLine) return { narration: { allowed: false, offline: true, voices: [] } };
+  if (!navigator.onLine) return { narration: { allowed: false, offline: true, voices: [] }, transcription: { allowed: false, offline: true } };
   try {
     const res = await authed('/api/studio/status');
     if (!res.ok) throw new Error('status ' + res.status);
     return await res.json();
-  } catch (e) { return { narration: { allowed: false, error: true, voices: [] } }; }
+  } catch (e) { return { narration: { allowed: false, error: true, voices: [] }, transcription: { allowed: false, error: true } }; }
 }
 
 const buffers = new Map();

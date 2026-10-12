@@ -4,13 +4,23 @@ Cognita Studio is a client-side video editor. Everything is vanilla ES modules: 
 
 ## Status: what was actually run
 
-Three checks were run in headless Chromium with the page's real CSP header applied:
+Everything below was run in headless Chromium with the page's real CSP header, against the real repo files, with ffprobe and ffmpeg checking every exported file. The sandbox has no H.264 encoder, so exports there came out as WebM (VP9 + Opus). The MP4 (H.264) path was run once in the first session (text only, no sound). MP4 with sound is **untested**.
 
-1. `/app.html?view=studio` loads with no uncaught page errors and shows the home screen. Passed.
-2. An old scene-based (v1) project migrates and opens in the editor (3 scene clips, v2 model, original kept as `legacyV1`). Passed.
-3. A 2 second text clip exports to MP4 (H.264, 1080x1920, 30 fps, 2.0 s) and `ffprobe` and `ffmpeg` read it cleanly. Passed.
+Passed:
+- Studio loads with no page errors. An old v1 project migrates and opens as v2.
+- Import of a video with sound, placed and exported: one video and one audio stream, right length, audio not silent.
+- Image + keyframed text + two transitions + burned-in caption export plays. In/Out range export has the right length. Speed 2x and reverse export with the right length and no errors.
+- Undo and redo return the exact state after split, move and delete.
+- Duplicate and delete project: copies keep their own media; a file shared by two projects survives until the last one is deleted.
+- Automatic captions (see below): 25 browser checks against a fake speech service and 30 Worker checks against the real endpoint, plan and usage code with a fake model.
+- Track height by drag (one Undo step), by arrow keys, with a minimum.
+- HEVC video gets a plain refusal. A phone video with rotation metadata imports at its display size and exports upright (checked against a reference frame).
+- Missing media is flagged, Replace relinks it, and the project exports with sound afterwards. A project JSON imported "on another device" opens with its media flagged missing and can be relinked. A broken JSON file is refused.
+- Layout checked by screenshot at 1100x800 and 390x844 (no sideways overflow).
 
-Everything else in this file is **untested** (written and syntax checked only). Treat it as untested until you try it. The headless browser has no icon font (CDN blocked in the sandbox), so the visual layout was only glanced at once.
+Still **untested**: MP4 with AAC sound, real Whisper output, real phones and touch dragging, 4K, long videos, memory use on big projects, the MediaRecorder fallback, voice-over recording, narration end to end, the Assistant, pictures from `/api/image`, and everything not listed above. The sandbox cannot load the icon font, so icons were not seen.
+
+Bug found and fixed while testing: after **Replace**, the clean-up of unused files ran before the project was saved and deleted the new file. It now saves first.
 
 ## Architecture
 
@@ -25,11 +35,12 @@ media.js             import and probe, Hub (decoded media for preview and export
 export.js            planExport (real codec probe), WebCodecs exporter, MediaRecorder fallback
 store.js             IndexedDB (projects, assets, recovery, templates)
 captions.js          SRT/VTT parse and write
+transcribe.js        automatic captions: chunking, upload, words to cues
 library-data.js      filters, stickers, text and caption presets, built-in templates
 editor/state.js      the one editor state, event bus, command/undo system, every edit operation
 editor/preview.js    preview canvas, playback clock, live audio, meter, on-canvas handles
 editor/timeline.js   canvas multitrack timeline with DOM track headers, pointer events
-editor/library.js    left panel tabs (media, audio, text, stickers, effects, transitions, filters, captions, templates)
+editor/library.js    left panel tabs (media, audio, text, stickers, effects, transitions, filters, captions incl. auto-captions, templates)
 editor/ai.js        AI tab: storyboard, assistant, pictures, narration
 editor/inspector.js  right panel: contextual controls, keyframes, project settings
 editor/export-ui.js  export dialog
@@ -76,7 +87,8 @@ LOCAL means it runs in the browser. NEEDS SERVICE means it calls a Cognita Worke
 | AI storyboard from prompt, document, images or footage; the Assistant | NEEDS SERVICE (`/api/chat`) |
 | AI pictures | NEEDS SERVICE (`/api/image`) |
 | Narration | NEEDS SERVICE (`/api/studio/tts`, Studio plan) |
-| Automatic transcription, background removal | NOT BUILT (disabled rows, would need a service) |
+| Automatic captions (speech to text, Whisper on Workers AI, Studio plan; only sound is sent) | NEEDS SERVICE (`/api/studio/stt`) |
+| Background removal | NOT BUILT (disabled row with the reason) |
 
 ## Export honesty
 
@@ -88,11 +100,27 @@ Space play or pause, J/K/L back, pause, play, Left/Right one frame (Shift: one s
 
 ## Dependencies
 
-Mediabunny 1.61.3 (MPL-2.0), already vendored in `vendor/` with its licence. No new libraries. No new Workers. No API keys.
+Mediabunny 1.61.3 (MPL-2.0), already vendored in `vendor/` with its licence. No new libraries. No API keys. Speech to text uses Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo` through the existing `AI` binding (the note taker uses the same model).
+
+## Automatic captions (new)
+
+Browser (`transcribe.js`, Captions tab): decodes the sound of the selected clip, keeps only the part on the timeline, resamples to 16 kHz mono, cuts it into chunks of about 25 s (never over 29 s) at the quietest moment, skips silent chunks, sends each as a small WAV to `POST /api/studio/stt` one at a time, then groups the returned words into caption cues (speed and trim are respected) and adds them in one Undo step. Cancel stops after the chunk in flight. If it stops early (limit, error), cues found so far are kept. The control is disabled with a reason when the plan does not allow it, the server is older, or the feature is switched off.
+
+Worker (`server/stt.js`, route in `server/endpoint.js`): verified uid, plan from the server, kill switch, WAV and size checks before anything is counted, reserve the estimated seconds, run Whisper, refund in full on failure, then true up to the length Whisper reports (a client that under-claims the length cannot get cheap audio). Nothing is stored. `/api/studio/status` now also returns a `transcription` block.
+
+**What you must configure**
+1. Deploy the Worker (`worker.js`, `entitlements.js`, `studio/server/*`). The `AI` binding and the `COGNITA_USAGE` KV already exist for the note taker and narration.
+2. Optional kill switch: Worker variable `STUDIO_STT_DISABLED=1` switches it off without a deploy.
+3. Allowance is the new plan limit `studioSttSecondsPerDay` in `entitlements.js`: Free 0, Plus 0, Studio 1800 (30 min of speech per day), Admin unlimited. Change the number there if you want.
+4. Cost: Cloudflare lists Whisper large-v3-turbo at about $0.0005 per audio minute. Worst case for one Studio user at the limit is 30 min a day. Confirm the current price in your Cloudflare dashboard.
+5. Not verified against the real service: the audio size limit (Cloudflare does not state one; chunks are kept under 1 MB), and how well it handles Nigerian English, Pidgin, Yoruba and Hausa. Always check names in the result.
 
 ## Files changed outside `studio/`
 
-None. `app.html`, `js/router.js`, `vercel.json`, `entitlements.js` and `studio/server/*` are untouched, so the plan gating is unchanged and the existing CSP is enough (media-src and worker-src already allow blob:).
+- `worker.js`: `/api/studio/stt` gets a 1.5 MB body allowance (other `/api/studio/*` routes stay at 100 KB) and is added to the rate-limited "heavy" routes next to `/api/studio/tts`.
+- `entitlements.js`: new limit `studioSttSecondsPerDay` on all four plans. Nothing else changed.
+- `.vercelignore`: adds `studio/server/` (Worker only code, the browser never loads it).
+- `app.html`, `js/router.js`, `vercel.json`: untouched. The existing CSP is enough (no WebAssembly). The existing narration gating is untouched.
 
 ## Migration notes
 
@@ -103,14 +131,15 @@ None. `app.html`, `js/router.js`, `vercel.json`, `entitlements.js` and `studio/s
 
 ## Limitations
 
+- Background removal is not built. A model that runs in the browser needs WebAssembly, which the site's security policy forbids (it would need `wasm-unsafe-eval` added to `vercel.json`, which is your decision). No Cognita Worker model fits. Chroma key removes a plain green or blue background locally.
+- Stabilisation and motion tracking are not built.
+- Speed changes pitch (no time-stretch). Preview sound plays only at 1x.
 - Undo is snapshot based, so very large projects use more memory per step.
-- Preview sound plays only at 1x. Speeds other than 1x preview the picture only.
-- Speed changes pitch (no time-stretch).
 - Two clips of the same video playing at once share one preview frame.
 - GIFs show their first frame only.
 - Reverse is limited to 12 s clips and a memory budget.
 - Noise reduction is a basic filter, not a trained model.
-- Stabilisation, motion tracking, transcription and background removal are not built.
-- HEVC and some phone formats may not decode in every browser. Rotation metadata handling is untested.
-- Mobile layout (one pane at a time with a bottom bar) is untested on real phones.
-- Real-device encoder behaviour is unknown beyond the one headless run.
+- Automatic captions: Studio plan only, up to the daily allowance, sound only, accuracy not measured on Nigerian languages. Word timing needs the model to return words; otherwise timing is spread across each sentence.
+- HEVC video is refused with an explanation where the browser cannot decode it.
+- Mobile layout was checked by screenshot only, not on real phones. Touch dragging of the new track-height handle is untested.
+- Real-device encoder behaviour is unknown beyond the sandbox (WebM only there).
