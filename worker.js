@@ -530,6 +530,8 @@ function _maxBodyBytes(path) {
   if (path === '/api/chat') return 36 * MB;       // up to 4 images as base64
   // Saving a sandbox file: up to 10 MB of file is about 13.4 MB as base64.
   if (/^\/api\/files\/[^/]+$/.test(path)) return 14 * MB;
+  // Studio automatic captions: one chunk (up to 30 s) of 16 kHz mono WAV sound, about 1 MB. studio/server/stt.js enforces its own 1.2 MB limit.
+  if (path === '/api/studio/stt') return 1.5 * MB;
   if (SMALL_BODY_PREFIXES.some((p) => path === p || path.startsWith(p))) return 100 * KB;
   return 15 * MB;
 }
@@ -548,6 +550,7 @@ function _isHeavyRoute(method, path) {
     /^\/api\/learna\/courses\/[^/]+\/(tutor|submit|assignments\/submit)$/.test(path) ||
     path === '/api/learna/speech/tts' ||
     path === '/api/studio/tts' ||
+    path === '/api/studio/stt' ||
     /^\/api\/note-sessions\/[^/]+\/transcribe$/.test(path) ||
     path === '/api/social/media';
 }

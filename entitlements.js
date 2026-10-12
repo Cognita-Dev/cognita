@@ -86,6 +86,9 @@ export const PLANS = {
       // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
       // Studio plan and the admin override only: 0 means narration is not part of the plan.
       studioTtsCharsPerDay: 0,
+      // Cognita Studio automatic captions (studio/server/stt.js). Seconds of audio sent to speech-to-text per day.
+      // Studio plan and the admin override only: 0 means automatic captions are not part of the plan.
+      studioSttSecondsPerDay: 0,
     },
     models: {
       chat: ['fast'],              // maps to internal model tier keys below
@@ -169,6 +172,9 @@ export const PLANS = {
       // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
       // Studio plan and the admin override only: 0 means narration is not part of the plan.
       studioTtsCharsPerDay: 0,
+      // Cognita Studio automatic captions (studio/server/stt.js). Seconds of audio sent to speech-to-text per day.
+      // Studio plan and the admin override only: 0 means automatic captions are not part of the plan.
+      studioSttSecondsPerDay: 0,
     },
     models: {
       chat: ['fast', 'advanced'],
@@ -245,6 +251,9 @@ export const PLANS = {
       // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
       // Studio plan and the admin override only: 0 means narration is not part of the plan.
       studioTtsCharsPerDay: 40000,
+      // Cognita Studio automatic captions (studio/server/stt.js). Seconds of audio sent to speech-to-text per day.
+      // Studio plan and the admin override only: 0 means automatic captions are not part of the plan.
+      studioSttSecondsPerDay: 30 * 60,
     },
     models: {
       chat: ['fast', 'advanced', 'reasoning'],
@@ -331,6 +340,9 @@ export const PLANS = {
       // Cognita Studio video narration (studio/server). Characters of NEW narration per day; lines already kept in storage cost nothing.
       // Studio plan and the admin override only: 0 means narration is not part of the plan.
       studioTtsCharsPerDay: UNLIMITED,
+      // Cognita Studio automatic captions (studio/server/stt.js). Seconds of audio sent to speech-to-text per day.
+      // Studio plan and the admin override only: 0 means automatic captions are not part of the plan.
+      studioSttSecondsPerDay: UNLIMITED,
     },
     models: {
       // Every tier a regular plan can reach, PLUS 'v0' — the Vercel v0
