@@ -148,3 +148,94 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 @media (max-width: 900px) { .st-tl-heads { width: 112px; } .st-th-btns { gap: 0; } .st-ctl-row { grid-template-columns: 78px minmax(0, 1fr) 44px 26px; } }
 .st-lib-filter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .st-lib-filter input[type=search] { flex: 1 1 120px; min-width: 0; }
 .st-lib-act { flex-wrap: wrap; }
+
+/* ═════════ UI/UX and touch fixes ═════════ */
+/* Touch: no double-tap zoom delay on controls, no grey tap flash. On phones, fields at 16px or more stop iOS from zooming the whole page in when a field is tapped. */
+#studioRoot button, #studioRoot summary, #studioRoot select, #studioRoot [role=tab], .st-menu button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+@media (pointer: coarse) {
+  #studioRoot select, #studioRoot textarea, #studioRoot input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]) { font-size: 16px; }
+  #studioRoot .st-mini { min-height: 40px; }
+}
+
+/* Timeline toolbar: one row that scrolls sideways instead of wrapping into three rows that eat the timeline */
+.st-tl-toolwrap { position: relative; flex: none; border-bottom: 1px solid var(--border); }
+.st-tl-toolwrap::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 22px; pointer-events: none; background: linear-gradient(to right, transparent, var(--bg-elevated)); }
+.st-tl-tools { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; border-bottom: 0; padding: 3px 26px 3px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.st-tl-tools::-webkit-scrollbar { display: none; }
+.st-tl-tools > * { flex: none; }
+#tlZoom { width: 110px; min-height: 34px; touch-action: none; }
+.st-addtrack { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 10px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--accent-subtle); color: var(--accent-hover); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); white-space: nowrap; cursor: pointer; }
+.st-addtrack:hover, .st-addtrack[aria-expanded="true"] { background: var(--accent); color: #fff; }
+.st-addtrack i { font-size: 16px; }
+@media (pointer: coarse) { .st-addtrack { height: 40px; } }
+
+/* Track headers: icon + hide/mute + lock + a "more" menu on phones and tablets. The old two-row button grid overlapped the resize bar, so Move and Delete could not be tapped. */
+.st-th-more { display: none; }
+.st-th-btns .st-th-more i, .st-th-btns button i { pointer-events: none; }
+@media (max-width: 900px), (pointer: coarse) {
+  .st-tl-heads { width: 128px; }
+  .st-th { flex-wrap: nowrap; padding: 0 4px; gap: 0; }
+  .st-th-name { display: none; }
+  .st-th-ico { flex: none; width: 16px; font-size: 14px; text-align: center; }
+  .st-th-btns { flex: 1 1 auto; flex-wrap: nowrap; justify-content: space-between; gap: 0; }
+  .st-th-btns .st-th-x { display: none; }
+  .st-th-btns .st-th-more { display: inline-grid; place-items: center; }
+  .st-th-btns button { width: 34px; height: 40px; font-size: 17px; display: inline-grid; place-items: center; }
+}
+@media (pointer: coarse) { .st-th-rz { height: 14px; bottom: -7px; } }
+
+/* Popup menus (Add track, track options, Add effect, speed...) */
+.st-menu { position: fixed; z-index: 10001; min-width: 210px; max-width: min(330px, calc(100vw - 16px)); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; background: var(--bg-elevated); color: var(--text-primary, inherit); border: 1px solid var(--border-strong); border-radius: var(--radius-lg, 12px); box-shadow: var(--shadow-lg, 0 14px 34px rgba(0,0,0,.3)); padding: 6px; }
+.st-menu-title { padding: 6px 10px 4px; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted, #8c8c86); }
+.st-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; border-radius: var(--radius-md, 8px); background: transparent; color: inherit; font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.st-menu-item i { font-size: 18px; width: 18px; flex: none; text-align: center; }
+.st-menu-gap { display: inline-block; }
+.st-menu-l { flex: 1; min-width: 0; }
+.st-menu-h { color: var(--text-muted, #8c8c86); font-size: var(--text-xs); text-align: right; }
+.st-menu-item:hover:not(:disabled), .st-menu-item:focus-visible { background: var(--bg-subtle); outline: none; }
+.st-menu-item:active:not(:disabled) { background: var(--accent-subtle); }
+.st-menu-item.is-on { color: var(--accent-hover); }
+.st-menu-item.is-danger { color: var(--danger); }
+.st-menu-item:disabled { opacity: .4; cursor: not-allowed; }
+.st-menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+@media (pointer: coarse) { .st-menu-item { min-height: 48px; } }
+
+/* Preview speed is now a small button that opens a menu */
+.st-ctl .st-rate { min-width: 52px; padding: 0 10px; cursor: pointer; font-variant-numeric: tabular-nums; }
+
+/* Empty project prompt */
+.st-start { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; text-align: center; color: #eee; background: rgba(14,14,13,.72); }
+.st-start[hidden] { display: none; }
+.st-start > i { font-size: 28px; opacity: .85; }
+.st-start strong { font-size: var(--text-md); font-weight: var(--weight-semibold); }
+.st-start > span { font-size: var(--text-xs); color: #c9c9c4; max-width: 30ch; line-height: 1.4; }
+.st-start-act { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.st-start .st-btn { min-height: 40px; }
+.st-start .st-btn:not(.st-btn--primary) { background: #222; color: #eee; border-color: #555; }
+@media (max-height: 760px) { .st-start > span { display: none; } }
+
+/* Toasts must never sit on top of a button you are about to tap. They ignore touches, and on phones they float above the bottom bar. */
+.toast { pointer-events: none; }
+@media (max-width: 900px) { body:has(#view-studio:not([hidden]) .st-mnav) .toast { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); } }
+
+/* Library tabs scroll sideways: fade the right edge so it is clear there is more to swipe to */
+.st-tabs--lib { padding-right: 24px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); scroll-behavior: smooth; }
+
+/* Phone layout: preview and timeline share the screen evenly, and the playback bar is tighter */
+@media (max-width: 900px) {
+  .st-ed[data-pane="preview"] > .st-center { bottom: 50%; }
+  .st-ed[data-pane="preview"] > .st-tl { top: 50%; }
+  .st-ctl { gap: 0; padding: 2px 4px; }
+  .st-tc { padding: 0 4px; }
+  .st-meter { display: none; }
+}
+/* A phone on its side: preview on the left, timeline on the right */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) {
+  .st-ed[data-pane="preview"] > .st-center { bottom: 0; right: 50%; }
+  .st-ed[data-pane="preview"] > .st-tl { top: 0; left: 50%; border-top: 0; border-left: 1px solid var(--border); }
+}
+
+/* Track headers are positioned with translateY by the timeline code, so they must not also stack in normal flow.
+   Before this, every header was pushed down by the height of all the headers above it and drifted away from its lane. */
+.st-tl-headlist { flex: 1; min-height: 0; }
+.st-th { position: absolute; left: 0; right: 0; top: 0; }
