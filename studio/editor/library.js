@@ -12,6 +12,7 @@ import { detectBeats } from '../audio.js';
 import { esc, fmtSize, fmtDur, download, safeName } from './util.js';
 import { renderAI, sttStatus } from './ai.js';
 import * as TR from '../transcribe.js';
+import * as LS from '../localstt.js';
 
 export const TABS = [['media', 'ph-folder-simple', 'Media'], ['audio', 'ph-waveform', 'Audio'], ['text', 'ph-text-t', 'Text'], ['stickers', 'ph-smiley-sticker', 'Stickers'], ['effects', 'ph-sparkle', 'Effects'], ['transitions', 'ph-arrows-left-right', 'Transitions'], ['filters', 'ph-drop-half', 'Filters'], ['captions', 'ph-subtitles', 'Captions'], ['templates', 'ph-layout', 'Templates'], ['ai', 'ph-magic-wand', 'AI']];
 let busWired = false, root = null, view = { q: '', kind: 'all', mode: 'grid' }, imports = [], rec = null;
@@ -208,7 +209,7 @@ function captions(b) {
     <p class="st-muted st-small">Position: select a cue, then drag it on the preview or use Position in the inspector. Keep text inside the safe area (toggle it under the preview).</p>
     <h4 class="st-h">Cues <span class="st-muted">${cs.length}</span></h4><div class="st-cues" id="capList">${cs.slice(0, 300).map((c) => `<div class="st-cue${S.sel.has(c.id) ? ' is-on' : ''}" data-id="${c.id}"><button type="button" class="st-cue-t" data-go="${c.id}" aria-label="Go to cue at ${M.fmtShort(c.start)}">${M.fmtShort(c.start)}</button><textarea rows="2" data-txt="${c.id}" aria-label="Caption text">${esc(c.text.content)}</textarea><div class="st-cue-tm"><input type="number" step="0.1" min="0" value="${c.start.toFixed(2)}" data-st="${c.id}" aria-label="Start seconds"><input type="number" step="0.1" min="0.1" value="${c.duration.toFixed(2)}" data-du="${c.id}" aria-label="Duration seconds"></div></div>`).join('')}${cs.length > 300 ? '<p class="st-muted st-small">Showing the first 300 cues.</p>' : ''}</div>
     <div class="st-inline"><button type="button" class="st-btn" id="capMerge">Merge selected cues</button><button type="button" class="st-btn" id="capSplit">Split at playhead</button></div>
-    <h4 class="st-h">Auto-captions <span class="st-tag st-tag--svc">NEEDS SERVICE</span></h4><div id="sttBox" aria-live="polite"></div>`;
+    <h4 class="st-h">Auto-captions <span class="st-tag st-tag--local">ON DEVICE</span> <span class="st-tag st-tag--svc">or cloud</span></h4><div id="sttBox" aria-live="polite"></div>`;
   b.querySelector('#capAdd').addEventListener('click', () => { const tr = ensureCaptionTrack(); addClip('caption', { name: 'Caption', text: { ...M.defaultText(), content: 'New caption', size: 64, weight: 700 }, cap: { preset: P().captionStyle.preset, lead: 0, dur: 0 }, transform: { y: 0.3 } }, S.t, 2.5, tr && tr.id); });
   b.querySelector('#capImp').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; if (f.size > CP.MAX_SUB_BYTES) { toast('That subtitle file is too large (over 2 MB).'); return; } try { const { cues, warnings } = CP.parseSubtitles(await f.text()); importCues(cues); toast(cues.length + ' cues imported.' + (warnings[0] ? ' ' + warnings[0] : '')); } catch (err) { toast(err.message || 'Could not read that subtitle file.'); } });
   const exp = (fmt) => { const cues = cs.map((c) => ({ start: c.start, end: c.start + c.duration, text: c.text.content })); download(new Blob([fmt === 'srt' ? CP.toSRT(cues) : CP.toVTT(cues)], { type: 'text/plain' }), safeName(p.title) + '.' + fmt); };
@@ -224,13 +225,28 @@ function captions(b) {
 }
 
 // ───────── Auto-captions (NEEDS SERVICE: Cognita Worker, Studio plan) ─────────
-const stt = { running: false, abort: null, stage: '', frac: 0, result: '', lang: 'project' };
+const stt = { running: false, abort: null, stage: '', frac: 0, result: '', lang: 'project', mode: 'device' };
 const STT_LANGS = [['project', 'Same as the project'], ['auto', 'Detect automatically'], ['en-NG', 'English'], ['fr-FR', 'French'], ['yo-NG', 'Yoruba'], ['ha-NG', 'Hausa']];
 const sttLang = () => (stt.lang === 'project' ? ((P().lang && TR_LANGS.includes(P().lang)) ? P().lang : 'en-NG') : stt.lang);
 const TR_LANGS = ['en-NG', 'en-GB', 'en-US', 'fr-FR'];
 const sttTarget = () => { const cs = selClips().filter((c) => c.kind === 'video' || c.kind === 'audio'); if (cs.length > 1) return { ok: false, reason: 'Select just one clip to transcribe.' }; const c = cs[0] || null; const chk = TR.canTranscribe(c, P()); return chk.ok ? { ...chk, clip: c } : chk; };
 const mins = (sec) => (sec < 90 ? Math.max(1, Math.round(sec)) + ' sec' : Math.round(sec / 60) + ' min');
 function sttHtml() {
+  const modeSel = `<div class="st-field"><label for="sttMode">Where to transcribe</label><select id="sttMode"${stt.running ? ' disabled' : ''}><option value="device"${stt.mode === 'device' ? ' selected' : ''}>On this device (private, free)</option><option value="cloud"${stt.mode === 'cloud' ? ' selected' : ''}>Cognita cloud (more accurate, Studio plan)</option></select></div>`;
+  return modeSel + (stt.mode === 'device' ? deviceHtml() : cloudHtml());
+}
+// ON THIS DEVICE: Whisper tiny in the isolated model frame. No plan, no allowance, nothing leaves the device.
+function deviceHtml() {
+  const sup = LS.deviceSupport(); if (!sup.ok) return `<p class="st-muted st-small">${esc(sup.reason)}</p><button type="button" class="st-btn" disabled>Generate captions</button>`;
+  const tg = sttTarget(); const opts = STT_LANGS.map(([v, l]) => `<option value="${v}"${stt.lang === v ? ' selected' : ''}>${esc(l)}</option>`).join(''); const pct = Math.round(stt.frac * 100);
+  return `<p class="st-muted st-small">The sound is transcribed by a small speech model running in this browser. <b>Nothing is uploaded</b> and there is no daily limit. The first run downloads about 63 MB (kept by the browser afterwards). It is best at clear English; Yoruba and Hausa are weak on this small model, and names often need fixing. A minute of speech takes roughly a minute on a typical laptop, longer on phones.</p>
+    <div class="st-field"><label for="sttLang">Language spoken</label><select id="sttLang"${stt.running ? ' disabled' : ''}>${opts}</select></div>
+    ${tg.ok ? `<p class="st-small">Clip: <b>${esc(tg.clip.name || 'Selected clip')}</b> (${mins(tg.seconds)} of sound).</p>` : `<p class="st-muted st-small">${esc(tg.reason)}</p>`}
+    <div class="st-inline"><button type="button" class="st-btn st-btn--primary" id="sttGo"${tg.ok && !stt.running ? '' : ' disabled'}><i class="ph ph-closed-captioning"></i>Generate captions</button>${stt.running ? '<button type="button" class="st-btn" id="sttStop">Cancel</button>' : ''}</div>
+    ${stt.running ? `<div class="st-bar" role="progressbar" aria-label="Automatic captions progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="st-muted st-small" role="status">${esc(stt.stage)}</p>` : ''}
+    ${stt.result ? `<p class="st-small" role="status">${esc(stt.result)}</p>` : ''}`;
+}
+function cloudHtml() {
   const st = sttStatus(); const dis = (why) => `<p class="st-muted st-small">${esc(why)}</p><button type="button" class="st-btn" disabled>Generate captions</button>`;
   if (!st.allowed) return dis(st.offline ? 'You appear to be offline, so automatic captions cannot be checked.' : st.error ? 'Could not check your plan right now. Reopen Studio to try again.' : st.notDeployed ? 'Automatic captions are not available on this server yet.' : st.unknown ? 'Checking what your plan allows…' : TR.MESSAGES.PLAN_REQUIRED + ' You can still type cues or import a subtitle file.');
   if (st.available === false) return dis(TR.MESSAGES.STT_NOT_CONFIGURED);
@@ -249,18 +265,30 @@ function paintStt() {
   const box = root && root.querySelector('#sttBox'); if (!box) return;
   const keep = document.activeElement && document.activeElement.id; box.innerHTML = sttHtml();
   const go = box.querySelector('#sttGo'), stop = box.querySelector('#sttStop'), lg = box.querySelector('#sttLang');
+  const md = box.querySelector('#sttMode'); if (md) md.addEventListener('change', () => { stt.mode = md.value; stt.result = ''; paintStt(); });
   if (lg) lg.addEventListener('change', () => { stt.lang = lg.value; });
   if (go) go.addEventListener('click', runStt); if (stop) stop.addEventListener('click', () => { stop.disabled = true; if (stt.abort) stt.abort.abort(); });
   if (keep) { const el = box.querySelector('#' + keep); if (el && !el.disabled) el.focus(); }
 }
 async function runStt() {
   const tg = sttTarget(); if (!tg.ok || stt.running) return;
+  if (stt.mode === 'device') return runSttDevice(tg);
   stt.running = true; stt.abort = new AbortController(); stt.frac = 0; stt.stage = 'Reading the sound'; stt.result = ''; paintStt();
   try {
     const r = await TR.transcribeClip({ project: P(), clip: tg.clip, hub: S.hub, lang: sttLang(), signal: stt.abort.signal, onProgress: (p) => { stt.stage = p.stage; stt.frac = p.frac; paintStt(); } });
     if (r.cues.length) importCues(r.cues);
     const st = S.status && S.status.transcription; if (st && r.secondsLeft != null) { st.secondsLeft = r.secondsLeft; st.secondsUsed = (st.secondsPerDay || 0) - r.secondsLeft; }
     stt.result = (r.cues.length ? r.cues.length + ' caption cue' + (r.cues.length === 1 ? '' : 's') + ' added. ' : (r.partial ? '' : 'No speech was found in this clip. ')) + (r.skipped ? r.skipped + ' silent part' + (r.skipped === 1 ? ' was' : 's were') + ' skipped. ' : '') + (r.partial ? 'Stopped early: ' + r.error + ' Time already processed still counts toward today’s allowance.' : '');
+    if (r.cues.length) toast(r.cues.length + ' captions added. Check the spelling of names.');
+  } catch (e) { stt.result = e && e.name === 'AbortError' ? 'Cancelled.' : (e && e.message) || 'Automatic captions failed.'; }
+  finally { stt.running = false; stt.abort = null; paintStt(); }
+}
+async function runSttDevice(tg) {
+  stt.running = true; stt.abort = new AbortController(); stt.frac = 0; stt.stage = 'Reading the sound'; stt.result = ''; paintStt();
+  try {
+    const r = await LS.transcribeClipLocal({ project: P(), clip: tg.clip, hub: S.hub, lang: stt.lang === 'project' ? sttLang() : stt.lang, signal: stt.abort.signal, onProgress: (p) => { stt.stage = p.download && p.download < 1 ? p.stage + ' (' + Math.round(p.download * 100) + '%)' : p.stage; stt.frac = p.frac; paintStt(); } });
+    if (r.cues.length) importCues(r.cues);
+    stt.result = (r.cues.length ? r.cues.length + ' caption cue' + (r.cues.length === 1 ? '' : 's') + ' added' + (r.language ? ' (language: ' + r.language + ')' : '') + '. ' : (r.partial ? '' : 'No speech was found in this clip. ')) + (r.skipped ? r.skipped + ' silent part' + (r.skipped === 1 ? ' was' : 's were') + ' skipped. ' : '') + (r.partial ? 'Stopped early: ' + r.error : '');
     if (r.cues.length) toast(r.cues.length + ' captions added. Check the spelling of names.');
   } catch (e) { stt.result = e && e.name === 'AbortError' ? 'Cancelled.' : (e && e.message) || 'Automatic captions failed.'; }
   finally { stt.running = false; stt.abort = null; paintStt(); }

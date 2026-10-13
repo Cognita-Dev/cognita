@@ -11,11 +11,12 @@ import { esc, download, safeName, fmtSize } from './util.js';
 import { seek } from './preview.js';
 import { narrState, narrateClips, nStatus } from './ai.js';
 import { setTab } from './library.js';
+import { toolsHtml, initTools, handleToolClick, toolBusy } from './tools.js';
 
 let wiredBus = false, host = null, sig = '', rafSync = 0, shown = 'main';
 const VIS = new Set(['video', 'image', 'text', 'shape', 'sticker', 'scene', 'caption']);
 export function mountInspector(el) {
-  host = el; sig = ''; host.addEventListener('input', onInput); host.addEventListener('change', onChange); host.addEventListener('click', onClick);
+  host = el; sig = ''; host.addEventListener('input', onInput); host.addEventListener('change', onChange); host.addEventListener('click', onClick); initTools(host, { rebuild: () => build(true) });
   if (!wiredBus) { wiredBus = true; on('sel', () => build()); on('project', () => { build(); }); on('assets', () => build(true)); on('playhead', () => { cancelAnimationFrame(rafSync); rafSync = requestAnimationFrame(syncValues); }); on('inspect', (w) => { shown = w || 'main'; build(true); const t = host.querySelector('[data-sec="' + shown + '"]'); if (t) { t.open = true; t.scrollIntoView({ block: 'nearest' }); } }); } build(true);
 }
 const prim = () => selClips()[0] || null;
@@ -124,7 +125,7 @@ function secActions(c, n) {
 }
 
 // ───────── build ─────────
-function structSig() { const cs = selClips(); const p = P(); return cs.map((c) => [c.id, c.kind, Object.keys(c.keyframes || {}).map((k) => k + c.keyframes[k].length + (M.keyframeAt(c, k, local(c)) ? 'n' : '')).join(','), c.effects.length, c.filter !== 'none', c.chroma.on, c.transform.mask.shape, c.text ? [c.text.gradient.on, c.text.stroke.w > 0, c.text.shadow.on, c.text.box.on, c.text.kinetic, c.text.align].join('') : '', c.shape ? [c.shape.type, c.shape.gradient.on].join('') : '', c.scene ? [c.scene.layout, !!c.scene.bg].join('') : '', c.transitionIn.type, c.transitionOut.type, c.transitionIn.type !== 'none' && M.DIR_TRANSITIONS.has(c.transitionIn.type), c.transitionOut.type !== 'none' && M.DIR_TRANSITIONS.has(c.transitionOut.type), c.reverse, c.groupId ? 1 : 0, c.audio.mute, narrState(c)].join('|')).join('~') + '#' + (cs.length ? '' : p.settings.preset + '|' + p.tracks.length) + '#' + (cs.length ? '' : '') + S.sel.size; }
+function structSig() { const cs = selClips(); const p = P(); return cs.map((c) => [c.id, c.kind, Object.keys(c.keyframes || {}).map((k) => k + c.keyframes[k].length + (M.keyframeAt(c, k, local(c)) ? 'n' : '')).join(','), c.effects.length, c.filter !== 'none', c.chroma.on, (c.stab ? 1 + (c.stab.on ? 1 : 0) : 0), (c.bg ? 1 + (c.bg.on ? 1 : 0) : 0), (c.tracks || []).map((t) => t.id).join('+'), c.follow ? c.follow.clipId + c.follow.trackId : '', p.clips.filter((v) => v.tracks).map((v) => v.id + v.tracks.length).join(), S.pickPoint ? 'pick' : '', toolBusy() ? 'busy' : '', c.transform.mask.shape, c.text ? [c.text.gradient.on, c.text.stroke.w > 0, c.text.shadow.on, c.text.box.on, c.text.kinetic, c.text.align].join('') : '', c.shape ? [c.shape.type, c.shape.gradient.on].join('') : '', c.scene ? [c.scene.layout, !!c.scene.bg].join('') : '', c.transitionIn.type, c.transitionOut.type, c.transitionIn.type !== 'none' && M.DIR_TRANSITIONS.has(c.transitionIn.type), c.transitionOut.type !== 'none' && M.DIR_TRANSITIONS.has(c.transitionOut.type), c.reverse, c.groupId ? 1 : 0, c.audio.mute, narrState(c)].join('|')).join('~') + '#' + (cs.length ? '' : p.settings.preset + '|' + p.tracks.length) + '#' + (cs.length ? '' : '') + S.sel.size; }
 function build(force) {
   if (!host || !P()) return; const s = structSig(); const focusIn = host.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if (!force && s === sig) { syncValues(); return; } if (!force && focusIn && s === sig) return; sig = s;
@@ -143,6 +144,7 @@ function clipPanel(cs) {
   if (k === 'effect') parts.push(secEffects(c)); if (k === 'adjustment') parts.push(secColour(c));
   if (VIS.has(k)) { parts.push(secTransform(c)); parts.push(secLook(c)); parts.push(secColour(c)); }
   if (k === 'video' || k === 'image') parts.push(secChroma(c)); if (VIS.has(k)) parts.push(secEffects(c));
+  if (VIS.has(k)) parts.push(toolsHtml(c, { sec, sl, ck }));
   if (k === 'video' || k === 'audio') parts.push(secSpeed(c)); if (k === 'video' || k === 'audio' || k === 'music' || k === 'scene') parts.push(secAudio(c));
   if (VIS.has(k) || k === 'adjustment' || k === 'effect') { parts.push(secTrans(c)); }
   if (VIS.has(k) || k === 'audio' || k === 'music') parts.push(secKeyframes(c));
@@ -232,6 +234,7 @@ function applyPreset(id) {
     else if (id === 'pulse') { const arr = []; for (let t = 0; t <= D + 0.001; t += 0.5) arr.push([t, ((t / 0.5) | 0) % 2 === 0 ? s0 : s0 * 1.08, 'inout']); K['transform.scale'] = arr.map(([t, v, e]) => ({ t, v, ease: e })); } else if (id === 'float') { const arr = []; for (let t = 0; t <= D + 0.001; t += 0.75) arr.push([t, ((t / 0.75) | 0) % 2 === 0 ? y0 : y0 - 0.02, 'inout']); K['transform.y'] = arr.map(([t, v, e]) => ({ t, v, ease: e })); } }); });
 }
 function onClick(e) {
+  if (handleToolClick(e)) return;
   const b = e.target.closest('[data-kf],[data-act],[data-kfgo]'); if (!b) return; const c = prim();
   if (b.dataset.kf) { if (c) toggleKeyframe(c.id, b.dataset.kf); return; }
   if (b.dataset.kfgo !== undefined) { seek(c.start + Number(b.dataset.kfgo)); return; }

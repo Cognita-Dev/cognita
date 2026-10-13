@@ -2,7 +2,7 @@
 // Preview canvas, playback clock, live audio (same graph builder as export), master meter, and the on-canvas transform handles.
 
 import { S, P, on, emit, dur, fps, selClips, select, clearSel, beginLive, commitLive, bump, toast, snapT, clipById } from './state.js';
-import { drawFrame, clipBox, hitTest, activeJobs } from '../render.js';
+import { drawFrame, clipBox, hitTest, activeJobs, trackedPoints } from '../render.js';
 import { scheduleProject } from '../audio.js';
 import * as M from '../model.js';
 import { audioContextClass } from '../engine.js';
@@ -114,20 +114,24 @@ function drawOverlay() {
   octx.clearRect(0, 0, W, H); const u = unit();
   if (S.grid) { octx.strokeStyle = 'rgba(255,255,255,0.45)'; octx.lineWidth = u; octx.beginPath(); [1 / 3, 2 / 3].forEach((f) => { octx.moveTo(W * f, 0); octx.lineTo(W * f, H); octx.moveTo(0, H * f); octx.lineTo(W, H * f); }); octx.moveTo(W / 2 - 10 * u, H / 2); octx.lineTo(W / 2 + 10 * u, H / 2); octx.moveTo(W / 2, H / 2 - 10 * u); octx.lineTo(W / 2, H / 2 + 10 * u); octx.stroke(); }
   if (S.safe) { octx.strokeStyle = 'rgba(255,200,60,0.8)'; octx.lineWidth = u; octx.setLineDash([6 * u, 5 * u]); [0.9, 0.8].forEach((f) => octx.strokeRect(W * (1 - f) / 2, H * (1 - f) / 2, W * f, H * f)); octx.setLineDash([]); }
+  if (!S.playing) { const sc = selClips()[0]; if (sc && sc.tracks && sc.tracks.length && S.t >= sc.start && S.t <= sc.start + sc.duration) trackedPoints(P(), sc, S.t - sc.start, W, H, S.hub.res).forEach((tp) => { octx.save(); octx.strokeStyle = '#2bd9a0'; octx.fillStyle = '#2bd9a0'; octx.lineWidth = 2 * u; octx.beginPath(); octx.arc(tp.x, tp.y, 12 * u, 0, 7); octx.moveTo(tp.x - 20 * u, tp.y); octx.lineTo(tp.x + 20 * u, tp.y); octx.moveTo(tp.x, tp.y - 20 * u); octx.lineTo(tp.x, tp.y + 20 * u); octx.stroke(); octx.font = (13 * u) + 'px sans-serif'; octx.fillText(tp.name, tp.x + 16 * u, tp.y - 14 * u); octx.restore(); }); }
   const c = S.playing ? null : primary(); if (!c) return; const b = clipBox(P(), c, S.t - c.start, W, H, S.hub.res); if (!b) return;
   octx.save(); octx.translate(b.cx, b.cy); octx.rotate(b.rot * Math.PI / 180); octx.strokeStyle = '#ff7a3d'; octx.lineWidth = 2 * u; octx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h); octx.restore();
   const hs = handlesFor(b, c); octx.fillStyle = '#fff'; octx.strokeStyle = '#ff7a3d'; octx.lineWidth = 2 * u;
   octx.beginPath(); octx.moveTo((hs.tl.x + hs.tr.x) / 2, (hs.tl.y + hs.tr.y) / 2); octx.lineTo(hs.rot.x, hs.rot.y); octx.stroke();
   Object.entries(hs).forEach(([k, h]) => { const s = (k.startsWith('c') ? 6 : 8) * u; octx.beginPath(); if (k === 'rot') octx.arc(h.x, h.y, s, 0, 7); else if (k.startsWith('c')) octx.rect(h.x - s * 0.6, h.y - s * 0.6, s * 1.2, s * 1.2); else octx.rect(h.x - s, h.y - s, s * 2, s * 2); octx.fill(); octx.stroke(); });
 }
+let followHintAt = 0;
+function showFollowHint() { const n = Date.now(); if (n - followHintAt > 4000) { followHintAt = n; S.toast = 'This clip follows a tracked point. Change its Position values in the inspector to offset it.'; emit('toast', S.toast); } }
 const toCanvas = (e) => { const r = el.ov.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H }; };
 function liveSet(c, path, v) { const local = M.clamp(S.t - c.start, 0, c.duration); if (M.hasKeyframes(c, path)) M.upsertKeyframe(c, path, local, v, M.keyframeAt(c, path, local) ? undefined : 'inout'); else M.setPath(c, path, v); }
 function wireHandles() {
   const ov = el.ov; ov.style.touchAction = 'none';
   ov.addEventListener('pointerdown', (e) => {
+    if (S.pickPoint) { const cb = S.pickPoint; S.pickPoint = null; const q = toCanvas(e); e.preventDefault(); cb(q.x / W, q.y / H); return; } // picking a point to track
     if (S.playing) return; const pt = toCanvas(e); const u = unit(); const c0 = primary(); let mode = null, clip = null;
     if (c0) { const b = clipBox(P(), c0, S.t - c0.start, W, H, S.hub.res); if (b) { const hs = handlesFor(b, c0); const tol = (e.pointerType === 'touch' ? 22 : 12) * u; for (const [k, h] of Object.entries(hs)) if (Math.hypot(pt.x - h.x, pt.y - h.y) <= tol) { mode = k; clip = c0; break; } } }
-    if (!mode) { const hit = hitTest(P(), S.t, S.hub.res, W, H, pt.x, pt.y); if (hit) { if (!S.sel.has(hit.id)) select([hit.id], e.shiftKey); mode = 'move'; clip = hit; } else { clearSel(); return; } }
+    if (!mode) { const hit = hitTest(P(), S.t, S.hub.res, W, H, pt.x, pt.y); if (hit) { if (!S.sel.has(hit.id)) select([hit.id], e.shiftKey); if (hit.follow) { showFollowHint(); return; } mode = 'move'; clip = hit; } else { clearSel(); return; } }
     if (!clip || M.assetOf && false) return; const tr = P().tracks.find((t) => t.id === clip.trackId); if (tr && tr.locked) { toast('This track is locked.'); return; }
     ov.setPointerCapture(e.pointerId);
     const b = clipBox(P(), clip, S.t - clip.start, W, H, S.hub.res);
