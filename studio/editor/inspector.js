@@ -4,6 +4,7 @@
 // (a focused input is never wiped). The panel is rebuilt only when the selection or its structure changes.
 
 import { S, P, on, emit, selClips, clipById, setClip, setProp, toggleKeyframe, setSpeed, freezeFrame, detachAudio, transact, toast, splitAt, deleteClips, duplicateSel, groupSel, ungroupSel, bump, markDirty, strip, usageOf } from './state.js';
+import { openMenu } from './menu.js';
 import * as M from '../model.js';
 import * as LD from '../library-data.js';
 import * as store from '../store.js';
@@ -55,7 +56,7 @@ function secColour(c) {
 }
 function secEffects(c) {
   return sec('effects', 'Effects', `${c.effects.map((e, i) => { const t = M.EFFECT_TYPES.find((x) => x[0] === e.type); return `<div class="st-ctl-row"><label>${t ? t[1] : e.type}</label><input type="range" data-fx="${i}" min="${t[4]}" max="${t[5]}" step="${t[5] <= 1 ? 0.01 : t[5] <= 0.3 ? 0.002 : 0.5}" value="${e.amount}" aria-label="${t[1]} amount"><button type="button" class="st-icon" data-act="rmFx" data-i="${i}" aria-label="Remove ${t[1]}"><i class="ph ph-x"></i></button></div>`; }).join('') || '<p class="st-muted st-small">No effects yet.</p>'}
-    <div class="st-inline"><select id="fxAdd" class="st-mini" aria-label="Add effect"><option value="">Add effect…</option>${M.EFFECT_TYPES.map((t) => `<option value="${t[0]}">${t[1]}</option>`).join('')}</select></div>`);
+    <div class="st-inline"><button type="button" class="st-btn" id="fxAdd" data-menu="fx" aria-haspopup="menu" aria-expanded="false"><i class="ph ph-plus"></i>Add effect</button></div>`);
 }
 function secChroma(c) {
   return sec('chroma', 'Chroma key <span class="st-tag st-tag--local">LOCAL</span>', `${ck(c, 'Remove a background colour (green screen)', 'chroma.on')}${c.chroma.on ? `${col(c, 'Key colour', 'chroma.color')}${sl(c, 'Tolerance', 'chroma.tolerance', 0, 100, 1, { scale: 100, unit: '%' })}${sl(c, 'Softness', 'chroma.softness', 0, 60, 1, { scale: 100, unit: '%' })}<p class="st-muted st-small">Works best on evenly lit green or blue backgrounds. It is a simple colour-distance key, not a studio-grade matte.</p>` : ''}`);
@@ -116,12 +117,12 @@ function secKeyframes(c) {
   const paths = Object.keys(c.keyframes || {}); const k0 = paths.map((p) => M.keyframeAt(c, p, local(c))).find(Boolean);
   const lanes = paths.map((p) => `<div class="st-kfrow"><span class="st-kfl">${M.KEYFRAME_PATHS[p] || p}</span><span class="st-kflane" data-lane="${p}">${c.keyframes[p].map((k) => `<button type="button" class="st-kfd" style="left:${(k.t / Math.max(0.01, c.duration)) * 100}%" data-kfgo="${k.t}" aria-label="Keyframe at ${k.t.toFixed(2)} seconds"></button>`).join('')}</span><button type="button" class="st-icon" data-act="clearKf" data-p="${p}" aria-label="Remove all keyframes for ${M.KEYFRAME_PATHS[p] || p}"><i class="ph ph-x"></i></button></div>`).join('');
   return sec('keyframes', 'Animation and keyframes', `<p class="st-muted st-small">Press the diamond beside Position, Scale, Rotation, Opacity or Volume to add a keyframe at the playhead. Move the playhead and change the value to animate.</p>
-    <div class="st-inline st-wrap"><select id="presetAdd" class="st-mini" aria-label="Animation preset"><option value="">Animation presets…</option>${PRESETS.map(([id, l]) => `<option value="${id}">${l}</option>`).join('')}</select></div>${lanes || '<p class="st-muted st-small">No keyframes yet.</p>'}
+    <div class="st-inline st-wrap"><button type="button" class="st-btn" id="presetAdd" data-menu="preset" aria-haspopup="menu" aria-expanded="false"><i class="ph ph-magic-wand"></i>Animation presets</button></div>${lanes || '<p class="st-muted st-small">No keyframes yet.</p>'}
     ${k0 ? `<div class="st-field"><label for="kfEase">Easing of the keyframe at the playhead</label><select id="kfEase" data-ease="1">${M.EASE_NAMES.map(([id, l]) => `<option value="${id}"${(k0.ease || 'linear') === id ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${k0.ease === 'bezier' ? `<div class="st-row4">${[0, 1, 2, 3].map((i) => `<input type="number" step="0.05" data-bez="${i}" value="${(k0.b || [0.25, 0.1, 0.25, 1])[i]}" aria-label="Curve value ${i + 1}">`).join('')}</div>` : ''}` : ''}`);
 }
 function secActions(c, n) {
   return sec('actions', 'Clip actions', `<div class="st-inline st-wrap"><button type="button" class="st-btn" data-act="split"><i class="ph ph-scissors"></i>Split</button><button type="button" class="st-btn" data-act="dup"><i class="ph ph-copy"></i>Duplicate</button><button type="button" class="st-btn st-btn--danger" data-act="del"><i class="ph ph-trash"></i>Delete</button>${n > 1 ? '<button type="button" class="st-btn" data-act="group">Group</button>' : ''}${c.groupId ? '<button type="button" class="st-btn" data-act="ungroup">Ungroup</button>' : ''}</div>
-    <div class="st-inline st-wrap"><button type="button" class="st-btn" data-act="saveStyle"><i class="ph ph-floppy-disk"></i>Save look as style</button><select id="styleApply" class="st-mini" aria-label="Apply a saved style"><option value="">Apply style…</option></select></div>`);
+    <div class="st-inline st-wrap"><button type="button" class="st-btn" data-act="saveStyle"><i class="ph ph-floppy-disk"></i>Save look as style</button><button type="button" class="st-btn" id="styleApply" data-menu="style" aria-haspopup="menu" aria-expanded="false"><i class="ph ph-paint-brush"></i>Apply style</button></div>`);
 }
 
 // ───────── build ─────────
@@ -174,7 +175,8 @@ function wireProject() {
   const k = host.querySelector('#pjKeys'); if (k) k.addEventListener('click', () => emit('shortcuts'));
 }
 async function fillStyles() {
-  const sa = host.querySelector('#styleApply'); if (!sa) return; try { const all = (await store.listTemplates()).filter((t) => t.style && t.clipKind === (prim() || {}).kind); sa.innerHTML = '<option value="">Apply style…</option>' + all.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join(''); sa._styles = all; } catch (_) { /* ignore */ }
+  const sa = host.querySelector('#styleApply'); if (!sa) return;
+  try { sa._styles = (await store.listTemplates()).filter((t) => t.style && t.clipKind === (prim() || {}).kind); } catch (_) { sa._styles = []; }
 }
 
 // ───────── events ─────────
@@ -202,11 +204,8 @@ function onChange(e) {
   if (el.dataset.spd) { setSpeed(prim().id, Number(el.value)); return; }
   if (el.dataset.tr && el.tagName === 'SELECT') { const [k, f] = el.dataset.tr.split('.'); setClip(prim().id, (c) => { c[k][f] = el.value; if (f === 'type' && el.value !== 'none' && !c[k].duration) c[k].duration = 0.6; }, 'Transition'); return; }
   if (el.dataset.tm) { setClip(prim().id, (c) => { const v = Math.max(el.dataset.tm === 'duration' ? 0.1 : 0, M.quant(P(), Number(el.value) || 0)); const other = P().clips.filter((x) => x.trackId === c.trackId && x.id !== c.id); const s = el.dataset.tm === 'start' ? v : c.start, d = el.dataset.tm === 'duration' ? v : c.duration; if (other.some((x) => x.start < s + d - 1e-6 && x.start + x.duration > s + 1e-6)) { toast('That overlaps another clip on this track.'); return; } c.start = s; c.duration = d; }, 'Timing'); build(true); return; }
-  if (el.id === 'fxAdd' && el.value) { const t = M.EFFECT_TYPES.find((x) => x[0] === el.value); setClip(prim().id, (c) => { if (c.effects.length < M.LIMITS.effects && !c.effects.some((x) => x.type === t[0])) c.effects.push({ type: t[0], amount: t[3] }); }, 'Add effect'); build(true); return; }
-  if (el.id === 'presetAdd' && el.value) { applyPreset(el.value); el.value = ''; return; }
   if (el.dataset.ease) { const c = prim(); const k = [...Object.keys(c.keyframes)].map((p) => M.keyframeAt(c, p, local(c))).filter(Boolean); transact('Easing', () => { k.forEach((x) => { x.ease = el.value; if (el.value === 'bezier' && !x.b) x.b = [0.25, 0.1, 0.25, 1]; }); }); build(true); return; }
   if (el.dataset.bez !== undefined) { const c = prim(); const k = Object.keys(c.keyframes).map((p) => M.keyframeAt(c, p, local(c))).filter(Boolean); transact('Easing curve', () => { k.forEach((x) => { x.b = x.b || [0.25, 0.1, 0.25, 1]; x.b[Number(el.dataset.bez)] = Math.min(1, Math.max(Number(el.dataset.bez) % 2 === 0 ? 0 : -1, Number(el.value) || 0)); if (Number(el.dataset.bez) % 2 === 0) x.b[Number(el.dataset.bez)] = Math.min(1, Math.max(0, Number(el.value) || 0)); }); }); return; }
-  if (el.id === 'styleApply' && el.value) { const st = (el._styles || []).find((x) => x.id === el.value); if (st) transact('Apply style', () => { selClips().filter((c) => c.kind === st.clipKind).forEach((c) => { Object.keys(st.style).forEach((k) => { c[k] = JSON.parse(JSON.stringify(st.style[k])); }); }); }); el.value = ''; return; }
   if (el.dataset.act === 'rev') { reverseToggle(el); return; }
   if (el.dataset.pj) projInput(el, false);
 }
@@ -233,7 +232,19 @@ function applyPreset(id) {
     else if (id === 'spinIn') { merge('transform.rotation', [[0, r0 - 180, 'out'], [Math.min(D, 0.8), r0, 'out']]); merge('transform.scale', [[0, s0 * 0.3, 'out'], [Math.min(D, 0.8), s0, 'out']]); } else if (id === 'kenburns') merge('transform.scale', [[0, s0, 'linear'], [D, s0 * 1.2, 'linear']]);
     else if (id === 'pulse') { const arr = []; for (let t = 0; t <= D + 0.001; t += 0.5) arr.push([t, ((t / 0.5) | 0) % 2 === 0 ? s0 : s0 * 1.08, 'inout']); K['transform.scale'] = arr.map(([t, v, e]) => ({ t, v, ease: e })); } else if (id === 'float') { const arr = []; for (let t = 0; t <= D + 0.001; t += 0.75) arr.push([t, ((t / 0.75) | 0) % 2 === 0 ? y0 : y0 - 0.02, 'inout']); K['transform.y'] = arr.map(([t, v, e]) => ({ t, v, ease: e })); } }); });
 }
+function applyStyleTo(st) { transact('Apply style', () => { selClips().filter((c) => c.kind === st.clipKind).forEach((c) => { Object.keys(st.style).forEach((k) => { c[k] = JSON.parse(JSON.stringify(st.style[k])); }); }); }); }
+async function onMenuButton(btn) {
+  const kind = btn.dataset.menu;
+  if (kind === 'fx') { const c = prim(); if (!c) return; openMenu(btn, M.EFFECT_TYPES.map((t) => ({ value: t[0], label: t[1], on: c.effects.some((x) => x.type === t[0]) })), (v) => { const t = M.EFFECT_TYPES.find((x) => x[0] === v); if (!t) return; if (c.effects.some((x) => x.type === t[0])) { toast(t[1] + ' is already on this clip.'); return; } if (c.effects.length >= M.LIMITS.effects) { toast('This clip already has the most effects it can hold.'); return; } setClip(c.id, (cc) => { cc.effects.push({ type: t[0], amount: t[3] }); }, 'Add effect'); build(true); }, { title: 'Add an effect' }); }
+  else if (kind === 'preset') { openMenu(btn, PRESETS.map(([id, l]) => ({ value: id, label: l })), (v) => applyPreset(v), { title: 'Animation presets' }); }
+  else if (kind === 'style') {
+    if (!btn._styles) await fillStyles(); const all = btn._styles || [];
+    if (!all.length) { toast('No saved styles yet. Use "Save look as style" first.'); return; }
+    openMenu(btn, all.map((t) => ({ value: t.id, label: t.name })), (v) => { const st = all.find((x) => x.id === v); if (st) applyStyleTo(st); }, { title: 'Apply a saved style' });
+  }
+}
 function onClick(e) {
+  const mb = e.target.closest('[data-menu]'); if (mb) { onMenuButton(mb); return; }
   if (handleToolClick(e)) return;
   const b = e.target.closest('[data-kf],[data-act],[data-kfgo]'); if (!b) return; const c = prim();
   if (b.dataset.kf) { if (c) toggleKeyframe(c.id, b.dataset.kf); return; }

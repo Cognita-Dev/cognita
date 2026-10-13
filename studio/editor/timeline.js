@@ -6,6 +6,7 @@ import { S, P, on, emit, dur, fps, clipById, trackById, select, clearSel, selCli
 import * as M from '../model.js';
 import { seek } from './preview.js';
 import { placeDrop, importAndPlace } from './library.js';
+import { openMenu, closeMenu } from './menu.js';
 
 const RULER = 30, TRIM = 9;
 const COL = { video: '#4f74a8', image: '#628f57', scene: '#a8471f', text: '#8a5fb0', shape: '#b8832f', sticker: '#c26690', audio: '#3b8f8c', music: '#5c8a5a', caption: '#7b7b78', effect: '#b04b4b', adjustment: '#85733a' };
@@ -14,7 +15,9 @@ const ptrs = new Map(); const thumbs = new Map();
 
 export function mountTimeline(root) {
   host = root;
-  host.innerHTML = `<div class="st-tl-tools" role="toolbar" aria-label="Timeline tools">
+  host.innerHTML = `<div class="st-tl-toolwrap"><div class="st-tl-tools" role="toolbar" aria-label="Timeline tools">
+      <button type="button" class="st-addtrack" id="tlAdd" aria-haspopup="menu" aria-expanded="false" aria-label="Add track" title="Add a track"><i class="ph ph-plus" aria-hidden="true"></i><span>Track</span></button>
+      <span class="st-sep"></span>
       <button type="button" class="st-icon" data-a="split" aria-label="Split at playhead" title="Split (S)"><i class="ph ph-scissors"></i></button>
       <button type="button" class="st-icon" data-a="del" aria-label="Delete selected" title="Delete (Del)"><i class="ph ph-trash"></i></button>
       <button type="button" class="st-icon" data-a="rdel" aria-label="Ripple delete" title="Ripple delete (Shift+Del)"><i class="ph ph-arrows-in-line-horizontal"></i></button>
@@ -30,13 +33,14 @@ export function mountTimeline(root) {
       <input type="range" id="tlZoom" min="0" max="100" aria-label="Timeline zoom" title="Zoom">
       <button type="button" class="st-icon" data-a="zin" aria-label="Zoom in" title="Zoom in (+)"><i class="ph ph-magnifying-glass-plus"></i></button>
       <button type="button" class="st-icon" data-a="fit" aria-label="Fit timeline to window" title="Fit (Shift+Z)"><i class="ph ph-arrows-out-line-horizontal"></i></button>
-      <span class="st-sep"></span>
-      <label class="st-vh" for="tlAdd">Add track</label><select id="tlAdd" class="st-mini" aria-label="Add track"><option value="">Add track</option>${M.TRACK_TYPES.map((t) => `<option value="${t}">${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select>
-    </div>
+    </div></div>
     <div class="st-tl-body"><div class="st-tl-heads" id="tlHeads"><div class="st-tl-corner"></div><div class="st-tl-headlist" id="tlHeadList"></div></div><div class="st-tl-wrap" id="tlWrap"><canvas id="tlCv" tabindex="0" aria-label="Timeline. Use the toolbar and keyboard shortcuts to edit."></canvas></div></div>`;
   cv = host.querySelector('#tlCv'); g = cv.getContext('2d'); heads = host.querySelector('#tlHeads'); headList = host.querySelector('#tlHeadList'); wrap = host.querySelector('#tlWrap');
   host.querySelector('.st-tl-tools').addEventListener('click', toolClick);
-  host.querySelector('#tlAdd').addEventListener('change', (e) => { if (e.target.value) addTrack(e.target.value); e.target.value = ''; });
+  host.querySelector('#tlAdd').addEventListener('click', (e) => {
+    const types = [['video', 'Video', 'ph-film-strip', 'Footage and clips'], ['image', 'Image', 'ph-image', 'Pictures and logos'], ['audio', 'Audio', 'ph-waveform', 'Voice and sound effects'], ['text', 'Text', 'ph-text-t', 'Titles and labels'], ['caption', 'Caption', 'ph-subtitles', 'Subtitles'], ['sticker', 'Sticker', 'ph-smiley-sticker', 'Emoji and stickers'], ['graphic', 'Graphic', 'ph-shapes', 'Shapes'], ['effect', 'Effect', 'ph-sparkle', 'Effects over the tracks below'], ['adjustment', 'Adjustment', 'ph-sliders', 'Colour for the tracks below']].filter((t) => M.TRACK_TYPES.includes(t[0]));
+    openMenu(e.currentTarget, types.map(([value, label, icon, hint]) => ({ value, label, icon, hint })), (v) => { const id = addTrack(v); const t = id && trackById(id); if (t) { revealTrack(id); toast(t.name + ' added.'); } }, { title: 'Add a track' });
+  });
   const zr = host.querySelector('#tlZoom'); zr.addEventListener('input', () => { const f = Number(zr.value) / 100; setZoom(4 * Math.pow(200, f), viewW() / 2 / S.pps + S.scrollX); });
   cv.style.touchAction = 'none';
   cv.addEventListener('pointerdown', down); cv.addEventListener('pointermove', move); cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up); cv.addEventListener('wheel', wheel, { passive: false });
@@ -47,7 +51,7 @@ export function mountTimeline(root) {
   S.hub && (S.hub.onPeaks = schedule);
   fitCanvas(); buildHeads(); fit(); schedule();
 }
-export function unmountTimeline() { offs.forEach((f) => f()); offs = []; ptrs.clear(); drag = null; }
+export function unmountTimeline() { closeMenu(); offs.forEach((f) => f()); offs = []; ptrs.clear(); drag = null; }
 const viewW = () => Math.max(100, W);
 const tToX = (t) => (t - S.scrollX) * S.pps, xToT = (x) => x / S.pps + S.scrollX;
 function fitCanvas() { dpr = Math.min(2, window.devicePixelRatio || 1); const r = wrap.getBoundingClientRect(); W = Math.floor(r.width); H = Math.floor(r.height); cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
@@ -55,6 +59,12 @@ export function schedule() { if (queued) return; queued = true; requestAnimation
 const rows = () => { let y = RULER - S.scrollY; return P().tracks.map((t) => { const r = { t, y, h: t.height }; y += t.height + 2; return r; }); };
 const totalH = () => P().tracks.reduce((a, t) => a + t.height + 2, 0) + 40;
 function clampScroll() { S.scrollX = Math.max(-1, S.scrollX); S.scrollY = Math.max(0, Math.min(S.scrollY, Math.max(0, totalH() - (H - RULER)))); }
+// Scrolls the timeline up or down so a track is fully on screen (used after Add track, which can insert above or below the visible rows).
+function revealTrack(id) {
+  const r = rows().find((x) => x.t.id === id); if (!r) return;
+  if (r.y < RULER) S.scrollY += r.y - RULER; else if (r.y + r.h > H) S.scrollY += Math.min(r.y + r.h - H, r.y - RULER);
+  clampScroll(); buildHeads(true); schedule();
+}
 export function setZoom(pps, anchorT) { const a = anchorT == null ? xToT(viewW() / 2) : anchorT; const ax = tToX(a); S.pps = M.clamp(pps, 4, 800); S.scrollX = a - ax / S.pps; clampScroll(); syncZoomUi(); buildHeads(true); schedule(); }
 export function zoomBy(f) { setZoom(S.pps * f, S.t); }
 export function fit() { const d = Math.max(5, dur() + 1); S.pps = M.clamp((viewW() - 20) / d, 4, 800); S.scrollX = -0.2; syncZoomUi(); schedule(); }
@@ -62,10 +72,15 @@ function syncZoomUi() { const z = host && host.querySelector('#tlZoom'); if (z) 
 function follow() { if (!S.playing || drag) return; const x = tToX(S.t); if (x > W * 0.92 || x < 0) { S.scrollX = S.t - (W * 0.1) / S.pps; clampScroll(); } }
 
 function toolClick(e) {
-  const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; const ids = [...S.sel];
-  if (a === 'split') splitAt(S.t, ids.length ? ids : null); else if (a === 'del') ids.length ? deleteClips(ids, false) : toast('Select a clip first.'); else if (a === 'rdel') ids.length ? deleteClips(ids, true) : toast('Select a clip first.');
-  else if (a === 'dup') import('./state.js').then((m) => m.duplicateSel()); else if (a === 'group') import('./state.js').then((m) => m.groupSel()); else if (a === 'ungroup') import('./state.js').then((m) => m.ungroupSel());
-  else if (a === 'marker') addMarker(S.t); else if (a === 'snap') { S.snap = !S.snap; b.setAttribute('aria-pressed', S.snap); b.classList.toggle('is-on', S.snap); } else if (a === 'ripple') { S.ripple = !S.ripple; b.setAttribute('aria-pressed', S.ripple); b.classList.toggle('is-on', S.ripple); }
+  const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a; const ids = [...S.sel]; const none = () => toast('Tap a clip on the timeline first.');
+  if (a === 'split') splitAt(S.t, ids.length ? ids : null);
+  else if (a === 'del') ids.length ? deleteClips(ids, false) : none(); else if (a === 'rdel') ids.length ? deleteClips(ids, true) : none();
+  else if (a === 'dup') { if (!ids.length) none(); else import('./state.js').then((m) => { if (m.duplicateSel()) toast('Duplicated.'); }); }
+  else if (a === 'group') { if (!ids.length) none(); else import('./state.js').then((m) => m.groupSel()); }
+  else if (a === 'ungroup') { if (!ids.length) none(); else import('./state.js').then((m) => { if (!m.ungroupSel()) toast('The selected clips are not grouped.'); }); }
+  else if (a === 'marker') { const n = P().markers.length; addMarker(S.t); toast(P().markers.length > n ? 'Marker added.' : 'Marker removed.'); }
+  else if (a === 'snap') { S.snap = !S.snap; setToolbarState(); toast('Snapping ' + (S.snap ? 'on' : 'off') + '.'); }
+  else if (a === 'ripple') { S.ripple = !S.ripple; setToolbarState(); toast('Ripple trim ' + (S.ripple ? 'on: later clips follow a trim.' : 'off.')); }
   else if (a === 'zin') zoomBy(1.4); else if (a === 'zout') zoomBy(1 / 1.4); else if (a === 'fit') fit();
 }
 export function setToolbarState() { if (!host) return; const s = host.querySelector('[data-a="snap"]'); const r = host.querySelector('[data-a="ripple"]'); if (s) { s.setAttribute('aria-pressed', S.snap); s.classList.toggle('is-on', S.snap); } if (r) { r.setAttribute('aria-pressed', S.ripple); r.classList.toggle('is-on', S.ripple); } }
@@ -83,15 +98,16 @@ function buildHeads(onlyPos) {
         <input class="st-th-name" value="${esc(t.name)}" aria-label="Track name" maxlength="40">
         <span class="st-th-btns"><button type="button" data-k="lock" class="${t.locked ? 'is-on' : ''}" aria-label="${t.locked ? 'Unlock' : 'Lock'} ${esc(t.name)}" aria-pressed="${t.locked}"><i class="ph ${t.locked ? 'ph-lock-simple' : 'ph-lock-simple-open'}"></i></button>
         <button type="button" data-k="${audio ? 'mute' : 'hide'}" class="${(audio ? t.muted : t.hidden) ? 'is-on' : ''}" aria-label="${audio ? (t.muted ? 'Unmute' : 'Mute') : (t.hidden ? 'Show' : 'Hide')} ${esc(t.name)}" aria-pressed="${audio ? t.muted : t.hidden}"><i class="ph ${audio ? (t.muted ? 'ph-speaker-slash' : 'ph-speaker-high') : (t.hidden ? 'ph-eye-slash' : 'ph-eye')}"></i></button>
-        ${audio ? `<button type="button" data-k="solo" class="${t.solo ? 'is-on' : ''}" aria-label="Solo ${esc(t.name)}" aria-pressed="${t.solo}">S</button>` : ''}
-        <button type="button" data-k="up" aria-label="Move ${esc(t.name)} up"><i class="ph ph-caret-up"></i></button><button type="button" data-k="down" aria-label="Move ${esc(t.name)} down"><i class="ph ph-caret-down"></i></button>
-        <button type="button" data-k="del" aria-label="Delete ${esc(t.name)}"><i class="ph ph-x"></i></button></span>
+        ${audio ? `<button type="button" class="st-th-x ${t.solo ? 'is-on' : ''}" data-k="solo" aria-label="Solo ${esc(t.name)}" aria-pressed="${t.solo}">S</button>` : ''}
+        <button type="button" class="st-th-x" data-k="up" aria-label="Move ${esc(t.name)} up"><i class="ph ph-caret-up"></i></button><button type="button" class="st-th-x" data-k="down" aria-label="Move ${esc(t.name)} down"><i class="ph ph-caret-down"></i></button>
+        <button type="button" class="st-th-x" data-k="del" aria-label="Delete ${esc(t.name)}"><i class="ph ph-x"></i></button>
+        <button type="button" class="st-th-more" data-k="more" aria-haspopup="menu" aria-expanded="false" aria-label="More options for ${esc(t.name)}"><i class="ph ph-dots-three-vertical"></i></button></span>
         <div class="st-th-rz" data-rz role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Resize ${esc(t.name)}. Drag, or press the up and down arrow keys." title="Drag to change the track height"></div>`;
       headList.appendChild(d);
     });
-    headList.onclick = (e) => { const b = e.target.closest('button[data-k]'); if (!b) return; const id = b.closest('.st-th').dataset.id; const t = trackById(id); const k = b.dataset.k; if (k === 'lock') setTrack(id, { locked: !t.locked }); else if (k === 'mute') setTrack(id, { muted: !t.muted }); else if (k === 'hide') setTrack(id, { hidden: !t.hidden }); else if (k === 'solo') setTrack(id, { solo: !t.solo }); else if (k === 'up') moveTrack(id, -1); else if (k === 'down') moveTrack(id, 1); else if (k === 'del') { if (!S.project.clips.some((c) => c.trackId === id) || window.confirm('Delete this track and the clips on it? You can undo this.')) removeTrack(id); } };
+    headList.onclick = (e) => { const b = e.target.closest('button[data-k]'); if (!b) return; const id = b.closest('.st-th').dataset.id; const t = trackById(id); const k = b.dataset.k; if (k === 'lock') setTrack(id, { locked: !t.locked }); else if (k === 'mute') setTrack(id, { muted: !t.muted }); else if (k === 'hide') setTrack(id, { hidden: !t.hidden }); else if (k === 'solo') setTrack(id, { solo: !t.solo }); else if (k === 'up') moveTrack(id, -1); else if (k === 'down') moveTrack(id, 1); else if (k === 'del') confirmDelete(id); else if (k === 'more') trackMenu(b, id); };
     // Track height: drag the thin bar under a track name (mouse, touch or pen) or use the arrow keys when it has focus. One drag = one Undo step.
-    const RZ_MIN = 28, RZ_MAX = 160; let rz = null;
+    const RZ_MIN = window.matchMedia && window.matchMedia('(pointer: coarse)').matches ? 44 : 28, RZ_MAX = 160; let rz = null;
     headList.onpointerdown = (e) => { const h = e.target.closest('.st-th-rz'); if (!h) return; const id = h.closest('.st-th').dataset.id; const t = trackById(id); if (!t) return; e.preventDefault(); try { h.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } rz = { id, t, y0: e.clientY, h0: t.height, before: beginLive(), pid: e.pointerId }; };
     headList.onpointermove = (e) => { if (!rz || e.pointerId !== rz.pid) return; rz.t.height = M.clamp(Math.round(rz.h0 + (e.clientY - rz.y0)), RZ_MIN, RZ_MAX); buildHeads(true); schedule(); };
     const endRz = (e) => { if (!rz || (e && e.pointerId !== rz.pid)) return; const r = rz; rz = null; commitLive('Resize track', r.before, 'rz:' + r.id); };
@@ -100,6 +116,24 @@ function buildHeads(onlyPos) {
     headList.onchange = (e) => { if (e.target.classList.contains('st-th-name')) { const id = e.target.closest('.st-th').dataset.id; setTrack(id, { name: e.target.value.trim() || 'Track' }); } };
   }
   [...headList.children].forEach((d, i) => { const r = rs[i]; if (r) { d.style.transform = `translateY(${r.y - RULER}px)`; d.style.height = r.h + 'px'; } });
+}
+function confirmDelete(id) { if (!S.project.clips.some((c) => c.trackId === id) || window.confirm('Delete this track and the clips on it? You can undo this.')) removeTrack(id); }
+// The options for one track, as a menu. On phones the header only has room for three buttons, so everything else lives here.
+function trackMenu(anchor, id) {
+  const t = trackById(id); if (!t) return; const audio = t.type === 'audio'; const i = P().tracks.findIndex((x) => x.id === id);
+  const items = [
+    { value: 'lock', label: t.locked ? 'Unlock track' : 'Lock track', icon: t.locked ? 'ph-lock-simple-open' : 'ph-lock-simple' },
+    audio ? { value: 'mute', label: t.muted ? 'Unmute track' : 'Mute track', icon: t.muted ? 'ph-speaker-high' : 'ph-speaker-slash' } : { value: 'hide', label: t.hidden ? 'Show track' : 'Hide track', icon: t.hidden ? 'ph-eye' : 'ph-eye-slash' },
+    ...(audio ? [{ value: 'solo', label: t.solo ? 'Turn solo off' : 'Solo track', icon: 'ph-headphones' }] : []),
+    { value: 'rename', label: 'Rename…', icon: 'ph-pencil-simple' }, { sep: true },
+    { value: 'up', label: 'Move up', icon: 'ph-caret-up', disabled: i <= 0 }, { value: 'down', label: 'Move down', icon: 'ph-caret-down', disabled: i >= P().tracks.length - 1 }, { sep: true },
+    { value: 'del', label: 'Delete track', icon: 'ph-trash', danger: true, disabled: P().tracks.length <= 1 },
+  ];
+  openMenu(anchor, items, (v) => {
+    if (v === 'lock') setTrack(id, { locked: !t.locked }); else if (v === 'mute') setTrack(id, { muted: !t.muted }); else if (v === 'hide') setTrack(id, { hidden: !t.hidden }); else if (v === 'solo') setTrack(id, { solo: !t.solo });
+    else if (v === 'up') moveTrack(id, -1); else if (v === 'down') moveTrack(id, 1); else if (v === 'del') confirmDelete(id);
+    else if (v === 'rename') { const n = window.prompt('Track name', t.name); if (n !== null) setTrack(id, { name: n.trim().slice(0, 40) || 'Track' }); }
+  }, { title: t.name, align: 'left' });
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

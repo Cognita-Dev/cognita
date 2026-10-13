@@ -6,12 +6,13 @@ import { drawFrame, clipBox, hitTest, activeJobs, trackedPoints } from '../rende
 import { scheduleProject } from '../audio.js';
 import * as M from '../model.js';
 import { audioContextClass } from '../engine.js';
+import { openMenu, closeMenu } from './menu.js';
 
 let el = {}, ctx = null, octx = null, W = 0, H = 0, raf = 0, last = 0, queued = false, pa = null, audioTimer = 0, meterBuf = null;
 
 export const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
 export function mountPreview(host) {
-  host.innerHTML = `<div class="st-stage" id="stStage"><div class="st-frame" id="stFrame"><canvas id="stCanvas" aria-label="Video preview"></canvas><canvas id="stOver" aria-label="Edit handles"></canvas></div></div>
+  host.innerHTML = `<div class="st-stage" id="stStage"><div class="st-frame" id="stFrame"><canvas id="stCanvas" aria-label="Video preview"></canvas><canvas id="stOver" aria-label="Edit handles"></canvas><div class="st-start" id="stEmpty" hidden><i class="ph ph-film-strip" aria-hidden="true"></i><strong>Start your video</strong><span>Add a clip, picture or sound, or begin with a title.</span><div class="st-start-act"><button type="button" class="st-btn st-btn--primary" id="stEmptyMedia"><i class="ph ph-upload-simple"></i>Add media</button><button type="button" class="st-btn" id="stEmptyText"><i class="ph ph-text-t"></i>Add text</button></div></div></div></div>
   <div class="st-ctl" role="toolbar" aria-label="Playback">
     <button type="button" class="st-icon" id="cStart" aria-label="Go to start" title="Start (Home)"><i class="ph ph-skip-back"></i></button>
     <button type="button" class="st-icon" id="cPrev" aria-label="Previous frame" title="Previous frame (Left)"><i class="ph ph-caret-left"></i></button>
@@ -20,7 +21,7 @@ export function mountPreview(host) {
     <button type="button" class="st-icon" id="cEnd" aria-label="Go to end" title="End (End)"><i class="ph ph-skip-forward"></i></button>
     <span class="st-tc" id="cTime" aria-live="off">00:00:00:00</span>
     <button type="button" class="st-icon" id="cLoop" aria-label="Loop playback" aria-pressed="false" title="Loop (uses the I/O range when set)"><i class="ph ph-repeat"></i></button>
-    <label class="st-vh" for="cRate">Preview speed</label><select id="cRate" class="st-mini" title="Preview speed (sound plays only at 1x)">${[0.25, 0.5, 1, 1.5, 2].map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r}x</option>`).join('')}</select>
+    <button type="button" class="st-mini st-rate" id="cRate" aria-haspopup="menu" aria-expanded="false" aria-label="Preview speed" title="Preview speed (sound plays only at 1x)">1x</button>
     <span class="st-meter" aria-label="Master level meter" title="Master level"><canvas id="cMeter" width="60" height="10"></canvas></span>
     <button type="button" class="st-icon" id="cGrid" aria-label="Show grid" aria-pressed="false" title="Grid"><i class="ph ph-grid-four"></i></button>
     <button type="button" class="st-icon" id="cSafe" aria-label="Show safe area" aria-pressed="false" title="Safe area"><i class="ph ph-frame-corners"></i></button>
@@ -32,16 +33,22 @@ export function mountPreview(host) {
   q('#cPlay').addEventListener('click', toggle); q('#cStart').addEventListener('click', () => seek(0)); q('#cEnd').addEventListener('click', () => seek(Math.max(0, dur() - 1 / fps())));
   q('#cPrev').addEventListener('click', () => step(-1)); q('#cNext').addEventListener('click', () => step(1));
   q('#cLoop').addEventListener('click', (e) => { S.loop = !S.loop; e.currentTarget.setAttribute('aria-pressed', S.loop); e.currentTarget.classList.toggle('is-on', S.loop); });
-  q('#cRate').addEventListener('change', (e) => { S.rate = Number(e.target.value); if (S.playing) startAudio(); });
+  const rateBtn = q('#cRate'); rateBtn.textContent = (S.rate || 1) + 'x';
+  rateBtn.addEventListener('click', () => openMenu(rateBtn, [0.25, 0.5, 1, 1.5, 2].map((r) => ({ value: r, label: r + 'x', hint: r === 1 ? 'with sound' : '', on: (S.rate || 1) === r })), (r) => { S.rate = Number(r); rateBtn.textContent = r + 'x'; if (S.playing) startAudio(); }, { title: 'Preview speed' }));
+  // Empty project: say what to do instead of showing a black box
+  const empty = q('#stEmpty'); const paintEmpty = () => { const none = !(P() && P().clips.length); empty.hidden = !none; };
+  q('#stEmptyMedia').addEventListener('click', async () => { const lib = await import('./library.js'); lib.setTab('media'); const inp = document.querySelector('#stImp'); if (inp) inp.click(); });
+  q('#stEmptyText').addEventListener('click', async () => { const lib = await import('./library.js'); const LD = await import('../library-data.js'); const pr = LD.TEXT_PRESETS[0]; if (pr) { await lib.placeDrop({ type: 'text', id: pr.id }, S.t, null); } });
+  paintEmpty();
   q('#cGrid').addEventListener('click', (e) => { S.grid = !S.grid; e.currentTarget.setAttribute('aria-pressed', S.grid); e.currentTarget.classList.toggle('is-on', S.grid); schedule(); });
   q('#cSafe').addEventListener('click', (e) => { S.safe = !S.safe; e.currentTarget.setAttribute('aria-pressed', S.safe); e.currentTarget.classList.toggle('is-on', S.safe); schedule(); });
   q('#cFull').addEventListener('click', () => { const f = el.frame; (f.requestFullscreen || f.webkitRequestFullscreen || (() => toast('Full screen is not supported on this device.'))).call(f); });
   wireHandles(); resize();
   const ro = new ResizeObserver(() => resize()); ro.observe(el.stage); el.ro = ro;
-  const offs = [on('project', () => { sizeCanvas(); schedule(); if (S.playing) audioSoon(); }), on('frame', schedule), on('time', schedule), on('sel', schedule)];
+  const offs = [on('project', () => { sizeCanvas(); paintEmpty(); schedule(); if (S.playing) audioSoon(); }), on('frame', schedule), on('time', schedule), on('sel', schedule)];
   el.offs = offs; S.hub.onChange = schedule; sizeCanvas(); schedule();
 }
-export function unmountPreview() { pause(); if (el.ro) el.ro.disconnect(); (el.offs || []).forEach((f) => f()); if (pa) { try { pa.ctx.close(); } catch (_) { /* ignore */ } pa = null; } el = {}; }
+export function unmountPreview() { closeMenu(); pause(); if (el.ro) el.ro.disconnect(); (el.offs || []).forEach((f) => f()); if (pa) { try { pa.ctx.close(); } catch (_) { /* ignore */ } pa = null; } el = {}; }
 
 function sizeCanvas() {
   const p = P(); if (!p || !el.cv) return; const long = isMobile() ? 720 : 1080; const k = long / Math.max(p.settings.width, p.settings.height);

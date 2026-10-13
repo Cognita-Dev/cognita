@@ -24,7 +24,12 @@ export function mountLibrary(host) {
   if (!busWired) { busWired = true; on('assets', () => { if (['media', 'audio'].includes(S.tab)) renderBody(); }); on('sel', () => { if (['effects', 'transitions', 'filters'].includes(S.tab)) syncHint(); if (S.tab === 'captions' && !stt.running) paintStt(); }); on('status-narr', () => { if (S.tab === 'captions') paintStt(); }); }
   setTab(S.tab || 'media');
 }
-export function setTab(k) { S.tab = k; root.querySelectorAll('[data-tab]').forEach((b) => { const on_ = b.dataset.tab === k; b.classList.toggle('is-on', on_); b.setAttribute('aria-selected', on_); }); renderBody(); emit('libtab', k); }
+export function setTab(k) {
+  S.tab = k; root.querySelectorAll('[data-tab]').forEach((b) => { const on_ = b.dataset.tab === k; b.classList.toggle('is-on', on_); b.setAttribute('aria-selected', on_); });
+  // The tab strip scrolls sideways on phones: keep the chosen tab in view so the others are clearly there to swipe to.
+  const bar = root.querySelector('.st-tabs'); const cur = bar && bar.querySelector('.st-tab.is-on'); if (bar && cur) { try { bar.scrollTo({ left: Math.max(0, cur.offsetLeft - (bar.clientWidth - cur.offsetWidth) / 2), behavior: 'smooth' }); } catch (_) { bar.scrollLeft = cur.offsetLeft; } }
+  renderBody(); emit('libtab', k);
+}
 const body = () => root.querySelector('#stLibBody');
 function renderBody() { const b = body(); if (!b) return; const f = { media: mediaTab, audio: audioTab, text, stickers, effects, transitions, filters, captions, templates, ai: renderAI }[S.tab]; b.scrollTop = 0; f(b); }
 const syncHint = () => { const h = body().querySelector('[data-hint]'); if (h) h.textContent = hintText(); };
