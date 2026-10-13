@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cognita Studio on-device models</title>
+<!--
+  On-device speech and image models for Cognita Studio (automatic captions, background removal).
+  This page is only ever loaded inside <iframe sandbox="allow-scripts"> by studio/ml-client.js, so:
+    - it has an opaque origin: no cookies, no localStorage, no Firebase session, no access to the Cognita page or its DOM;
+    - its own Content-Security-Policy (set for this path in vercel.json) allows scripts from this site only, WebAssembly
+      ('wasm-unsafe-eval', which allows compiling WebAssembly and nothing else: no eval, no inline scripts),
+      and connect-src limited to this site's static model files. Footage, sound and results cannot be sent anywhere else;
+    - the models run in a Worker started from a blob (worker-src blob:), which inherits this policy, so inference never blocks the editor;
+    - the main app's Content-Security-Policy is NOT relaxed for any of this.
+  The parent sends sound or pictures with postMessage and gets text or masks back.
+-->
+</head>
+<body>
+<script src="/studio/ml/ml-frame.js"></script>
+</body>
+</html>
