@@ -81,7 +81,7 @@ export const listTemplates = async () => ((await tx('templates', 'readonly', (s)
 export function assetIdsOf(p) {
   const ids = new Set();
   (p.assets || []).forEach((a) => a && a.id && ids.add(a.id));
-  if (p.v === 2) (p.clips || []).forEach((c) => { if (c.assetId) ids.add(c.assetId); if (c.scene) { if (c.scene.image) ids.add(c.scene.image); if (c.scene.video) ids.add(c.scene.video); } });
+  if (p.v === 2) (p.clips || []).forEach((c) => { if (c.assetId) ids.add(c.assetId); if (c.bg && c.bg.key) ids.add(c.bg.key); if (c.scene) { if (c.scene.image) ids.add(c.scene.image); if (c.scene.video) ids.add(c.scene.video); } });
   else (p.scenes || []).forEach((s) => { if (s.image) ids.add(s.image); if (s.video) ids.add(s.video); if (s.narr && s.narr.key) ids.add('narr_' + s.narr.key); });
   if (p.legacyV1) assetIdsOf(p.legacyV1).forEach((i) => ids.add(i));
   return ids;

@@ -18,7 +18,24 @@ Passed:
 - Missing media is flagged, Replace relinks it, and the project exports with sound afterwards. A project JSON imported "on another device" opens with its media flagged missing and can be relinked. A broken JSON file is refused.
 - Layout checked by screenshot at 1100x800 and 390x844 (no sideways overflow).
 
-Still **untested**: MP4 with AAC sound, real Whisper output, real phones and touch dragging, 4K, long videos, memory use on big projects, the MediaRecorder fallback, voice-over recording, narration end to end, the Assistant, pictures from `/api/image`, and everything not listed above. The sandbox cannot load the icon font, so icons were not seen.
+### Update: the four features that were left out are now built and tested
+
+Background removal, video stabilisation, motion tracking and speech-to-text that runs on the device. All four run in the browser with no paid service, and **footage and sound are not uploaded**. Details are in "On-device tools" below. What was run (headless Chromium, the real header rules from `vercel.json`, real editor UI, real exported file):
+
+- `node tests/studio-motion.test.mjs`: 12 of 12 passed (stabilisation and tracking maths against synthetic footage with known shake).
+- `python3 tests/studio-ml.e2e.py`: 27 of 27 passed (the isolated model frame: Whisper on real speech, the cut-out model on a real photo, the security policy of the frame tested with real scripts, cancel, responsiveness).
+- `python3 tests/studio-tools.e2e.py`: 27 of 27 passed (the real Studio: import a shaky video, stabilise, track a point and attach a shape to it, remove the background, make captions, export, check the exported frame; zero CSP violations and zero page errors).
+
+Measured results (one 6.6 s, 640x360, 25 fps test clip with deliberate shake, so treat these as a guide, not a guarantee):
+
+| Feature | Result |
+|---|---|
+| Stabilisation | Recovered the real camera path to 1.2 px (x) and 1.5 px (y) RMS on a 640 px frame. On the **rendered output**, frame-to-frame jitter fell from 11.95 px to 4.94 px (about 60% less). No border colour showed at the edges. Analysis took a few seconds. |
+| Motion tracking | Mean error 1.4 px, worst 3.2 px against the true feature position, never lost. A shape attached to the point, found in the rendered pixels, followed it to within 9.8 canvas px worst case (mean about 5). |
+| Background removal | Subject kept, background removed (checked on rendered pixels and in the exported WebM). **Slow: 177 s for 6.6 s of video** (67 frames at about 2.6 s per frame) in the headless test machine. See Limitations. |
+| Captions on device | Word error rate 0.0 to 0.056 on two read English recordings. 6.6 s of speech took 9 to 10 s, 16.7 s took 9 s. Silence and quiet noise produced no invented text. |
+
+Still **untested**: MP4 with AAC sound, real output from the cloud Whisper service (Workers AI), real phones and touch dragging, 4K, long videos, memory use on big projects, the MediaRecorder fallback, voice-over recording, narration end to end, the Assistant, pictures from `/api/image`, and everything not listed above. The sandbox cannot load the icon font, so icons were not seen.
 
 Bug found and fixed while testing: after **Replace**, the clean-up of unused files ran before the project was saved and deleted the new file. It now saves first.
 
@@ -87,8 +104,11 @@ LOCAL means it runs in the browser. NEEDS SERVICE means it calls a Cognita Worke
 | AI storyboard from prompt, document, images or footage; the Assistant | NEEDS SERVICE (`/api/chat`) |
 | AI pictures | NEEDS SERVICE (`/api/image`) |
 | Narration | NEEDS SERVICE (`/api/studio/tts`, Studio plan) |
-| Automatic captions (speech to text, Whisper on Workers AI, Studio plan; only sound is sent) | NEEDS SERVICE (`/api/studio/stt`) |
-| Background removal | NOT BUILT (disabled row with the reason) |
+| Automatic captions, cloud option (Whisper on Workers AI, Studio plan; only sound is sent) | NEEDS SERVICE (`/api/studio/stt`) |
+| Automatic captions on this device (Whisper tiny, multilingual, free, no limit, nothing uploaded) | LOCAL |
+| Background removal for video and pictures (U²-Net-P) | LOCAL |
+| Video stabilisation | LOCAL |
+| Motion tracking, with text, stickers, shapes and pictures that follow a tracked point | LOCAL |
 
 ## Export honesty
 
@@ -115,12 +135,53 @@ Worker (`server/stt.js`, route in `server/endpoint.js`): verified uid, plan from
 4. Cost: Cloudflare lists Whisper large-v3-turbo at about $0.0005 per audio minute. Worst case for one Studio user at the limit is 30 min a day. Confirm the current price in your Cloudflare dashboard.
 5. Not verified against the real service: the audio size limit (Cloudflare does not state one; chunks are kept under 1 MB), and how well it handles Nigerian English, Pidgin, Yoruba and Hausa. Always check names in the result.
 
+## On-device tools
+
+Stabilise, Remove background and Track motion are sections in the Inspector of a video clip (Remove background also for pictures); "Follow a tracked point" is in the Inspector of text, stickers, shapes, pictures and captions. Automatic captions on this device is the default mode of the Captions tab; the cloud option is one dropdown away.
+
+### How it works
+
+- **Stabilisation and tracking** are plain JavaScript (`motion.js`, no WebAssembly, no model, no network). Frames are decoded with the already vendored Mediabunny (`analyze.js`). Stabilisation matches a grid of blocks between neighbouring frames (coarse then fine then sub-pixel), reduces them to a robust shift and a small roll (outliers such as a person walking through the shot are discarded), adds them into a camera path, smooths the path with a Gaussian (Strength slider, 0.1 to 2.5 s) and counter-moves each frame. The raw path is stored on the clip (`clip.stab`), so Strength and Crop limit change live without analysing again. Tracking follows a patch with sum of absolute differences and a sub-pixel step, forwards and backwards from the frame the user picked, with a slowly adapting patch and a match test that is relative to the patch's own contrast (so a point that leaves the picture is flagged lost instead of locking onto something else). The track is stored on the clip (`clip.tracks`).
+- **Where it is drawn:** `render.js` (the one function used by preview and export). Stabilisation is applied to the picture before the clip transform. A follower's position is read from the tracker through the source clip's crop, fit, stabilisation and transform, so it stays on the point even when the source clip is moved, scaled, rotated, cropped or stabilised. The cut-out is applied as a mask over the same box the picture was drawn in. Because both use `render.js`, preview and export match (checked: the exported frame shows the cut-out).
+- **Background removal and Whisper** need a neural network, so they run through ONNX Runtime Web (WebAssembly) inside an isolated frame (below). Whisper: log-mel spectrogram (same maths as OpenAI's), encoder, then greedy decoding with Whisper's timestamp rules, a no-speech check, a repetition guard, and a seek loop for windows the model ends early. Background removal: U²-Net-P on 320x320 pictures; the alpha pictures are stored per sampled frame (`matte.js`) in IndexedDB under `clip.bg.key` and counted in `assetIdsOf`, so they follow the project and are cleaned with it.
+- **Saved data** (all optional fields, validated in `sanitiseClip`): `clip.stab`, `clip.bg`, `clip.tracks`, `clip.follow`. Old projects open unchanged.
+
+### Security changes
+
+The task allowed changing the Content-Security-Policy. The narrowest working design was used, and **the main app's CSP was not changed at all** (the test checks that it still has neither `unsafe-eval` nor `wasm-unsafe-eval`).
+
+1. WebAssembly needs `wasm-unsafe-eval`. It is allowed only on one new page, `/studio-ml-frame`, never on the app. That page is excluded from the main CSP rule in `vercel.json` the same way `sandbox-frame` and `preview-frame` already are (two CSP headers would be intersected and would block WebAssembly).
+2. The frame's own policy: `sandbox allow-scripts; default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`.
+   - `wasm-unsafe-eval` lets WebAssembly be compiled and nothing else. `eval`, `new Function` and inline scripts stay blocked (tested with real scripts, inside the frame and inside its worker).
+   - `sandbox` without `allow-same-origin` gives the frame an opaque origin: no cookies, no localStorage or IndexedDB, no Firebase session, no access to the Cognita page.
+   - `connect-src 'self'` means it can fetch only this site's static model files. Footage, sound and results cannot be sent anywhere (tested: a fetch to another site fails, inside the frame and inside its worker).
+   - `worker-src blob:` is there so the models run in a Worker, off the main thread. A same-site frame shares the page's thread, and without the worker inference froze the whole editor (found by the cancel test). The worker is started from a blob of `ml-worker.js` and inherits the frame's policy. With the worker, the editor's longest stall during inference was 24 ms.
+3. `/studio/ml/(.*)` gets `Access-Control-Allow-Origin: *` and `Cross-Origin-Resource-Policy: cross-origin`, because a sandboxed frame with an opaque origin can read same-site files only with CORS. These are public, static, credential-free files. Cache: 30 days.
+4. The iframe is created with `sandbox="allow-scripts"` by `ml-client.js`. A request is accepted only from the parent window and only with a random per-session token; a request with the wrong token is ignored (tested).
+5. No new network services, no third-party hosts, no CDN. Everything is vendored in `studio/ml/` with licences (`LICENSES.md`) and checksums (`models/SHA256SUMS`).
+
+### Size and uploading to GitHub
+
+About 98 MB is added to the repo (the models are 4.5 MB + 13 MB + 50 MB, the runtime is 14 MB). Every file is under GitHub's 25 MB web-upload limit: the Whisper decoder is stored as three 16 MiB parts and joined in the browser. Users download the speech model (about 63 MB) only the first time they use on-device captions, and the cut-out model (5 MB) only the first time they remove a background.
+
+### How to re-run the tests
+
+```
+node tests/studio-motion.test.mjs
+node tests/studio-server.mjs 8765 &
+python3 tests/studio-ml.e2e.py
+python3 tests/studio-tools.e2e.py     # needs ffmpeg; takes about 6 minutes (the cut-out is slow)
+```
+
 ## Files changed outside `studio/`
 
 - `worker.js`: `/api/studio/stt` gets a 1.5 MB body allowance (other `/api/studio/*` routes stay at 100 KB) and is added to the rate-limited "heavy" routes next to `/api/studio/tts`.
 - `entitlements.js`: new limit `studioSttSecondsPerDay` on all four plans. Nothing else changed.
 - `.vercelignore`: adds `studio/server/` (Worker only code, the browser never loads it).
-- `app.html`, `js/router.js`, `vercel.json`: untouched. The existing CSP is enough (no WebAssembly). The existing narration gating is untouched.
+- `app.html`, `js/router.js`: untouched. The existing narration gating is untouched.
+- `vercel.json`: **changed, see "Security changes".** The main app's Content-Security-Policy is not changed.
+- `studio-ml-frame.html` (new, in the repo root so the header rule can exclude it like the other frames).
+- `tests/`: `studio-server.mjs` (static server that applies the `vercel.json` header rules), `studio-ml.e2e.py`, `studio-tools.e2e.py`, `studio-motion.test.mjs`, and small fixtures. `.vercelignore` already keeps `tests/` out of the deployment.
 
 ## Migration notes
 
@@ -131,8 +192,13 @@ Worker (`server/stt.js`, route in `server/endpoint.js`): verified uid, plan from
 
 ## Limitations
 
-- Background removal is not built. A model that runs in the browser needs WebAssembly, which the site's security policy forbids (it would need `wasm-unsafe-eval` added to `vercel.json`, which is your decision). No Cognita Worker model fits. Chroma key removes a plain green or blue background locally.
-- Stabilisation and motion tracking are not built.
+- Background removal is a small general-purpose model (U²-Net-P, 4.5 MB), not a portrait matting model. It finds the main subject well on clear people and objects, but edges are soft and slightly blocky (it works at 320x320), a light fringe can remain, hair and thin straps are approximate, and cluttered scenes or several people can confuse it. The Edge position and Edge softness sliders help.
+- Background removal on video is slow: it runs the model on a single thread in WebAssembly. Measured 2.6 s per frame on the test machine, so a 10 s clip at 10 frames per second can take several minutes, and a phone will be slower. Video is limited to 90 s per clip and 360 sampled frames (the sampling rate drops for longer clips); cut-out frames in between are blended. Fast motion can lag the cut-out edge a little. The user can cancel at any time.
+- Matte data is about 100 KB per sampled frame (about 4 MB for 10 s) and is kept in the browser's IndexedDB with the project's media.
+- Stabilisation corrects shift and slight roll of the whole picture, not rolling-shutter wobble, motion blur, or parallax. It needs texture to lock onto (flat sky or a blank wall gives weak results and the user is told). A crop-in (default cap 130%) hides the borders; past the cap the correction is reduced instead of showing black edges. Limited to 120 s of footage per clip.
+- Motion tracking follows a point's position, not its scale or rotation. It follows one small patch of the picture, so it can lose a point that leaves the frame, is hidden, or changes a lot (it then holds the last position and says so). Limited to 90 s per clip and 6 tracks per clip. A clip that follows a point cannot be dragged on the preview; change its Position values, which become offsets from the point.
+- Captions on device use Whisper **tiny**, the smallest model, so that the download stays at about 63 MB and phones can run it. It is good on clear English, weaker on accents, noise, names and numbers, and weak on Yoruba and Hausa (not tested here; only English was tested). Segment timing is whole phrases, and words inside a phrase are spread by length as with the cloud option. Sound tags such as [Music] are dropped. The first use downloads the model (kept by the browser for 30 days). The cloud option stays available and is more accurate.
+- The on-device models need WebAssembly and about 300 MB of free memory while they run (the frame is removed after 4 idle minutes). If either is missing the buttons explain why and nothing else is affected.
 - Speed changes pitch (no time-stretch). Preview sound plays only at 1x.
 - Undo is snapshot based, so very large projects use more memory per step.
 - Two clips of the same video playing at once share one preview frame.

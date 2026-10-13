@@ -9,6 +9,8 @@
 // Effects use Canvas2D (ctx.filter where the browser has it) with a pixel-loop fallback, so they work everywhere.
 
 import { valueAt, hasKeyframes, trackIndex, videoRef, srcTime, FONTS, clamp, ease } from './model.js';
+import { trackAt, lerpAt, correctionFromPath } from './motion.js';
+import { bgActive, matteCanvas, MATTE_SIZE } from './matte.js';
 import { filterById } from './library-data.js';
 import { drawSceneCore } from './engine.js';
 
@@ -406,8 +408,64 @@ function applyMask(c, box, mk, u, W, H) {
   release(M);
 }
 
-function effTransform(clip, local) {
+// ───────── stabilisation, tracked points, cut-outs (all LOCAL; data lives on the clip) ─────────
+const stabCache = new WeakMap();
+// Correction for a stabilised clip at source time srcT: { dx, dy (picture widths), rot (radians), zoom } or null. The smoothing is
+// recomputed only when the strength or the zoom limit changes.
+export function stabCorr(clip, srcT) {
+  const st = clip.stab; if (!st || !st.on || !st.raw || st.raw.length < 6) return null;
+  let c = stabCache.get(st); const key = st.strength + '|' + (st.zoomMax || 1.3) + '|' + st.raw.length;
+  if (!c || c.key !== key) {
+    const n = st.raw.length / 3, dx = new Float64Array(n), dy = new Float64Array(n), rot = new Float64Array(n);
+    for (let i = 0; i < n; i++) { dx[i] = st.raw[i * 3]; dy[i] = st.raw[i * 3 + 1]; rot[i] = st.raw[i * 3 + 2]; }
+    c = { key, corr: correctionFromPath({ dx, dy, rot }, st.rate, st.strength == null ? 0.5 : st.strength, st.aspect || 1.78, st.zoomMax || 1.3) }; stabCache.set(st, c);
+  }
+  const i = (srcT - st.t0) * st.rate; return { dx: lerpAt(c.corr.dx, i), dy: lerpAt(c.corr.dy, i), rot: lerpAt(c.corr.rot, i), zoom: c.corr.zoom };
+}
+const clipMapCache = new WeakMap();
+function clipOf(project, id) {
+  let h = clipMapCache.get(project); if (!h || h.rev !== project._rev || h.n !== project.clips.length) { h = { rev: project._rev, n: project.clips.length, map: new Map(project.clips.map((c) => [c.id, c])) }; clipMapCache.set(project, h); }
+  return h.map.get(id) || null;
+}
+// Where a point of the SOURCE picture (fractions 0..1) lands on the canvas, through crop, fit, stabilisation and the clip transform.
+// Returns { x, y } as canvas pixels, or null when the picture is not available yet.
+function sourceToCanvas(clip, local, fr, nx, ny, W, H) {
+  const ref = videoRef(clip); const tf = effTransform(clip, local, null); const m = mediaDims(fr, W, H, clip.transform, clip.transform.fit); if (!m) return null;
+  const [iw, ih] = srcSize(fr); let x = ((nx * iw - m.sx) / m.sw - 0.5) * m.dw, y = ((ny * ih - m.sy) / m.sh - 0.5) * m.dh;
+  const sc = ref ? stabCorr(clip, srcTime(ref, local)) : null;
+  if (sc) { x *= sc.zoom; y *= sc.zoom; const cs = Math.cos(sc.rot), sn = Math.sin(sc.rot); const rx = x * cs - y * sn, ry = x * sn + y * cs; x = rx + sc.dx * m.dw; y = ry + sc.dy * m.dw; }
+  x *= tf.scale * (tf.flipX ? -1 : 1); y *= tf.scale * (tf.flipY ? -1 : 1);
+  if (tf.rotation) { const a = tf.rotation * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a); const rx = x * cs - y * sn, ry = x * sn + y * cs; x = rx; y = ry; }
+  return { x: W / 2 + tf.x * W + x, y: H / 2 + tf.y * H + y };
+}
+// The inverse: a canvas pixel -> a point of the source picture (fractions). Used to pick a point to track on the preview.
+export function canvasToSource(clip, local, fr, px, py, W, H) {
+  const ref = videoRef(clip); const tf = effTransform(clip, local, null); const m = mediaDims(fr, W, H, clip.transform, clip.transform.fit); if (!m) return null;
+  let x = px - W / 2 - tf.x * W, y = py - H / 2 - tf.y * H;
+  if (tf.rotation) { const a = -tf.rotation * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a); const rx = x * cs - y * sn, ry = x * sn + y * cs; x = rx; y = ry; }
+  x /= tf.scale * (tf.flipX ? -1 : 1) || 1; y /= tf.scale * (tf.flipY ? -1 : 1) || 1;
+  const sc = ref ? stabCorr(clip, srcTime(ref, local)) : null;
+  if (sc) { x -= sc.dx * m.dw; y -= sc.dy * m.dw; const a = -sc.rot, cs = Math.cos(a), sn = Math.sin(a); const rx = x * cs - y * sn, ry = x * sn + y * cs; x = rx / sc.zoom; y = ry / sc.zoom; }
+  const [iw, ih] = srcSize(fr);
+  return { x: ((x / m.dw + 0.5) * m.sw + m.sx) / iw, y: ((y / m.dh + 0.5) * m.sh + m.sy) / ih };
+}
+// A tracker's point on the canvas, in pixels, at absolute project time t.
+export function trackedCanvasPoint(project, srcClip, trackId, absT, W, H, res) {
+  const tr = (srcClip.tracks || []).find((x) => x.id === trackId); const ref = videoRef(srcClip); if (!tr || !ref) return null;
+  const local = clamp(absT - srcClip.start, 0, srcClip.duration), srcT = srcTime(ref, local); const pt = trackAt(tr, srcT); if (!pt) return null;
+  const fr = res.frame(ref, srcT); if (!fr) return null; return sourceToCanvas(srcClip, local, fr, pt.x, pt.y, W, H);
+}
+export function trackedPoints(project, clip, local, W, H, res) {
+  const out = []; for (const tr of clip.tracks || []) { const p = trackedCanvasPoint(project, clip, tr.id, clip.start + local, W, H, res); if (p) out.push({ id: tr.id, name: tr.name, x: p.x, y: p.y }); } return out;
+}
+
+function effTransform(clip, local, ctx) {
   const t = clip.transform; const tf = { x: valueAt(clip, 'transform.x', local), y: valueAt(clip, 'transform.y', local), scale: valueAt(clip, 'transform.scale', local), rotation: valueAt(clip, 'transform.rotation', local), flipX: t.flipX, flipY: t.flipY };
+  // A clip attached to a tracked point: its Position values become an offset from that point.
+  if (ctx && clip.follow) {
+    const src = clipOf(ctx.project, clip.follow.clipId);
+    if (src && src.id !== clip.id) { const p = trackedCanvasPoint(ctx.project, src, clip.follow.trackId, clip.start + local, ctx.W, ctx.H, ctx.res); if (p) { tf.x += p.x / ctx.W - 0.5; tf.y += p.y / ctx.H - 0.5; } }
+  }
   for (const fx of clip.effects || []) {
     if (fx.type === 'shake') { tf.x += Math.sin(local * 47.3) * Math.cos(local * 31.7) * fx.amount; tf.y += Math.cos(local * 39.1) * Math.sin(local * 53.9) * fx.amount; }
     else if (fx.type === 'pulse') tf.scale *= 1 + fx.amount * 0.5 * (1 + Math.sin(local * Math.PI * 2 * 2));
@@ -423,6 +481,15 @@ function captionLinks(project) {
   capCache.set(project, { rev: project._rev, n: project.clips.length, set }); return set;
 }
 
+// Keeps only the subject: the matte is laid over the picture the same way the picture was drawn (same crop, fit, stabilisation). Only
+// called when the clip is drawn on its own layer (needsLayer is true whenever a cut-out is active), so nothing else is erased.
+function applyMatte(c, clip, srcT, src, W, H) {
+  const m = mediaDims(src, W, H, clip.transform, clip.transform.fit); const mc = m && matteCanvas(clip, srcT); if (!mc) return;
+  const cr = clip.transform.crop, S = MATTE_SIZE;
+  c.save(); c.globalCompositeOperation = 'destination-in'; c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+  c.drawImage(mc, cr.l * S, cr.t * S, S * (1 - cr.l - cr.r), S * (1 - cr.t - cr.b), -m.dw / 2, -m.dh / 2, m.dw, m.dh); c.restore();
+}
+
 function drawContent(c, W, H, u, project, clip, local, res, tf, adj) {
   c.save();
   c.translate(W / 2 + tf.x * W, H / 2 + tf.y * H);
@@ -430,8 +497,16 @@ function drawContent(c, W, H, u, project, clip, local, res, tf, adj) {
   c.scale(tf.scale * (tf.flipX ? -1 : 1), tf.scale * (tf.flipY ? -1 : 1));
   let box = null;
   const k = clip.kind;
-  if (k === 'image') { const im = res.image(clip.assetId); if (im) box = drawMedia(c, im, W, H, clip.transform); }
-  else if (k === 'video') { const ref = videoRef(clip); const fr = ref && res.frame(ref, srcTime(ref, local)); if (fr) box = drawMedia(c, fr, W, H, clip.transform); }
+  if (k === 'image') { const im = res.image(clip.assetId); if (im) { box = drawMedia(c, im, W, H, clip.transform); if (box && bgActive(clip)) applyMatte(c, clip, 0, im, W, H); } }
+  else if (k === 'video') {
+    const ref = videoRef(clip); const st = ref ? srcTime(ref, local) : 0; const fr = ref && res.frame(ref, st);
+    if (fr) {
+      const sc = stabCorr(clip, st);
+      if (sc) { const m = mediaDims(fr, W, H, clip.transform, clip.transform.fit); if (m) { c.translate(sc.dx * m.dw, sc.dy * m.dw); c.rotate(sc.rot); c.scale(sc.zoom, sc.zoom); } }
+      box = drawMedia(c, fr, W, H, clip.transform);
+      if (box && bgActive(clip)) applyMatte(c, clip, st, fr, W, H);
+    }
+  }
   else if (k === 'scene') {
     const ref = videoRef(clip); const sc = clip.scene;
     c.translate(-W / 2, -H / 2);
@@ -448,7 +523,7 @@ function drawContent(c, W, H, u, project, clip, local, res, tf, adj) {
 
 function needsLayer(clip, adj, extraBlur) {
   const mk = clip.transform.mask;
-  return !!((mk && mk.shape !== 'none') || (clip.chroma && clip.chroma.on) || (clip.effects && clip.effects.some((e) => e.type !== 'shake' && e.type !== 'pulse')) || clip.blend !== 'normal' || adjActive(adj) || extraBlur > 0.5);
+  return !!((mk && mk.shape !== 'none') || bgActive(clip) || (clip.chroma && clip.chroma.on) || (clip.effects && clip.effects.some((e) => e.type !== 'shake' && e.type !== 'pulse')) || clip.blend !== 'normal' || adjActive(adj) || extraBlur > 0.5);
 }
 
 function drawClip(ctx, W, H, u, project, clip, local, res, mods) {
@@ -457,7 +532,7 @@ function drawClip(ctx, W, H, u, project, clip, local, res, mods) {
   let alpha = 1, blur = 0, flash = 0;
   if (sts) for (const s of sts) { alpha *= s.alpha; blur += s.blur; flash = Math.max(flash, s.flash); }
   if (alpha > 0.001) {
-    const tf = effTransform(clip, local); const adj = effAdjust(clip, local);
+    const tf = effTransform(clip, local, { project, W, H, res }); const adj = effAdjust(clip, local);
     if (!needsLayer(clip, adj, blur)) {
       ctx.save(); applyMods(ctx, W, H, sts); ctx.globalAlpha *= opac * alpha;
       drawContent(ctx, W, H, u, project, clip, local, res, tf, adj); ctx.restore();
@@ -515,7 +590,7 @@ function baseBox(project, clip, local, W, H, u, res) {
 // Box of a clip on the canvas in canvas pixels: centre, size and rotation (degrees). null for audio-only and layer clips.
 export function clipBox(project, clip, local, W, H, res) {
   const u = Math.min(W, H) / 1080; const b = baseBox(project, clip, local, W, H, u, res); if (!b) return null;
-  const tf = effTransform(clip, local);
+  const tf = effTransform(clip, local, { project, W, H, res });
   return { cx: W / 2 + tf.x * W, cy: H / 2 + tf.y * H, w: b.w * tf.scale, h: b.h * tf.scale, rot: tf.rotation, bw: b.w, bh: b.h };
 }
 // Topmost clip under a canvas point at time t.

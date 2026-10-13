@@ -336,6 +336,17 @@ export function sanitiseClip(raw, trackIds) {
   if (raw.narr && isObj(raw.narr) && typeof raw.narr.key === 'string') c.narr = { key: str(raw.narr.key, 24), dur: clamp(num(raw.narr.dur), 0, 3600), text: str(raw.narr.text, 400), voice: str(raw.narr.voice, 30), rate: clamp(num(raw.narr.rate, 1), 0.5, 2), engine: str(raw.narr.engine, 24) };
   const kfs = {}; if (isObj(raw.keyframes)) Object.keys(raw.keyframes).slice(0, 40).forEach((k) => { const l = raw.keyframes[k]; if (!/^[a-zA-Z.]{1,40}$/.test(k) || !Array.isArray(l)) return; const clean = l.slice(0, LIMITS.keyframes).filter((x) => isObj(x) && Number.isFinite(Number(x.t)) && Number.isFinite(Number(x.v))).map((x) => ({ t: clamp(Number(x.t), 0, 86400), v: Number(x.v), ease: EASE_NAMES.some((e) => e[0] === x.ease) ? x.ease : 'inout', ...(Array.isArray(x.b) && x.b.length === 4 && x.b.every((n) => Number.isFinite(Number(n))) ? { b: x.b.map(Number) } : {}) })).sort((a, b) => a.t - b.t); if (clean.length) kfs[k] = clean; });
   c.keyframes = kfs;
+  // On-device analysis results (stabilisation path, tracked points, cut-out settings) and a link to a tracked point
+  if (isObj(raw.stab)) {
+    const st = raw.stab; const arr = Array.isArray(st.raw) ? st.raw.slice(0, 60000).map(Number) : [];
+    if (arr.length >= 6 && arr.length % 3 === 0 && arr.every(Number.isFinite)) c.stab = { on: !!st.on, strength: clamp(num(st.strength, 0.5), 0, 1), zoomMax: clamp(num(st.zoomMax, 1.3), 1, 1.6), t0: clamp(num(st.t0), 0, 86400), rate: clamp(num(st.rate, 15), 1, 60), aspect: clamp(num(st.aspect, 1.78), 0.2, 5), raw: arr.map((v) => Math.round(v * 1e5) / 1e5) };
+  }
+  if (isObj(raw.bg) && raw.bg.key) c.bg = { on: !!raw.bg.on, key: str(raw.bg.key, 80), cutoff: clamp(num(raw.bg.cutoff, 0.5), 0.05, 0.95), soft: clamp(num(raw.bg.soft, 0.18), 0, 0.5) };
+  if (Array.isArray(raw.tracks)) {
+    c.tracks = raw.tracks.slice(0, 6).filter((t) => isObj(t) && Array.isArray(t.pts) && t.pts.length >= 2 && t.pts.length % 2 === 0 && t.pts.length <= 120000).map((t) => ({ id: str(t.id, 40) || nid('tk'), name: str(t.name, 40) || 'Track', t0: clamp(num(t.t0), 0, 86400), rate: clamp(num(t.rate, 15), 1, 60), pts: t.pts.map((v) => Math.round(clamp(num(v), -2, 3) * 1e5) / 1e5), ok: typeof t.ok === 'string' ? t.ok.slice(0, 60000).replace(/[^01]/g, '') : '' }));
+    if (!c.tracks.length) delete c.tracks;
+  }
+  if (isObj(raw.follow) && raw.follow.clipId && raw.follow.trackId) c.follow = { clipId: str(raw.follow.clipId, 60), trackId: str(raw.follow.trackId, 40) };
   return c;
 }
 // Accepts a parsed JSON value (v1 or v2), returns a clean v2 project or throws a readable Error.

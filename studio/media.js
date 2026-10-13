@@ -3,6 +3,7 @@
 // the export-side frame decoders, reverse-frame caches, and the AI picture call. The video library (Mediabunny, MPL-2.0,
 // vendored in studio/vendor) loads only when footage or a WebCodecs export needs it. Nothing is ever uploaded.
 
+import { ensureMattes } from './matte.js';
 import { uid, putAsset, getAsset } from './store.js';
 import { WORKER_URL } from './storyboard.js';
 import * as eng from './engine.js';
@@ -110,7 +111,7 @@ export class Hub {
       } catch (_) { this.status.set(id, 'unsupported'); asset.status = 'unsupported'; }
     });
   }
-  async ensureAll(project) { await Promise.all(project.assets.filter((a) => a.kind !== 'audio').map((a) => this.ensure(a))); }
+  async ensureAll(project) { await Promise.all([...project.assets.filter((a) => a.kind !== 'audio').map((a) => this.ensure(a)), ensureMattes(project)]); }
   // Decoded sound for an asset id: audio files, narration ("narr_<key>"), and the sound track of footage.
   async soundFor(project, id) {
     if (this.audio.has(id)) return this.audio.get(id);
@@ -213,6 +214,7 @@ class ClipStream {
 export class ExportFrames {
   constructor(project, W, H) { this.project = project; this.W = W; this.H = H; this.inputs = new Map(); this.streams = new Map(); this.cur = new Map(); this.rev = new Map(); this.imgs = new Map(); this.svgs = new Map(); this.missingIds = new Set(); this.unsupported = new Set(); }
   async open() {
+    await ensureMattes(this.project);
     const mb = this.mb = await loadMediabunny();
     const vids = new Set(); this.project.clips.forEach((c) => { const r = videoRef(c); if (r && r.assetId) vids.add(r.assetId); });
     for (const id of vids) {
