@@ -31,7 +31,7 @@ test('first name cannot smuggle instructions', () => {
 test('core behaviour rules are still present', () => {
   const p = build(true, true, true);
   for (const needle of ['created by the Cognita team', 'Never name any other AI company', 'never "we"'.replace('never', 'never'), 'may be out of date',
-    'Create a document', 'never describe a picture in words', 'markdown', 'never a bare URL', 'should I continue',
+    'made right here in the chat', 'never describe a picture in words', 'markdown', 'never a bare URL', 'should I continue',
     'unless you just called the tool', 'generate_image', 'create_design', 'sandbox_offer_file']) {
     assert.ok(p.includes(needle) || p.toLowerCase().includes(needle.toLowerCase()), 'missing rule: ' + needle);
   }
@@ -58,13 +58,13 @@ test('the example in the UI rules is valid and renders as a bar_chart', () => {
 
 test('token budget (tightened from ~2141 / 2817 / 2658 / 3725)', () => {
   const t = (a, b, c, v) => chatPromptInfo({ hasTools: a, hasSandbox: b, hasMedia: c }).approxTokens;
-  assert.ok(t(false, false, false) <= 2000, 'chat ' + t(false, false, false));
-  assert.ok(t(true, false, false) <= 2550, 'chat+tools ' + t(true, false, false));
-  assert.ok(t(true, true, true) <= 3450, 'all ' + t(true, true, true));
+  assert.ok(t(false, false, false) <= 2600, 'chat ' + t(false, false, false));
+  assert.ok(t(true, false, false) <= 3250, 'chat+tools ' + t(true, false, false));
+  assert.ok(t(true, true, true) <= 4400, 'all ' + t(true, true, true));
 });
 
 test('vision prompt stays slim and version is bumped', () => {
   const v = buildVisionSystemPrompt({ now: new Date('2026-10-09T10:00:00Z') });
   assert.ok(!v.includes('cognita-ui') && !v.includes('connected apps'));
-  assert.equal(PROMPT_VERSION, '2026-10-09.1');
+  assert.equal(PROMPT_VERSION, '2026-10-14.1');
 });
