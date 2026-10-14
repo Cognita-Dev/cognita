@@ -12,7 +12,9 @@ const VERSION = '0.29.5';
 const ASSET = `pyodide-${VERSION}.tar.bz2`;
 const ASSET_URL = `https://github.com/pyodide/pyodide/releases/download/${VERSION}/${ASSET}`;
 const RELEASE_API = `https://api.github.com/repos/pyodide/pyodide/releases/tags/${VERSION}`;
-const ALLOWLIST = ['numpy', 'pandas', 'matplotlib', 'scipy', 'scikit-learn', 'sympy', 'openpyxl', 'pillow', 'pyyaml', 'pytest'];
+const ALLOWLIST = ['numpy', 'pandas', 'matplotlib', 'scipy', 'scikit-learn', 'sympy', 'openpyxl', 'pillow', 'pyyaml', 'pytest',
+  // Added Oct 2026 (present in the Pyodide 0.29 package list; the build fails loudly if one is missing):
+  'beautifulsoup4', 'networkx', 'statsmodels', 'xlrd', 'lxml'];
 const CORE_FILES = ['pyodide.js', 'pyodide.asm.js', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json'];
 const VENDORED = [
   { name: 'et-xmlfile', version: '2.0.0', file: 'et_xmlfile-2.0.0-py3-none-any.whl',
