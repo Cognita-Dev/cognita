@@ -1261,6 +1261,13 @@ function _isTouchPrimaryDevice() {
 }
 
 function wireComposer() {
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest && e.target.closest('.msg-file[data-msg-index], img.message-image[data-msg-index]');
+    if (!t) return;
+    const m = conversation[parseInt(t.dataset.msgIndex, 10)];
+    const att = m && m.attachments && m.attachments[parseInt(t.dataset.attIndex, 10)];
+    if (att) previewAttachment(att, null);
+  });
   const input = document.getElementById('composerInput');
   const sendBtn = document.getElementById('sendBtn');
   const fileInput = document.getElementById('fileInput');
@@ -1317,16 +1324,16 @@ function wireComposer() {
   async function addFilesToComposer(files) {
     files = (files || []).filter(Boolean);
     if (!files.length) return;
-    if (attachBusy) { showToast('Still reading your last file. One moment.'); return; }
+    if (attachBusy) { composerNotice('Still reading your last file. One moment.'); return; }
     attachBusy = true;
     sendBtn.disabled = true;
     try {
       if (files.length > MAX_ATTACH_PER_PICK) {
-        showToast('You can add up to ' + MAX_ATTACH_PER_PICK + ' files at a time. Added the first ' + MAX_ATTACH_PER_PICK + '.');
+        composerNotice('You can add up to ' + MAX_ATTACH_PER_PICK + ' files at a time. Added the first ' + MAX_ATTACH_PER_PICK + '.');
       }
       for (const file of files.slice(0, MAX_ATTACH_PER_PICK)) {
         try { await handlePickedFile(file); }
-        catch (err) { console.error('[app] attach failed:', err && err.message); showToast('Could not add ' + (file.name || 'that file') + '.'); }
+        catch (err) { console.error('[app] attach failed:', err && err.message); composerNotice('Could not add ' + (file.name || 'that file') + '.'); }
       }
     } finally {
       attachBusy = false;
@@ -1435,13 +1442,72 @@ async function prepareImage(file, mime) {
   return { blob, mimeType: outMime };
 }
 
+
+/* ── In-chat file status: progress card and short notices live inside the composer,
+      right where the file will sit, instead of floating toasts. ── */
+const _localFiles = new WeakMap(); // sent attachment object -> original File (this session only)
+let _noticeTimer = null;
+function composerStatusEl() {
+  let el = document.getElementById('composerStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'composerStatus';
+    el.className = 'composer-status';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    const tray = document.getElementById('composerAttachments');
+    tray.parentNode.insertBefore(el, tray);
+  }
+  return el;
+}
+function composerNotice(msg) {
+  const el = composerStatusEl();
+  let n = el.querySelector('.cs-notice');
+  if (!n) { n = document.createElement('div'); n.className = 'cs-notice'; el.appendChild(n); }
+  n.innerHTML = '<i class="ph ph-info" aria-hidden="true"></i><span></span>';
+  n.querySelector('span').textContent = msg;
+  clearTimeout(_noticeTimer);
+  _noticeTimer = setTimeout(() => { n.remove(); }, 6000);
+}
+// Progress card for reading a file. pct null = unknown (animated bar).
+function createFileProgress(name, label) {
+  const el = composerStatusEl();
+  const card = document.createElement('div');
+  card.className = 'cs-progress';
+  card.innerHTML =
+    '<i class="ph ph-file-text cs-icon" aria-hidden="true"></i>' +
+    '<div class="cs-main"><div class="cs-top"><span class="cs-name"></span><span class="cs-pct"></span></div>' +
+    '<div class="cs-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span></span></div>' +
+    '<div class="cs-label"></div></div>' +
+    '<button type="button" class="cs-cancel">Cancel</button>';
+  card.querySelector('.cs-name').textContent = name;
+  const state = { cancelled: false };
+  const bar = card.querySelector('.cs-bar'), fill = bar.firstElementChild;
+  const pctEl = card.querySelector('.cs-pct'), lab = card.querySelector('.cs-label');
+  const cancelBtn = card.querySelector('.cs-cancel');
+  cancelBtn.addEventListener('click', () => { state.cancelled = true; cancelBtn.disabled = true; lab.textContent = 'Stopping...'; });
+  state.set = (text, pct) => {
+    if (state.cancelled) return;
+    lab.textContent = text;
+    if (pct == null) { bar.classList.add('indeterminate'); pctEl.textContent = ''; fill.style.width = ''; bar.removeAttribute('aria-valuenow'); }
+    else {
+      const v = Math.max(0, Math.min(100, Math.round(pct)));
+      bar.classList.remove('indeterminate'); fill.style.width = v + '%'; pctEl.textContent = v + '%'; bar.setAttribute('aria-valuenow', v);
+    }
+  };
+  state.set(label || 'Reading file...', null);
+  state.remove = () => card.remove();
+  el.prepend(card);
+  return state;
+}
+
 async function handlePickedFile(file) {
   if (!file || file.size === 0) {
-    showToast((file && file.name ? file.name : 'That file') + ' is empty, so it was skipped.');
+    composerNotice((file && file.name ? file.name : 'That file') + ' is empty, so it was skipped.');
     return;
   }
   if (pendingAttachments.some((a) => a.name === file.name && a.size === file.size && a.kind !== 'image')) {
-    showToast(file.name + ' is already attached.');
+    composerNotice(file.name + ' is already attached.');
     return;
   }
   const imageMime = detectImageMime(file);
@@ -1460,18 +1526,23 @@ async function handlePickedFile(file) {
   // Word text can only be read here: the code sandbox has no PDF or Word
   // library and no internet. Plain text is simply decoded.
   let extracted = '';
+  const fileProgress = (isPdf || isDocx) ? createFileProgress(file.name, isPdf ? 'Reading PDF...' : 'Reading document...') : null;
+  _activeFileProgress = fileProgress;
   try {
     if (isPdf) {
       if (window.pdfjsLib) extracted = await extractPdfText(file);
-      else showToast('PDF reading is still loading, so only the file itself was added.');
+      else composerNotice('PDF reading is still loading, so only the file itself was added.');
     } else if (isDocx) {
       if (window.mammoth) extracted = await extractDocxText(file);
-      else showToast('Word reading is still loading, so only the file itself was added.');
+      else composerNotice('Word reading is still loading, so only the file itself was added.');
     } else if (isTextLike) {
       extracted = await file.text();
     }
   } catch (err) {
     console.error('[app] Could not read text from file:', err && err.message);
+  } finally {
+    if (fileProgress) fileProgress.remove();
+    _activeFileProgress = null;
   }
   extracted = String(extracted || '').trim();
 
@@ -1482,7 +1553,7 @@ async function handlePickedFile(file) {
   // Small documents are pasted into the message so a quick question needs no
   // code run (and no waiting for Python to load).
   if (isDocLike && smallEnough) {
-    pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(extracted) });
+    pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(extracted), file });
     return;
   }
 
@@ -1495,7 +1566,7 @@ async function handlePickedFile(file) {
       const att = {
         name: file.name, kind: 'data', size: file.size, data,
         preview: extracted ? previewOfText(extracted.slice(0, 16384)) : '',
-        hasText: !!extracted,
+        hasText: !!extracted, file,
       };
       // For PDF and Word, also save the text we read, so code can use it.
       if (extracted && (isPdf || isDocx)) {
@@ -1504,19 +1575,37 @@ async function handlePickedFile(file) {
       pendingAttachments.push(att);
     } catch (err) {
       console.error('[app] Could not read file:', err && err.message);
-      showToast('Could not read that file.');
+      composerNotice('Could not read that file.');
     }
     return;
   }
 
   // Too big for the workspace on this plan.
-  showToast(file.name + ' is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB your plan allows.');
+  composerNotice(file.name + ' is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB your plan allows.');
   if (isDocLike && extracted) {
     // Still send what we could read, cut to a safe length.
     pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(extracted) });
     return;
   }
   pendingAttachments.push({ name: file.name, kind: 'unsupported' });
+}
+
+function _buildSentAttachment(a, savedToWorkspace) {
+  if (a.kind === 'data') return savedToWorkspace.get(a) || { kind: 'unsupported', name: a.name };
+  if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
+  if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
+  if (a.kind === 'text') return { kind: 'file', name: a.name, text: a.text };
+  return { kind: 'unsupported', name: a.name };
+}
+
+// Open the preview sheet for a file the person attached.
+async function previewAttachment(att, file) {
+  let name = att.name || 'file';
+  let blob = file || _localFiles.get(att) || null;
+  if (!blob && att.dataUrl) { try { blob = await (await fetch(att.dataUrl)).blob(); } catch (e) { blob = null; } }
+  if (!blob && typeof att.text === 'string') { blob = new Blob([att.text], { type: 'text/plain' }); if (!canPreview(name) || !/\.(txt|md|csv|tsv|json|log|xml|ya?ml|py|js|css|html?)$/i.test(name)) name = name.replace(/\.[a-z0-9]{1,5}$/i, '') + '.txt'; }
+  if (!blob || !canPreview(name)) { composerNotice('That file cannot be previewed.'); return; }
+  openFilePreview({ name, size: blob.size, getBlob: async () => blob });
 }
 
 function _capText(text) {
@@ -1582,6 +1671,8 @@ function pdfPageLimits() {
   return paid ? { total: Infinity, ocr: Infinity } : { total: FREE_PDF_MAX_PAGES, ocr: FREE_PDF_OCR_MAX_PAGES };
 }
 
+let _activeFileProgress = null;
+let _ocrPageProgress = null;
 let _ocrWorkerPromise = null;
 // One shared Tesseract.js worker, created on first use. Everything is self-hosted under
 // /vendor/tesseract/, so nothing is loaded from a CDN and the file never leaves the browser.
@@ -1594,6 +1685,7 @@ function getOcrWorker() {
       langPath: '/vendor/tesseract/lang',
       gzip: true,
       workerBlobURL: false,
+      logger: (m) => { if (m && m.status === 'recognizing text' && _ocrPageProgress) _ocrPageProgress(m.progress || 0); },
     }).catch((err) => { _ocrWorkerPromise = null; throw err; });
   }
   return _ocrWorkerPromise;
@@ -1652,6 +1744,7 @@ async function extractPdfText(file) {
   try {
   for (let i = 1; i <= maxPages; i++) {
     const page = await pdf.getPage(i);
+    if (_activeFileProgress && !progress) _activeFileProgress.set('Reading PDF: page ' + i + ' of ' + maxPages, ((i - 1) / maxPages) * 100);
     const content = await page.getTextContent();
     let pageText = content.items.map((item) => item.str).join(' ').trim();
     // No real text layer: this page is a scan. Read it with OCR.
@@ -1661,10 +1754,13 @@ async function extractPdfText(file) {
         ocrSkipped++;
       } else if (ocrPages < limits.ocr) {
         try {
-          if (!progress) progress = createOcrProgress();
-          progress.update(i, maxPages);
+          if (!progress) progress = _activeFileProgress || createFileProgress('PDF', 'Reading scanned PDF...');
+          const setP = (frac) => progress.set('Reading scanned PDF (OCR): page ' + i + ' of ' + maxPages, ((i - 1 + frac) / maxPages) * 100);
+          setP(0);
+          _ocrPageProgress = setP;
           const worker = await getOcrWorker();
           const ocrText = await ocrPdfPage(page, worker);
+          _ocrPageProgress = null;
           ocrPages++;
           if (ocrText) pageText = ocrText;
         } catch (err) {
@@ -1678,7 +1774,8 @@ async function extractPdfText(file) {
     text += pageText + '\n\n';
   }
   } finally {
-    if (progress) progress.remove();
+    _ocrPageProgress = null;
+    if (progress && progress !== _activeFileProgress) progress.remove();
   }
   if (pdf.numPages > maxPages) {
     text += '[Only the first ' + maxPages + ' of ' + pdf.numPages + ' pages were read on the free plan. Upgrade to read every page.]';
@@ -1703,11 +1800,11 @@ async function handleImageFile(file, detectedMime) {
     return;
   }
   if (!currentAccountHasVision) {
-    showToast('Image understanding is available on Cognita Plus and above.');
+    composerNotice('Image understanding is available on Cognita Plus and above.');
     return;
   }
   if (pendingAttachments.filter((a) => a.kind === 'image').length >= MAX_IMAGES_PER_MESSAGE) {
-    showToast('You can attach up to ' + MAX_IMAGES_PER_MESSAGE + ' images per message.');
+    composerNotice('You can attach up to ' + MAX_IMAGES_PER_MESSAGE + ' images per message.');
     return;
   }
 
@@ -1718,9 +1815,9 @@ async function handleImageFile(file, detectedMime) {
     } catch (err) {
       console.error('[app] Image prepare failed:', err && err.message);
       if (HEIC_RE.test(mime)) {
-        showToast('This browser cannot read HEIC photos. Change the camera format to Most Compatible, or share it as a JPEG.');
+        composerNotice('This browser cannot read HEIC photos. Change the camera format to Most Compatible, or share it as a JPEG.');
       } else {
-        showToast((file.name || 'That image') + ' looks damaged or is not a valid image.');
+        composerNotice((file.name || 'That image') + ' looks damaged or is not a valid image.');
       }
       return;
     }
@@ -1733,7 +1830,7 @@ async function handleImageFile(file, detectedMime) {
     const base64 = String(dataUrl).split(',')[1];
     const maxChars = Math.floor(sandboxFileLimitBytes() * 1.37);
     if (!base64 || base64.length > Math.min(8000000, Math.max(maxChars, 5 * 1024 * 1024 * 1.37))) {
-      showToast((file.name || 'That image') + ' is too large even after shrinking.');
+      composerNotice((file.name || 'That image') + ' is too large even after shrinking.');
       return;
     }
     const baseName = prepared.mimeType !== mime && file.name ? file.name.replace(/\.[^.]+$/, '') + (prepared.mimeType === 'image/jpeg' ? '.jpg' : '.png') : file.name;
@@ -1746,7 +1843,7 @@ async function handleImageFile(file, detectedMime) {
     });
   } catch (err) {
     console.error('[app] Could not read image:', err && err.message);
-    showToast('Could not read that image.');
+    composerNotice('Could not read that image.');
   }
 }
 
@@ -1761,21 +1858,30 @@ function renderComposerAttachments() {
   wrap.hidden = false;
   wrap.innerHTML = pendingAttachments.map((att, i) => {
     if (att.kind === 'image') {
-      return '<span class="attachment-chip attachment-chip-image">' +
+      return '<span class="attachment-chip attachment-chip-image is-previewable">' +
         '<img src="' + att.dataUrl + '" alt="">' +
-        '<span class="attachment-chip-name">' + escapeHtml(att.name) + '</span>' +
+        '<button type="button" class="attachment-chip-name attachment-chip-open" data-preview-pending="' + i + '" title="Preview">' + escapeHtml(att.name) + '</button>' +
         '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
       '</span>';
     }
     const icon = att.kind === 'unsupported' ? 'warning' : 'file-text';
     const suffix = att.kind === 'unsupported' ? ' (not readable yet)' : '';
-    return '<span class="attachment-chip">' +
-      '<i class="ph ph-' + icon + '"></i>' +
-      '<span class="attachment-chip-name">' + escapeHtml(att.name) + suffix + '</span>' +
+    const canView = att.kind !== 'unsupported' && canPreview(att.name) && att.file;
+    return '<span class="attachment-chip' + (canView ? ' is-previewable' : '') + '">' +
+      '<i class="ph ' + (canView ? fileIconClass(att.name) : 'ph-' + icon) + '"></i>' +
+      (canView
+        ? '<button type="button" class="attachment-chip-name attachment-chip-open" data-preview-pending="' + i + '" title="Preview">' + escapeHtml(att.name) + '</button>'
+        : '<span class="attachment-chip-name">' + escapeHtml(att.name) + suffix + '</span>') +
       '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
     '</span>';
   }).join('');
 
+  wrap.querySelectorAll('[data-preview-pending]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const att = pendingAttachments[parseInt(btn.dataset.previewPending, 10)];
+      if (att) previewAttachment(att, att.file || null);
+    });
+  });
   wrap.querySelectorAll('[data-remove-attachment]').forEach((btn) => {
     btn.addEventListener('click', () => {
       pendingAttachments.splice(parseInt(btn.dataset.removeAttachment, 10), 1);
@@ -2062,12 +2168,11 @@ async function sendMessage(text) {
   // Attachments kept for display (thumbnails/chips) — never the raw
   // base64 string or full file text is put into the visible message.
   const attachmentsForMessage = staged.map((a) => {
-    if (a.kind === 'data') return savedToWorkspace.get(a) || { kind: 'unsupported', name: a.name };
-    if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
-    if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
-    if (a.kind === 'text') return { kind: 'file', name: a.name, text: a.text };
-    return { kind: 'unsupported', name: a.name };
+    const out = _buildSentAttachment(a, savedToWorkspace);
+    if (a.file && out) _localFiles.set(out, a.file);
+    return out;
   });
+
 
   // What actually goes to the vision model — base64 + mime only, never
   // rendered as text anywhere.
@@ -4113,7 +4218,7 @@ function renderMessage(msg, index) {
     let imagesHtml = '';
     if (imageAtts.length) {
       imagesHtml = '<div class="message-image-grid">' +
-        imageAtts.map((a) => '<img src="' + a.dataUrl + '" alt="' + escapeHtml(a.name) + '" class="message-image">').join('') +
+        imageAtts.map((a) => '<img src="' + a.dataUrl + '" alt="' + escapeHtml(a.name) + '" class="message-image" data-msg-index="' + index + '" data-att-index="' + msg.attachments.indexOf(a) + '" tabindex="0">').join('') +
       '</div>';
     }
 
@@ -4121,11 +4226,16 @@ function renderMessage(msg, index) {
     if (otherAtts.length) {
       chipsHtml = '<div class="message-attachments">' +
         otherAtts.map((a) => {
-          const icon = a.kind === 'unsupported' ? 'warning' : 'file-text';
-          return '<span class="attachment-chip attachment-chip-static">' +
-            '<i class="ph ph-' + icon + '"></i>' +
-            '<span class="attachment-chip-name">' + escapeHtml(a.name) + '</span>' +
-          '</span>';
+          const j = msg.attachments.indexOf(a);
+          const bad = a.kind === 'unsupported';
+          const ok = !bad && canPreview(a.name) && (_localFiles.get(a) || typeof a.text === 'string');
+          const icon = bad ? 'ph-warning' : fileIconClass(a.name).replace('ph-file-arrow-down', 'ph-file-text');
+          const inner = '<span class="msg-file-icon"><i class="ph ' + icon + '"></i></span>' +
+            '<span class="msg-file-text"><span class="msg-file-name">' + escapeHtml(a.name) + '</span>' +
+            '<span class="msg-file-sub">' + escapeHtml(bad ? 'Not readable yet' : previewLabel(a.name)) + (ok ? ' · Tap to preview' : '') + '</span></span>';
+          return ok
+            ? '<button type="button" class="msg-file" data-msg-index="' + index + '" data-att-index="' + j + '">' + inner + '</button>'
+            : '<div class="msg-file is-static">' + inner + '</div>';
         }).join('') +
       '</div>';
     }
