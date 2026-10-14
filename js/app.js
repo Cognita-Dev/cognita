@@ -78,7 +78,7 @@ const MAX_EXTRACTED_CHARS = 40000;
 const INLINE_DOC_MAX_CHARS = 12000;   // documents shorter than this are pasted into the message; longer ones go to the workspace
 
 // Mime types for AI-generated document downloads, keyed by the "format"
-// the /api/document endpoint returns. Kept in sync with document-endpoint.js.
+// stored on older chats' download chips (documents are now made in chat).
 const EXPORT_MIME_TYPES = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pdf: 'application/pdf',
@@ -163,8 +163,6 @@ let currentAccountChatTiers = ['fast'];
 // walk through an OAuth flow that chat will never use.
 let currentAccountHasConnectorTools = false;
 let visualKind = 'diagram';
-let documentDocType = 'letter';
-let documentFormat = 'docx';
 
 const THINKING_WORDS = [
   'Thinking',
@@ -193,7 +191,6 @@ export async function mount() {
   wireAttachMenu();
   wireQualityPicker();
   wireVisualModal();
-  wireDocumentModal();
   wireConnectorsModal();
   showConnectorRedirectBanner();
   wireComposerSuggestions();
@@ -1197,7 +1194,6 @@ function wireAttachMenu() {
   const filesItem = document.getElementById('attachFilesItem');
   const diagramItem = document.getElementById('attachDiagramItem');
   const illustrationItem = document.getElementById('attachIllustrationItem');
-  const documentItem = document.getElementById('attachDocumentItem');
   const connectorsItem = document.getElementById('attachConnectorsItem');
   const noteTakerItem = document.getElementById('attachNoteTakerItem');
   const fileInput = document.getElementById('fileInput');
@@ -1230,11 +1226,6 @@ function wireAttachMenu() {
   illustrationItem.addEventListener('click', () => {
     closeMenu();
     openVisualModal('illustration');
-  });
-
-  documentItem.addEventListener('click', () => {
-    closeMenu();
-    openDocumentModal();
   });
 
   connectorsItem.addEventListener('click', () => {
@@ -5508,145 +5499,6 @@ function insertVisualIntoConversation(data, promptText) {
 
   renderConversation();
   updateConversationTitle();
-  persistCurrentConversation();
-}
-
-/* ════════════════════════════════════════���═══════════════
-   DOCUMENT GENERATION MODAL (letter / report / essay / memo)
-════════════════════════════════════════════════════════ */
-
-function openDocumentModal() {
-  const modal = document.getElementById('documentModal');
-  const topicInput = document.getElementById('documentTopicInput');
-  const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
-  const formatOptions = document.querySelectorAll('#documentFormatToggle .visual-type-option');
-
-  documentDocType = 'letter';
-  documentFormat = 'docx';
-  typeOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.doctype === documentDocType));
-  formatOptions.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.format === documentFormat));
-
-  openModal(modal);
-  topicInput.value = '';
-  topicInput.focus();
-}
-
-function wireDocumentModal() {
-  const modal = document.getElementById('documentModal');
-  const closeBtn = document.getElementById('documentModalClose');
-  const submitBtn = document.getElementById('documentSubmitBtn');
-  const topicInput = document.getElementById('documentTopicInput');
-  const typeOptions = document.querySelectorAll('#documentTypeToggle .visual-type-option');
-  const formatOptions = document.querySelectorAll('#documentFormatToggle .visual-type-option');
-
-  closeBtn.addEventListener('click', () => { closeModal(modal); });
-  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(modal); });
-
-  typeOptions.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      typeOptions.forEach((b) => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      documentDocType = btn.dataset.doctype;
-    });
-  });
-
-  formatOptions.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      formatOptions.forEach((b) => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      documentFormat = btn.dataset.format;
-    });
-  });
-
-  submitBtn.addEventListener('click', async () => {
-    const topic = topicInput.value.trim();
-    if (!topic) return;
-
-    setModalLoading(submitBtn, true);
-
-    // A document generated in a brand-new chat still needs somewhere to
-    // be scoped for later retrieval — make sure a conversationId exists
-    // before asking the server to build (and persist) the file.
-    const conversationId = ensureConversationId();
-
-    try {
-      const res = await window.Auth.authedFetch(WORKER_URL + '/api/document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, docType: documentDocType, format: documentFormat, conversationId }),
-      });
-
-      const data = await res.json();
-      setModalLoading(submitBtn, false);
-
-      if (!res.ok) {
-        showToast(data.error || 'Could not generate the document.');
-        return;
-      }
-
-      closeModal(modal);
-      insertDocumentIntoConversation(data, topic, documentDocType, conversationId);
-    } catch (e) {
-      setModalLoading(submitBtn, false);
-      showToast('Could not reach Cognita. Please try again.');
-      console.error('[app] document request failed:', e.message);
-    }
-  });
-}
-
-function insertDocumentIntoConversation(data, topicText, docType, conversationId) {
-  if (loadingConversationId && loadingConversationId === currentConversationId) {
-    showToast('This chat is still loading. Please try again in a moment.');
-    return;
-  }
-  conversation.push({ role: 'user', content: 'Create a ' + docType + ' about: ' + topicText });
-
-  const mimeType = EXPORT_MIME_TYPES[data.format];
-
-  if (mimeType) {
-    const assistantMessage = { role: 'assistant', content: '[Generated a ' + docType + ' document: ' + data.filename + ']' };
-
-    // If the server confirmed it persisted the file (fileId present),
-    // attach that metadata to the message so it travels with the
-    // conversation to B2 and survives a reload — this is what the
-    // re-download chip in renderMessage reads from. If persistence
-    // failed server-side (fileId missing), the person still gets this
-    // one-time download below, they just won't be able to re-fetch it
-    // later — flagged so it's an honest degradation, not a silent one.
-    if (data.fileId) {
-      assistantMessage.documentFile = {
-        fileId: data.fileId,
-        conversationId: data.conversationId || conversationId,
-        filename: data.filename,
-        mimeType,
-      };
-    }
-
-    if (!data.fileId) {
-      // Fallback: no persisted copy exists, so give an immediate one-time
-      // download via a blob URL built from this response's own bytes. The
-      // link is remembered for this session so it survives re-renders.
-      const byteChars = atob(data.content);
-      const bytes = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([bytes], { type: mimeType });
-      _transientDownloads.set(assistantMessage, { url: URL.createObjectURL(blob), filename: data.filename });
-    }
-
-    conversation.push(assistantMessage);
-    renderConversation();
-    updateConversationTitle();
-
-    if (!data.fileId) {
-      showToast('This file could not be saved for later — download it now before leaving this chat.');
-    }
-  } else {
-    // Free plan: plain text only, shown directly as the reply.
-    conversation.push({ role: 'assistant', content: data.content });
-    renderConversation();
-    updateConversationTitle();
-  }
-
   persistCurrentConversation();
 }
 
