@@ -11,5 +11,5 @@
   Cross-Origin-Resource-Policy: cross-origin
   X-Content-Type-Options: nosniff
 
-/v0.29.5/*
+/v0.29.5-r2/*
   Cache-Control: public, max-age=31536000, immutable
