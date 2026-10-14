@@ -29,7 +29,7 @@ import { purgeSavedNotesForUser } from './saved-notes-endpoint.js';
 import { deleteReminder, deleteSubscriptionById, listSubscriptions } from './reminders/reminders-storage.js';
 import { cancelScheduledPost } from './social-scheduler.js';
 
-const CONNECTOR_PROVIDERS = ['github', 'google', 'facebook', 'canva'];
+const CONNECTOR_PROVIDERS = ['github', 'google', 'facebook', 'cloudshell'];
 
 function _confirmationCode() {
   return 'delacct_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);

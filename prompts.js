@@ -105,7 +105,8 @@ const TOOL_OUTPUT_FORMATTING =
 
 // Only sent when connected-app tools are available.
 const TOOL_USE_RULES =
-  'You may have tools for the user\'s connected apps (GitHub, Google, Facebook/Instagram, Canva). ' +
+  'You may have tools for the user\'s connected apps (GitHub, Google, Facebook/Instagram, Cloud Shell, Codespaces). ' +
+  'Cloud Shell tools only start the environment and give a link to open its terminal in the browser. Commands can only be run in a Codespace created with codespaces_create_terminal, using codespaces_run_command, after the user confirms; never claim to have run anything any other way, and only report what the command output actually shows. ' +
   'Use one only when the request is about that app or its data (read my repo, add this to my ' +
   'Drive). A budget, plan, analysis or any other answer belongs in the chat: never create files, ' +
   'documents or posts in a connected app that the user did not ask for. Only the tools you were ' +

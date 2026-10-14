@@ -60,6 +60,7 @@
 //     them itself.
 
 import { getValidToken } from './connectors.js';
+import * as codespacesTools from './codespaces-tools.js';
 
 // Soft ceiling on committed file content, well under GitHub's own Contents
 // API limit (~1MB base64-encoded). This isn't a file-upload feature, it's
@@ -75,6 +76,8 @@ const MAX_FILE_CONTENT_CHARS = 300_000;
 const MAX_FILES_PER_COMMIT = 20;
 
 export const TOOLS = [
+  // GitHub Codespaces tools (own file; same GitHub connection) — see codespaces-tools.js.
+  ...codespacesTools.TOOLS,
   {
     type: 'function',
     function: {
@@ -524,6 +527,7 @@ export const TOOLS = [
 ];
 
 export const REQUIRES_CONFIRMATION = [
+  ...codespacesTools.REQUIRES_CONFIRMATION,
   'github_create_issue',
   'github_update_issue',
   'github_add_issue_comment',
@@ -549,6 +553,7 @@ function _repoLabel(args) {
 
 export function describe(name, args) {
   args = args || {};
+  if (String(name).startsWith('codespaces_')) return codespacesTools.describe(name, args);
   const repo = _repoLabel(args);
   if (name === 'github_list_repos') return 'Looking at your GitHub repositories.';
   if (name === 'github_get_repo') return 'Checking ' + repo + "'s details.";
@@ -594,6 +599,7 @@ export function describe(name, args) {
  */
 export function approvalScope(name, args) {
   args = args || {};
+  if (String(name).startsWith('codespaces_')) return codespacesTools.approvalScope(name, args);
   if (!args.owner || !args.repo) return 'unscoped';
   return args.owner + '/' + args.repo;
 }
@@ -1275,6 +1281,7 @@ async function _getWorkflowRunLogs(uid, args, env) {
 }
 
 export async function execute(name, args, uid, env) {
+  if (String(name).startsWith('codespaces_')) return codespacesTools.execute(name, args, uid, env);
   if (name === 'github_list_repos') return _listRepos(uid, args, env);
   if (name === 'github_get_repo') return _getRepo(uid, args, env);
   if (name === 'github_search_repositories') return _searchRepositories(uid, args, env);

@@ -479,7 +479,7 @@ async function _dispatch(providerName, messages, model, env, maxTokens, ctx) {
   throw new Error('Unknown provider: ' + providerName);
 }
 
-// ── Tool-calling (connector tools: GitHub/Google/Facebook/Canva) ──
+// ── Tool-calling (connector tools: GitHub/Google/Facebook/Cloud Shell) ──
 // Only Groq and OpenRouter speak the OpenAI-compatible `tools` param here.
 // Workers AI is deliberately NOT wired for tools — its binding's tool-call
 // support is inconsistent across models and this app only uses it as an

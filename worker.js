@@ -377,7 +377,7 @@ const _app = {
       return handleInsightsFileProxy(request, env);
     }
 
-    // ── Connectors (GitHub, Google, Facebook, Canva) ─────
+    // ── Connectors (GitHub, Google, Facebook, Cloud Shell) ─────
 
     // Must come before the /:provider/start check below, since both
     // match a "/api/connectors/<segment>" shape.

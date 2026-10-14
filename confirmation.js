@@ -173,11 +173,41 @@ const TOOLS = {
     consequence: () => 'This sends the email from your Gmail account and cannot be undone.',
   },
 
-  canva_create_design: {
-    p: 'canva', l: 'Canva', verb: 'create',
-    title: (a) => 'Create ' + quote(a.title) + ' in Canva',
-    details: (a) => [D('Title', a.title), D('Type', a.designType)],
-    consequence: () => 'This adds a new design to your Canva account.',
+  codespaces_create: {
+    p: 'codespaces', l: 'GitHub Codespaces', verb: 'create',
+    title: (a) => 'Create a cloud terminal for ' + quote(a.repo),
+    details: (a) => [D('Repository', a.owner && a.repo ? a.owner + '/' + a.repo : a.repo), D('Branch', a.ref), D('Machine', a.machine), D('Stops itself after', (a.idleTimeoutMinutes || 30) + ' minutes idle')],
+    consequence: () => 'This creates a Codespace in your own GitHub account. It uses your own included Codespaces time, not Cognita\'s.',
+  },
+  codespaces_create_terminal: {
+    p: 'codespaces', l: 'GitHub Codespaces', verb: 'create',
+    title: () => 'Create your cloud terminal',
+    details: (a) => [D('Machine', a.machine), D('Stops itself after', (a.idleTimeoutMinutes || 30) + ' minutes idle'), D('Deleted if unused for', (a.retentionDays || 3) + ' days')],
+    consequence: () => 'This creates a Codespace in your own GitHub account from Cognita\'s open-source terminal setup. It uses your own included Codespaces time, not Cognita\'s.',
+  },
+  codespaces_run_command: {
+    p: 'codespaces', l: 'GitHub Codespaces', verb: 'run',
+    title: () => 'Run a command in your cloud terminal',
+    details: (a) => [D('Command', a.command, true), D('Folder', a.cwd), D('Time limit', a.timeoutSeconds ? a.timeoutSeconds + ' seconds' : null)],
+    consequence: () => 'This runs in your own Codespace, not on your computer or on Cognita\'s servers. It can change or delete files in that Codespace.',
+  },
+  codespaces_start: {
+    p: 'codespaces', l: 'GitHub Codespaces', verb: 'start',
+    title: () => 'Start your Codespace',
+    details: (a) => [D('Codespace', a.name)],
+    consequence: () => 'This starts it on your own GitHub account and uses your own included Codespaces time.',
+  },
+  codespaces_stop: {
+    p: 'codespaces', l: 'GitHub Codespaces', verb: 'stop',
+    title: () => 'Stop your Codespace',
+    details: (a) => [D('Codespace', a.name)],
+    consequence: () => 'This stops it. Anything still running inside it is interrupted; your files are kept.',
+  },
+  cloudshell_start: {
+    p: 'cloudshell', l: 'Google Cloud Shell', verb: 'start',
+    title: () => 'Start your Cloud Shell',
+    details: () => [],
+    consequence: () => 'This starts your own Google Cloud Shell and uses your own Google allowance, not Cognita\'s.',
   },
   facebook_create_post: {
     p: 'facebook', l: 'Facebook', verb: 'post',
@@ -194,7 +224,7 @@ const TOOLS = {
 };
 
 // Used when a tool has no entry above.
-const FALLBACK_PROVIDERS = { github: ['github', 'GitHub'], google: ['google', 'Google'], facebook: ['facebook', 'Facebook'], canva: ['canva', 'Canva'], figma: ['figma', 'Figma'] };
+const FALLBACK_PROVIDERS = { github: ['github', 'GitHub'], google: ['google', 'Google'], facebook: ['facebook', 'Facebook'], cloudshell: ['cloudshell', 'Google Cloud Shell'], figma: ['figma', 'Figma'] };
 
 function verbFromName(name) {
   if (/_delete_|_remove_/.test(name)) return 'delete';

@@ -391,7 +391,7 @@ export function planHasRemoteBrowser(planId) {
   return !!p.features.sandboxBrowserRemote && (p.limits.browserRemotePerDay || 0) > 0;
 }
 
-// Can this plan use connected-app tools (GitHub/Google/Facebook/Canva)
+// Can this plan use connected-app tools (GitHub/Google/Facebook/Cloud Shell)
 export function planHasConnectorTools(planId) {
   return !!getPlan(planId).features.connectorTools;
 }

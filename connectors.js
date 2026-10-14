@@ -33,7 +33,7 @@ import { buildAuthorizeUrl, exchangeCodeForToken, refreshAccessToken, revokeToke
 // remove a provider name here without also wiring up
 // connector-providers.js, a *-tools.js executor, and every frontend
 // CONNECTOR_META/CONNECTOR_ORDER.
-export const CONNECTOR_PROVIDERS = ['github', 'google', 'facebook', 'canva'];
+export const CONNECTOR_PROVIDERS = ['github', 'google', 'facebook', 'cloudshell'];
 
 // Where the OAuth flow should send the user back to after the provider's
 // redirect completes. This is the ONLY set of values `returnTo` may ever
@@ -224,7 +224,7 @@ export async function consumeOAuthState(state, env) {
   }
 }
 
-// ── PKCE (Canva only, per Canva's OAuth requirements) ─────────────────
+// ── PKCE helpers (currently unused; kept for providers that require PKCE) ─────────────────
 
 /**
  * Generates a PKCE code_verifier: a random string 43-128 chars long from
@@ -271,18 +271,11 @@ export async function startAuth(uid, provider, env, returnTo = 'account') {
   _assertKnownProvider(provider);
   const safeReturnTo = ALLOWED_RETURN_TARGETS.includes(returnTo) ? returnTo : 'account';
 
-  let codeVerifier;
-  let codeChallenge;
-  if (provider === 'canva') {
-    codeVerifier = generateCodeVerifier();
-    codeChallenge = await generateCodeChallenge(codeVerifier);
-  }
-
-  const state = await createOAuthState(uid, provider, env, {
-    returnTo: safeReturnTo,
-    ...(codeVerifier ? { codeVerifier } : {}),
-  });
-  return buildAuthorizeUrl(provider, env, { state, codeChallenge });
+  // No connector currently uses PKCE (Canva was the only one, now removed),
+  // so no code_verifier is created. generateCodeVerifier/generateCodeChallenge
+  // above are kept for the next provider that needs them.
+  const state = await createOAuthState(uid, provider, env, { returnTo: safeReturnTo });
+  return buildAuthorizeUrl(provider, env, { state });
 }
 
 /**

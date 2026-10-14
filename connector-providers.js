@@ -15,7 +15,9 @@ const ENV_VARS = {
   github: { id: 'GITHUB_CLIENT_ID', secret: 'GITHUB_CLIENT_SECRET' },
   google: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
   facebook: { id: 'FACEBOOK_CLIENT_ID', secret: 'FACEBOOK_CLIENT_SECRET' },
-  canva: { id: 'CANVA_CLIENT_ID', secret: 'CANVA_CLIENT_SECRET' },
+  // Cloud Shell is a second Google connector: same Google OAuth client, but its
+  // own scope and its own stored token (see SCOPES.cloudshell).
+  cloudshell: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
 };
 
 // This app's Meta product is "Facebook Login for Business" (App Dashboard
@@ -102,7 +104,12 @@ async function _fetchGrantedFacebookScopes(accessToken) {
 // visible change here; requesting broad scopes up front is not
 // reversible for users who already granted them.
 const SCOPES = {
-  github: 'repo', // full read/write on public AND private repos — see hasSufficientScope() below
+  // `repo`: full read/write on public AND private repos — see hasSufficientScope() below.
+  // `codespace`: create/start/stop the USER's own Codespaces (billed to the user).
+  // hasSufficientScope() deliberately still only requires `repo`, so people who
+  // connected before `codespace` existed keep every other GitHub tool; the
+  // Codespaces tools alone ask them to reconnect (see codespaces-tools.js).
+  github: 'repo codespace',
   // Narrowed (2026-09) to only scopes Google classifies as "sensitive" or
   // "non-sensitive" — NOT "restricted". Restricted scopes (drive,
   // gmail.modify, gmail.readonly, gmail.compose, etc.) force the app
@@ -170,7 +177,10 @@ const SCOPES = {
     // permissions periodically.
     'pages_messaging', 'instagram_manage_messages', 'instagram_manage_comments', 'pages_manage_engagement',
   ].join(','),
-  canva: 'folder:permission:read design:content:read design:content:write asset:read profile:read design:meta:read asset:write folder:read',
+  // Broad on purpose, which is why this is NOT part of the 'google' connector:
+  // the Cloud Shell API only accepts cloud-platform. Used only to read/start the
+  // user's own Cloud Shell environment (cloudshell-tools.js).
+  cloudshell: 'https://www.googleapis.com/auth/cloud-platform',
 };
 
 const FACEBOOK_REQUIRED_SCOPES = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'];
@@ -219,7 +229,10 @@ export function hasSufficientScope(provider, storedScope) {
     // error mid-run.
     return facebookMissingScopes(storedScope).length === 0;
   }
-  return true; // not implemented for canva yet
+  if (provider === 'cloudshell') {
+    return (storedScope || '').split(' ').map((x) => x.trim()).includes('https://www.googleapis.com/auth/cloud-platform');
+  }
+  return true;
 }
 
 // ── AI Inbox scope check — deliberately separate from
@@ -257,7 +270,7 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
     });
   }
 
-  if (provider === 'google') {
+  if (provider === 'google' || provider === 'cloudshell') {
     return 'https://accounts.google.com/o/oauth2/v2/auth?' + _form({
       client_id: id, redirect_uri: redirectUri, response_type: 'code', scope, state,
       // access_type=offline + prompt=consent are both required to reliably
@@ -288,13 +301,6 @@ export function buildAuthorizeUrl(provider, env, { state, codeChallenge }) {
     return 'https://www.facebook.com/' + META_GRAPH_VERSION + '/dialog/oauth?' + _form({
       client_id: id, redirect_uri: redirectUri, state, config_id: configId,
       response_type: 'code', override_default_response_type: true,
-    });
-  }
-
-  if (provider === 'canva') {
-    return 'https://www.canva.com/api/oauth/authorize?' + _form({
-      client_id: id, redirect_uri: redirectUri, response_type: 'code', scope, state,
-      code_challenge_method: 's256', code_challenge: codeChallenge,
     });
   }
 
@@ -331,7 +337,7 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
     };
   }
 
-  if (provider === 'google') {
+  if (provider === 'google' || provider === 'cloudshell') {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -395,27 +401,6 @@ export async function exchangeCodeForToken(provider, env, { code, codeVerifier }
     };
   }
 
-  if (provider === 'canva') {
-    const res = await fetch('https://api.canva.com/rest/v1/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: _basicAuthHeader(id, secret),
-      },
-      body: _form({
-        grant_type: 'authorization_code', code, code_verifier: codeVerifier, redirect_uri: redirectUri,
-      }),
-    });
-    const data = await _mustJson(res, 'canva');
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || null,
-      expiresAt: now + (data.expires_in || 14400) * 1000,
-      scope: data.scope || '',
-      providerAccountId: null,
-    };
-  }
-
   throw new Error('Unknown connector provider: ' + provider);
 }
 
@@ -436,7 +421,7 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
   const { id, secret } = _creds(provider, env);
   const now = Date.now();
 
-  if (provider === 'google') {
+  if (provider === 'google' || provider === 'cloudshell') {
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -471,27 +456,6 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
     };
   }
 
-  if (provider === 'canva') {
-    const res = await fetch('https://api.canva.com/rest/v1/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: _basicAuthHeader(id, secret),
-      },
-      body: _form({ grant_type: 'refresh_token', refresh_token: refreshTokenValue }),
-    });
-    const data = await _mustJson(res, 'canva');
-    return {
-      accessToken: data.access_token,
-      // Canva DOES rotate the refresh token on every refresh — the old
-      // one becomes invalid, so the new value must always be saved.
-      refreshToken: data.refresh_token,
-      expiresAt: now + (data.expires_in || 14400) * 1000,
-      scope: data.scope || '',
-      providerAccountId: null,
-    };
-  }
-
   if (provider === 'github') {
     throw new Error('GitHub classic OAuth App tokens do not expire — refresh should never be called for this provider.');
   }
@@ -507,17 +471,8 @@ export async function refreshAccessToken(provider, env, refreshTokenValue) {
 // revoke failing should never block the user from disconnecting locally.
 
 export async function revokeToken(provider, env, token) {
-  if (provider === 'google') {
+  if (provider === 'google' || provider === 'cloudshell') {
     await fetch('https://oauth2.googleapis.com/revoke?' + _form({ token }), { method: 'POST' });
-    return;
-  }
-  if (provider === 'canva') {
-    const { id, secret } = _creds(provider, env);
-    await fetch('https://api.canva.com/rest/v1/oauth/revoke', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: _basicAuthHeader(id, secret) },
-      body: _form({ token }),
-    });
     return;
   }
   if (provider === 'github') {

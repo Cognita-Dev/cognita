@@ -33,7 +33,7 @@ import { CONNECTOR_PROVIDERS, listConnectedProviders } from './connectors.js';
 import * as githubTools from './github-tools.js';
 import * as googleTools from './google-tools.js';
 import * as metaTools from './meta-tools.js';
-import * as canvaTools from './canva-tools.js';
+import * as cloudshellTools from './cloudshell-tools.js';
 import * as sandboxTools from './sandbox-tools.js';
 import { describeConfirmation as _describeConfirmation } from './confirmation.js';
 
@@ -47,7 +47,7 @@ const REGISTRY = {
   github: githubTools,
   google: googleTools,
   facebook: metaTools,
-  canva: canvaTools,
+  cloudshell: cloudshellTools,
 };
 
 // Sanity check at module load, not per-request: every provider in
@@ -107,7 +107,7 @@ export function isSandboxToolName(name) {
 // Below this many total connected tools, every connected tool is always
 // offered — no routing, no risk of hiding the tool the user needed. This
 // only starts mattering for a user with several providers connected at
-// once (e.g. GitHub + Google's 25 + Facebook + Canva); a single-connector
+// once (e.g. GitHub + Google's 25 + Facebook + Cloud Shell); a single-connector
 // user never crosses it. Tune by watching [chat][tools] toolCount= in
 // logs; raise it if models keep choosing well past this count, lower it
 // if selection accuracy visibly degrades before hitting it.
@@ -120,10 +120,10 @@ const ROUTER_THRESHOLD = 60;
 // user actually needed. Ambiguous/unmatched text always falls back to
 // "offer everything" (see getAvailableTools) rather than guessing.
 const PROVIDER_KEYWORDS = {
-  github: ['github', 'repo', 'repository', 'pull request', ' pr ', 'commit', 'branch', 'issue', 'workflow', ' ci ', 'merge'],
+  github: ['github', 'repo', 'repository', 'pull request', ' pr ', 'commit', 'branch', 'issue', 'workflow', ' ci ', 'merge', 'codespace', 'terminal', 'run a command', 'command line', 'bash'],
   google: ['google', 'calendar', 'event', 'meeting', 'schedule', 'appointment', 'drive', 'gmail', 'email', 'mail', 'inbox', 'attachment', 'doc', 'sheet', 'spreadsheet', 'folder'],
   facebook: ['facebook', 'instagram', 'social media', 'social post', ' ig ', 'reel', 'caption', 'schedule a post', 'page insights'],
-  canva: ['canva', 'design', 'template', 'poster', 'flyer'],
+  cloudshell: ['cloud shell', 'cloudshell', 'gcloud', 'terminal', 'shell'],
 };
 
 // Same idea one level down, only for Google (the one provider large
@@ -152,7 +152,7 @@ function _matchedKeys(text, keywordMap) {
 // are only offered when the person names an app or asks for something an app
 // does. `texts` is the newest user messages, newest first; the last three are
 // checked so a short follow-up like "yes, do it" keeps the tools.
-const CONNECTOR_INTENT_RE = /\b(?:google|gmail|g-?drive|drive|google docs?|docs?|sheets?|spreadsheet|calendar|inbox|e-?mails?|github|repo|repository|pull request|commits?|branch(?:es)?|facebook|instagram|social media|canva|figma|slack|reels?|meeting|appointment|schedule (?:a|an|my|the)|my (?:files?|folders?|events?|documents?))\b/i;
+const CONNECTOR_INTENT_RE = /\b(?:google|gmail|g-?drive|drive|google docs?|docs?|sheets?|spreadsheet|calendar|inbox|e-?mails?|github|repo|repository|pull request|commits?|branch(?:es)?|facebook|instagram|social media|codespaces?|cloud ?shell|terminal|command line|bash|figma|slack|reels?|meeting|appointment|schedule (?:a|an|my|the)|my (?:files?|folders?|events?|documents?))\b/i;
 export function shouldOfferConnectorTools(texts) {
   const list = Array.isArray(texts) ? texts.slice(0, 3) : [texts];
   for (const t of list) {
@@ -360,13 +360,13 @@ export function stepMeta(name) {
   const provider = providerForTool(name);
   let providerLabel = '';
   if (provider === SANDBOX_PROVIDER) providerLabel = 'Code';
-  else if (provider === 'github') providerLabel = 'GitHub';
-  else if (provider === 'canva') providerLabel = 'Canva';
+  else if (provider === 'github') providerLabel = String(name).startsWith('codespaces_') ? 'GitHub Codespaces' : 'GitHub';
+  else if (provider === 'cloudshell') providerLabel = 'Google Cloud Shell';
   else if (provider === 'facebook') providerLabel = String(name).startsWith('instagram_') ? 'Instagram' : 'Facebook';
   else if (provider === 'google') {
     const d = googleTools.TOOL_DOMAINS || {};
     providerLabel = (d.calendar || []).includes(name) ? 'Google Calendar' : (d.gmail || []).includes(name) ? 'Gmail' : 'Google Drive';
   }
-  const kind = provider === SANDBOX_PROVIDER ? 'run' : (toolRequiresConfirmation(name) ? 'write' : 'read');
+  const kind = (provider === SANDBOX_PROVIDER || name === 'codespaces_run_command') ? 'run' : (toolRequiresConfirmation(name) ? 'write' : 'read');
   return { providerLabel, kind };
 }
