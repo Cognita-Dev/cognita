@@ -1439,6 +1439,71 @@ function workspaceStub(att) {
   return head + (att.preview ? 'It looks like text.' : 'Check what it is first (for example by reading the first bytes).') + tail + preview + ']';
 }
 
+// Pages with fewer characters than this are treated as scans (pictures of text) and sent to OCR.
+const PDF_SCAN_MIN_CHARS = 20;
+// Paid plans (anything except 'free') have NO page limit when reading documents. Only the free plan
+// (and the moment before the plan is known) keeps a page limit. Limit the number of documents per
+// plan on the server if you need a cap; do not cap pages.
+const FREE_PDF_MAX_PAGES = 30;
+const FREE_PDF_OCR_MAX_PAGES = 15;
+function pdfPageLimits() {
+  const paid = !!currentAccountPlanId && currentAccountPlanId !== 'free';
+  return paid ? { total: Infinity, ocr: Infinity } : { total: FREE_PDF_MAX_PAGES, ocr: FREE_PDF_OCR_MAX_PAGES };
+}
+
+let _ocrWorkerPromise = null;
+// One shared Tesseract.js worker, created on first use. Everything is self-hosted under
+// /vendor/tesseract/, so nothing is loaded from a CDN and the file never leaves the browser.
+function getOcrWorker() {
+  if (!window.Tesseract) return Promise.reject(new Error('OCR engine not loaded'));
+  if (!_ocrWorkerPromise) {
+    _ocrWorkerPromise = window.Tesseract.createWorker('eng', 1, {
+      workerPath: '/vendor/tesseract/worker.min.js',
+      corePath: '/vendor/tesseract/',
+      langPath: '/vendor/tesseract/lang',
+      gzip: true,
+      workerBlobURL: false,
+    }).catch((err) => { _ocrWorkerPromise = null; throw err; });
+  }
+  return _ocrWorkerPromise;
+}
+
+async function ocrPdfPage(page, worker) {
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const res = await worker.recognize(canvas);
+  canvas.width = canvas.height = 0;
+  return ((res && res.data && res.data.text) || '').trim();
+}
+
+// Small progress box with a Cancel button, shown while a long scanned PDF is being read.
+function createOcrProgress() {
+  const box = document.createElement('div');
+  box.setAttribute('role', 'status');
+  box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100000;' +
+    'background:#1f1f24;color:#fff;padding:10px 14px;border-radius:12px;font:14px/1.3 system-ui,sans-serif;' +
+    'box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;gap:12px;align-items:center;max-width:90vw';
+  const label = document.createElement('span');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Cancel';
+  btn.style.cssText = 'background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5);' +
+    'border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit';
+  const state = { cancelled: false };
+  btn.addEventListener('click', () => { state.cancelled = true; btn.disabled = true; label.textContent = 'Stopping...'; });
+  box.append(label, btn);
+  document.body.appendChild(box);
+  state.update = (done, total) => { if (!state.cancelled) label.textContent = 'Reading scanned PDF (OCR): page ' + done + ' of ' + total; };
+  state.remove = () => box.remove();
+  return state;
+}
+
 async function extractPdfText(file) {
   const arrayBuffer = await file.arrayBuffer();
   if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -1447,14 +1512,49 @@ async function extractPdfText(file) {
   }
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let text = '';
-  const maxPages = Math.min(pdf.numPages, 30); // guard against huge scans
+  let ocrPages = 0;
+  let ocrSkipped = 0;
+  let cancelledAt = 0;
+  let progress = null;
+  const limits = pdfPageLimits();
+  const maxPages = Math.min(pdf.numPages, limits.total);
+  try {
   for (let i = 1; i <= maxPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((item) => item.str).join(' ') + '\n\n';
+    let pageText = content.items.map((item) => item.str).join(' ').trim();
+    // No real text layer: this page is a scan. Read it with OCR.
+    if (pageText.length < PDF_SCAN_MIN_CHARS) {
+      if (progress && progress.cancelled) {
+        if (!cancelledAt) cancelledAt = i;
+        ocrSkipped++;
+      } else if (ocrPages < limits.ocr) {
+        try {
+          if (!progress) progress = createOcrProgress();
+          progress.update(i, maxPages);
+          const worker = await getOcrWorker();
+          const ocrText = await ocrPdfPage(page, worker);
+          ocrPages++;
+          if (ocrText) pageText = ocrText;
+        } catch (err) {
+          console.error('[app] OCR failed on page ' + i + ':', err && err.message);
+          ocrSkipped++;
+        }
+      } else {
+        ocrSkipped++;
+      }
+    }
+    text += pageText + '\n\n';
+  }
+  } finally {
+    if (progress) progress.remove();
   }
   if (pdf.numPages > maxPages) {
-    text += '[Only the first ' + maxPages + ' of ' + pdf.numPages + ' pages were read.]';
+    text += '[Only the first ' + maxPages + ' of ' + pdf.numPages + ' pages were read on the free plan. Upgrade to read every page.]';
+  }
+  if (ocrSkipped > 0) {
+    text += '\n[' + ocrSkipped + ' scanned page(s) were not read with OCR' +
+      (cancelledAt ? ' (cancelled at page ' + cancelledAt + ')' : ' (the free plan OCRs up to ' + FREE_PDF_OCR_MAX_PAGES + ' pages per file)') + '.]';
   }
   return text.trim();
 }
