@@ -1308,7 +1308,10 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   font-size: var(--text-xs);
   color: var(--text-2);
   max-width: 220px;
+  min-width: 0;
 }
+@media (max-width: 600px) { .attachment-chip { max-width: calc(50% - 6px); } }
+.attachment-chip button { min-width: 28px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; }
 .attachment-chip-name {
   overflow: hidden;
   text-overflow: ellipsis;
