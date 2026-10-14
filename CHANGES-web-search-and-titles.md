@@ -3,8 +3,9 @@
 ## 1. "I have no web search" was half true
 What Cognita really had: a page READER (`sandbox_web_fetch`, any plan with the sandbox) and a cloud browser (`sandbox_browser_fetch`, Studio/Admin only, needs `CF_BROWSER_ACCOUNT_ID` + `CF_BROWSER_API_TOKEN`, only offered when the sandbox is offered for that message). Both open ONE address you already have; neither can take a question and find sources. And nothing in the prompt told the model it could read pages, so it said it had no web access.
 - NEW `web-search.js`: `web_search` tool, runs on the Worker. Providers (both free plans renew monthly, no card): `TAVILY_API_KEY` first, `FIRECRAWL_API_KEY` as backup and as automatic fallback when Tavily's allowance runs out. Brave was dropped (needs a card). No key = tool never offered.
-- `chat-endpoint.js`: offers it only when the message looks like a lookup (`shouldOfferWebSearch`), the plan still has searches left today, and a key is set. Runs on the Worker, 4 per request, counted under usage key `webSearches`, refunded on failure. Works on every plan, with or without the sandbox.
-- `entitlements.js`: `limits.webSearchPerDay` free 10, plus 50, studio 200, admin unlimited.
+- `chat-endpoint.js`: offers it only when the message looks like a lookup (`shouldOfferWebSearch`), the plan still has searches left today, and a key is set. Runs on the Worker, 4 per request, counted under usage key `webSearches` (monthly counter, renews on the 1st UTC), refunded on failure. Works with or without the sandbox on any plan that includes it.
+- `entitlements.js`: `limits.webSearchPerMonth` free 0 (not offered), plus 50, studio 150, admin unlimited.
+- `usage.js`: new monthly counters (`getMonthlyUsage`, `checkAndIncrementMonthly`, `refundMonthlyUsage`, `nextMonthlyResetIso`).
 - `prompts.js` (version 2026-10-14.2): new WEB_RULES (only sent when the tool is offered); KNOWLEDGE no longer lets the model claim it has no web access; the sandbox rule now says only the model's CODE is offline and pages can be read. Trimmed to stay inside the token budget test.
 - `wrangler.jsonc`: comment listing the new secrets.
 

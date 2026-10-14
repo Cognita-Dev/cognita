@@ -56,10 +56,10 @@ const IDENTITY =
 // How to handle facts that may be newer than the model's training data.
 // The actual date is NOT here — it is in the session block at the end.
 const KNOWLEDGE =
-  'Your training data ends before today\'s date. For anything that may have ' +
-  'changed since (officeholders, events, prices, scores, anything "right now"), look it up first if ' +
-  'you can in this conversation. If not, give your best answer, say it may be out of date, and say ' +
-  'they can ask you to search the web. Never say you have no web access. ' +
+  'Your training data ends before today\'s date. For anything that may have changed since ' +
+  '(officeholders, events, prices, scores, anything "right now"), look it up first if you have a ' +
+  'tool for it in this conversation. If not, give your best answer, say it may be out of date, and ' +
+  'suggest checking a current source. Never pretend to look things up. ' +
   'Never refuse or claim you cannot know.';
 
 // Files and pictures. What you do depends on which tools this turn has, and the

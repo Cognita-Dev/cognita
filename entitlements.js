@@ -54,8 +54,8 @@ export const PLANS = {
       browserRemotePerDay: 0,
       // Local browser test (sandbox_browser_test, free to run). Counted by the Worker under the usage key browserTests.
       browserTestPerDay: 100,
-      // Live web searches (web-search.js). Counted by the Worker under the usage key webSearches.
-      webSearchPerDay: 10,
+      // Live web searches per MONTH (web-search.js); 0 = not included. Counted under the usage key webSearches, renews on the 1st (UTC).
+      webSearchPerMonth: 0,
       noteTakerSessionsPerDay: 3,
       noteTakerWhisperSecondsPerDay: 25 * 60,   // cloud (Whisper) transcription: 25 minutes/day. Browser recognition is free and uncounted.
       noteTakerSummariesPerDay: 3,  // AI summary + action items per meeting
@@ -147,8 +147,8 @@ export const PLANS = {
       browserRemotePerDay: 0,
       // Local browser test (sandbox_browser_test, free to run). Counted by the Worker under the usage key browserTests.
       browserTestPerDay: 500,
-      // Live web searches (web-search.js). Counted by the Worker under the usage key webSearches.
-      webSearchPerDay: 50,
+      // Live web searches per MONTH (web-search.js); 0 = not included. Counted under the usage key webSearches, renews on the 1st (UTC).
+      webSearchPerMonth: 50,
       noteTakerSessionsPerDay: 30,
       noteTakerWhisperSecondsPerDay: 3 * 3600,  // 3 hours/day
       noteTakerSummariesPerDay: 30,  // AI summary + action items per meeting
@@ -231,8 +231,8 @@ export const PLANS = {
       browserRemotePerDay: 30,
       // Local browser test (sandbox_browser_test, free to run). Counted by the Worker under the usage key browserTests.
       browserTestPerDay: UNLIMITED,
-      // Live web searches (web-search.js). Counted by the Worker under the usage key webSearches.
-      webSearchPerDay: 200,
+      // Live web searches per MONTH (web-search.js); 0 = not included. Counted under the usage key webSearches, renews on the 1st (UTC).
+      webSearchPerMonth: 150,
       noteTakerSessionsPerDay: 150,
       noteTakerWhisperSecondsPerDay: 6 * 3600,  // 6 hours/day
       noteTakerSummariesPerDay: 150,  // AI summary + action items per meeting
@@ -322,8 +322,8 @@ export const PLANS = {
       browserRemotePerDay: UNLIMITED,
       // Local browser test (sandbox_browser_test, free to run). Counted by the Worker under the usage key browserTests.
       browserTestPerDay: UNLIMITED,
-      // Live web searches (web-search.js). Counted by the Worker under the usage key webSearches.
-      webSearchPerDay: UNLIMITED,
+      // Live web searches per MONTH (web-search.js); 0 = not included. Counted under the usage key webSearches, renews on the 1st (UTC).
+      webSearchPerMonth: UNLIMITED,
       noteTakerSessionsPerDay: UNLIMITED,
       noteTakerWhisperSecondsPerDay: UNLIMITED,
       noteTakerSummariesPerDay: UNLIMITED,  // AI summary + action items per meeting

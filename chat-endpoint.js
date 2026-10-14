@@ -2,7 +2,7 @@
 
 import { requireAuth, describeAuthError } from './auth-middleware.js';
 import { resolveAccountWithRole, assertPlan } from './subscription.js';
-import { checkAndIncrement, getUsage, refundUsage } from './usage.js';
+import { checkAndIncrement, getUsage, refundUsage, getMonthlyUsage, checkAndIncrementMonthly, refundMonthlyUsage } from './usage.js';
 import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox, planHasRemoteBrowser } from './entitlements.js';
 import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
@@ -693,13 +693,14 @@ export async function handleChatRequest(request, env) {
 
   // Live web search (web-search.js). Like the sandbox and picture tools it is only offered when the
   // message looks like it needs fresh or looked-up facts, so ordinary chats pay no extra tokens. It also
-  // needs a search key on the Worker and some of today's allowance left; otherwise it is simply not offered.
+  // needs a search key on the Worker and some of this month's allowance left; otherwise it is simply not offered.
   let webSearchEnabled = false;
   let webSearchLimit = 0;
   if (!hasImages && webSearch.webSearchConfigured(env)) {
-    webSearchLimit = Number.isFinite(plan.limits.webSearchPerDay) ? plan.limits.webSearchPerDay : 10;
+    // Per month, and 0 (or missing) means the plan does not include search, so it is never offered.
+    webSearchLimit = Number.isFinite(plan.limits.webSearchPerMonth) ? plan.limits.webSearchPerMonth : 0;
     const wantsWeb = webSearch.shouldOfferWebSearch(gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '');
-    webSearchEnabled = wantsWeb && (await getUsage(identity.uid, 'webSearches', env)) < webSearchLimit;
+    webSearchEnabled = wantsWeb && webSearchLimit > 0 && (await getMonthlyUsage(identity.uid, 'webSearches', env)) < webSearchLimit;
   }
   console.log('[chat][web] search=' + (webSearchEnabled ? 'offered' : 'skipped') + ' provider=' + (webSearch.webSearchProvider(env) || 'none'));
 
@@ -1179,13 +1180,13 @@ export async function handleChatRequest(request, env) {
               if (webSearchesThisTurn > MAX_WEB_SEARCHES_PER_TURN) {
                 wsResult = { ok: false, error: 'Too many searches in one request (limit ' + MAX_WEB_SEARCHES_PER_TURN + '). Answer with what you have.' };
               } else {
-                const wsCharge = await checkAndIncrement(identity.uid, 'webSearches', webSearchLimit, env);
+                const wsCharge = await checkAndIncrementMonthly(identity.uid, 'webSearches', webSearchLimit, env);
                 if (!wsCharge.allowed) {
-                  wsResult = { ok: false, error: 'The daily web search limit for the ' + plan.name + ' plan (' + wsCharge.limit + ' searches) has been reached. It resets at midnight UTC.' };
+                  wsResult = { ok: false, error: 'The monthly web search limit for the ' + plan.name + ' plan (' + wsCharge.limit + ' searches) has been reached. It renews on the 1st of next month (UTC).' };
                 } else {
                   emit('step_start', { name: call.name, provider: 'web', ...wsMeta, summary: wsSummary });
                   wsResult = await webSearch.searchWeb(call.args, env);
-                  if (!wsResult.ok) await refundUsage(identity.uid, 'webSearches', env);
+                  if (!wsResult.ok) await refundMonthlyUsage(identity.uid, 'webSearches', env);
                 }
               }
               console.log('[chat][web] search ok=' + !!wsResult.ok + (wsResult.ok ? ' results=' + wsResult.results.length : ''));

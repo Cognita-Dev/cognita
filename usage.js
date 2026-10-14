@@ -125,3 +125,59 @@ export async function adjustUsage(uid, resource, delta, day, env) {
   await env.COGNITA_USAGE.put(key, String(next), { expirationTtl: _secondsUntilMidnightUTC() + 60 });
   return next;
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   Monthly counters (live web search: web-search.js)
+   Same idea as the daily counters above, but the key carries the UTC month
+   (YYYY-MM) and the counter expires shortly after that month ends, so the
+   allowance renews on the 1st (00:00 UTC). Used for resources whose real
+   cost is billed by the month, where a daily allowance would not map onto it.
+──────────────────────────────────────────────────────────────────── */
+
+function _monthKey() {
+  return new Date().toISOString().slice(0, 7); // YYYY-MM (UTC)
+}
+
+function _secondsUntilNextMonthUTC() {
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+  return Math.floor((next - now.getTime()) / 1000);
+}
+
+function _monthlyKvKey(uid, resource) {
+  return 'usage:' + uid + ':' + resource + ':m:' + _monthKey();
+}
+
+/** ISO timestamp of the next monthly reset (the 1st, 00:00 UTC). */
+export function nextMonthlyResetIso() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+}
+
+/** Reads this month's usage for a resource, without incrementing. */
+export async function getMonthlyUsage(uid, resource, env) {
+  if (!env.COGNITA_USAGE) throw new Error('Server misconfiguration: usage KV not bound.');
+  const raw = await env.COGNITA_USAGE.get(_monthlyKvKey(uid, resource));
+  return raw ? parseInt(raw, 10) || 0 : 0;
+}
+
+/** Checks this month's quota and increments if allowed. Returns { allowed, used, limit }. Same small race as checkAndIncrement. */
+export async function checkAndIncrementMonthly(uid, resource, limit, env) {
+  if (!env.COGNITA_USAGE) throw new Error('Server misconfiguration: usage KV not bound.');
+  const key = _monthlyKvKey(uid, resource);
+  const raw = await env.COGNITA_USAGE.get(key);
+  const used = raw ? parseInt(raw, 10) || 0 : 0;
+  if (used >= limit) return { allowed: false, used, limit };
+  await env.COGNITA_USAGE.put(key, String(used + 1), { expirationTtl: _secondsUntilNextMonthUTC() + 86400 });
+  return { allowed: true, used: used + 1, limit };
+}
+
+/** Gives back one unit of this month's usage (the work failed on our side). Never goes below zero. */
+export async function refundMonthlyUsage(uid, resource, env) {
+  if (!env.COGNITA_USAGE) return;
+  const key = _monthlyKvKey(uid, resource);
+  const raw = await env.COGNITA_USAGE.get(key);
+  const used = raw ? parseInt(raw, 10) || 0 : 0;
+  if (used <= 0) return;
+  await env.COGNITA_USAGE.put(key, String(used - 1), { expirationTtl: _secondsUntilNextMonthUTC() + 86400 });
+}
