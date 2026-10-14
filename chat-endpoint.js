@@ -614,6 +614,7 @@ export async function handleChatRequest(request, env) {
         text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
         hint: body.sandboxHint === true,
         resuming: !!sandboxResume,
+        recent: trimmedHistory.filter((m) => m && m.role === 'user' && typeof m.content === 'string').slice(-4, -1).map((m) => m.content),
       })
     : { offer: false, reason: hasImages ? 'images' : 'plan' };
   const sandboxEnabled = planAllowsSandbox && gate.offer;

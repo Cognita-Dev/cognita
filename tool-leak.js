@@ -243,6 +243,11 @@ export function findLeaks(text, names) {
 export function stripToolLeaks(text, names, streaming) {
   let s = typeof text === 'string' ? text : '';
   if (!s) return '';
+  // Code written for the private document helper is never an answer for the person.
+  // Complete fences are removed; while streaming, an unfinished fence is cut off too.
+  s = s.replace(/```[a-z]*\n(?:(?!```)[\s\S])*?(?:cognita_docs|sandbox_\w+)(?:(?!```)[\s\S])*?```\n?/gi, '');
+  const _open = streaming ? /```[a-z]*\n(?:(?!```)[\s\S])*?(?:cognita_docs|sandbox_\w+)(?:(?!```)[\s\S])*$/i.exec(s) : null;
+  if (_open) s = s.slice(0, _open.index);
   if (names && names.size) {
     const leaks = findLeaks(s, names);
     if (leaks.length) {

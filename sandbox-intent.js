@@ -43,6 +43,7 @@ export const SANDBOX_INTENT_PATTERNS = [
   { name: 'presentation', re: /\b(?:power ?point|pptx?|slides?|slide ?deck|presentation|pitch deck)\b/i },
   { name: 'file-version', re: /\b(?:make|turn|save|convert|export|give me) (?:that|this|it|the (?:letter|report|essay|memo|cv|resume|proposal|plan)) (?:into |as |to )?(?:a |an )?(?:word|pdf|docx|powerpoint|excel|file|download)/i },
   { name: 'downloadable', re: /\b(?:downloadable|printable|download (?:it|this|that|link))\b/i },
+  { name: 'finished-file', re: /\b(?:produce|create|make|generate|prepare|build|give me|need|want)\b[^.?!\n]{0,60}\b(?:file|pdf|word|docx|organogram|org chart|proposal|document)\b/i },
   { name: 'file-request', re: /\b(?:make|create|generate|produce|build|give me|put .{0,40} in|save .{0,40} (?:as|to|in)) (?:me )?(?:a |an |the )?(?:\w+ )?(?:file|csv|spreadsheet|xlsx|report file|txt|text file|download|excel file|word file|pdf)\b/i },
 ];
 
@@ -56,12 +57,22 @@ export const SANDBOX_INTENT_PATTERNS = [
  * Returns { offer: boolean, reason: string } where reason is "resume",
  * "hint", the name of the pattern that matched, or "none".
  */
-export function shouldOfferSandbox({ text, hint, resuming } = {}) {
+export function shouldOfferSandbox({ text, hint, resuming, recent } = {}) {
   if (resuming) return { offer: true, reason: 'resume' };
   if (hint === true) return { offer: true, reason: 'hint' };
   const t = typeof text === 'string' ? text.slice(0, 20000) : '';
   for (const p of SANDBOX_INTENT_PATTERNS) {
     if (p.re.test(t)) return { offer: true, reason: p.name };
+  }
+  // Short follow-ups ("Go on", "Where's it?", "Try again") carry no keyword of their own,
+  // so look at the person's last few messages for a file or code request.
+  if (t.trim().length <= 80 && Array.isArray(recent)) {
+    for (const r of recent.slice(-3)) {
+      const rt = typeof r === 'string' ? r.slice(0, 20000) : '';
+      for (const p of SANDBOX_INTENT_PATTERNS) {
+        if (p.re.test(rt)) return { offer: true, reason: 'follow-up:' + p.name };
+      }
+    }
   }
   return { offer: false, reason: 'none' };
 }
