@@ -1,6 +1,0 @@
-Delete these files from the repo (no longer used):
-document-endpoint.js
-docx-builder.js
-pptx-builder.js
-
-Kept: pdf-builder.js (still used by insights-digest.js for the Insights PDF).
