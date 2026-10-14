@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds the self-hosted Pyodide bundle into pyodide-host/dist/v<VERSION>/.
+// Builds the self-hosted Pyodide bundle into pyodide-host/dist/v<VERSION>-<BUNDLE_REV>/.
 // Node >= 18, no npm dependencies. Shells out to `tar` for .tar.bz2 extraction.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -28,7 +28,9 @@ const MAX_COUNT = 20000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const hostDir = path.join(root, 'pyodide-host');
 const distDir = path.join(hostDir, 'dist');
-const outDir = path.join(distDir, `v${VERSION}`);
+// BUNDLE_REV is part of the folder name because files are cached for a year: change it whenever the package list or files change, so every browser fetches the new bundle.
+const BUNDLE_REV = 'r2';
+const outDir = path.join(distDir, `v${VERSION}-${BUNDLE_REV}`);
 const norm = (n) => n.toLowerCase().replace(/[-_.]+/g, '-');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
