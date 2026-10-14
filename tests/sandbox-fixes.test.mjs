@@ -61,7 +61,7 @@ await test('only your own Python host is listed', async () => {
   const m = frame.match(/var PY_BASES = \[\s*('[^']+'(?:\s*,\s*'[^']+')*)\s*\]/);
   ok(m, 'PY_BASES not found');
   const list = m[1].split(',').map((x) => x.trim().replace(/'/g, ''));
-  eq(list.join(','), 'https://pyodide.cognita.com.ng/v0.29.5/');
+  eq(list.join(','), 'https://pyodide.cognita.com.ng/v0.29.5-r2/');
   ok(!/jsdelivr/i.test(frame), 'frame still mentions jsDelivr');
 });
 await test('the download guard exists and is wired into boot()', async () => {

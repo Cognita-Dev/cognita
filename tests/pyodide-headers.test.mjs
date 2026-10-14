@@ -11,7 +11,7 @@ for (const raw of text.split('\n')) {
   if (/^\S/.test(raw)) { cur = { pattern: raw.trim(), headers: [] }; blocks.push(cur); }
   else { const i = raw.indexOf(':'); cur.headers.push(raw.slice(0, i).trim().toLowerCase()); }
 }
-const sample = ['/v0.29.5/pyodide.js', '/v0.29.5/pyodide.asm.wasm', '/v0.29.5/pyodide-lock.json', '/v0.29.5/numpy-2.0.2.zip', '/index.html'];
+const sample = ['/v0.29.5-r2/pyodide.js', '/v0.29.5-r2/pyodide.asm.wasm', '/v0.29.5-r2/pyodide-lock.json', '/v0.29.5-r2/numpy-2.0.2.zip', '/index.html'];
 const matches = (pat, path) => new RegExp('^' + pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$').test(path);
 let n = 0;
 for (const path of sample) {
