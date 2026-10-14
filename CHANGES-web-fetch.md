@@ -21,3 +21,8 @@ Log: `groq_skipped_too_large: prompt is about 6976 tokens, over the 8000 per-min
 - providers.js `_estimateTokens`: prose 3.8 chars/token, tool schemas 3.2 (was 3 for all). Same request now estimates about 5,600, leaving about 2,100 tokens for the answer.
 - chat-endpoint.js: `sandbox_browser_test` (largest tool description) is only offered when the chat mentions a web page.
 - If you are on a paid Groq plan, set the Worker variable GROQ_TPM_LIMIT to your real limit (default 8000) and the skip will not happen at all.
+
+## Review fixes
+- `web-fetch.js`: the read cap is now 300,000 bytes (was 450,000). `sandbox_import_from_tool` keeps only 300,000 characters, so pages between 300k and 450k were saved to the workspace cut off with no warning. Now the cut is at the read, and the model is told the page was truncated.
+- `web-fetch.js`: pages that declare their encoding inside the HTML (`<meta charset>` or an XML header) instead of the HTTP header are now decoded correctly instead of showing garbled accents.
+- `tests/web-fetch.test.mjs`: added checks for the cap, the in-page encoding, an unknown encoding label, and a redirect to a blocked address.

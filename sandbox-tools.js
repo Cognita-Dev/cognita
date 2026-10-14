@@ -41,12 +41,18 @@ const MAX_COMMAND_CHARS = 4_000;
 const MAX_TEXT_FIELD = 12_000;          // stdout / stderr kept per field in a result
 const MAX_FILES_LISTED = 60;
 export const MAX_IMPORT_CHARS = 300_000; // mirrors MAX_CONTENT_CHARS in google-tools.js / github-tools.js
-const MAX_TRACE_ENTRIES = 40;
+// A turn may now make MAX_SANDBOX_CALLS_PER_TURN sandbox calls plus connector calls, and the browser sends the
+// whole trace back after every run, so the trace must hold comfortably more entries than the call cap.
+// If it held fewer, the oldest or newest steps would be dropped silently on resume and the task would lose its place.
+const MAX_TRACE_ENTRIES = 100;
 const MAX_TRACE_FILES = 20;
 const MAX_TRACE_RESULT_CHARS = 60_000;  // model-visible result text kept per trace entry
 const MAX_TRACE_BLOB_CHARS = MAX_IMPORT_CHARS;
-const MAX_TRACE_TOTAL_CHARS = 1_200_000;
-export const MAX_SANDBOX_CALLS_PER_TURN = 12;
+const MAX_TRACE_TOTAL_CHARS = 2_000_000;
+// Real work is write, run, read the error, fix, run again, check, then repeat for each file. Twelve calls ended
+// such tasks halfway. The real cost control is the plan's daily run allowance (sandboxRunsPerDay), which every
+// call is still charged against, so this ceiling only has to stop a runaway loop, not ration normal work.
+export const MAX_SANDBOX_CALLS_PER_TURN = 40;
 
 // ── Tool schemas ────────────────────────────────────────────────────────
 // Each entry: { cap, tool }. `cap` is the capability a provider must report
@@ -528,6 +534,35 @@ function _exchangeText(entry, userDecided) {
 }
 
 /** Appends one exchange to a message list, in the same shape the live agent loop produces. */
+const _EXCHANGE_HEAD = /^(?:Tool call: [^\n]*\n)?Result \(step \d+\): /;
+
+/**
+ * Returns a copy of `messages` in which every tool result except the newest `keepRecent` is cut to `maxChars`.
+ * Long tasks replay every earlier result to the model on each round; without this the request grows until the
+ * model's size or per-minute limit is hit, which is what used to force tasks to stop early. The text that tells the
+ * model it can still import the full text (the "[Shortened here...]" note) and the "Continue the task" line are kept.
+ * Pure: the input is not changed, so the full results stay available for later steps.
+ */
+export function shrinkOldResults(messages, keepRecent = 4, maxChars = 1500) {
+  const idx = [];
+  (messages || []).forEach((m, i) => {
+    if (m && m.role === 'user' && typeof m.content === 'string' && _EXCHANGE_HEAD.test(m.content)) idx.push(i);
+  });
+  const old = new Set(idx.slice(0, Math.max(0, idx.length - keepRecent)));
+  if (!old.size) return messages;
+  return messages.map((m, i) => {
+    if (!old.has(i)) return m;
+    const c = m.content;
+    const head = _EXCHANGE_HEAD.exec(c)[0];
+    let tailAt = c.indexOf('\n[Shortened here.');
+    if (tailAt < 0) tailAt = c.indexOf('\n\nContinue the task if it is not');
+    if (tailAt < 0) tailAt = c.length;
+    const body = c.slice(head.length, tailAt);
+    if (body.length <= maxChars) return m;
+    return { ...m, content: head + body.slice(0, maxChars) + '\n[Older result shortened to save space.]' + c.slice(tailAt) };
+  });
+}
+
 export function appendExchange(messages, entry, userDecided) {
   const add = [];
   if (entry.a) add.push({ role: 'assistant', content: entry.a });

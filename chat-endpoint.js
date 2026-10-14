@@ -46,7 +46,10 @@ const MAX_AGENT_ROUNDS = 8;
 // sandbox run is also counted against the plan's sandboxRunsPerDay and a
 // per-turn cap (MAX_SANDBOX_CALLS_PER_TURN in sandbox-tools.js), so a higher
 // round ceiling cannot become a way around those limits.
-const MAX_AGENT_ROUNDS_SANDBOX = 14;
+// Rounds are not only tool calls: a call the model got wrong, a reply that claimed work it had not done, and code
+// written in the answer instead of run each cost a round too. So the ceiling is the call cap plus headroom for those,
+// and it can never be reached before the call cap is (the old fixed 14 ended long tasks well before 12 calls were spent).
+const MAX_AGENT_ROUNDS_SANDBOX = sandboxTools.MAX_SANDBOX_CALLS_PER_TURN + 20;
 
 // If the model calls the same tool with invalid/missing arguments this
 // many times in a row, stop silently retrying and surface it to the user
@@ -1016,7 +1019,9 @@ export async function handleChatRequest(request, env) {
             if (!result) {
               streamer.reset();
               emit('round', { round });
-              result = await _modelTurn(tierConfig, workingMessages, tools, env, streamOptions);
+              // Older tool results are shortened for the model only (workingMessages keeps them whole), so a long
+              // task does not outgrow the model's request size or per-minute limit.
+              result = await _modelTurn(tierConfig, sandboxTools.shrinkOldResults(workingMessages), tools, env, streamOptions);
               // The component format called as a "tool": keep it as a component block, not a tool call.
               if (result && result.toolCalls && result.toolCalls.length) {
                 const uiBlocks = _uiBlockFromPseudoCall(result.toolCalls[0], (n) => !!providerForTool(n) || mediaTools.isMediaTool(n));
@@ -1278,7 +1283,7 @@ export async function handleChatRequest(request, env) {
               }
               if (turnTrace.filter((e) => e.k === 'sbx').length >= sandboxTools.MAX_SANDBOX_CALLS_PER_TURN) {
                 result = {
-                  text: 'I ran a lot of steps on this and hit my limit for one request. Tell me if you want me to keep going from where things stand.',
+                  text: 'I ran a lot of steps on this and reached the limit for one request. Reply "continue" and I will carry on from where things stand.',
                   reasoning: null, toolCalls: null,
                 };
                 break;
@@ -1523,7 +1528,7 @@ export async function handleChatRequest(request, env) {
             console.warn('[chat][tools] hit MAX_AGENT_ROUNDS uid=' + identity.uid);
             result = {
               text: 'I made progress on this but hit my step limit before finishing everything. ' +
-                'Here\'s where things stand — let me know if you\'d like me to keep going.',
+                'Here\'s where things stand. Reply "continue" and I will carry on.',
               reasoning: null,
               toolCalls: null,
             };
