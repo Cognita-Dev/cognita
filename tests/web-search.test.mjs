@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as ws from '../web-search.js';
 import { buildChatSystemPrompt, chatPromptInfo } from '../prompts.js';
 import { getPlan, UNLIMITED } from '../entitlements.js';
+import * as usage from '../usage.js';
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -103,8 +104,25 @@ const plain = buildChatSystemPrompt({ now: new Date('2026-10-14T00:00:00Z') }).s
 const web = buildChatSystemPrompt({ hasWeb: true, now: new Date('2026-10-14T00:00:00Z') });
 assert.ok(web.startsWith(plain.slice(0, 1000)));
 
-// every plan has a daily search allowance
-for (const id of ['free', 'plus', 'studio', 'admin']) assert.ok(getPlan(id).limits.webSearchPerDay > 0, id);
-assert.equal(getPlan('admin').limits.webSearchPerDay, UNLIMITED);
+// search is allowed per MONTH: none on free, 50 plus, 150 studio, unlimited admin
+assert.equal(getPlan('free').limits.webSearchPerMonth, 0);
+assert.equal(getPlan('plus').limits.webSearchPerMonth, 50);
+assert.equal(getPlan('studio').limits.webSearchPerMonth, 150);
+assert.equal(getPlan('admin').limits.webSearchPerMonth, UNLIMITED);
+for (const id of ['free', 'plus', 'studio', 'admin']) assert.equal(getPlan(id).limits.webSearchPerDay, undefined, id);
+
+// monthly counter: counts, stops at the limit, refunds, and the key carries the month
+const store = new Map();
+const kvEnv = { COGNITA_USAGE: { get: async (k) => store.get(k) ?? null, put: async (k, v) => { store.set(k, v); } } };
+assert.equal((await usage.checkAndIncrementMonthly('u1', 'webSearches', 2, kvEnv)).allowed, true);
+assert.equal((await usage.checkAndIncrementMonthly('u1', 'webSearches', 2, kvEnv)).allowed, true);
+const blocked = await usage.checkAndIncrementMonthly('u1', 'webSearches', 2, kvEnv);
+assert.equal(blocked.allowed, false); assert.equal(blocked.used, 2);
+await usage.refundMonthlyUsage('u1', 'webSearches', kvEnv);
+assert.equal(await usage.getMonthlyUsage('u1', 'webSearches', kvEnv), 1);
+await usage.refundMonthlyUsage('u2', 'webSearches', kvEnv); // never below zero
+assert.equal(await usage.getMonthlyUsage('u2', 'webSearches', kvEnv), 0);
+assert.ok([...store.keys()][0].includes(new Date().toISOString().slice(0, 7)));
+assert.ok(new Date(usage.nextMonthlyResetIso()).getUTCDate() === 1);
 
 console.log('web-search tests ok');
