@@ -417,7 +417,10 @@ function deriveTitle(messages) {
 function updateConversationTitle() {
   const titleEl = document.getElementById('conversationTitle');
   if (loadingConversationId && loadingConversationId === currentConversationId) return;
-  titleEl.textContent = deriveTitle(conversation);
+  // The title cache holds the newest title for this chat: the one written from the opening exchange
+  // (see requestAiTitle below) once it has arrived, the start of the first message until then.
+  const stored = currentConversationId ? _loadTitleCache()[currentConversationId] : '';
+  titleEl.textContent = stored || deriveTitle(conversation);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -472,6 +475,7 @@ function _toPlaceholder(c) {
     title: c.title && c.title !== PLACEHOLDER_TITLE ? c.title : deriveTitle(c.messages || []),
     messages: [],
     meta: [],
+    titleSource: c.titleSource,
     quality: c.quality || 'standard',
     updatedAt: c.updatedAt,
     remoteSyncedAt: c.remoteSyncedAt,
@@ -904,9 +908,13 @@ function persistCurrentConversation() {
   const existingIndex = all.findIndex((c) => c.id === currentConversationId);
   const existing = existingIndex >= 0 ? all[existingIndex] : null;
 
+  // Once a real title has been written for this chat, keep it; the first-message fallback is only for
+  // chats that do not have one yet.
+  const keepTitle = existing && existing.titleSource === 'ai' && existing.title ? existing.title : null;
   const entry = {
     id: currentConversationId,
-    title: deriveTitle(conversation),
+    title: keepTitle || deriveTitle(conversation),
+    titleSource: keepTitle ? 'ai' : undefined,
     messages: conversation,
     meta: conversationMeta,
     approvals: conversationApprovals,
@@ -925,6 +933,58 @@ function persistCurrentConversation() {
   rememberTitle(entry.id, entry.title);
   renderSidebarHistory();
   syncConversationToB2(entry);
+  maybeRequestAiTitle(entry);
+}
+
+/* ── Real chat titles ────────────────────────────────────────────────
+   The title cannot be known when the first message is sent, so the chat starts with the start of that
+   message as a stand-in, and once the first reply is in, the server writes a short title from the opening
+   exchange (POST /api/chat/title). It is stored on the chat (titleSource 'ai') and synced like the rest. If the
+   request fails the stand-in stays and the next completed exchange tries again. */
+const _titleRequested = new Set(); // chat ids asked for a title during this page load
+
+function maybeRequestAiTitle(entry) {
+  if (!entry || entry.titleSource === 'ai' || entry.notLoaded || _titleRequested.has(entry.id)) return;
+  const msgs = Array.isArray(entry.messages) ? entry.messages : [];
+  const firstUser = msgs.find((m) => m && m.role === 'user');
+  const firstReply = msgs.find((m) => m && m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
+  if (!firstUser || !firstReply) return; // wait for the first reply
+  const hasImage = !!(firstUser.attachments && firstUser.attachments.some((a) => a.kind === 'image'));
+  const userText = (typeof firstUser.content === 'string' ? firstUser.content : '').trim() || (hasImage ? '(attached an image)' : '');
+  if (!userText) return;
+  _titleRequested.add(entry.id);
+  requestAiTitle(entry.id, userText, firstReply.content);
+}
+
+async function requestAiTitle(id, userText, replyText) {
+  try {
+    const res = await window.Auth.authedFetch(WORKER_URL + '/api/chat/title', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [
+        { role: 'user', content: userText.slice(0, 1500) },
+        { role: 'assistant', content: String(replyText || '').slice(0, 1500) },
+      ] }),
+    });
+    const data = res.ok ? await res.json() : null;
+    const title = data && typeof data.title === 'string' ? data.title.trim() : '';
+    if (!title) { _titleRequested.delete(id); return; }
+
+    const all = loadAllConversations();
+    const idx = all.findIndex((c) => c.id === id);
+    if (idx < 0 || all[idx].notLoaded) return; // deleted or replaced in the meantime
+    // updatedAt is left alone so the chat keeps its place in the sidebar.
+    all[idx].title = title;
+    all[idx].titleSource = 'ai';
+    saveAllConversations(all);
+    rememberTitle(id, title);
+    if (id === currentConversationId) updateConversationTitle();
+    renderSidebarHistory();
+    syncConversationToB2(all[idx]);
+  } catch (e) {
+    _titleRequested.delete(id);
+    console.warn('[app] Could not get a chat title:', e.message);
+  }
 }
 
 function renderSidebarHistory() {
