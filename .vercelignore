@@ -71,6 +71,7 @@ pptx-builder.js
 sandbox-tools.js
 sandbox-provider.js
 confirmation.js
+web-fetch.js
 
 worker.js
 wrangler.jsonc
