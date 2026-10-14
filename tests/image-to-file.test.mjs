@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { wantsFileFromImage, shouldOfferSandbox } from '../sandbox-intent.js';
+import { stripToolLeaks } from '../tool-leak.js';
+const yes = ['Can you put these questions in a neatly designed document?', 'make this a pdf', 'type these out', 'put this in excel'];
+const no = ['what is this?', 'describe the picture', 'is this plant safe'];
+for (const t of yes) assert.ok(wantsFileFromImage(t), t);
+for (const t of no) assert.ok(!wantsFileFromImage(t), t);
+assert.ok(shouldOfferSandbox({ text: "Where's it?", recent: ['Make that a pdf.'] }).offer);
+assert.ok(!shouldOfferSandbox({ text: 'hello', recent: ['hi'] }).offer);
+assert.equal(stripToolLeaks('A\n```python\nfrom cognita_docs import pdf\n```\nB', new Set(), false), 'A\nB');
+console.log('image-to-file tests ok');
