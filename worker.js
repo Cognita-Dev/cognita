@@ -10,6 +10,7 @@ import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js'
 import { handleAccountDeletionRequest } from './account-deletion-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
+import { handleChatTitle } from './chat-title-endpoint.js';
 import { handleFilesList, handleFileGet, handleFileSave } from './files-endpoint.js';
 import {
   handleAdminBootstrap,
@@ -172,6 +173,10 @@ const _app = {
 
     if (request.method === 'POST' && url.pathname === '/api/chat') {
       return handleChatRequest(request, env);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/chat/title') {
+      return handleChatTitle(request, env);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/chat/save') {
@@ -512,7 +517,7 @@ function _isExemptFromBodyCap(path) {
 const SMALL_BODY_PREFIXES = [
   '/api/auth/', '/api/payment/initialize', '/api/subscription/', '/api/account/',
   '/api/reminders', '/api/inbox', '/api/admin/roles', '/api/connectors/',
-  '/api/insights/schedule', '/api/studio/',
+  '/api/insights/schedule', '/api/studio/', '/api/chat/title',
 ];
 
 function _maxBodyBytes(path) {

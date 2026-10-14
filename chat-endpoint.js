@@ -16,6 +16,7 @@ import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-prov
 import * as sandboxTools from './sandbox-tools.js';
 import { wantsFileFromImage } from './sandbox-intent.js';
 import { fetchPublicText, previewForModel } from './web-fetch.js';
+import * as webSearch from './web-search.js';
 import * as mediaTools from './media-tools.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
 import { stripToolLeaks, recoverLeakedCall } from './tool-leak.js';
@@ -690,6 +691,18 @@ export async function handleChatRequest(request, env) {
   const designCtx = { assets: designIn.assets, facts: designIn.facts, skipped: designIn.skipped, userText: allUserText };
   console.log('[chat][media] gate=' + (mediaEnabled ? 'offered' : 'skipped') + ' reason=' + mediaGate.reason);
 
+  // Live web search (web-search.js). Like the sandbox and picture tools it is only offered when the
+  // message looks like it needs fresh or looked-up facts, so ordinary chats pay no extra tokens. It also
+  // needs a search key on the Worker and some of today's allowance left; otherwise it is simply not offered.
+  let webSearchEnabled = false;
+  let webSearchLimit = 0;
+  if (!hasImages && webSearch.webSearchConfigured(env)) {
+    webSearchLimit = Number.isFinite(plan.limits.webSearchPerDay) ? plan.limits.webSearchPerDay : 10;
+    const wantsWeb = webSearch.shouldOfferWebSearch(gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '');
+    webSearchEnabled = wantsWeb && (await getUsage(identity.uid, 'webSearches', env)) < webSearchLimit;
+  }
+  console.log('[chat][web] search=' + (webSearchEnabled ? 'offered' : 'skipped') + ' provider=' + (webSearch.webSearchProvider(env) || 'none'));
+
   // Diagnostics for the connector tool-calling pipeline (see project
   // notes on issue 5c — "connected tools aren't used in chat"). Never
   // logs tokens, message content, or tool arguments — only enough to
@@ -756,7 +769,7 @@ export async function handleChatRequest(request, env) {
 
   async function _agent(emit) {
   // Every tool name the model could write out as text. Filled with this request's tools below.
-  const leakNames = new Set([...sandboxTools.SANDBOX_TOOL_NAMES, ...mediaTools.MEDIA_TOOL_NAMES]);
+  const leakNames = new Set([...sandboxTools.SANDBOX_TOOL_NAMES, ...mediaTools.MEDIA_TOOL_NAMES, webSearch.TOOL_NAME]);
   const streamer = _makeTurnStreamer(emit, leakNames);
   const streamOptions = Object.assign({ maxTokens: 4096 }, cacheOptions, { onText: streamer.onText, signal: abortCtl.signal });
   let result;
@@ -777,8 +790,10 @@ export async function handleChatRequest(request, env) {
   let turnTrace = [];
   let stepNo = 0;
   let webFetchesThisTurn = 0;
+  let webSearchesThisTurn = 0;
   let codeInChatRetries = 0;
   const MAX_WEB_FETCHES_PER_TURN = 6;
+  const MAX_WEB_SEARCHES_PER_TURN = 4;
   // The newest user message, kept so the end of the turn can tell whether the
   // person asked for a file (see collectDeliverables in sandbox-tools.js).
   let lastUserText = '';
@@ -786,7 +801,7 @@ export async function handleChatRequest(request, env) {
   try {
     if (hasImages) {
       result = await callVisionModel(VISION_MODEL, messages, images, env);
-    } else if (connectorToolsEnabled || sandboxEnabled || mediaEnabled) {
+    } else if (connectorToolsEnabled || sandboxEnabled || mediaEnabled || webSearchEnabled) {
       // Only used by getAvailableTools' router, and only once a user's
       // connected-tool count actually crosses ROUTER_THRESHOLD — see
       // connector-tools.js. Below that, this is computed but ignored, so
@@ -835,7 +850,8 @@ export async function handleChatRequest(request, env) {
         }
       }
       const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas() : [];
-      const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas);
+      const webToolSchemas = webSearchEnabled ? [webSearch.toolSchema()] : [];
+      const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas, webToolSchemas);
       const offeredToolNames = new Set(tools.map((t) => t && t.function && t.function.name).filter(Boolean));
       offeredToolNames.forEach((n) => leakNames.add(n));
       if (tools.length > 0 || sandboxLimitNote) {
@@ -849,13 +865,14 @@ export async function handleChatRequest(request, env) {
             hasTools: connectorTools.length > 0,
             hasSandbox: sandboxToolSchemas.length > 0,
             hasMedia: mediaToolSchemas.length > 0,
+            hasWeb: webToolSchemas.length > 0,
           }) + sandboxLimitNote,
         };
       }
       const maxRounds = sandboxToolSchemas.length > 0 ? MAX_AGENT_ROUNDS_SANDBOX : MAX_AGENT_ROUNDS;
       let mediaCallsThisTurn = 0;
       console.log(
-        '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name) || (mediaTools.isMediaTool(t.function.name) ? 'media' : 'unknown')))].join(',') +
+        '[chat][tools] providers=' + [...new Set(tools.map((t) => providerForTool(t.function.name) || (mediaTools.isMediaTool(t.function.name) ? 'media' : (t.function.name === webSearch.TOOL_NAME ? 'web' : 'unknown'))))].join(',') +
         ' toolCount=' + tools.length +
         ' tier=' + actualTier + ' provider=' + tierConfig.provider + ' model=' + tierConfig.model +
         ' resuming=' + !!confirmToolCall + ' sandboxResume=' + !!sandboxResume +
@@ -1024,7 +1041,7 @@ export async function handleChatRequest(request, env) {
               result = await _modelTurn(tierConfig, sandboxTools.shrinkOldResults(workingMessages), tools, env, streamOptions);
               // The component format called as a "tool": keep it as a component block, not a tool call.
               if (result && result.toolCalls && result.toolCalls.length) {
-                const uiBlocks = _uiBlockFromPseudoCall(result.toolCalls[0], (n) => !!providerForTool(n) || mediaTools.isMediaTool(n));
+                const uiBlocks = _uiBlockFromPseudoCall(result.toolCalls[0], (n) => !!providerForTool(n) || mediaTools.isMediaTool(n) || n === webSearch.TOOL_NAME);
                 if (uiBlocks) result = { ...result, toolCalls: null, text: (result.text || '').trimEnd() + '\n\n```cognita-ui\n' + JSON.stringify(uiBlocks) + '\n```' };
               }
               // A tool call written out as plain text instead of made as a real call: run it as the
@@ -1134,6 +1151,55 @@ export async function handleChatRequest(request, env) {
                 continue;
               }
               break;
+            }
+
+            // Web search (web-search.js). Runs right here in the Worker, needs no connected app and no
+            // confirmation, counts against the plan's daily search allowance (a failure is refunded), and
+            // gives the model a short text result of sources. At most MAX_WEB_SEARCHES_PER_TURN per request.
+            if (call.name === webSearch.TOOL_NAME) {
+              const wv = webSearch.validateArgs(call.args);
+              if (!wv.ok) {
+                invalidArgAttempts[call.name] = (invalidArgAttempts[call.name] || 0) + 1;
+                if (invalidArgAttempts[call.name] > MAX_INVALID_ARG_RETRIES_PER_TOOL) {
+                  result = { text: 'I need to know what to look up. What should I search for?', reasoning: result.reasoning || null, toolCalls: null };
+                  break;
+                }
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: 'Attempting ' + call.name + '.' },
+                  { role: 'user', content: 'That call was missing required field(s): ' + wv.missing.join(', ') + '. Retry with them filled in.' },
+                ]);
+                result = null;
+                round++;
+                continue;
+              }
+              const wsSummary = webSearch.describe(call.args);
+              const wsMeta = { providerLabel: 'Web', kind: 'read' };
+              webSearchesThisTurn++;
+              let wsResult;
+              if (webSearchesThisTurn > MAX_WEB_SEARCHES_PER_TURN) {
+                wsResult = { ok: false, error: 'Too many searches in one request (limit ' + MAX_WEB_SEARCHES_PER_TURN + '). Answer with what you have.' };
+              } else {
+                const wsCharge = await checkAndIncrement(identity.uid, 'webSearches', webSearchLimit, env);
+                if (!wsCharge.allowed) {
+                  wsResult = { ok: false, error: 'The daily web search limit for the ' + plan.name + ' plan (' + wsCharge.limit + ' searches) has been reached. It resets at midnight UTC.' };
+                } else {
+                  emit('step_start', { name: call.name, provider: 'web', ...wsMeta, summary: wsSummary });
+                  wsResult = await webSearch.searchWeb(call.args, env);
+                  if (!wsResult.ok) await refundUsage(identity.uid, 'webSearches', env);
+                }
+              }
+              console.log('[chat][web] search ok=' + !!wsResult.ok + (wsResult.ok ? ' results=' + wsResult.results.length : ''));
+              steps.push({ type: 'executed', name: call.name, provider: 'web', ...wsMeta, ms: 0, ok: !!wsResult.ok, ...(wsResult.ok ? {} : { reason: 'The search did not work.' }), summary: wsSummary });
+              emit('step', steps[steps.length - 1]);
+              const wsEntry = sandboxTools.makeTraceEntry({
+                n: ++stepNo, kind: 'tool', assistantText: (result.text && result.text.trim()) ? result.text : '',
+                description: wsSummary, resultText: webSearch.resultForModel(wsResult),
+              });
+              turnTrace.push(wsEntry);
+              workingMessages = sandboxTools.appendExchange(workingMessages, wsEntry);
+              result = null;
+              round++;
+              continue;
             }
 
             // Picture and design tools (media-tools.js). They run right here in

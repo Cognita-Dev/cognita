@@ -83,6 +83,11 @@
   //   npx wrangler secret put CF_BROWSER_API_TOKEN   (permission: Browser Run (or Browser Rendering) - Edit)
   // Optional daily cap across all users, default 60: CF_BROWSER_GLOBAL_PER_DAY
 
+  // Live web search (web-search.js). Both free plans renew monthly and need no card. Set one or both as SECRETS
+  // (with both, Firecrawl takes over when Tavily's monthly allowance runs out); without either, search is not offered:
+  //   npx wrangler secret put TAVILY_API_KEY       (tried first; https://tavily.com, free "Researcher" plan, 1,000 credits/month)
+  //   npx wrangler secret put FIRECRAWL_API_KEY    (backup; https://firecrawl.dev, free plan, 1,000 credits/month, about 500 searches)
+
   "vars": {
     "FIREBASE_PROJECT_ID": "cognita-b94eb",
     "APP_ORIGIN": "https://app.cognita.com.ng",
