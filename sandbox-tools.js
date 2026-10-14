@@ -65,7 +65,7 @@ const CATALOG = [
     { reset: { type: 'boolean' } }, []) },
 
   { cap: CAPS.PYTHON, tool: _fn('sandbox_run_python',
-    'Run Python; returns stdout, stderr, exit code. Has numpy, pandas, matplotlib, scipy, scikit-learn, sympy, openpyxl. Files written are kept.',
+    'Run Python; returns stdout, stderr, exit code. Has numpy, pandas, matplotlib, scipy, scikit-learn, sympy, statsmodels, networkx, openpyxl, xlrd (old .xls), pillow, pyyaml, beautifulsoup4, lxml, pytest. No internet. Files written are kept.',
     {
       code: { type: 'string' },
       filename: { type: 'string', description: 'Optional. Save the code here first, then run it.' },
@@ -138,6 +138,11 @@ const CATALOG = [
       full_page: { type: 'boolean', description: 'Screenshot the whole page (up to 3000 px tall) instead of just the first screen.' },
       screenshot: { type: 'boolean', description: 'Set false to skip the screenshot the user sees. Default true.' },
     }, []) },
+
+  // Web reading. Runs on the Worker (web-fetch.js), so the browser sandbox stays offline. Offered per request by chat-endpoint.js.
+  { cap: CAPS.WEB_FETCH, tool: _fn('sandbox_web_fetch',
+    'Read a public https web page or data file (HTML, text, CSV, JSON, XML) and return its text. Python in the workspace has no internet, so to analyse the page, call sandbox_import_from_tool with this step number to save it as a file first. Cannot read sign-in pages, PDFs, Excel files or pictures. Do not use it for pages that need JavaScript to show their content.',
+    { url: { type: 'string', description: 'Public https address.' } }, ['url']) },
 
   // Cloud browser (Studio and Admin only). Offered per request by chat-endpoint.js, never by a provider.
   { cap: CAPS.BROWSER_REMOTE, tool: _fn('sandbox_browser_fetch',
@@ -237,6 +242,7 @@ export function describe(name, args) {
     case 'sandbox_import_from_tool': return 'Placing the fetched data in ' + _short(a.path, 80) + '.';
     case 'sandbox_offer_file': return 'Preparing ' + _short(a.title || a.path, 80) + ' for download.';
     case 'sandbox_browser_test': return a.path ? 'Testing ' + _short(a.path, 70) + ' in a browser.' : 'Testing the page in a browser.';
+    case 'sandbox_web_fetch': return a.url ? 'Reading ' + _short(a.url, 80) + '.' : 'Reading a web page.';
     case 'sandbox_browser_fetch': return a.url ? 'Opening ' + _short(a.url, 80) + ' in the cloud browser.' : 'Rendering the page in the cloud browser.';
     case 'sandbox_start_process': return 'Starting: ' + _short(a.command, 100);
     case 'sandbox_get_process_output': return 'Reading process output.';
@@ -285,6 +291,10 @@ export function validateSandboxArgs(name, args) {
     if (a.selectors !== undefined && (!Array.isArray(a.selectors) || a.selectors.some((s) => typeof s !== 'string' || s.length > 200))) {
       return { ok: false, error: '"selectors" must be a list of short CSS selector strings.' };
     }
+  }
+  if (name === 'sandbox_web_fetch') {
+    const c = checkPublicUrl(a.url);
+    if (!c.ok) return { ok: false, error: c.error };
   }
   if (name === 'sandbox_browser_fetch') {
     const hasUrl = typeof a.url === 'string' && a.url.trim() !== '';

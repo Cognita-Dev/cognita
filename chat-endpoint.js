@@ -15,6 +15,7 @@ import {
 import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
 import { wantsFileFromImage } from './sandbox-intent.js';
+import { fetchPublicText, previewForModel } from './web-fetch.js';
 import * as mediaTools from './media-tools.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
 import { stripToolLeaks, recoverLeakedCall } from './tool-leak.js';
@@ -772,6 +773,8 @@ export async function handleChatRequest(request, env) {
   let pendingSandboxCall = null;
   let turnTrace = [];
   let stepNo = 0;
+  let webFetchesThisTurn = 0;
+  const MAX_WEB_FETCHES_PER_TURN = 6;
   // The newest user message, kept so the end of the turn can tell whether the
   // person asked for a file (see collectDeliverables in sandbox-tools.js).
   let lastUserText = '';
@@ -818,6 +821,7 @@ export async function handleChatRequest(request, env) {
             offerCaps.delete(CAPS.BROWSER_TEST);
             sandboxLimitNote = '\n\nThe user has used up today\'s browser-test allowance. Do not call sandbox_browser_test; check the page by reading the code instead and mention the limit briefly if it matters.';
           }
+          offerCaps.add(CAPS.WEB_FETCH);
           sandboxToolSchemas = getSandboxToolSchemas(offerCaps);
         }
       }
@@ -1262,6 +1266,45 @@ export async function handleChatRequest(request, env) {
                 quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' +
                   plan.limits.sandboxRunsPerDay + ' runs per day). It resets at midnight UTC.';
                 break;
+              }
+
+              // Web reading: runs on the Worker (web-fetch.js), counts as one run, at most
+              // MAX_WEB_FETCHES_PER_TURN per request. The full text is kept as the step's blob
+              // so sandbox_import_from_tool can place it in the workspace.
+              if (sbName === 'sandbox_web_fetch') {
+                webFetchesThisTurn++;
+                let wf;
+                if (webFetchesThisTurn > MAX_WEB_FETCHES_PER_TURN) {
+                  wf = { ok: false, error: 'Too many pages read in one request (limit ' + MAX_WEB_FETCHES_PER_TURN + '). Work with what you have.' };
+                } else {
+                  const wfCharge = await checkAndIncrement(identity.uid, 'sandboxRuns', plan.limits.sandboxRunsPerDay, env);
+                  if (!wfCharge.allowed) {
+                    quotaExceededError = 'You have reached your daily code-running limit for the ' + plan.name + ' plan (' + wfCharge.limit + ' runs per day). It resets at midnight UTC.';
+                    break;
+                  }
+                  emit('step_start', { name: call.name, provider: 'sandbox', providerLabel: 'Web', kind: 'run', summary: describeTool(call.name, call.args) });
+                  wf = await fetchPublicText(sbArgs.url);
+                  if (!wf.ok) await refundUsage(identity.uid, 'sandboxRuns', env);
+                }
+                const wfResult = sandboxTools.normalizeResult({
+                  exitCode: wf.ok ? 0 : 1, error: !wf.ok, command: describeTool(call.name, call.args),
+                  stdout: wf.ok ? previewForModel(wf) : '', stderr: wf.ok ? '' : wf.error,
+                }, sandboxTools.describe(call.name, call.args));
+                steps.push({
+                  type: 'sandbox', name: call.name, provider: 'sandbox', providerLabel: 'Web', kind: 'run', ms: wfResult.durationMs, ok: wfResult.ok,
+                  summary: describeTool(call.name, call.args), sandbox: wfResult,
+                });
+                emit('step', steps[steps.length - 1]);
+                const wfEntry = sandboxTools.makeTraceEntry({
+                  n: ++stepNo, kind: 'sbx', assistantText: (result.text && result.text.trim()) ? result.text : '',
+                  description: describeTool(call.name, call.args), resultText: sandboxTools.resultForModel(wfResult),
+                  tool: sbName, files: [], offered: null, blob: wf.ok ? wf.text : null,
+                });
+                turnTrace.push(wfEntry);
+                workingMessages = sandboxTools.appendExchange(workingMessages, wfEntry);
+                result = null;
+                round++;
+                continue;
               }
 
               // Cloud browser: always runs on the Worker, whatever provider is active.

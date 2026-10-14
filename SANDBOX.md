@@ -240,3 +240,22 @@ failures on our side or Cloudflare's refund the allowance; only public https URL
 Setup: `npx wrangler secret put CF_BROWSER_ACCOUNT_ID` and `npx wrangler secret put CF_BROWSER_API_TOKEN`
 (API token with the "Browser Run (or Browser Rendering) - Edit" permission). Optional var `CF_BROWSER_GLOBAL_PER_DAY`.
 Check the current free-plan allowance in the Cloudflare dashboard before relying on it.
+
+
+## Reading the web (`sandbox_web_fetch`)
+
+Python in the browser sandbox still has no internet, on purpose: the page policy only lets it reach the
+Python host, so model-written code cannot send data anywhere. Web access goes through the Worker instead.
+
+- `web-fetch.js` fetches ONE public https page or text/CSV/JSON/XML file for the assistant. https only, port 443,
+  no credentials, no IP addresses or local names (re-checked on every redirect, max 4), no cookies sent, 15 s limit,
+  450 KB read limit, binary files (PDF, Excel, pictures) refused.
+- The result is a normal tool result. To analyse it the assistant calls `sandbox_import_from_tool` with that step
+  number, which saves the full text as a workspace file; Python then reads it (html.parser, beautifulsoup4, pandas).
+- Counts as one code run on the person's daily allowance (refunded when the fetch fails); at most 6 pages per request.
+- It does not run JavaScript on the page. Pages that need it can still use `sandbox_browser_fetch` (Studio/Admin).
+- It does not obey robots.txt and identifies itself as `CognitaBot/1.0`. Add a robots check before wide release.
+
+Python packages added to the bundle (build script): beautifulsoup4, networkx, statsmodels, xlrd, lxml.
+Not added: duckdb and polars (not in Pyodide 0.29), scikit-image and wordcloud (large; add later if wanted).
+Rebuild the bundle (`node scripts/build-pyodide-bundle.mjs`) and redeploy the Pages project for them to appear.

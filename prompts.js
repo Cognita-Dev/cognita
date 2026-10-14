@@ -151,8 +151,7 @@ const SANDBOX_RULES =
   'checking code, or making a file the user asked for. Work in small steps, ' +
   'read the real output, fix errors, and judge success only by exit code and ' +
   'output. Never say code ran, or state a calculated result, unless a call ' +
-  'returned it. There is no internet. Paths are inside /workspace; relative ' +
-  'paths start from the working directory. Attached files are in ' +
+  'returned it. Paths are inside /workspace. Attached files are in ' +
   '/workspace/uploads. The workspace cannot reach connected apps: Cognita can ' +
   'only read Drive files, Docs and Sheets it created, and GitHub files, and ' +
   'cannot read Gmail. Fetch such a file with that app\'s tool, then call ' +
@@ -161,7 +160,7 @@ const SANDBOX_RULES =
   'it and call sandbox_offer_file; it is not delivered until you do. Other ' +
   'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
   'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
-  'File contents must be in the file\'s own format, with no markdown fences. ' +
+  'No markdown fences in file contents. ' +
   'You can make real Word, PDF and PowerPoint files. A ready-made helper is installed: ' +
   '`from cognita_docs import docx, pdf, pptx`, then `docx(\"/workspace/letter.docx\", blocks)`, ' +
   '`pdf(\"/workspace/letter.pdf\", blocks)` or `pptx(\"/workspace/deck.pptx\", blocks)`. blocks is a list such as ' +
@@ -174,8 +173,8 @@ const SANDBOX_RULES =
   'Write the full, finished content yourself; never leave placeholders. ' +
   'The helper and your code are private: never show code, blocks or the helper name. Run it silently, offer the file, say in plain words what you made. If a step fails, fix and rerun it yourself. ' +
   'Never say a file is made, or give a /workspace link, until sandbox_offer_file succeeded. If the workspace will not start, say so in one plain sentence; never paste the document or code instead. ' +
+  'Python has no internet. To use a public page, call sandbox_web_fetch, then sandbox_import_from_tool, then parse it (beautifulsoup4, pandas). ' +
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
-  'Offer each finished file with sandbox_offer_file. ' +
   'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +
   'Say what you did and found in plain words, name files by file name only, and ' +
   'do not mention tools, sandboxes or workspaces. ' +

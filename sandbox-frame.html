@@ -1343,7 +1343,7 @@ self.onmessage = async function (ev) {
         else if (m.t === 'installed' && m.id === rid) {
           finished = true; clearTimeout(timer); w.removeEventListener('message', onMsg);
           if (m.ok) { io.out('Loaded: ' + pkgs.join(', ') + '\n'); resolve(0); }
-          else { io.err('Could not install ' + pkgs.join(', ') + ': ' + (m.message || 'unknown package') + '\nThe browser sandbox has no internet access, so only the packages bundled with it can be used (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, openpyxl, pillow, pyyaml, pytest).\n'); resolve(1); }
+          else { io.err('Could not install ' + pkgs.join(', ') + ': ' + (m.message || 'unknown package') + '\nThe browser sandbox has no internet access, so only the packages bundled with it can be used (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, statsmodels, networkx, openpyxl, xlrd, pillow, pyyaml, beautifulsoup4, lxml, pytest).\n'); resolve(1); }
         }
       }
       w.addEventListener('message', onMsg);

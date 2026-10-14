@@ -35,6 +35,7 @@ export const CAPS = {
   BASH: 'bash',                 // a real Bash
   NETWORK: 'network',
   BROWSER_TEST: 'browser_test',      // render a page in the person's own browser and report what happened
+  WEB_FETCH: 'web_fetch',           // read a public web page or data file through the Worker (added per request by chat-endpoint.js)
   BROWSER_REMOTE: 'browser_remote', // Cloudflare cloud browser (Studio and Admin only, added per request by chat-endpoint.js)
 };
 
