@@ -33,14 +33,14 @@ const accountReadyPromise = new Promise((resolve) => { _resolveConnectorEntitlem
 // description to show," never trusted for anything else.
 const CONNECTOR_META = {
   github: {
-    label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues.',
+    label: 'GitHub', icon: 'ph-github-logo', desc: 'List repos, read files, open issues, and start your own Codespaces.',
     hint: 'You need to be signed in to GitHub in this browser to connect it.',
   },
   google: { label: 'Google', icon: 'ph-google-logo', desc: 'Calendar (full read/write), Drive (files Cognita creates), and Gmail (send + labels only).' },
   facebook: { label: 'Facebook & Instagram', icon: 'ph-facebook-logo', desc: 'Post to a Facebook Page and its linked Instagram account, and schedule posts.' },
-  canva: { label: 'Canva', icon: 'ph-image-square', desc: 'Read and create designs.' },
+  cloudshell: { label: 'Google Cloud Shell', icon: 'ph-terminal-window', desc: 'Start your own Cloud Shell and open its terminal. Runs on your own Google allowance.' },
 };
-const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
+const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'cloudshell'];
 
 // Google and Facebook require their brand mark to appear in its standard
 // multi-color form — a monochrome icon-font glyph doesn't satisfy that, so
@@ -51,14 +51,6 @@ const CONNECTOR_ORDER = ['github', 'google', 'facebook', 'canva'];
 // violation. This is the exact official Octocat path (confirmed against
 // GitHub's own brand asset), rendered in currentColor so it still goes
 // dark-on-light / light-on-dark like their own "Invertocat" usage.
-// Canva DOES publish a downloadable logo pack (canva.dev/docs/apps/
-// rest-apis/brand-guidelines: "you can download assets of the Canva
-// logo" — asset zip at canva.dev/assets/connect/Canva-logos.zip). Their
-// guide says to use the "icon logo" specifically for surfaces below 50px,
-// which is this row, so it's referenced as a real asset file rather than
-// redrawn — see /assets/canva-icon-logo.svg (drop the icon-logo SVG from
-// that zip in at that path; don't recolor or reshape it per their "Don't"
-// list).
 const CONNECTOR_BRAND_SVG = {
   github: '<svg class="settings-row-icon" width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" fill="currentColor" style="color: var(--text-2);">' +
     '<path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>' +
@@ -72,7 +64,6 @@ const CONNECTOR_BRAND_SVG = {
   facebook: '<svg class="settings-row-icon" width="20" height="20" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
     '<path fill="#1877F2" d="M18 9a9 9 0 1 0-10.4 8.9v-6.3H5.3V9h2.3V6.9c0-2.3 1.4-3.6 3.5-3.6.7 0 1.5.1 2.2.2v2.4h-1.2c-1.2 0-1.5.7-1.5 1.5V9h2.6l-.4 2.6h-2.2v6.3A9 9 0 0 0 18 9Z"/>' +
     '</svg>',
-  canva: '<img class="settings-row-icon" src="/assets/canva-icon-logo.svg" width="20" height="20" alt="" />',
 };
 
 function connectionRow(provider, connected, locked) {
