@@ -67,6 +67,7 @@ const DOC_FILE_RE = /\.doc$/i; // legacy .doc — mammoth can't read this, flagg
 // Guard against sending enormous extracted text to the model — trim and
 // note that it was trimmed rather than silently truncating.
 const MAX_EXTRACTED_CHARS = 40000;
+const INLINE_DOC_MAX_CHARS = 12000;   // documents shorter than this are pasted into the message; longer ones go to the workspace
 
 // Mime types for AI-generated document downloads, keyed by the "format"
 // the /api/document endpoint returns. Kept in sync with document-endpoint.js.
@@ -1299,11 +1300,13 @@ function wireComposer() {
   // Single picker handles images, plain text/csv, PDFs, and Word docs —
   // routed by mime type/extension once a file is chosen.
   fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
+    const picked = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!picked.length) return;
 
-    await handlePickedFile(file);
+    for (const file of picked.slice(0, 5)) {
+      await handlePickedFile(file);
+    }
     renderComposerAttachments();
     refreshSendEnabled();
     input.focus();
@@ -1315,94 +1318,78 @@ async function handlePickedFile(file) {
   const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
   const isPdf = file.type === PDF_MIME || PDF_FILE_RE.test(file.name);
   const isDocx = file.type === DOCX_MIME || DOCX_FILE_RE.test(file.name);
-  const isLegacyDoc = DOC_FILE_RE.test(file.name) && !isDocx;
 
+  // Pictures go to the vision model, not the workspace.
   if (isImage) {
     await handleImageFile(file);
     return;
   }
 
-  // Spreadsheets and data files go into the code workspace, so a big file is
-  // never pasted into the prompt. Small txt/md files stay inline as before.
-  if (WORKSPACE_DATA_RE.test(file.name) || (WORKSPACE_TEXT_RE.test(file.name) && file.size > WORKSPACE_TEXT_MIN_BYTES)) {
-    const maxBytes = sandboxFileLimitBytes();
-    const isXlsx = /\.xlsx$/i.test(file.name);
-    if (file.size <= maxBytes) {
-      try {
-        const data = await file.arrayBuffer();
-        pendingAttachments.push({
-          name: file.name, kind: 'data', size: file.size, data,
-          preview: isXlsx ? '' : previewOfText(new TextDecoder('utf-8', { fatal: false }).decode(data.slice(0, 16384))),
-        });
-      } catch (err) {
-        console.error('[app] Could not read file:', err.message);
-        showToast('Could not read that file.');
-      }
-      return;
+  // Read the text out of the file here in the browser when we can. PDF and
+  // Word text can only be read here: the code sandbox has no PDF or Word
+  // library and no internet. Plain text is simply decoded.
+  let extracted = '';
+  try {
+    if (isPdf) {
+      if (window.pdfjsLib) extracted = await extractPdfText(file);
+      else showToast('PDF reading is still loading, so only the file itself was added.');
+    } else if (isDocx) {
+      if (window.mammoth) extracted = await extractDocxText(file);
+      else showToast('Word reading is still loading, so only the file itself was added.');
+    } else if (isTextLike) {
+      extracted = await file.text();
     }
-    showToast(file.name + ' is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB your plan allows for code runs.');
-    if (isXlsx) { pendingAttachments.push({ name: file.name, kind: 'unsupported' }); return; }
-    // Text formats fall through to the inline path below (capped as before).
+  } catch (err) {
+    console.error('[app] Could not read text from file:', err && err.message);
+  }
+  extracted = String(extracted || '').trim();
+
+  const isDocLike = isPdf || isDocx || isTextLike;
+  const smallEnough = extracted.length > 0 && extracted.length <= INLINE_DOC_MAX_CHARS &&
+    !(WORKSPACE_DATA_RE.test(file.name));
+
+  // Small documents are pasted into the message so a quick question needs no
+  // code run (and no waiting for Python to load).
+  if (isDocLike && smallEnough) {
+    pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(extracted) });
+    return;
   }
 
-  if (isTextLike) {
+  // Everything else (any type, any size within the plan limit) goes into the
+  // workspace. The model opens it with code.
+  const maxBytes = sandboxFileLimitBytes();
+  if (file.size <= maxBytes) {
     try {
-      const text = await file.text();
-      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
+      const data = await file.arrayBuffer();
+      const att = {
+        name: file.name, kind: 'data', size: file.size, data,
+        preview: extracted ? previewOfText(extracted.slice(0, 16384)) : '',
+        hasText: !!extracted,
+      };
+      // For PDF and Word, also save the text we read, so code can use it.
+      if (extracted && (isPdf || isDocx)) {
+        att.sidecar = { name: file.name + '.txt', data: new TextEncoder().encode(extracted).buffer };
+      }
+      pendingAttachments.push(att);
     } catch (err) {
-      console.error('[app] Could not read file:', err.message);
+      console.error('[app] Could not read file:', err && err.message);
       showToast('Could not read that file.');
     }
     return;
   }
 
-  if (isPdf) {
-    if (!window.pdfjsLib) {
-      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-      showToast('PDF reading is still loading — try again in a moment.');
-      return;
-    }
-    try {
-      const text = await extractPdfText(file);
-      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
-    } catch (err) {
-      console.error('[app] Could not read PDF:', err.message);
-      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-      showToast('Could not extract text from that PDF.');
-    }
+  // Too big for the workspace on this plan.
+  showToast(file.name + ' is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB your plan allows.');
+  if (isDocLike && extracted) {
+    // Still send what we could read, cut to a safe length.
+    pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(extracted) });
     return;
   }
-
-  if (isDocx) {
-    if (!window.mammoth) {
-      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-      showToast('Word document reading is still loading — try again in a moment.');
-      return;
-    }
-    try {
-      const text = await extractDocxText(file);
-      pendingAttachments.push({ name: file.name, kind: 'text', text: _capText(text) });
-    } catch (err) {
-      console.error('[app] Could not read Word document:', err.message);
-      pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-      showToast('Could not extract text from that document.');
-    }
-    return;
-  }
-
-  if (isLegacyDoc) {
-    // Legacy binary .doc isn't readable by mammoth (which only handles
-    // .docx). Flag it rather than pretending to read it.
-    pendingAttachments.push({ name: file.name, kind: 'unsupported' });
-    showToast('Old .doc files aren\'t supported yet — please use .docx.');
-    return;
-  }
-
-  // pptx, xlsx, and anything else not yet wired for extraction.
   pendingAttachments.push({ name: file.name, kind: 'unsupported' });
 }
 
 function _capText(text) {
+  text = String(text || '');
   if (text.length <= MAX_EXTRACTED_CHARS) return text;
   return text.slice(0, MAX_EXTRACTED_CHARS) + '\n\n[Content truncated — file was longer than could be included.]';
 }
@@ -1422,14 +1409,34 @@ function previewOfText(text) {
 /* What the model is told about a file that was put in the workspace. It stays
  * in the chat history, so later messages still know the file exists. */
 function workspaceStub(att) {
-  const kb = att.size < 1024 ? att.size + ' B' : Math.max(1, Math.round(att.size / 1024)) + ' KB';
+  const kb = att.size < 1024 ? att.size + ' B' : att.size < 1048576 ? Math.max(1, Math.round(att.size / 1024)) + ' KB' : (att.size / 1048576).toFixed(1) + ' MB';
+  const head = '[Attached file "' + att.name + '" (' + kb + ') is in the workspace at ' + att.path + '. ';
+  const tail = ' If it is missing later, ask the user to attach it again.';
+  const preview = att.preview ? '\nPreview (first lines):\n' + att.preview : '';
   if (/\.xlsx$/i.test(att.name)) {
-    return '[Attached Excel workbook "' + att.name + '" (' + kb + ') is in the workspace at ' + att.path +
-      '. Open it with pandas.read_excel. If it is missing later, ask the user to attach it again.]';
+    return head + 'Open it with pandas.read_excel or openpyxl.' + tail + ']';
   }
-  const header = /\.(csv|tsv)$/i.test(att.name) && att.preview ? '\nHeader row: ' + att.preview.split('\n')[0] : '';
-  return '[Attached file "' + att.name + '" (' + kb + ') is in the workspace at ' + att.path +
-    '. If it is missing later, ask the user to attach it again.' + header + '\nPreview (first lines):\n' + (att.preview || '(empty)') + ']';
+  if (/\.(csv|tsv)$/i.test(att.name)) {
+    const header = att.preview ? '\nHeader row: ' + att.preview.split('\n')[0] : '';
+    return head + 'Read it with pandas.' + tail + header + preview + ']';
+  }
+  if (/\.pdf$/i.test(att.name)) {
+    return head + (att.textPath
+      ? 'The text of the PDF was already read and saved at ' + att.textPath + ' (plain text, pages in order). Read that file with Python to answer; do not try to parse the PDF itself, because no PDF library is installed.'
+      : 'No text could be read from this PDF (it may be a scan), and no PDF library is installed. Tell the user plainly that you could not read it.') + tail + preview + ']';
+  }
+  if (/\.docx$/i.test(att.name)) {
+    return head + (att.textPath
+      ? 'The text of the document was already read and saved at ' + att.textPath + '. Read that file with Python to answer.'
+      : 'It is a zip file; read word/document.xml inside it with zipfile and xml.etree.') + tail + preview + ']';
+  }
+  if (/\.(pptx|xlsm|odt|ods|odp)$/i.test(att.name)) {
+    return head + 'It is a zip of XML files. Open it with the zipfile module and read the XML inside with xml.etree.' + tail + ']';
+  }
+  if (/\.zip$/i.test(att.name)) {
+    return head + 'It is a zip archive. Open it with the zipfile module.' + tail + ']';
+  }
+  return head + (att.preview ? 'It looks like text.' : 'Check what it is first (for example by reading the first bytes).') + tail + preview + ']';
 }
 
 async function extractPdfText(file) {
@@ -1666,31 +1673,66 @@ async function putDataAttachments(list) {
   if (!list.length) return out;
   const conversationId = ensureConversationId();
   const lim = currentSandboxLimits || {};
+
+  // Each file may bring a text copy along (PDF and Word). Save both together.
+  const items = [];
+  list.forEach((a) => {
+    items.push({ owner: a, side: false, name: a.name, data: a.data });
+    if (a.sidecar) items.push({ owner: a, side: true, name: a.sidecar.name, data: a.sidecar.data });
+  });
+
   let res;
   try {
     res = await getSandbox().putFiles(
       conversationId,
-      list.map((a) => ({ name: a.name, data: a.data.slice(0) })),
+      items.map((it) => ({ name: it.name, data: it.data.slice(0) })),
       { maxFileBytes: sandboxFileLimitBytes(), maxWorkspaceBytes: (lim.maxWorkspaceMB || 10) * 1024 * 1024 }
     );
   } catch (e) {
-    res = { saved: [], errors: list.map((a) => ({ name: a.name, error: 'The code sandbox could not start.' })) };
+    res = { saved: [], errors: items.map((it) => ({ name: it.name, error: 'The code sandbox could not start.' })) };
   }
-  const byName = new Map((res.saved || []).map((s) => [s.name, s]));
+  // Two files can share a name; match them in order, not by name alone.
+  const savedQueue = new Map();
+  (res.saved || []).forEach((sv) => {
+    if (!savedQueue.has(sv.name)) savedQueue.set(sv.name, []);
+    savedQueue.get(sv.name).push(sv);
+  });
   const failed = new Map((res.errors || []).map((e) => [e.name, e.error]));
+  const savedFor = new Map();
+  items.forEach((it) => {
+    const q = savedQueue.get(it.name);
+    savedFor.set(it, q && q.length ? q.shift() : null);
+  });
+
   list.forEach((a) => {
-    const saved = byName.get(a.name);
+    const mainItem = items.find((it) => it.owner === a && !it.side);
+    const sideItem = items.find((it) => it.owner === a && it.side);
+    const saved = savedFor.get(mainItem);
     if (saved) {
-      const att = { kind: 'workspace', name: a.name, path: saved.path, size: a.size, preview: a.preview };
+      const sideSaved = sideItem ? savedFor.get(sideItem) : null;
+      const att = {
+        kind: 'workspace', name: a.name, path: saved.path, size: a.size,
+        preview: a.preview, textPath: sideSaved ? sideSaved.path : '',
+      };
       att.stub = workspaceStub(att);
       delete att.preview;
+      delete att.textPath;
       out.set(a, att);
       return;
     }
     showToast(a.name + ': ' + (failed.get(a.name) || 'could not be added to the workspace.'));
-    if (/\.xlsx$/i.test(a.name)) { out.set(a, { kind: 'unsupported', name: a.name }); return; }
-    const text = new TextDecoder('utf-8', { fatal: false }).decode(a.data);
-    out.set(a, { kind: 'file', name: a.name, text: _capText(text) });
+    // Fall back to the text we already read; never paste raw bytes of a binary file.
+    if (a.sidecar) {
+      const t = new TextDecoder('utf-8', { fatal: false }).decode(a.sidecar.data);
+      out.set(a, { kind: 'file', name: a.name, text: _capText(t) });
+      return;
+    }
+    if (a.hasText) {
+      const t = new TextDecoder('utf-8', { fatal: false }).decode(a.data);
+      out.set(a, { kind: 'file', name: a.name, text: _capText(t) });
+      return;
+    }
+    out.set(a, { kind: 'unsupported', name: a.name });
   });
   return out;
 }
@@ -1732,15 +1774,40 @@ async function sendMessage(text) {
   isSending = true;
   streamScroll.follow = true; // sending means the person wants to see the answer arrive
 
+  // Take the staged attachments NOW, before any waiting, so nothing else
+  // (a retry restoring a draft, say) can swap them out mid-send.
+  const staged = pendingAttachments;
+  pendingAttachments = [];
+
   const input = document.getElementById('composerInput');
   input.value = '';
   input.style.height = 'auto';
   document.getElementById('sendBtn').disabled = true;
   notifyComposerActivity();
 
+  // A data file (csv, xlsx, ...) goes straight into the workspace, so the
+  // sandbox tools must be offered for this message (see sandboxHint below).
+  // This must run BEFORE the attachment list is built, because that list
+  // looks up where each data file was saved.
+  const sendingDataFile = staged.some((a) => a.kind === 'data' || a.kind === 'workspace');
+  let savedToWorkspace = new Map();
+  try {
+    savedToWorkspace = await putDataAttachments(staged.filter((a) => a.kind === 'data'));
+  } catch (err) {
+    console.error('[app] Could not save attachments:', err && err.message);
+    showToast('Could not add your file. Please try again.');
+    // Give the person their files and text back.
+    pendingAttachments = staged;
+    renderComposerAttachments();
+    input.value = text || '';
+    isSending = false;
+    document.getElementById('sendBtn').disabled = false;
+    return;
+  }
+
   // Attachments kept for display (thumbnails/chips) — never the raw
   // base64 string or full file text is put into the visible message.
-  const attachmentsForMessage = pendingAttachments.map((a) => {
+  const attachmentsForMessage = staged.map((a) => {
     if (a.kind === 'data') return savedToWorkspace.get(a) || { kind: 'unsupported', name: a.name };
     if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
     if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
@@ -1748,18 +1815,12 @@ async function sendMessage(text) {
     return { kind: 'unsupported', name: a.name };
   });
 
-  // A data file (csv, xlsx, ...) goes straight into the workspace, so the
-  // sandbox tools must be offered for this message (see sandboxHint below).
-  const sendingDataFile = pendingAttachments.some((a) => a.kind === 'data' || a.kind === 'workspace');
-  const savedToWorkspace = await putDataAttachments(pendingAttachments.filter((a) => a.kind === 'data'));
-
   // What actually goes to the vision model — base64 + mime only, never
   // rendered as text anywhere.
-  const outgoingImages = pendingAttachments
+  const outgoingImages = staged
     .filter((a) => a.kind === 'image')
     .map((a) => ({ base64: a.base64, mimeType: a.mimeType }));
 
-  pendingAttachments = [];
   renderComposerAttachments();
 
   const userMessage = { role: 'user', content: text || '' };
