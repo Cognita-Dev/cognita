@@ -694,7 +694,7 @@ def pptx(path, blocks, title=None, author="Cognita"):
 // (self.PYODIDE_BASE, set by blobUrl() below). The first choice is Cognita's own Cloudflare Pages site
 // (built by scripts/build-pyodide-bundle.mjs). It is the only host: the iframe CSP in vercel.json allows exactly
 // this one host. If it cannot be reached, the person gets a clear message (see downloadProblem below).
-var PYODIDE_BASE_URL = self.PYODIDE_BASE || 'https://pyodide.cognita.com.ng/v0.29.5/';
+var PYODIDE_BASE_URL = self.PYODIDE_BASE || 'https://pyodide.cognita.com.ng/v0.29.5-r2/';
 var pyodide = null;
 var loading = null;
 var post = function (m) { self.postMessage(m); };
@@ -1093,7 +1093,7 @@ self.onmessage = async function (ev) {
   // in vercel.json allows exactly this one host, so model-written code cannot reach any other server either.
   // (The list form is kept so a second Cognita-owned host could be added later; if you do, add it to that policy too.)
   var PY_BASES = [
-    'https://pyodide.cognita.com.ng/v0.29.5/'
+    'https://pyodide.cognita.com.ng/v0.29.5-r2/'
   ];
   var pyBaseIdx = 0;                // the server that worked last starts first next time
   function hostOf(i) { return PY_BASES[i].replace(/^https?:\/\//, '').split('/')[0]; }

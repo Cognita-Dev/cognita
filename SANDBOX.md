@@ -11,7 +11,7 @@ agent framework.
 Cognita nothing.
 
 - Python through Pyodide (Python 3.13, pinned to 0.29.5), now **self-hosted** at
-  `https://pyodide.cognita.com.ng/v0.29.5/` (see "Self-hosted Pyodide" below).
+  `https://pyodide.cognita.com.ng/v0.29.5-r2/` (see "Self-hosted Pyodide" below).
   numpy, pandas, matplotlib, scipy, openpyxl and other bundled packages load
   only when the code imports them.
 - JavaScript in a throwaway Web Worker.
@@ -182,7 +182,7 @@ snippet that fails on purpose. "Copy report" copies the result. (`sandbox-check.
 - The Pages "Metrics" tab only counts Pages Functions. This project is static files, so "No data" there is
   normal and does not mean the site is unused or broken. Check "Deployments" (latest production deployment
   says Success) and "Custom domains" (pyodide.cognita.com.ng says Active) instead.
-- Quick manual test: open `https://pyodide.cognita.com.ng/v0.29.5/pyodide-lock.json` in a browser. Readable
+- Quick manual test: open `https://pyodide.cognita.com.ng/v0.29.5-r2/pyodide-lock.json` in a browser. Readable
   JSON means the host is up.
 
 ## Deploying
