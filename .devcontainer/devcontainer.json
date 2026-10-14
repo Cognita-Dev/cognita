@@ -1,0 +1,12 @@
+{
+  "name": "Cognita terminal",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "forwardPorts": [8787],
+  "portsAttributes": {
+    "8787": {
+      "label": "Cognita terminal helper",
+      "onAutoForward": "silent"
+    }
+  },
+  "postStartCommand": "setsid nohup python3 .devcontainer/cognita-agent.py > /tmp/cognita-agent.log 2>&1 &"
+}
