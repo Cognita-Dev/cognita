@@ -649,12 +649,17 @@ const GROQ_TPM_MARGIN = 300;       // slack for the estimate being a little off
 const GROQ_MIN_ANSWER_ROOM = 1024; // below this, an answer would get cut off
 
 function _estimateTokens(messages, tools) {
+  // Prose is about 4 characters per token and JSON tool schemas about 3. These ratios are still a little
+  // cautious. Being too cautious is not harmless: it used to skip Groq for every sandbox request
+  // (about 7,000 estimated against about 5,400 real), so the model that can call tools was never used and
+  // the assistant pasted code instead of running it. A request Groq really does refuse falls through to
+  // the next provider anyway.
   let chars = 0;
   for (const m of messages || []) {
     chars += typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
   }
-  if (tools) chars += JSON.stringify(tools).length;
-  return Math.ceil(chars / 3) + 50; // 3 characters per token is deliberately cautious
+  const toolChars = tools ? JSON.stringify(tools).length : 0;
+  return Math.ceil(chars / 3.8 + toolChars / 3.2) + 50;
 }
 
 function _groqMaxTokens(messages, tools, wanted, env) {

@@ -774,6 +774,7 @@ export async function handleChatRequest(request, env) {
   let turnTrace = [];
   let stepNo = 0;
   let webFetchesThisTurn = 0;
+  let codeInChatRetries = 0;
   const MAX_WEB_FETCHES_PER_TURN = 6;
   // The newest user message, kept so the end of the turn can tell whether the
   // person asked for a file (see collectDeliverables in sandbox-tools.js).
@@ -822,6 +823,11 @@ export async function handleChatRequest(request, env) {
             sandboxLimitNote = '\n\nThe user has used up today\'s browser-test allowance. Do not call sandbox_browser_test; check the page by reading the code instead and mention the limit briefly if it matters.';
           }
           offerCaps.add(CAPS.WEB_FETCH);
+          // The browser test is the biggest tool description (about 1,400 characters), so it is only offered
+          // when the chat is about a web page. Smaller requests keep the model inside Groq's per-minute limit.
+          if (!recentUserTexts.slice(0, 4).some((t) => /\b(?:html|css|web ?page|landing page|web ?site|webpage|browser|responsive|viewport)\b/i.test(t))) {
+            offerCaps.delete(CAPS.BROWSER_TEST);
+          }
           sandboxToolSchemas = getSandboxToolSchemas(offerCaps);
         }
       }
@@ -1037,6 +1043,22 @@ export async function handleChatRequest(request, env) {
             // on; if the model asked for several at once, the rest are
             // implicitly re-offered next round once it sees this one's
             // result.
+            if (!call && sandboxToolSchemas.length > 0 && codeInChatRetries < 1 &&
+                /```(?:python|py|javascript|js|node)\b/i.test(result.text || '') &&
+                !turnTrace.some((e) => e.k === 'sbx') &&
+                !/\b(?:show|give|write|print|paste)\b[^.?!\n]{0,30}\b(?:code|script|snippet|function|program)\b/i.test(lastUserText || '')) {
+              // The model wrote code into its answer instead of running it. The person cannot use
+              // code, so make it run the code with the tool and report the real result.
+              codeInChatRetries++;
+              console.warn('[chat][sandbox] code written in the reply instead of run - retrying. uid=' + identity.uid);
+              workingMessages = workingMessages.concat([
+                { role: 'assistant', content: 'I will run that now.' },
+                { role: 'user', content: 'Do not show code to the user. Run it now with the sandbox tool (sandbox_run_python for Python), read the real output, and then answer in plain words with the actual result.' },
+              ]);
+              result = null;
+              round++;
+              continue;
+            }
             if (!call) {
               // Plain reply, no further tool call requested — the loop's
               // natural end. Run the grounding check (Bug 1 / Bug 5)
