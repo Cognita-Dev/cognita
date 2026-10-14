@@ -169,9 +169,11 @@ const SANDBOX_RULES =
   '(\"bullets\", [\"a\", \"b\"]), (\"numbered\", [\"x\", \"y\"]), (\"table\", [[\"Col A\", \"Col B\"], [\"1\", \"2\"]]), ' +
   '(\"p\", \"Centered\", {\"align\": \"center\"}), (\"pagebreak\",)]. Use \\n inside a paragraph for a line break. ' +
   'For PowerPoint, a \"title\" block is the cover slide and every \"h1\" starts a new slide; keep each slide to a short heading and 3 to 6 short lines. ' +
+  'Draw organograms and diagrams with matplotlib, save a PNG, and add it with (\"image\", \"/workspace/fig.png\", {\"width\": 420, \"caption\": \"Figure 1\"}) (Word and PDF only). ' +
+  'A picture the person attached is already read for you: its text follows their message as a note, so never say you cannot read it. ' +
   'Write the full, finished content yourself; never leave placeholders. ' +
-  'The helper and your code are private working tools: never show the code, the blocks list or the helper name to the person. Run it silently, offer the file, and tell them in plain words what you made. If a step fails, fix it and run it again yourself rather than showing them the error or the script. ' +
-  'Never say a file is made, and never give a link or a path such as /workspace/..., until you have run the code and called sandbox_offer_file and it succeeded; the person only receives a file through that call. If the workspace will not start, say so in one plain sentence and offer to try again; do not write the document into the chat as a substitute, and never answer with code. ' +
+  'The helper and your code are private: never show code, blocks or the helper name. Run it silently, offer the file, say in plain words what you made. If a step fails, fix and rerun it yourself. ' +
+  'Never say a file is made, or give a /workspace link, until sandbox_offer_file succeeded. If the workspace will not start, say so in one plain sentence; never paste the document or code instead. ' +
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
   'Offer each finished file with sandbox_offer_file. ' +
   'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +

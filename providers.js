@@ -223,7 +223,7 @@ async function _callWorkersAI(messages, model, env, ctx) {
  *   caller (size, count, mime type)
  * @param {object} env - Worker env bindings
  */
-export async function callVisionModel(model, messages, images, env) {
+export async function callVisionModel(model, messages, images, env, opts = {}) {
   if (!env.AI) throw new Error('workersai_not_bound');
 
   // Workers AI's Llama 3.2 Vision binding takes a single "image" input
@@ -261,7 +261,7 @@ export async function callVisionModel(model, messages, images, env) {
   const input = {
     prompt,
     image: Array.from(bytes),
-    max_tokens: 1024,
+    max_tokens: Number.isInteger(opts && opts.maxTokens) ? Math.min(Math.max(opts.maxTokens, 256), 4096) : 1024,
   };
   let res;
   try {

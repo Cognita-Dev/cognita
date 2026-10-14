@@ -39,12 +39,15 @@
     pdf("/workspace/report.pdf", blocks)
     pptx("/workspace/deck.pptx", blocks)   # slides: title block = cover, each h1 = new slide
 
-Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, spacer, pagebreak.
+Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, image, spacer, pagebreak.
+A picture (PNG or JPEG, e.g. a matplotlib chart or organogram saved with savefig) is ("image", "/workspace/chart.png", {"width": 420, "caption": "Figure 1"}); width is in points. Word and PDF only.
 An optional last item in a block is a dict: {"align": "left|center|right|justify"}.
 A table may be given as ("table", rows, {"header": True}).
 """
 import re
+import struct
 import zipfile
+import zlib
 from xml.sax.saxutils import escape as _esc
 
 __all__ = ["docx", "pdf", "pptx"]
@@ -85,6 +88,115 @@ def _norm(blocks):
                     opts = extra
         out.append((str(kind).lower(), val, opts))
     return out
+
+
+# ───────────────────────── Pictures ─────────────────────────
+
+def _load_image(path):
+    """Read a PNG or JPEG file. Returns {kind, w, h, data, comps, raw}. Raises ValueError if unsupported."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        pos, idat, plte, hdr = 8, [], None, None
+        while pos + 8 <= len(data):
+            n, typ = struct.unpack(">I4s", data[pos:pos + 8])
+            body = data[pos + 8:pos + 8 + n]
+            if typ == b"IHDR":
+                hdr = struct.unpack(">IIBBBBB", body)
+            elif typ == b"PLTE":
+                plte = body
+            elif typ == b"IDAT":
+                idat.append(body)
+            elif typ == b"IEND":
+                break
+            pos += 12 + n
+        if not hdr:
+            raise ValueError("bad png")
+        w, h, depth, ctype, _c, _f, interlace = hdr
+        if depth != 8 or interlace != 0 or ctype not in (0, 2, 3, 4, 6):
+            raise ValueError("unsupported png (needs 8-bit, not interlaced)")
+        return {"kind": "png", "w": w, "h": h, "ctype": ctype, "plte": plte, "idat": b"".join(idat), "ext": "png"}
+    if data[:2] == b"\xff\xd8":
+        pos = 2
+        while pos + 9 < len(data):
+            if data[pos] != 0xFF:
+                pos += 1
+                continue
+            mk = data[pos + 1]
+            if mk in (0xD8, 0x01) or 0xD0 <= mk <= 0xD7:
+                pos += 2
+                continue
+            ln = struct.unpack(">H", data[pos + 2:pos + 4])[0]
+            if mk in (0xC0, 0xC1, 0xC2):
+                h, w = struct.unpack(">HH", data[pos + 5:pos + 9])
+                return {"kind": "jpeg", "w": w, "h": h, "comps": data[pos + 9], "raw": data, "ext": "jpeg"}
+            pos += 2 + ln
+        raise ValueError("bad jpeg")
+    raise ValueError("pictures must be PNG or JPEG")
+
+
+def _png_file(im):
+    """Re-wrap the stored PNG data as a complete PNG file."""
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", im["w"], im["h"], 8, im["ctype"], 0, 0, 0))
+    if im["plte"]:
+        out += chunk(b"PLTE", im["plte"])
+    return out + chunk(b"IDAT", im["idat"]) + chunk(b"IEND", b"")
+
+
+def _png_planes(im):
+    """Unfilter a PNG. Returns (rgb_bytes, alpha_bytes_or_None, width, height)."""
+    w, h, ct = im["w"], im["h"], im["ctype"]
+    ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ct]
+    stride = w * ch
+    raw = zlib.decompress(im["idat"])
+    prev = bytearray(stride)
+    rgb, alp = bytearray(), bytearray()
+    pos = 0
+    pal = im["plte"] or b""
+    tr = [bytes(pal[i::3][:256]).ljust(256, b"\0") for i in range(3)] if ct == 3 else None
+    for _ in range(h):
+        ft = raw[pos]
+        line = bytearray(raw[pos + 1:pos + 1 + stride])
+        pos += 1 + stride
+        if ft == 1:
+            for i in range(ch, stride):
+                line[i] = (line[i] + line[i - ch]) & 255
+        elif ft == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 255
+        elif ft == 3:
+            for i in range(stride):
+                a = line[i - ch] if i >= ch else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 255
+        elif ft == 4:
+            for i in range(stride):
+                a = line[i - ch] if i >= ch else 0
+                b = prev[i]
+                c = prev[i - ch] if i >= ch else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 255
+        prev = line
+        row = bytearray(w * 3)
+        if ct == 2:
+            row = line
+        elif ct == 6:
+            row[0::3], row[1::3], row[2::3] = line[0::4], line[1::4], line[2::4]
+            alp += line[3::4]
+        elif ct == 0:
+            row[0::3] = row[1::3] = row[2::3] = line
+        elif ct == 4:
+            g = line[0::2]
+            row[0::3] = row[1::3] = row[2::3] = g
+            alp += line[1::2]
+        else:  # palette
+            idx = bytes(line)
+            row[0::3], row[1::3], row[2::3] = idx.translate(tr[0]), idx.translate(tr[1]), idx.translate(tr[2])
+        rgb += row
+    return bytes(rgb), (bytes(alp) if alp and any(b != 255 for b in alp) else None)
 
 
 # ───────────────────────── Word ─────────────────────────
@@ -139,6 +251,7 @@ def _table_xml(rows, header=True):
 def docx(path, blocks, title=None, author="Cognita", page="A4"):
     """Write a .docx file. `blocks` is described at the top of this module."""
     body = []
+    media = []  # (name, bytes, ext)
     nums = []  # numbering instances: (numId, abstractId)
     next_num = 3
     if title and not any(k == "title" for k, _, _ in _norm(blocks)):
@@ -161,6 +274,29 @@ def docx(path, blocks, title=None, author="Cognita", page="A4"):
                 body.append(_para(item, style="ListParagraph", num=nid))
         elif kind == "table":
             body.append(_table_xml(val, opts.get("header", True)))
+        elif kind == "image":
+            try:
+                im = _load_image(val)
+                maxw = 468.0 if str(page).lower() == "letter" else 451.0
+                wpt = min(float(opts.get("width", 420)), maxw)
+                hpt = min(wpt * im["h"] / im["w"], 620.0)
+                wpt = hpt * im["w"] / im["h"]
+                n = len(media) + 1
+                media.append(("image%d.%s" % (n, im["ext"]), im, im["ext"]))
+                cx, cy = int(wpt * 12700), int(hpt * 12700)
+                body.append(
+                    '<w:p><w:pPr><w:keepNext/><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
+                    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
+                    '<wp:extent cx="%d" cy="%d"/><wp:docPr id="%d" name="Picture %d"/>'
+                    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+                    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="%d" name="image%d"/><pic:cNvPicPr/></pic:nvPicPr>'
+                    '<pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdImg%d"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+                    '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+                    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>' % (cx, cy, n, n, n, n, n, cx, cy))
+                if opts.get("caption"):
+                    body.append(_para(opts["caption"], style="Quote", align="center"))
+            except Exception as e:
+                body.append(_para("[Picture could not be added: %s]" % e))
         elif kind == "spacer":
             body.append("<w:p/>")
         elif kind == "pagebreak":
@@ -223,9 +359,16 @@ def docx(path, blocks, title=None, author="Cognita", page="A4"):
     doc_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                 '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
                 '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>')
+    if media:
+        ctypes = ctypes.replace("</Types>", '<Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/></Types>')
+        doc_rels = doc_rels.replace("</Relationships>", "".join(
+            '<Relationship Id="rIdImg%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/%s"/>' % (i + 1, m[0])
+            for i, m in enumerate(media)) + "</Relationships>")
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", ctypes)
         z.writestr("_rels/.rels", rels)
+        for name, im, ext in media:
+            z.writestr("word/media/" + name, _png_file(im) if im["kind"] == "png" else im["raw"])
         z.writestr("word/document.xml", document)
         z.writestr("word/styles.xml", styles)
         z.writestr("word/numbering.xml", numbering)
@@ -268,6 +411,7 @@ def pdf(path, blocks, title=None, page="A4"):
     M = 64.0
     pages = [[]]
     state = {"y": H - M}
+    pdf_images = []
 
     def newpage():
         pages.append([])
@@ -367,6 +511,23 @@ def pdf(path, blocks, title=None, page="A4"):
                             cx += _tw(_cp(word), 10, b)
                 state["y"] = top - rh
             state["y"] -= 10
+        elif kind == "image":
+            try:
+                im = _load_image(val)
+            except Exception as e:
+                draw_para("[Picture could not be added: %s]" % e, 10, M, cw, False, "left", 8)
+            else:
+                wpt = min(float(opts.get("width", 420)), cw)
+                hpt = wpt * im["h"] / im["w"]
+                if hpt > H - 2 * M - 30:
+                    hpt = H - 2 * M - 30
+                    wpt = hpt * im["w"] / im["h"]
+                ensure(hpt + 10)
+                pdf_images.append(("Im%d" % (len(pdf_images) + 1), im))
+                pages[-1].append("q %.2f 0 0 %.2f %.2f %.2f cm /%s Do Q" % (wpt, hpt, M + (cw - wpt) / 2, state["y"] - hpt, pdf_images[-1][0]))
+                state["y"] -= hpt + 8
+                if opts.get("caption"):
+                    draw_para(opts["caption"], 9, M, cw, False, "center", 10)
         elif kind == "spacer":
             state["y"] -= 14
         elif kind == "pagebreak":
@@ -384,12 +545,32 @@ def pdf(path, blocks, title=None, page="A4"):
     pgs = add("")      # 2 pages (filled later)
     fonts = [add("<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>" % n)
              for n in ("Helvetica", "Helvetica-Bold", "Helvetica-Oblique")]
+    xobj = []
+    for name, im in pdf_images:
+        if im["kind"] == "jpeg":
+            cs = {1: "/DeviceGray", 3: "/DeviceRGB", 4: "/DeviceCMYK"}.get(im["comps"], "/DeviceRGB")
+            body = im["raw"].decode("latin-1")
+            oid = add("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream"
+                      % (im["w"], im["h"], cs, len(im["raw"]), body))
+        else:
+            rgb, alpha = _png_planes(im)
+            extra = ""
+            if alpha:
+                ad = zlib.compress(alpha)
+                sid = add("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream"
+                          % (im["w"], im["h"], len(ad), ad.decode("latin-1")))
+                extra = " /SMask %d 0 R" % sid
+            cd = zlib.compress(rgb)
+            oid = add("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length %d%s >>\nstream\n%s\nendstream"
+                      % (im["w"], im["h"], len(cd), extra, cd.decode("latin-1")))
+        xobj.append("/%s %d 0 R" % (name, oid))
+    xres = (" /XObject << %s >>" % " ".join(xobj)) if xobj else ""
     kids = []
     for ops in pages:
         stream = "\n".join(ops).encode("cp1252", "replace")
         cid = add("<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream.decode("latin-1")))
         pid = add("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.0f %.0f] /Contents %d 0 R "
-                  "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R >> >> >>" % (pgs, W, H, cid, fonts[0], fonts[1], fonts[2]))
+                  "/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R >>%s >> >>" % (pgs, W, H, cid, fonts[0], fonts[1], fonts[2], xres))
         kids.append(pid)
     objs[cat - 1] = "<< /Type /Catalog /Pages %d 0 R >>" % pgs
     objs[pgs - 1] = "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join("%d 0 R" % k for k in kids), len(kids))
@@ -434,6 +615,9 @@ def pptx(path, blocks, title=None, author="Cognita"):
         elif kind == "table":
             for row in val or []:
                 cur["lines"].append("  |  ".join(str(c) for c in row))
+        elif kind == "image":
+            if opts.get("caption"):
+                cur["lines"].append(str(opts["caption"]))
         else:
             cur["lines"].append(str(val))
     if not slides:

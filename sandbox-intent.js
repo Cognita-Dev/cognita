@@ -76,3 +76,13 @@ export function shouldOfferSandbox({ text, hint, resuming, recent } = {}) {
   }
   return { offer: false, reason: 'none' };
 }
+
+// With a photo attached, "put these questions in a neatly designed document" has no
+// code keyword of its own. These words mean "turn what is in the picture into a file".
+const IMAGE_FILE_RE = /\b(?:document|doc|docx|word|pdf|file|spreadsheet|excel|xlsx|csv|slides?|powerpoint|pptx|organogram|org chart|table|typed? (?:it|this|these|them) (?:up|out)|type (?:it|this|these|them)|neat(?:ly)?|format(?:ted)?|download\w*|printable)\b/i;
+
+/** True when a message that comes with a picture asks for a finished file, so the picture should be read first and the sandbox offered. */
+export function wantsFileFromImage(text) {
+  const t = typeof text === 'string' ? text.slice(0, 20000) : '';
+  return IMAGE_FILE_RE.test(t) || SANDBOX_INTENT_PATTERNS.some((p) => p.re.test(t));
+}

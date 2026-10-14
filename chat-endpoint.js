@@ -14,6 +14,7 @@ import {
 } from './connector-tools.js';
 import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
+import { wantsFileFromImage } from './sandbox-intent.js';
 import * as mediaTools from './media-tools.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
 import { stripToolLeaks, recoverLeakedCall } from './tool-leak.js';
@@ -509,8 +510,11 @@ export async function handleChatRequest(request, env) {
     }
   }
 
-  const hasImages = Array.isArray(body.images) && body.images.length > 0;
+  const hasImagesAttached = Array.isArray(body.images) && body.images.length > 0;
+  let hasImages = hasImagesAttached;
   let images = [];
+  // Text read from the pictures when the person wants a file made from them (see below).
+  let imageTranscript = '';
 
   if (hasImages) {
     if (!planHasVision(account.planId)) {
@@ -533,6 +537,38 @@ export async function handleChatRequest(request, env) {
         visionQuota.limit + ' per day). It resets at midnight UTC.',
         429, env
       );
+    }
+  }
+
+  // A picture plus a request for a file ("put these questions in a neat document"):
+  // the sandbox cannot read pixels (no OCR engine is bundled), so the vision model reads
+  // every picture first and the sandbox tools then build the file from that text. If
+  // reading fails, the request carries on exactly as before (vision-only answer).
+  if (hasImagesAttached && planHasSandbox(account.planId)) {
+    const lastUser = [...history].reverse().find((m) => m && m.role === 'user');
+    const askText = lastUser && typeof lastUser.content === 'string' ? lastUser.content : '';
+    if (wantsFileFromImage(askText)) {
+      try {
+        const parts = [];
+        for (let i = 0; i < images.length; i++) {
+          const r = await callVisionModel(
+            VISION_MODEL,
+            [
+              { role: 'system', content: 'You read pictures of documents for someone who cannot type them out. Copy ALL the text in the picture exactly as written, in reading order, keeping numbering, headings, answer options (A, B, C, D), tables and line breaks. Do not summarise, explain or add anything. If a word is unclear, write [unclear] instead of guessing. If the picture has no text, describe what it shows in two sentences.' },
+              { role: 'user', content: 'Copy all the text in this picture.' },
+            ],
+            [images[i]],
+            env,
+            { maxTokens: 3072 }
+          );
+          parts.push((images.length > 1 ? 'Picture ' + (i + 1) + ':\n' : '') + r.text);
+        }
+        imageTranscript = parts.join('\n\n').slice(0, 24000);
+        if (imageTranscript) { hasImages = false; images = []; }
+      } catch (e) {
+        console.error('[chat][vision] could not read pictures for the sandbox flow:', e && e.message);
+        imageTranscript = '';
+      }
     }
   }
 
@@ -572,6 +608,14 @@ export async function handleChatRequest(request, env) {
     history.filter(m => m.role === 'user' || m.role === 'assistant'),
     plan.limits.maxContextMessages
   ).map(m => ({ role: m.role, content: m.content }));
+  if (imageTranscript) {
+    for (let i = trimmedHistory.length - 1; i >= 0; i--) {
+      if (trimmedHistory[i].role === 'user') {
+        trimmedHistory[i].content += '\n\n[Text read from the picture(s) the person attached. It may contain small reading errors; fix obvious ones and keep the original numbering and wording otherwise. Use it as the source for the file they asked for. Do not mention this note.]\n' + imageTranscript;
+        break;
+      }
+    }
+  }
 
   // Each kind of turn gets only the prompt it needs (see prompts.js):
   //   - image questions  -> a slim vision prompt
@@ -612,7 +656,7 @@ export async function handleChatRequest(request, env) {
   const gate = planAllowsSandbox
     ? sandboxTools.shouldOfferSandbox({
         text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
-        hint: body.sandboxHint === true,
+        hint: body.sandboxHint === true || !!imageTranscript,
         resuming: !!sandboxResume,
         recent: trimmedHistory.filter((m) => m && m.role === 'user' && typeof m.content === 'string').slice(-4, -1).map((m) => m.content),
       })
