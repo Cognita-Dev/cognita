@@ -1376,12 +1376,26 @@ function detectImageMime(file) {
 // Decode, apply EXIF rotation, downscale and re-encode so phone photos
 // (often 5-12 MB) stay under the plan limit. HEIC is converted to JPEG
 // where the browser can decode it (Safari on iOS).
+// Confirms the browser can actually decode the bytes, so a corrupt or
+// mislabelled file is caught here instead of failing at the vision model.
+async function assertDecodable(file) {
+  if (window.createImageBitmap) {
+    const bmp = await createImageBitmap(file);
+    if (bmp.close) bmp.close();
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    await new Promise((res, rej) => { const i = new Image(); i.onload = res; i.onerror = () => rej(new Error('decode failed')); i.src = url; });
+  } finally { URL.revokeObjectURL(url); }
+}
+
 async function prepareImage(file, mime) {
   const isGif = mime === 'image/gif';
   const needsConvert = HEIC_RE.test(mime);
   const small = file.size <= IMAGE_TARGET_BYTES;
-  if (isGif && small) return { blob: file, mimeType: mime };
-  if (!needsConvert && small && mime !== 'image/jpeg') return { blob: file, mimeType: mime };
+  if (isGif && small) { await assertDecodable(file); return { blob: file, mimeType: mime }; }
+  if (!needsConvert && small && mime !== 'image/jpeg') { await assertDecodable(file); return { blob: file, mimeType: mime }; }
 
   let bitmap = null;
   try {
@@ -1705,9 +1719,10 @@ async function handleImageFile(file, detectedMime) {
       console.error('[app] Image prepare failed:', err && err.message);
       if (HEIC_RE.test(mime)) {
         showToast('This browser cannot read HEIC photos. Change the camera format to Most Compatible, or share it as a JPEG.');
-        return;
+      } else {
+        showToast((file.name || 'That image') + ' looks damaged or is not a valid image.');
       }
-      throw err;
+      return;
     }
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
