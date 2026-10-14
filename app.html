@@ -35,6 +35,8 @@
      content can be sent to the model instead of being marked unreadable. -->
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<!-- Self-hosted Tesseract.js (OCR) so scanned PDFs can be read in the browser. No CDN, no data leaves the device. -->
+<script defer src="/vendor/tesseract/tesseract.min.js"></script>
 <style>
   /* The loading overlay mirrors #appContentWrap's own layout (a flexed
      .conversation above a pinned .composer-wrap) instead of centering a
