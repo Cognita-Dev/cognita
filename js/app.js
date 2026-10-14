@@ -51,6 +51,14 @@ const RESUME_AFTER_IDLE_MS = 4000; // wait after user goes idle before resuming
 // docx, etc.) is either extracted client-side (see below) or flagged to
 // the user rather than silently dropped.
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp|gif)$/i;
+// Phones often hand over images with an empty type (Android) or as HEIC/HEIF (iOS).
+const IMAGE_EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heif' };
+const HEIC_RE = /^image\/(heic|heif)(-sequence)?$/i;
+const MAX_ATTACH_PER_PICK = 5;
+const MAX_IMAGES_PER_MESSAGE = 4;       // matches MAX_IMAGES_PER_REQUEST on the server
+const IMAGE_MAX_EDGE = 2048;            // longest side after downscaling
+const IMAGE_TARGET_BYTES = 3 * 1024 * 1024;
+let attachBusy = false;
 const TEXT_FILE_RE = /\.(txt|csv|tsv|json|md)$/i;
 const TEXT_MIME_TYPES = ['text/plain', 'text/csv', 'text/tab-separated-values', 'application/json', 'text/markdown'];
 // Files that go straight into the code workspace instead of the prompt.
@@ -1258,7 +1266,7 @@ function wireComposer() {
   const fileInput = document.getElementById('fileInput');
 
   function refreshSendEnabled() {
-    sendBtn.disabled = (!input.value.trim() && pendingAttachments.length === 0) || isSending;
+    sendBtn.disabled = (!input.value.trim() && pendingAttachments.length === 0) || isSending || attachBusy;
   }
 
   input.addEventListener('input', () => {
@@ -1290,10 +1298,11 @@ function wireComposer() {
     if (e.shiftKey) return;
 
     e.preventDefault();
-    if (!sendBtn.disabled) sendMessage(input.value.trim());
+    if (!sendBtn.disabled && !attachBusy) sendMessage(input.value.trim());
   });
 
   sendBtn.addEventListener('click', () => {
+    if (attachBusy) return;
     sendMessage(input.value.trim());
   });
 
@@ -1302,26 +1311,134 @@ function wireComposer() {
   fileInput.addEventListener('change', async (e) => {
     const picked = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!picked.length) return;
-
-    for (const file of picked.slice(0, 5)) {
-      await handlePickedFile(file);
-    }
-    renderComposerAttachments();
-    refreshSendEnabled();
-    input.focus();
+    await addFilesToComposer(picked);
   });
+
+  async function addFilesToComposer(files) {
+    files = (files || []).filter(Boolean);
+    if (!files.length) return;
+    if (attachBusy) { showToast('Still reading your last file. One moment.'); return; }
+    attachBusy = true;
+    sendBtn.disabled = true;
+    try {
+      if (files.length > MAX_ATTACH_PER_PICK) {
+        showToast('You can add up to ' + MAX_ATTACH_PER_PICK + ' files at a time. Added the first ' + MAX_ATTACH_PER_PICK + '.');
+      }
+      for (const file of files.slice(0, MAX_ATTACH_PER_PICK)) {
+        try { await handlePickedFile(file); }
+        catch (err) { console.error('[app] attach failed:', err && err.message); showToast('Could not add ' + (file.name || 'that file') + '.'); }
+      }
+    } finally {
+      attachBusy = false;
+      renderComposerAttachments();
+      refreshSendEnabled();
+      if (!_isTouchPrimaryDevice()) input.focus();
+    }
+  }
+
+  // Paste screenshots/files straight into the composer (desktop, and
+  // Android keyboards that support image paste).
+  input.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.files;
+    if (items && items.length) {
+      e.preventDefault();
+      addFilesToComposer(Array.from(items));
+    }
+  });
+
+  // Drag and drop onto the composer.
+  const dropZone = input.closest('.composer') || input.parentElement;
+  if (dropZone) {
+    dropZone.addEventListener('dragover', (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+    });
+    dropZone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) { e.preventDefault(); addFilesToComposer(Array.from(files)); }
+    });
+  }
+}
+
+function extOf(name) {
+  const m = /\.([a-z0-9]+)$/i.exec(String(name || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+// Returns a usable image mime for the file, or '' if it is not an image.
+function detectImageMime(file) {
+  const t = String(file.type || '').toLowerCase();
+  if (t === 'image/jpg' || t === 'image/pjpeg') return 'image/jpeg';
+  if (IMAGE_MIME_RE.test(t) || HEIC_RE.test(t)) return t;
+  if (!t || t === 'application/octet-stream') return IMAGE_EXT_MIME[extOf(file.name)] || '';
+  return '';
+}
+
+// Decode, apply EXIF rotation, downscale and re-encode so phone photos
+// (often 5-12 MB) stay under the plan limit. HEIC is converted to JPEG
+// where the browser can decode it (Safari on iOS).
+async function prepareImage(file, mime) {
+  const isGif = mime === 'image/gif';
+  const needsConvert = HEIC_RE.test(mime);
+  const small = file.size <= IMAGE_TARGET_BYTES;
+  if (isGif && small) return { blob: file, mimeType: mime };
+  if (!needsConvert && small && mime !== 'image/jpeg') return { blob: file, mimeType: mime };
+
+  let bitmap = null;
+  try {
+    if (window.createImageBitmap) {
+      try { bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+      catch (_) { bitmap = await createImageBitmap(file); }
+    }
+  } catch (_) { bitmap = null; }
+  let w, h, source;
+  if (bitmap) { w = bitmap.width; h = bitmap.height; source = bitmap; }
+  else {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode failed')); i.src = url; });
+      w = img.naturalWidth; h = img.naturalHeight; source = img;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  if (!w || !h) throw new Error('empty image');
+  const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(w, h));
+  // Nothing to shrink and no format change needed: keep the original bytes.
+  if (scale === 1 && small && !needsConvert) { if (bitmap && bitmap.close) bitmap.close(); return { blob: file, mimeType: mime }; }
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
+  const ctx = canvas.getContext('2d');
+  const keepAlpha = mime === 'image/png' || mime === 'image/webp';
+  if (!keepAlpha) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  if (bitmap && bitmap.close) bitmap.close();
+  const outMime = keepAlpha ? 'image/png' : 'image/jpeg';
+  let blob = await new Promise((res) => canvas.toBlob(res, outMime, 0.85));
+  if (blob && blob.size > IMAGE_TARGET_BYTES && outMime === 'image/png') {
+    blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (blob) return { blob, mimeType: 'image/jpeg' };
+  }
+  if (!blob) throw new Error('encode failed');
+  return { blob, mimeType: outMime };
 }
 
 async function handlePickedFile(file) {
-  const isImage = IMAGE_MIME_RE.test(file.type);
+  if (!file || file.size === 0) {
+    showToast((file && file.name ? file.name : 'That file') + ' is empty, so it was skipped.');
+    return;
+  }
+  if (pendingAttachments.some((a) => a.name === file.name && a.size === file.size && a.kind !== 'image')) {
+    showToast(file.name + ' is already attached.');
+    return;
+  }
+  const imageMime = detectImageMime(file);
+  const isImage = !!imageMime;
   const isTextLike = TEXT_MIME_TYPES.includes(file.type) || TEXT_FILE_RE.test(file.name);
   const isPdf = file.type === PDF_MIME || PDF_FILE_RE.test(file.name);
   const isDocx = file.type === DOCX_MIME || DOCX_FILE_RE.test(file.name);
 
   // Pictures go to the vision model, not the workspace.
   if (isImage) {
-    await handleImageFile(file);
+    await handleImageFile(file, imageMime);
     return;
   }
 
@@ -1565,8 +1682,9 @@ async function extractDocxText(file) {
   return (result.value || '').trim();
 }
 
-async function handleImageFile(file) {
-  if (!IMAGE_MIME_RE.test(file.type)) {
+async function handleImageFile(file, detectedMime) {
+  const mime = detectedMime || detectImageMime(file);
+  if (!mime) {
     pendingAttachments.push({ name: file.name, kind: 'unsupported' });
     return;
   }
@@ -1574,24 +1692,45 @@ async function handleImageFile(file) {
     showToast('Image understanding is available on Cognita Plus and above.');
     return;
   }
+  if (pendingAttachments.filter((a) => a.kind === 'image').length >= MAX_IMAGES_PER_MESSAGE) {
+    showToast('You can attach up to ' + MAX_IMAGES_PER_MESSAGE + ' images per message.');
+    return;
+  }
 
   try {
+    let prepared;
+    try {
+      prepared = await prepareImage(file, mime);
+    } catch (err) {
+      console.error('[app] Image prepare failed:', err && err.message);
+      if (HEIC_RE.test(mime)) {
+        showToast('This browser cannot read HEIC photos. Change the camera format to Most Compatible, or share it as a JPEG.');
+        return;
+      }
+      throw err;
+    }
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = () => reject(new Error('read failed'));
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(prepared.blob);
     });
-    const base64 = dataUrl.split(',')[1];
+    const base64 = String(dataUrl).split(',')[1];
+    const maxChars = Math.floor(sandboxFileLimitBytes() * 1.37);
+    if (!base64 || base64.length > Math.min(8000000, Math.max(maxChars, 5 * 1024 * 1024 * 1.37))) {
+      showToast((file.name || 'That image') + ' is too large even after shrinking.');
+      return;
+    }
+    const baseName = prepared.mimeType !== mime && file.name ? file.name.replace(/\.[^.]+$/, '') + (prepared.mimeType === 'image/jpeg' ? '.jpg' : '.png') : file.name;
     pendingAttachments.push({
-      name: file.name,
+      name: baseName || 'image',
       kind: 'image',
       dataUrl,
       base64,
-      mimeType: file.type,
+      mimeType: prepared.mimeType,
     });
   } catch (err) {
-    console.error('[app] Could not read image:', err.message);
+    console.error('[app] Could not read image:', err && err.message);
     showToast('Could not read that image.');
   }
 }
