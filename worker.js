@@ -4,7 +4,6 @@
 import { handlePlansRequest } from './plans-endpoint.js';
 import { handleChatRequest } from './chat-endpoint.js';
 import { handleImageRequest } from './image-endpoint.js';
-import { handleDocumentRequest } from './document-endpoint.js';
 import { handlePaymentInitialize, handlePaymentStatus } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
@@ -194,10 +193,6 @@ const _app = {
 
     if (request.method === 'POST' && url.pathname === '/api/image') {
       return handleImageRequest(request, env);
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/document') {
-      return handleDocumentRequest(request, env);
     }
 
     if (request.method === 'POST' && /^\/api\/files\/[^/]+$/.test(url.pathname)) {
@@ -542,7 +537,6 @@ function _isHeavyRoute(method, path) {
   if (method !== 'POST') return false;
   return path === '/api/chat' ||
     path === '/api/image' ||
-    path === '/api/document' ||
     path === '/api/insights/generate' ||
     path === '/api/note-summary' ||
     path === '/api/note-ask' ||

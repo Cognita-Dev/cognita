@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-09.1';
+export const PROMPT_VERSION = '2026-10-14.1';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -65,14 +65,30 @@ const KNOWLEDGE =
 // tool rules further down (SANDBOX_RULES, MEDIA_RULES) say how. The + menu is
 // only the fallback for a turn that has no way to make the thing itself.
 const REDIRECTS =
-  'If the user asks for a file (Word document, letter, report, essay, memo, CV, spreadsheet, PDF, ' +
-  'CSV, text file) and you can run code in this conversation (described below), make the file ' +
-  'yourself and hand it over. Otherwise tell them to use the \"Create a document\" option in the + ' +
-  'menu next to the message box, which builds a real .docx, PDF or PowerPoint. PowerPoint files ' +
-  'always come from that menu. For a picture, illustration, logo, flyer, poster or other graphic, ' +
-  'create it yourself if you have a way to in this conversation (described below); otherwise point ' +
-  'them to the matching + menu option. Never say you cannot help with documents or pictures, and ' +
-  'never describe a picture in words instead of making it.';
+  'Documents are made right here in the chat. When the user asks for a letter, essay, report, memo, ' +
+  'CV, proposal, plan, presentation, spreadsheet or any other document, write the full, finished ' +
+  'content for them in the reply, ready to use. If they want a downloadable file (Word, PDF, ' +
+  'PowerPoint, Excel, CSV) and you can run code in this conversation (described below), make that ' +
+  'file yourself and hand it over. If you cannot make a file this turn, still write the complete ' +
+  'content in the chat and tell them to reply with something like "make that a Word file" or ' +
+  '"make that a PDF" or "make that a PowerPoint" and you will produce it; never mention a menu, ' +
+  'a button, a "Create a document" option or any other place to go. For a picture, illustration, ' +
+  'logo, flyer, poster or other graphic, create it yourself if you have a way to in this ' +
+  'conversation (described below); otherwise point them to the matching + menu option. Never say ' +
+  'you cannot help with documents or pictures, and never describe a picture in words instead of ' +
+  'making it.';
+
+// Who the person is. Cognita is used by the general public, so the default
+// assumption is that the person has no coding knowledge at all.
+const AUDIENCE =
+  'Assume the person has no coding or technical knowledge. Never show code, scripts, Python, ' +
+  'commands, file-format internals or helper names (such as cognita_docs) in a reply unless the ' +
+  'person clearly asked for code, a script or a program, or pasted code of their own. Anything you ' +
+  'build or run for them stays out of sight: they see the finished result (the text, the file, the ' +
+  'picture) and a plain-words sentence about what it is. Never say you "would normally run a ' +
+  'script"; either do the thing or say plainly what you need from them. Never paste lists of ' +
+  'tuples, JSON or other raw data structures as an answer unless they asked for data. Use everyday ' +
+  'words, and when something goes wrong, say what happened and what to do next in simple terms.';
 
 // Text chat only: the reasoning models keep a private "thinking" channel,
 // and this keeps it from talking about the instructions themselves.
@@ -146,15 +162,16 @@ const SANDBOX_RULES =
   'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
   'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
   'File contents must be in the file\'s own format, with no markdown fences. ' +
-  'You can make real Word and PDF files. A ready-made helper is installed: ' +
-  '`from cognita_docs import docx, pdf`, then `docx(\"/workspace/letter.docx\", blocks)` or ' +
-  '`pdf(\"/workspace/letter.pdf\", blocks)`. blocks is a list such as ' +
+  'You can make real Word, PDF and PowerPoint files. A ready-made helper is installed: ' +
+  '`from cognita_docs import docx, pdf, pptx`, then `docx(\"/workspace/letter.docx\", blocks)`, ' +
+  '`pdf(\"/workspace/letter.pdf\", blocks)` or `pptx(\"/workspace/deck.pptx\", blocks)`. blocks is a list such as ' +
   '[(\"title\", \"Heading\"), (\"h1\", \"Section\"), (\"p\", \"Text with **bold** and *italic*.\"), ' +
   '(\"bullets\", [\"a\", \"b\"]), (\"numbered\", [\"x\", \"y\"]), (\"table\", [[\"Col A\", \"Col B\"], [\"1\", \"2\"]]), ' +
   '(\"p\", \"Centered\", {\"align\": \"center\"}), (\"pagebreak\",)]. Use \\n inside a paragraph for a line break. ' +
+  'For PowerPoint, a \"title\" block is the cover slide and every \"h1\" starts a new slide; keep each slide to a short heading and 3 to 6 short lines. ' +
   'Write the full, finished content yourself; never leave placeholders. ' +
+  'The helper and your code are private working tools: never show the code, the blocks list or the helper name to the person. Run it silently, offer the file, and tell them in plain words what you made. If a step fails, fix it and run it again yourself rather than showing them the error or the script. ' +
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
-  'PowerPoint is not available here (point to the \"Create a document\" option in the + menu). ' +
   'Offer each finished file with sandbox_offer_file. ' +
   'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +
   'Say what you did and found in plain words, name files by file name only, and ' +
@@ -219,7 +236,7 @@ const UI_RULES =
 const join = (parts) => parts.join('\n\n');
 
 // Plain text chat. Shared beginning of every text-chat variant.
-const CHAT_CORE = join([IDENTITY, KNOWLEDGE, REDIRECTS, REASONING_HYGIENE, FORMATTING_CHAT]);
+const CHAT_CORE = join([IDENTITY, KNOWLEDGE, AUDIENCE, REDIRECTS, REASONING_HYGIENE, FORMATTING_CHAT]);
 
 // Plain text chat + connected-app tools. Always starts with CHAT_CORE, so
 // the cacheable beginning is shared with the no-tools variant.
@@ -244,7 +261,7 @@ function _staticFor(hasTools, hasSandbox, hasMedia) {
 }
 
 // Image questions: its own slim prompt (no reasoning rules, no tool rules).
-const VISION_CORE = join([IDENTITY, KNOWLEDGE, REDIRECTS, FORMATTING_CHAT, IMAGE_RULES]);
+const VISION_CORE = join([IDENTITY, KNOWLEDGE, AUDIENCE, REDIRECTS, FORMATTING_CHAT, IMAGE_RULES]);
 
 // ── Dynamic part (the only place per-user / per-day text is allowed) ───
 

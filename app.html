@@ -285,10 +285,6 @@
                     <i class="ph ph-image-square"></i>
                     <span>Create an illustration</span>
                   </button>
-                  <button class="attach-menu-item" id="attachDocumentItem" type="button">
-                    <i class="ph ph-file-doc"></i>
-                    <span>Create a document</span>
-                  </button>
                   <button class="attach-menu-item" id="attachConnectorsItem" type="button">
                     <i class="ph ph-plug"></i>
                     <span>Connected apps</span>
@@ -1160,43 +1156,6 @@
   </div>
 </div>
 
-<!-- ── Document generation modal (letter / report / essay / memo) — chat view ── -->
-<div class="modal-overlay" id="documentModal" hidden>
-  <div class="modal-box">
-    <div class="modal-header">
-      <h2>Create a document</h2>
-      <button class="modal-close-btn" id="documentModalClose" aria-label="Close">
-        <i class="ph ph-x"></i>
-      </button>
-    </div>
-    <div class="modal-body">
-      <label class="modal-field">
-        <span>What's it about?</span>
-        <textarea id="documentTopicInput" rows="3" placeholder="e.g. a resignation letter for a marketing role, a report on Q3 sales performance"></textarea>
-      </label>
-      <div class="visual-type-toggle" id="documentTypeToggle">
-        <button class="visual-type-option is-active" data-doctype="letter">Letter</button>
-        <button class="visual-type-option" data-doctype="report">Report</button>
-        <button class="visual-type-option" data-doctype="essay">Essay</button>
-        <button class="visual-type-option" data-doctype="memo">Memo</button>
-      </div>
-      <div class="visual-type-toggle mt-tight" id="documentFormatToggle">
-        <button class="visual-type-option is-active" data-format="docx">
-          <i class="ph ph-file-doc"></i> Word
-        </button>
-        <button class="visual-type-option" data-format="pdf">
-          <i class="ph ph-file-pdf"></i> PDF
-        </button>
-        <button class="visual-type-option" data-format="pptx">
-          <i class="ph ph-presentation-chart"></i> PowerPoint
-        </button>
-      </div>
-      <button class="modal-submit-btn" id="documentSubmitBtn">        <span class="btn-label">Generate</span>
-        <span class="btn-spinner" hidden></span>
-      </button>
-    </div>
-  </div>
-</div>
 
 <!-- ── Connected apps modal (connectors: view/connect/disconnect) — chat view ── -->
 <div class="modal-overlay" id="connectorsModal" hidden>

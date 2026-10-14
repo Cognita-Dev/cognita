@@ -22,9 +22,9 @@
 <script src="/js/sandbox-shell.js"></script>
 
 <script type="text/plain" id="docs-py-src">
-"""cognita_docs: make Word (.docx) and PDF files with only the standard library.
+"""cognita_docs: make Word (.docx), PDF and PowerPoint (.pptx) files with only the standard library.
 
-    from cognita_docs import docx, pdf
+    from cognita_docs import docx, pdf, pptx
     blocks = [
         ("title", "Quarterly Report"),
         ("h1", "Summary"),
@@ -37,6 +37,7 @@
     ]
     docx("/workspace/report.docx", blocks)
     pdf("/workspace/report.pdf", blocks)
+    pptx("/workspace/deck.pptx", blocks)   # slides: title block = cover, each h1 = new slide
 
 Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, spacer, pagebreak.
 An optional last item in a block is a dict: {"align": "left|center|right|justify"}.
@@ -46,7 +47,7 @@ import re
 import zipfile
 from xml.sax.saxutils import escape as _esc
 
-__all__ = ["docx", "pdf"]
+__all__ = ["docx", "pdf", "pptx"]
 
 _INLINE = re.compile(r"(\*\*.+?\*\*|\*.+?\*)", re.S)
 
@@ -404,6 +405,102 @@ def pdf(path, blocks, title=None, page="A4"):
     out += ("trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, cat, xref)).encode()
     with open(path, "wb") as f:
         f.write(bytes(out))
+    return path
+
+
+# ───────────────────────── PowerPoint ─────────────────────────
+
+def pptx(path, blocks, title=None, author="Cognita"):
+    """Make a .pptx. A "title" block makes the opening slide; every h1 starts a new slide.
+    p / bullets / numbered / quote / table blocks fill the slide they follow."""
+    A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    slides = []
+    cur = None
+    for kind, val, opts in _norm(blocks):
+        if kind in ("title", "h1"):
+            cur = {"head": str(val), "title": kind == "title", "lines": []}
+            slides.append(cur)
+            continue
+        if cur is None:
+            cur = {"head": title or "", "title": True, "lines": []}
+            slides.append(cur)
+        if kind in ("pagebreak", "spacer"):
+            if kind == "pagebreak":
+                cur = {"head": "", "title": False, "lines": []}
+                slides.append(cur)
+        elif kind in ("bullets", "numbered"):
+            for i, it in enumerate(val or []):
+                cur["lines"].append(("%d. " % (i + 1) if kind == "numbered" else "• ") + str(it))
+        elif kind == "table":
+            for row in val or []:
+                cur["lines"].append("  |  ".join(str(c) for c in row))
+        else:
+            cur["lines"].append(str(val))
+    if not slides:
+        slides.append({"head": title or "Presentation", "title": True, "lines": []})
+
+    def txt(text, sz, bold=False, color="1F2937"):
+        out = ""
+        for t, b, i in _runs(text):
+            out += ('<a:r><a:rPr lang="en-US" sz="%d"%s%s dirty="0"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:rPr><a:t>%s</a:t></a:r>'
+                    % (sz, ' b="1"' if (b or bold) else "", ' i="1"' if i else "", color, _esc(t)))
+        return out
+
+    def shape(i, name, x, y, w, h, paras):
+        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
+                '<p:txBody><a:bodyPr wrap="square" anchor="t"><a:normAutofit/></a:bodyPr><a:lstStyle/>%s</p:txBody></p:sp>' % (i, name, x, y, w, h, paras))
+
+    def slide_xml(s):
+        W, H = 12192000, 6858000
+        if s["title"]:
+            body = shape(2, "Title", 900000, 2200000, W - 1800000, 1300000, '<a:p><a:pPr algn="l"/>%s</a:p>' % txt(s["head"], 4400, True, "111827"))
+            if s["lines"]:
+                body += shape(3, "Subtitle", 900000, 3600000, W - 1800000, 1800000, "".join('<a:p>%s</a:p>' % txt(l, 2000, False, "4B5563") for l in s["lines"][:4]))
+        else:
+            n = max(len(s["lines"]), 1)
+            sz = 2400 if n <= 6 else 2000 if n <= 9 else 1600 if n <= 13 else 1300
+            body = shape(2, "Title", 600000, 350000, W - 1200000, 900000, '<a:p>%s</a:p>' % txt(s["head"], 3200, True, "111827"))
+            body += shape(3, "Body", 600000, 1400000, W - 1200000, H - 1900000, "".join('<a:p><a:spcAft><a:spcPts val="600"/></a:spcAft>%s</a:p>' % txt(l, sz) for l in s["lines"]) or "<a:p><a:endParaRPr lang=\"en-US\"/></a:p>")
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld %s><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>' % (A, body))
+
+    ct = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>',
+          '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
+          '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>',
+          '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>',
+          '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>']
+    REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    prels = ['<Relationship Id="rId1" Type="%s/slideMaster" Target="slideMasters/slideMaster1.xml"/>' % REL]
+    ids = []
+    for n in range(1, len(slides) + 1):
+        ct.append('<Override PartName="/ppt/slides/slide%d.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>' % n)
+        prels.append('<Relationship Id="rId%d" Type="%s/slide" Target="slides/slide%d.xml"/>' % (n + 1, REL, n))
+        ids.append('<p:sldId id="%d" r:id="rId%d"/>' % (255 + n, n + 1))
+    ct.append("</Types>")
+    pres = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation %s><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>%s</p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>' % (A, "".join(ids)))
+    tree = '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>'
+    master = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster %s>%s<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>' % (A, tree))
+    layout = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout %s type="blank">%s<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>' % (A, tree)
+    clr = "".join('<a:%s><a:srgbClr val="%s"/></a:%s>' % (n, v, n) for n, v in [("dk1", "000000"), ("lt1", "FFFFFF"), ("dk2", "1F2937"), ("lt2", "F3F4F6"), ("accent1", "2563EB"), ("accent2", "059669"), ("accent3", "D97706"), ("accent4", "DC2626"), ("accent5", "7C3AED"), ("accent6", "0891B2"), ("hlink", "2563EB"), ("folHlink", "7C3AED")])
+    fnt = '<a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/>'
+    fill = '<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>'
+    ln = '<a:lnStyleLst>' + '<a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>' * 3 + '</a:lnStyleLst>'
+    eff = '<a:effectStyleLst>' + '<a:effectStyle><a:effectLst/></a:effectStyle>' * 3 + '</a:effectStyleLst>'
+    bg = '<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>'
+    theme = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Cognita"><a:themeElements><a:clrScheme name="Cognita">%s</a:clrScheme><a:fontScheme name="Cognita"><a:majorFont>%s</a:majorFont><a:minorFont>%s</a:minorFont></a:fontScheme><a:fmtScheme name="Cognita">%s%s%s%s</a:fmtScheme></a:themeElements></a:theme>' % (clr, fnt, fnt, fill, ln, eff, bg))
+    rels_hdr = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "".join(ct))
+        z.writestr("_rels/.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/officeDocument" Target="ppt/presentation.xml"/></Relationships>' % REL)
+        z.writestr("ppt/presentation.xml", pres)
+        z.writestr("ppt/_rels/presentation.xml.rels", rels_hdr + "".join(prels) + "</Relationships>")
+        z.writestr("ppt/slideMasters/slideMaster1.xml", master)
+        z.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="%s/theme" Target="../theme/theme1.xml"/></Relationships>' % (REL, REL))
+        z.writestr("ppt/slideLayouts/slideLayout1.xml", layout)
+        z.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>' % REL)
+        z.writestr("ppt/theme/theme1.xml", theme)
+        for n, sl in enumerate(slides, 1):
+            z.writestr("ppt/slides/slide%d.xml" % n, slide_xml(sl))
+            z.writestr("ppt/slides/_rels/slide%d.xml.rels" % n, rels_hdr + '<Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>' % REL)
     return path
 </script>
 
