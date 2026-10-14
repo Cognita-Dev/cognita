@@ -1,0 +1,24 @@
+Remaining steps (nothing here is hidden - all names are visible)
+
+A) NEW repo Cognita-Dev/cognita-terminal (currently empty)
+   On GitHub: Add file > Create new file. In the file-name box type the path
+   EXACTLY as shown (typing the "/" makes the folder), paste the contents of
+   the matching file from template-repo-files/, then click Commit changes.
+
+     type this name in GitHub              paste the contents of
+     ------------------------------------  ---------------------------------
+     .devcontainer/devcontainer.json       template-repo-files/devcontainer.json
+     .devcontainer/cognita-agent.py        template-repo-files/cognita-agent.py
+     README.md                             template-repo-files/README.md
+
+B) Main repo Cognita-Dev/cognita, file .vercelignore (line 52)
+   Open it on GitHub, click the pencil, find the line:   canva-tools.js
+   Replace that ONE line with these THREE lines:
+       cloudshell-tools.js
+       codespaces-tools.js
+       terminal-agent/
+   (A full copy is in vercelignore-full-copy.txt if you prefer to paste it all.)
+
+C) Main repo: delete these two files on GitHub (open file > ... menu > Delete file):
+       canva-tools.js
+       assets/canva-icon-logo.svg
