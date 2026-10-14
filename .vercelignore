@@ -49,7 +49,9 @@ social-scheduler.js
 connectors.js
 connector-providers.js
 connector-tools.js
-canva-tools.js
+cloudshell-tools.js
+codespaces-tools.js
+terminal-agent/
 figma-tools.js
 github-tools.js
 google-tools.js
