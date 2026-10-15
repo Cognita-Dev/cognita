@@ -2201,3 +2201,20 @@ img.message-image[data-msg-index] { cursor: zoom-in; }
 }
 .attachment-chip .attachment-chip-open:hover { color: var(--text-1); }
 .attachment-chip > i { flex-shrink: 0; }
+
+/* Long pasted text, attached as a file the person can open and edit */
+.attachment-chip-pasted .attachment-chip-open { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; }
+.attachment-chip-sub { font-size: 11px; color: var(--text-2); }
+.attachment-chip-edit { background: none; border: 1px solid var(--border-strong); color: var(--text-1); border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+.attachment-chip-edit:hover { background: var(--bg-subtle); }
+.paste-editor { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-end; justify-content: center; }
+.paste-editor-card { background: var(--bg-elevated); color: var(--text-1); width: min(820px, 100%); height: min(88vh, 100%); border-radius: 16px 16px 0 0; display: flex; flex-direction: column; padding: 14px; gap: 10px; box-sizing: border-box; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 720px) { .paste-editor { align-items: center; } .paste-editor-card { border-radius: 16px; height: min(80vh, 760px); } }
+.paste-editor-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.paste-editor-title { font-weight: 600; }
+.paste-editor-meta { font-size: 12px; color: var(--text-2); }
+.paste-editor-x { background: none; border: 0; color: inherit; font-size: 20px; cursor: pointer; }
+.paste-editor-text { flex: 1; width: 100%; box-sizing: border-box; resize: none; background: var(--bg-subtle); color: var(--text-1); border: 1px solid var(--border-strong); border-radius: 10px; padding: 12px; font: 14px/1.5 'Geist Mono', ui-monospace, monospace; }
+.paste-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.paste-editor-cancel, .paste-editor-save { border-radius: 999px; padding: 9px 18px; font: inherit; cursor: pointer; border: 1px solid var(--border-strong); background: none; color: var(--text-1); }
+.paste-editor-save { background: var(--accent); border-color: var(--accent); color: #fff; }
