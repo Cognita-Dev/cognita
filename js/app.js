@@ -1486,7 +1486,26 @@ async function prepareImage(file, mime) {
   const outMime = keepAlpha ? 'image/png' : 'image/jpeg';
   let blob = await new Promise((res) => canvas.toBlob(res, outMime, 0.85));
   if (blob && blob.size > IMAGE_TARGET_BYTES && outMime === 'image/png') {
-    blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+    // A transparent picture (a logo with its background removed) must stay a PNG, because JPEG has no
+    // transparency and would turn the see-through parts black. Shrink it in steps first.
+    let cur = canvas;
+    for (let step = 0; step < 5 && blob && blob.size > IMAGE_TARGET_BYTES; step++) {
+      const nw = Math.round(cur.width * 0.75), nh = Math.round(cur.height * 0.75);
+      if (Math.max(nw, nh) < 320) break;
+      const smaller = document.createElement('canvas');
+      smaller.width = nw; smaller.height = nh;
+      smaller.getContext('2d').drawImage(cur, 0, 0, nw, nh);
+      cur = smaller;
+      blob = await new Promise((res) => cur.toBlob(res, 'image/png'));
+    }
+    if (blob && blob.size <= IMAGE_TARGET_BYTES) return { blob, mimeType: 'image/png' };
+    // Still too big: fall back to JPEG, but on a white background so nothing goes black.
+    const flat = document.createElement('canvas');
+    flat.width = canvas.width; flat.height = canvas.height;
+    const fctx = flat.getContext('2d');
+    fctx.fillStyle = '#fff'; fctx.fillRect(0, 0, flat.width, flat.height);
+    fctx.drawImage(canvas, 0, 0);
+    blob = await new Promise((res) => flat.toBlob(res, 'image/jpeg', 0.85));
     if (blob) return { blob, mimeType: 'image/jpeg' };
   }
   if (!blob) throw new Error('encode failed');
