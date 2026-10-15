@@ -56,11 +56,14 @@ test('the example in the UI rules is valid and renders as a bar_chart', () => {
   assert.equal(ex.ui[0].type, 'bar_chart');
 });
 
-test('token budget (tightened from ~2141 / 2817 / 2658 / 3725)', () => {
+// Plain chat and chat+tools keep their tight caps. The sandbox prompt legitimately grew (document helper, QA check and
+// taste-score rules, ~1,600 tokens), so the all-features cap was moved from 4400 to 5300 and a separate sandbox cap added.
+test('token budget (chat ~2550, +tools ~3180, +sandbox ~4140, all ~5160)', () => {
   const t = (a, b, c, v) => chatPromptInfo({ hasTools: a, hasSandbox: b, hasMedia: c }).approxTokens;
   assert.ok(t(false, false, false) <= 2600, 'chat ' + t(false, false, false));
   assert.ok(t(true, false, false) <= 3250, 'chat+tools ' + t(true, false, false));
-  assert.ok(t(true, true, true) <= 4400, 'all ' + t(true, true, true));
+  assert.ok(t(false, true, false) <= 4400, 'chat+sandbox ' + t(false, true, false));
+  assert.ok(t(true, true, true) <= 5300, 'all ' + t(true, true, true));
 });
 
 test('vision prompt stays slim and version is bumped', () => {
