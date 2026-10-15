@@ -26,7 +26,7 @@ const EXT_KIND = {
 
 const KIND_LABEL = {
   html: 'Interactive page', image: 'Picture', pdf: 'PDF document', sheet: 'Spreadsheet', csv: 'Table',
-  word: 'Word document', slides: 'Presentation (text outline)', text: 'Text file',
+  word: 'Word document', slides: 'Presentation', text: 'Text file',
 };
 
 const KIND_ICON = {
