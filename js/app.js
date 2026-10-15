@@ -2433,7 +2433,14 @@ async function continueAfterSandbox(payload, paused, turn) {
 
 function withoutPreviewFields(r) {
   const out = Object.assign({}, r);
-  delete out.screenshot; delete out.previewHtml; delete out.previewSize;
+  // The page-test screenshot and the taste picture of the pages are the only pictures the server may use,
+  // and only for the vision review. Both must be small JPEG data addresses.
+  const jpeg = (u) => typeof u === 'string' && u.length <= 190000 && /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(u) ? u : null;
+  const imgs = [];
+  const pg = jpeg(r.tastePicture); if (pg) imgs.push({ kind: 'pages', dataUrl: pg });
+  const sh = jpeg(r.screenshot && r.screenshot.dataUrl); if (sh) imgs.push({ kind: 'page-test', dataUrl: sh });
+  delete out.screenshot; delete out.previewHtml; delete out.previewSize; delete out.tastePicture;
+  if (imgs.length) out.reviewImages = imgs;
   return out;
 }
 
