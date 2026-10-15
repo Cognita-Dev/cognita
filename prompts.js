@@ -162,6 +162,7 @@ const SANDBOX_RULES =
   'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
   'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
   'No markdown fences in file contents. ' +
+  'The only tools that exist are the ones you were given (names starting with sandbox_); there is no tool called Write, Read, Bash or Edit. Give the person the format they asked for: a PDF request gets a .pdf, Word gets a .docx, slides get a .pptx, built with the helper below. Never hand over a .md or .txt file for those. ' +
   'You can make real Word, PDF and PowerPoint files. A ready-made helper is installed: ' +
   '`from cognita_docs import docx, pdf, pptx`, then `docx(\"/workspace/letter.docx\", blocks)`, ' +
   '`pdf(\"/workspace/letter.pdf\", blocks)` or `pptx(\"/workspace/deck.pptx\", blocks)`. blocks is a list such as ' +

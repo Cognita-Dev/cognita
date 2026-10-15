@@ -81,6 +81,13 @@ export function shouldOfferSandbox({ text, hint, resuming, recent } = {}) {
 // code keyword of its own. These words mean "turn what is in the picture into a file".
 const IMAGE_FILE_RE = /\b(?:document|doc|docx|word|pdf|file|spreadsheet|excel|xlsx|csv|slides?|powerpoint|pptx|organogram|org chart|table|typed? (?:it|this|these|them) (?:up|out)|type (?:it|this|these|them)|neat(?:ly)?|format(?:ted)?|download\w*|printable)\b/i;
 
+const LOGO_RE = /\b(?:logo|watermark|letterhead|crest|emblem|badge|brand(?:ing)? (?:mark|image|picture))\b/i;
+
+/** True when the attached picture is meant to be placed in a file (a logo or crest), not read as a document. */
+export function isLogoRequest(text) {
+  return LOGO_RE.test(typeof text === 'string' ? text.slice(0, 20000) : '');
+}
+
 /** True when a message that comes with a picture asks for a finished file, so the picture should be read first and the sandbox offered. */
 export function wantsFileFromImage(text) {
   const t = typeof text === 'string' ? text.slice(0, 20000) : '';

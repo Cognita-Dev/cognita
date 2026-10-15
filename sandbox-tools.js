@@ -691,3 +691,69 @@ export function qaGate(path, trace) {
   return 'Not offered yet. The last quality check of ' + base + ' found problems. Fix each one in the content or layout, rebuild the file, ' +
     'then run check again. Offer the file only when the report says PASS.';
 }
+
+
+// ── Tool names the model makes up ───────────────────────────────────────
+// Some models call "Write", "Read" or "Bash" (names from other products). There is no such tool here, and an unknown
+// name used to turn into an approval card for "a connected app". When the sandbox is offered, the obvious ones are
+// mapped to the real sandbox tool; anything else gets a plain "no such tool" answer instead of an approval card.
+const _ALIASES = {
+  write: 'sandbox_write_file', write_file: 'sandbox_write_file', create_file: 'sandbox_write_file', save_file: 'sandbox_write_file',
+  read: 'sandbox_read_file', read_file: 'sandbox_read_file',
+  bash: 'sandbox_run_command', shell: 'sandbox_run_command', run_command: 'sandbox_run_command',
+  python: 'sandbox_run_python', run_python: 'sandbox_run_python',
+};
+
+/** Returns { name, args } for a made-up tool name that clearly means a sandbox tool, else null. */
+export function aliasSandboxCall(call) {
+  if (!call || typeof call.name !== 'string') return null;
+  const key = call.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const target = _ALIASES[key];
+  if (!target) return null;
+  const a = call.args && typeof call.args === 'object' ? call.args : {};
+  const str = (v) => (typeof v === 'string' ? v : undefined);
+  if (target === 'sandbox_write_file') {
+    const path = str(a.path) || str(a.file_path) || str(a.filename) || str(a.file);
+    const content = str(a.content) !== undefined ? str(a.content) : (str(a.text) !== undefined ? str(a.text) : str(a.contents));
+    if (!path || content === undefined) return null;
+    return { name: target, args: { path, content } };
+  }
+  if (target === 'sandbox_read_file') {
+    const path = str(a.path) || str(a.file_path) || str(a.filename) || str(a.file);
+    return path ? { name: target, args: { path } } : null;
+  }
+  if (target === 'sandbox_run_command') {
+    const command = str(a.command) || str(a.cmd);
+    return command ? { name: target, args: { command } } : null;
+  }
+  if (target === 'sandbox_run_python') {
+    const code = str(a.code) || str(a.script);
+    return code ? { name: target, args: { code } } : null;
+  }
+  return null;
+}
+
+// ── The file offered must be the format the person asked for ────────────
+const _FORMATS = [
+  { name: 'a PDF', re: /\bpdf\b/i, ext: /\.pdf$/i, how: 'pdf("/workspace/name.pdf", blocks)' },
+  { name: 'a Word document', re: /\b(?:word (?:doc(?:ument)?|file)|ms word|microsoft word|docx)\b/i, ext: /\.docx$/i, how: 'docx("/workspace/name.docx", blocks)' },
+  { name: 'a PowerPoint', re: /\b(?:power ?point|pptx?|slides?|slide ?deck|presentation|pitch deck)\b/i, ext: /\.pptx$/i, how: 'pptx("/workspace/name.pptx", blocks)' },
+];
+
+/**
+ * When the person asked for exactly one of PDF, Word or PowerPoint and the file about to be offered is a plain
+ * text file (.md, .txt), returns a message telling the model to build the real format with the helper. Otherwise null.
+ * `text` is what the person asked; a person who also asks for markdown or plain text is left alone.
+ */
+export function formatMismatch(text, path) {
+  const t = typeof text === 'string' ? text.slice(0, 20000) : '';
+  const p = typeof path === 'string' ? path : '';
+  if (!/\.(?:md|markdown|txt|rtf)$/i.test(p)) return null;
+  if (/\b(?:markdown|\.md|plain text|text file|txt|notes? file)\b/i.test(t)) return null;
+  const asked = _FORMATS.filter((f) => f.re.test(t));
+  if (asked.length !== 1) return null;
+  const f = asked[0];
+  return 'The person asked for ' + f.name + ', not a text file. Build it with the helper: from cognita_docs import ' +
+    f.how.split('(')[0] + ', then ' + f.how + ' (pass logo="/workspace/uploads/<name>" if they attached a logo), check the QA report, ' +
+    'and offer the ' + f.name.replace(/^a /, '').replace('Word document', '.docx').replace('PowerPoint', '.pptx').replace('PDF', '.pdf') + ' file instead of ' + p + '.';
+}

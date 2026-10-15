@@ -15,7 +15,7 @@ import {
 } from './connector-tools.js';
 import { selectSandboxProvider, cleanConversationId, CAPS } from './sandbox-provider.js';
 import * as sandboxTools from './sandbox-tools.js';
-import { wantsFileFromImage } from './sandbox-intent.js';
+import { wantsFileFromImage, isLogoRequest } from './sandbox-intent.js';
 import { fetchPublicText, previewForModel } from './web-fetch.js';
 import * as webSearch from './web-search.js';
 import * as mediaTools from './media-tools.js';
@@ -568,7 +568,13 @@ export async function handleChatRequest(request, env) {
   if (hasImagesAttached && planHasSandbox(account.planId)) {
     const lastUser = [...history].reverse().find((m) => m && m.role === 'user');
     const askText = lastUser && typeof lastUser.content === 'string' ? lastUser.content : '';
-    if (wantsFileFromImage(askText)) {
+    if (wantsFileFromImage(askText) && isLogoRequest(askText)) {
+      // A logo is placed in the file, not read as a document: reading its lettering and treating that text as page
+      // content is wrong. Keep the sandbox on, and tell the model what the picture is for.
+      imageTranscript = '(This is a logo or brand picture. Do not copy any text from it and do not treat it as content. ' +
+        'It is saved in the workspace at the path given in the note above; pass that path as logo= to pdf() or pptx().)';
+      hasImages = false; images = [];
+    } else if (wantsFileFromImage(askText)) {
       try {
         const parts = [];
         for (let i = 0; i < images.length; i++) {
@@ -632,7 +638,7 @@ export async function handleChatRequest(request, env) {
   if (imageTranscript) {
     for (let i = trimmedHistory.length - 1; i >= 0; i--) {
       if (trimmedHistory[i].role === 'user') {
-        trimmedHistory[i].content += '\n\n[Text read from the picture(s) the person attached. It may contain small reading errors; fix obvious ones and keep the original numbering and wording otherwise. Use it as the source for the file they asked for. Do not mention this note.]\n' + imageTranscript;
+        trimmedHistory[i].content += '\n\n[' + (isLogoRequest(trimmedHistory[i].content) ? 'About the picture(s) the person attached. Do not mention this note.' : 'Text read from the picture(s) the person attached. It may contain small reading errors; fix obvious ones and keep the original numbering and wording otherwise. Use it as the source for the file they asked for. Do not mention this note.') + ']\n' + imageTranscript;
         break;
       }
     }
@@ -1188,6 +1194,32 @@ export async function handleChatRequest(request, env) {
             // Web search (web-search.js). Runs right here in the Worker, needs no connected app and no
             // confirmation, counts against the plan's daily search allowance (a failure is refunded), and
             // gives the model a short text result of sources. At most MAX_WEB_SEARCHES_PER_TURN per request.
+            // A tool name that exists nowhere ("Write", "Read", "create_file"). It must never become an approval card for
+            // "a connected app": map the obvious ones to the real sandbox tool, answer the rest with a plain error.
+            if (!providerForTool(call.name) && !mediaTools.isMediaTool(call.name) && call.name !== webSearch.TOOL_NAME) {
+              const aliased = sandboxEnabled ? sandboxTools.aliasSandboxCall(call) : null;
+              if (aliased) {
+                console.warn('[chat][tools] mapped made-up tool "' + call.name + '" to ' + aliased.name);
+                call.name = aliased.name;
+                call.args = aliased.args;
+              } else {
+                const bad = call.name;
+                invalidArgAttempts['unknown:' + bad] = (invalidArgAttempts['unknown:' + bad] || 0) + 1;
+                console.warn('[chat][tools] unknown tool "' + bad + '" (attempt ' + invalidArgAttempts['unknown:' + bad] + ')');
+                if (invalidArgAttempts['unknown:' + bad] > MAX_INVALID_ARG_RETRIES_PER_TOOL) {
+                  result = { text: 'I could not finish that step. Please try again.', reasoning: result.reasoning || null, toolCalls: null };
+                  break;
+                }
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: 'Attempting ' + bad + '.' },
+                  { role: 'user', content: 'There is no tool named "' + bad + '". Use only these tools: ' + [...offeredToolNames].join(', ') + '. Try again with one of them.' },
+                ]);
+                result = null;
+                round++;
+                continue;
+              }
+            }
+
             if (call.name === webSearch.TOOL_NAME) {
               const wv = webSearch.validateArgs(call.args);
               if (!wv.ok) {
@@ -1394,6 +1426,20 @@ export async function handleChatRequest(request, env) {
                 result = null;
                 round++;
                 continue;
+              }
+              // The file must be the format they asked for (a PDF request is not answered with a .md file).
+              if (sbName === 'sandbox_offer_file' && !invalidArgAttempts['format_nudge']) {
+                const fm = sandboxTools.formatMismatch(allUserText, sbArgs.path);
+                if (fm) {
+                  invalidArgAttempts['format_nudge'] = 1;
+                  workingMessages = workingMessages.concat([
+                    { role: 'assistant', content: 'Attempting ' + call.name + '.' },
+                    { role: 'user', content: fm },
+                  ]);
+                  result = null;
+                  round++;
+                  continue;
+                }
               }
               // Quality gate: slides, Word, PDF, Excel and pictures are inspected before they are handed over.
               if (sbName === 'sandbox_offer_file') {
