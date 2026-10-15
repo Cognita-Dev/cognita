@@ -2357,6 +2357,8 @@ async function boot() {
     }
     post({ t: 'status', text: 'Starting Python\u2026 (3/3 finishing)' });
     dl.phase = 'libs';
+    // No keyboard in here: input() must end the script with EOFError, not crash with OSError [Errno 29].
+    try { py.setStdin({ stdin: function () { return undefined; } }); } catch (e) {}
     py.FS.mkdirTree('/workspace');
     // Built-in helper so the model can make real .docx and .pdf files
     // (see the cognita_docs notes in prompts.js). Lives outside /workspace so

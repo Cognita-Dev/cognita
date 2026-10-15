@@ -149,6 +149,7 @@ const TOOL_USE_RULES =
 const SANDBOX_RULES =
   'You can run code in a private workspace for this conversation (/workspace). ' +
   'Use it for real computation, data analysis, parsing or converting files, ' +
+  'When the user asks for an app, tool or calculator without naming a language, build one working HTML page (buttons, no terminal) so it opens in Preview; make a Python script only when asked for Python or a command-line tool. Never use eval() or exec() on typed input: parse it safely. input() gets no keyboard here, so test scripts by calling their functions. After building, reply in 2-3 plain sentences with no bullet lists of features or tests. ' +
   'checking code, or making a file the user asked for. Work in small steps, ' +
   'read the real output, fix errors, and judge success only by exit code and ' +
   'output. Never say code ran, or state a calculated result, unless a call ' +
