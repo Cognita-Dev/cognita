@@ -73,8 +73,76 @@ def _runs(text):
     return out
 
 
+_TEXT_KINDS = ("p", "title", "h1", "h2", "h3", "quote")
+_LIST_KINDS = ("bullets", "numbered")
+
+
+def _flat(x):
+    if x is None:
+        return ""
+    if isinstance(x, (list, tuple, set)):
+        return ", ".join(t for t in (_flat(i) for i in x) if t)
+    if isinstance(x, dict):
+        return ": ".join(t for t in (_flat(i) for i in x.values()) if t)
+    return str(x).strip()
+
+
+def _parse_list_text(s):
+    """Turn "['a', 'b']" or '["a", "b"]' (a list written out as text) into a real list, else None."""
+    import ast, json
+    t = re.sub(r"^\s*```\w*\s*|\s*```\s*$", "", str(s)).strip()
+    if not (t.startswith("[") and t.endswith("]")):
+        return None
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            v = loader(t)
+            if isinstance(v, (list, tuple)):
+                return list(v)
+        except Exception:
+            pass
+    inner = t[1:-1].strip()
+    m = re.match(r"^(['\"])(.*)\1$", inner, re.S)
+    if m:
+        q = m.group(1)
+        return [x.replace("\\" + q, q).strip() for x in re.split(q + r"\s*,\s*" + q, m.group(2))]
+    return None
+
+
+def _as_items(val):
+    """Anything list-like -> a clean list of one-line strings."""
+    if val is None:
+        return []
+    if isinstance(val, str):
+        parsed = _parse_list_text(val)
+        if parsed is not None:
+            return _as_items(parsed)
+        lines = [re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", "", ln).strip() for ln in val.splitlines()]
+        return [ln for ln in lines if ln]
+    if isinstance(val, dict):
+        val = list(val.values())
+    if isinstance(val, (list, tuple, set)):
+        return [t for t in (_flat(i) for i in val) if t]
+    return [str(val)]
+
+
+def _as_rows(val):
+    if isinstance(val, str):
+        parsed = _parse_list_text(val)
+        val = parsed if parsed is not None else [[c.strip() for c in ln.split("|")] for ln in val.splitlines() if ln.strip()]
+    rows = []
+    for r in val or []:
+        if r is None:
+            continue
+        if isinstance(r, dict):
+            r = list(r.values())
+        rows.append([_flat(c) for c in (r if isinstance(r, (list, tuple)) else [r])])
+    return rows
+
+
 def _norm(blocks):
-    """Accept tuples or dicts; return (kind, value, opts) triples."""
+    """Accept tuples or dicts; return (kind, value, opts) triples.
+    Values are cleaned: a list given as a paragraph becomes bullets, a list written out as text
+    ("['a', 'b']") becomes a real list, and nothing is ever printed as raw brackets or quotes."""
     out = []
     for b in blocks or []:
         if isinstance(b, dict):
@@ -89,7 +157,26 @@ def _norm(blocks):
             for extra in b[1:]:
                 if isinstance(extra, dict):
                     opts = extra
-        out.append((str(kind).lower(), val, opts))
+        kind = str(kind).lower()
+        if kind in _LIST_KINDS:
+            val = _as_items(val)
+        elif kind == "table":
+            val = _as_rows(val)
+        elif kind in ("image", "spacer", "pagebreak"):
+            pass
+        else:
+            listy = isinstance(val, (list, tuple, set, dict)) or (isinstance(val, str) and _parse_list_text(val) is not None)
+            if listy and kind == "p":
+                items = _as_items(val)
+                if len(items) > 1:
+                    out.append(("bullets", items, {}))
+                    continue
+                val = items[0] if items else ""
+            elif listy:
+                val = _flat(_as_items(val))
+            elif not isinstance(val, str):
+                val = _flat(val)
+        out.append((kind, val, opts))
     return out
 
 
@@ -547,14 +634,28 @@ def pdf(path, blocks, title=None, page="A4", logo=None, logo_pages="all"):
         align = opts.get("align", "left")
         if kind == "title":
             ensure(80)
+            tl = wrap(val, 26, cw, True)
             draw_para(val, 26, M, cw, True, align, 8, C_INK, 1.2)
-            pages[-1].append("%s rg %.2f %.2f 64 4 re f %s rg %.2f %.2f 18 4 re f" % (C_ACC, M, state["y"] - 4, C_ACC2, M + 70, state["y"] - 4))
-            state["y"] -= 26
+            # The short accent rule is a choice, not a requirement: pass {"rule": True/False}. By default it is
+            # drawn only under a one-line title, and it follows the title's alignment.
+            want = opts.get("rule", "auto")
+            if want == "auto":
+                want = len(tl) == 1
+            if want:
+                rw = 64.0 + 6 + 18
+                rx = M if align == "left" else (M + (cw - rw) / 2 if align == "center" else M + cw - rw)
+                pages[-1].append("%s rg %.2f %.2f 64 4 re f %s rg %.2f %.2f 18 4 re f" % (C_ACC, rx, state["y"] - 4, C_ACC2, rx + 70, state["y"] - 4))
+                state["y"] -= 26
+            else:
+                state["y"] -= 6
         elif kind in ("h1", "h2", "h3"):
             size = {"h1": 16, "h2": 13.5, "h3": 12}[kind]
             ensure(size * 3)
             state["y"] -= 10
-            pages[-1].append("%s rg %.2f %.2f 4 %.2f re f" % (C_ACC, M - 12, state["y"] - size * 1.2, size * 1.1))
+            # Marker bar sits on the first line of the heading: baseline is size*1.35 below the cursor,
+            # the bar runs from just under the baseline to the top of the capital letters.
+            base = state["y"] - size * 1.35
+            pages[-1].append("%s rg %.2f %.2f 4 %.2f re f" % (C_ACC, M - 12, base - size * 0.12, size * 0.9))
             draw_para(val, size, M, cw, True, align, 6, C_INK)
         elif kind == "quote":
             q0 = state["y"]

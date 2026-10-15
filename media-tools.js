@@ -24,6 +24,7 @@
 // model would fix).
 
 import { checkAndIncrement } from './usage.js';
+import { toList, toText } from './list-text.js';
 import { deriveDesignDirection, DESIGN_LAYOUTS, KEY_FACT_RX, pickKeyFact } from './design-direction.js';
 
 export const MEDIA_TOOL_NAMES = new Set(['generate_image', 'create_design']);
@@ -601,6 +602,9 @@ const _hasPh = (v) => PLACEHOLDER_RX.test(String(v == null ? '' : v));
 
 export function cleanDesignArgs(args) {
   const a = { ...(args || {}) };
+  // A list given as text (or text given as a list) is turned into the right shape first.
+  for (const k of ['bullets', 'details']) if (a[k] != null) a[k] = toList(a[k]);
+  for (const k of ['headline', 'tagline', 'subheadline', 'body', 'cta', 'footer']) if (a[k] != null) a[k] = toText(a[k]);
   // Single-line fields: the whole line goes when it carries a placeholder.
   for (const k of ['tagline', 'subheadline', 'body', 'cta', 'footer']) {
     if (typeof a[k] === 'string' && _hasPh(a[k])) a[k] = '';

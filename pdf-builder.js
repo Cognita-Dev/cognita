@@ -18,6 +18,7 @@
 // characters before being placed in a content stream, and content streams
 // are encoded 1 char = 1 byte (Latin-1), never UTF-8.
 
+import { toList, toText, isListLike } from './list-text.js';
 import { getTemplate, getDefaultTemplate, getPdfFontFamily } from './design-templates.js';
 
 /* ── Page geometry ── */
@@ -264,11 +265,15 @@ function _layoutTitle(state, title, theme) {
     _drawTextLine(state, line, { x: MARGIN_X, size: TITLE_SIZE, bold: true, color: theme.colors.ink });
     state.cursorY -= 4;
   });
-  // Accent underline beneath the title block.
-  _ensureSpace(state, 18);
-  state.cursorY -= 6;
-  _drawRect(state, { x: MARGIN_X, y: state.cursorY - 2, w: 54, h: 2.5, color: theme.colors.accent });
-  state.cursorY -= 22;
+  // Accent underline: only under a one-line title (it looks off under a wrapped one).
+  if (lines.length === 1) {
+    _ensureSpace(state, 18);
+    state.cursorY -= 6;
+    _drawRect(state, { x: MARGIN_X, y: state.cursorY - 2, w: 54, h: 2.5, color: theme.colors.accent });
+    state.cursorY -= 22;
+  } else {
+    state.cursorY -= 10;
+  }
 }
 
 function _layoutHeading(state, text, theme) {
@@ -284,6 +289,8 @@ function _layoutHeading(state, text, theme) {
 }
 
 function _layoutParagraph(state, text, theme) {
+  if (isListLike(text)) { _layoutBullets(state, toList(text), theme); return; }
+  text = toText(text);
   if (!text || !String(text).trim()) return;
   const lines = _wrapToWidth(text, CONTENT_WIDTH, BODY_SIZE, false, theme.family);
   lines.forEach((line) => {
@@ -297,7 +304,7 @@ function _layoutParagraph(state, text, theme) {
 
 function _layoutBullets(state, items, theme) {
   const textWidth = CONTENT_WIDTH - BULLET_INDENT;
-  (items || []).forEach((item) => {
+  toList(items).forEach((item) => {
     const lines = _wrapToWidth(item, textWidth, BULLET_SIZE, false, theme.family);
     lines.forEach((line, i) => {
       _ensureSpace(state, BULLET_LINE_HEIGHT);
