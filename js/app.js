@@ -11,6 +11,7 @@
 import { escapeHtml, showToast, closeMobileSidebar, renderAccountInfo, openModal, closeModal } from './shell.js';
 import { buildCodeBlockHtml, codeTextOf } from './code-highlight.js';
 import { SandboxClient } from './sandbox-client.js';
+import { shouldConvertPaste, pastedFileName, makePastedFile, openTextEditor, describeSize } from './pasted-text.js';
 import { canPreview, previewLabel, fileIconClass, isHtmlFile, openFilePreview, isFilePreviewOpen } from './file-viewer.js';
 import { renderUiHtml, wireUi, refreshUi, liveUiUpdate, skeletonHtml } from './ui-render.js';
 import { validateUi, applyPatches, findUiNode } from '../ui-schema.js';
@@ -1401,6 +1402,15 @@ function wireComposer() {
     if (items && items.length) {
       e.preventDefault();
       addFilesToComposer(Array.from(items));
+      return;
+    }
+    // Long text becomes an attached text file (open it to edit, add a prompt, or send it alone).
+    const text = e.clipboardData && e.clipboardData.getData('text/plain');
+    if (shouldConvertPaste(text)) {
+      e.preventDefault();
+      const f = makePastedFile(text, pastedFileName(pendingAttachments.map((a) => a.name)));
+      _pastedFiles.add(f);
+      addFilesToComposer([f]);
     }
   });
 
@@ -1921,6 +1931,34 @@ async function handleImageFile(file, detectedMime) {
   }
 }
 
+const _pastedFiles = new WeakSet(); // File objects made from long pasted text
+
+async function editPastedAttachment(i) {
+  const att = pendingAttachments[i];
+  if (!att) return;
+  let text = '';
+  try { text = att.file ? await att.file.text() : String(att.text || ''); } catch (e) { text = String(att.text || ''); }
+  openTextEditor({
+    name: att.name, text,
+    onSave: async (newText) => {
+      const cur = pendingAttachments.indexOf(att);
+      if (cur < 0) return;
+      if (!String(newText).trim()) pendingAttachments.splice(cur, 1);   // emptied: drop it
+      else {
+        const f = makePastedFile(newText, att.name);
+        _pastedFiles.add(f);
+        pendingAttachments.splice(cur, 1);
+        await handlePickedFile(f);                                      // same reading rules as any file
+        const added = pendingAttachments.pop();
+        if (added) pendingAttachments.splice(cur, 0, added);
+      }
+      renderComposerAttachments();
+      const input = document.getElementById('composerInput');
+      document.getElementById('sendBtn').disabled = !input.value.trim() && pendingAttachments.length === 0;
+    },
+  });
+}
+
 function renderComposerAttachments() {
   const wrap = document.getElementById('composerAttachments');
   if (pendingAttachments.length === 0) {
@@ -1936,6 +1974,15 @@ function renderComposerAttachments() {
         '<img src="' + att.dataUrl + '" alt="">' +
         '<button type="button" class="attachment-chip-name attachment-chip-open" data-preview-pending="' + i + '" title="Preview">' + escapeHtml(att.name) + '</button>' +
         '<button type="button" data-remove-attachment="' + i + '"><i class="ph ph-x"></i></button>' +
+      '</span>';
+    }
+    if (att.file && _pastedFiles.has(att.file)) {
+      return '<span class="attachment-chip attachment-chip-pasted is-previewable">' +
+        '<i class="ph ph-file-text"></i>' +
+        '<button type="button" class="attachment-chip-name attachment-chip-open" data-edit-pending="' + i + '" title="Open and edit">' +
+          escapeHtml(att.name) + '<span class="attachment-chip-sub">' + escapeHtml(att.kind === 'text' ? describeSize(att.text) : Math.max(1, Math.round((att.size || 0) / 1024)) + ' KB') + '</span></button>' +
+        '<button type="button" class="attachment-chip-edit" data-edit-pending="' + i + '" aria-label="Open and edit ' + escapeHtml(att.name) + '"><i class="ph ph-pencil-simple"></i> Open</button>' +
+        '<button type="button" data-remove-attachment="' + i + '" aria-label="Remove"><i class="ph ph-x"></i></button>' +
       '</span>';
     }
     const icon = att.kind === 'unsupported' ? 'warning' : 'file-text';
@@ -1955,6 +2002,9 @@ function renderComposerAttachments() {
       const att = pendingAttachments[parseInt(btn.dataset.previewPending, 10)];
       if (att) previewAttachment(att, att.file || null);
     });
+  });
+  wrap.querySelectorAll('[data-edit-pending]').forEach((btn) => {
+    btn.addEventListener('click', () => editPastedAttachment(parseInt(btn.dataset.editPending, 10)));
   });
   wrap.querySelectorAll('[data-remove-attachment]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -3947,7 +3997,8 @@ function renderActivityHtml(meta, index, isUser) {
     }
   }
 
-  const failed = steps.filter((st) => st.ok === false && st.type !== 'blocked').length;
+  // A failed step that a later step of the same kind fixed is not counted: the work recovered.
+  const failed = steps.filter((st, i) => st.ok === false && st.type !== 'blocked' && !steps.slice(i + 1).some((n) => n.ok === true && n.type === st.type)).length;
   // "Worked for" counts from the first step; "Thought for" counts the whole
   // wait. Older saved chats have no workMs and fall back to the total.
   const t = formatDuration(meta.elapsedMs);

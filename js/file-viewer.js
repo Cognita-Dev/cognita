@@ -43,7 +43,12 @@ export function previewKind(name) {
 }
 export const canPreview = (name) => !!previewKind(name);
 export const fileIconClass = (name) => KIND_ICON[previewKind(name)] || 'ph-file-arrow-down';
-export const previewLabel = (name) => KIND_LABEL[previewKind(name)] || 'File';
+const EXT_LABEL = { py: 'Python script', js: 'JavaScript file', css: 'Stylesheet', json: 'JSON file', md: 'Markdown document',
+  xml: 'XML file', yaml: 'YAML file', yml: 'YAML file', log: 'Log file', txt: 'Text file' };
+export const previewLabel = (name) => {
+  const m = /\.([a-z0-9]{1,5})$/i.exec(String(name || ''));
+  return (m && EXT_LABEL[m[1].toLowerCase()]) || KIND_LABEL[previewKind(name)] || 'File';
+};
 export const isHtmlFile = (name) => previewKind(name) === 'html';
 
 function formatSize(n) {
