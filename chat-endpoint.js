@@ -122,19 +122,27 @@ function _claimsCompletion(text) {
 // grounding retries below (MAX_STALL_RETRIES) since this isn't a
 // hallucination to correct, it's a legitimate task that just needs the
 // model to actually keep going.
-const MAX_STALL_RETRIES = 2;
+const MAX_STALL_RETRIES = 3;
+const CONTINUE_NUDGE = 'I have not finished this yet. Reply "continue" and I will pick up exactly where I stopped.';
 const STALL_PATTERNS = [
   /^(?:I(?:'ll| will)|Let me|I(?:'m| am) going to|I need to)\s+(?:check|examine|look at|review|investigate|explore|dig into|go through|take a look at|see)\b/i,
 ];
 
-function _looksLikeUnfinishedStall(text) {
+// Announced a next step ("Let me improve...", "I'll fix...") as the last thing said, then ended the turn.
+const STALL_ANYWHERE = /\b(?:let me|let's|I(?:'ll| will)|I(?:'m| am) going to|I need to|next,? I(?:'ll| will)|now I(?:'ll| will)|going to (?:fix|improve|rebuild|redo|update|adjust|check|add))\b/i;
+const NEEDS_WORK = /\b(?:needs? (?:better|more|further|some|fixes|fixing|work|improv\w*|adjust\w*)|still (?:needs?|has|have)|not (?:yet )?(?:fixed|finished|done|ready)|failed|NEEDS FIXES)\b/i;
+
+function _looksLikeUnfinishedStall(text, workedThisTurn) {
   if (!text) return false;
   const t = text.trim();
-  // A genuine clarifying question to the user ends with "?" — that's the
-  // "genuinely blocked" pause the system prompt explicitly allows, never
-  // a stall to correct.
-  if (!t || t.length > 220 || t.endsWith('?')) return false;
-  return STALL_PATTERNS.some((re) => re.test(t));
+  // A genuine clarifying question to the user ends with "?" and is never a stall to correct.
+  if (!t || t.endsWith('?')) return false;
+  if (t.length <= 220 && STALL_PATTERNS.some((re) => re.test(t))) return true;
+  if (!workedThisTurn || t.length > 700) return false;
+  const sentences = t.split(/(?<=[.!:])\s+/).filter(Boolean);
+  const last = sentences.slice(-2).join(' ');
+  // Work was done this turn and the reply ends by announcing more work, or reports a problem it has not fixed.
+  return STALL_ANYWHERE.test(last) || (NEEDS_WORK.test(t) && /\b(?:improve|fix|rebuild|adjust|redo|update)\b/i.test(t));
 }
 
 // Client-supplied, conversation-scoped record of writes the user has
@@ -1168,7 +1176,7 @@ export async function handleChatRequest(request, env) {
                   reasoning: result.reasoning || null,
                   toolCalls: null,
                 };
-              } else if (_looksLikeUnfinishedStall(result.text || '') && stallRetries < MAX_STALL_RETRIES) {
+              } else if (_looksLikeUnfinishedStall(result.text || '', turnTrace.length > 0) && stallRetries < MAX_STALL_RETRIES) {
                 // The model said it would keep investigating and then
                 // stopped instead of actually doing so — push it to
                 // really take the next step rather than letting that
@@ -1187,6 +1195,10 @@ export async function handleChatRequest(request, env) {
                 result = null;
                 round++;
                 continue;
+              } else if (_looksLikeUnfinishedStall(result.text || '', turnTrace.length > 0)) {
+                // Still announcing work after every retry: never present it as finished. Say so and offer "continue".
+                console.warn('[chat][grounding] stall persisted after retries - adding continue nudge. uid=' + identity.uid);
+                result = { text: (result.text || '').trim() + '\n\n' + CONTINUE_NUDGE, reasoning: result.reasoning || null, toolCalls: null };
               }
               break;
             }

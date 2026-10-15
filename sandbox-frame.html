@@ -1825,6 +1825,10 @@ def _taste_docx(m):
     walls = [p for p in paras if len(p["t"].split()) > 140]
     if walls:
         pen.append((min(12, 6 * len(walls)), "%d paragraph(s) run past 140 words. Split them, or turn a list inside them into bullets." % len(walls)))
+    _bl = sum(1 for p in paras if p.get("bullet") and p["t"].strip())
+    _pl = sum(1 for p in paras if not p.get("bullet") and len(p["t"].split()) >= 15)
+    if _bl >= 8 and _bl > 2 * max(1, _pl):
+        pen.append((10, "Most of the document is bullets (%d bullets, %d real paragraphs). Write explanations as full paragraphs and keep bullets for real lists." % (_bl, _pl)))
     fonts = set(f for p in paras for f in p["fonts"])
     if len(fonts) > 3:
         pen.append((5, "%d different fonts are used. Two is enough: one for headings, one for body." % len(fonts)))
@@ -1926,6 +1930,17 @@ def _taste_pdf(m):
         if len(rows) > 70:
             pen.append((5, "Page %d is a wall of text (%d lines). Add spacing, headings or bullets." % (pn, len(rows))))
             break
+    _np = len(m["pages"])
+    for pn, pg in enumerate(m["pages"], 1):
+        rows = [i for i in pg if i["y"] > 40 and i["t"].strip()]
+        if pn < _np and len(rows) <= 6 and _np > 1:
+            pen.append((10, "Page %d is almost empty. Start the content on page 1 and keep the page count the person asked for; no title-only cover page." % pn))
+            break
+    _all = [i for i in items if i["t"].strip()]
+    _bul = sum(1 for i in _all if i["t"].strip() == u"\u2022")
+    _words = sum(len(i["t"].split()) for i in _all)
+    if _bul >= 8 and _words > 0 and _bul * 14 > _words * 0.6:
+        pen.append((10, "Almost everything is bullets. Write the explanations as full paragraphs (\"p\" blocks) and keep bullets for real lists only."))
     _t_filler(" ".join(i["t"] for i in items), "The text", pen)
     return pen
 
