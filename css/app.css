@@ -1268,6 +1268,86 @@ div.katex-target { display: block; margin: var(--space-3) 0; text-align: center;
   }
 }
 
+/* ── Streaming orbit — a small orbiting mark under the newest text while a
+     reply is still arriving. It is the last thing in the chat column, so it
+     moves down by itself as the text grows, and it shows the reply is alive
+     even when a slow connection makes the text pause. Transform and opacity
+     only, so it stays smooth on weak phones. No text on screen. ── */
+.stream-orbit {
+  width: 100%;
+  max-width: var(--chat-max-width, 860px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 240ms var(--ease-out, ease-out), opacity 240ms ease;
+  pointer-events: none;
+}
+.stream-orbit.is-on { max-height: 64px; opacity: 1; }
+.stream-orbit.is-leaving { max-height: 0; opacity: 0; transition-duration: 260ms; }
+.so-mark {
+  --so-size: 32px;
+  position: relative;
+  flex: none;
+  width: var(--so-size);
+  height: var(--so-size);
+  margin: var(--space-4, 16px) 0 var(--space-2, 8px) 6px;
+}
+.so-glow {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-2) 0%, transparent 68%);
+  opacity: 0.3;
+  animation: so-glow 4.4s ease-in-out infinite;
+}
+.so-ring {
+  position: absolute;
+  top: 50%; left: 50%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, transparent);
+  animation: so-spin 2.8s linear infinite;
+  will-change: transform;
+}
+.so-ring i {
+  position: absolute;
+  top: -3px; left: 50%;
+  width: 6px; height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent-2) 55%, transparent);
+  animation: so-shimmer 3.6s ease-in-out infinite;
+}
+.so-ring-a { width: 30px; height: 30px; margin: -15px 0 0 -15px; animation-duration: 3.1s; }
+.so-ring-b { width: 19px; height: 19px; margin: -9.5px 0 0 -9.5px; animation-duration: 2.3s; animation-direction: reverse; }
+.so-ring-b i { width: 5px; height: 5px; margin-left: -2.5px; top: -2.5px; animation-delay: -1.2s; }
+.so-ring-c { width: 8px; height: 8px; margin: -4px 0 0 -4px; animation-duration: 1.6s; border-color: transparent; }
+.so-ring-c i { width: 4px; height: 4px; margin-left: -2px; top: -2px; animation-delay: -2.4s; }
+.so-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+@keyframes so-spin { to { transform: rotate(360deg); } }
+@keyframes so-shimmer {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+@keyframes so-glow {
+  0%, 100% { opacity: 0.14; transform: scale(0.85); }
+  50% { opacity: 0.42; transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-orbit { transition: none; }
+  .so-ring { animation: none; }
+  .so-ring i { animation: so-shimmer 3.6s ease-in-out infinite; }
+}
+
 /* ── Composer — the most polished surface in the app: a soft
      elevated panel with a thin inner highlight, not a plain box ── */
 .composer-wrap { padding: 0 var(--space-5) var(--space-5); flex-shrink: 0; }
