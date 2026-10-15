@@ -2076,7 +2076,7 @@ function buildEffectiveContent(msg) {
     if (savedPictures.length) {
       text += savedPictures.map((a) =>
         '\n\n[The picture "' + a.name + '" is also saved in the workspace at ' + a.workspacePath +
-        '. To put it in a file (for example as a logo on every page or slide), pass that path as logo= to pdf() or pptx(), ' +
+        '. It is a picture, so never open it with a read or text tool. To put it in a file (for example as a logo on every page or slide), pass that path as logo= to pdf() or pptx(), ' +
         'or use it in an image block. If the file is missing later, ask the user to attach it again.]'
       ).join('');
     }
