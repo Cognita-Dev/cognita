@@ -43,6 +43,7 @@ Every build prints a "QA REPORT" for the new file. check("/workspace/file.pptx")
 
 Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, image, spacer, pagebreak.
 A picture (PNG or JPEG, e.g. a matplotlib chart or organogram saved with savefig) is ("image", "/workspace/chart.png", {"width": 420, "caption": "Figure 1"}); width is in points. Word, PDF and PowerPoint (placed beside the slide text).
+A logo for every page or slide: pdf("/workspace/a.pdf", blocks, logo="/workspace/uploads/logo.png") and pptx("/workspace/a.pptx", blocks, logo="/workspace/uploads/logo.png"). PNG or JPEG only. By default it is stamped on EVERY page or slide, the cover too; add logo_pages= to limit it: "cover", "not-cover", "last", or a list of page or slide numbers like [1, 3] (PDF: top right; slides: top left on the cover and section slides on a white plate, bottom right on content slides). When the person attached a logo, its path is in the attachment note; use that path. If the logo cannot be read, a "Logo not added" line is printed: tell the person.
 An optional last item in a block is a dict: {"align": "left|center|right|justify"}.
 A table may be given as ("table", rows, {"header": True}).
 """
@@ -407,8 +408,55 @@ def _pdf_escape(s):
     return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def pdf(path, blocks, title=None, page="A4"):
-    """Write a simple, clean PDF. `blocks` is described at the top of this module."""
+def _prep_logo(logo):
+    """Load a logo file for pdf()/pptx(). Returns (image, data_bytes) or (None, None) after printing why not."""
+    if not logo:
+        return None, None
+    try:
+        im = _load_image(str(logo))
+        with open(str(logo), "rb") as f:
+            data = f.read()
+        if not im["w"] or not im["h"]:
+            raise ValueError("the picture has no size")
+        return im, data
+    except FileNotFoundError:
+        print("Logo not added: %s was not found. Ask the person to attach the logo again." % logo)
+    except Exception as e:
+        print("Logo not added: %s (use a PNG or JPEG file)" % e)
+    return None, None
+
+
+def _logo_pages(spec):
+    """Turn logo_pages into a function (n, total) -> bool. Accepts "all", "cover"/"first", "not-cover"/"not-first", "last",
+    or a list of 1-based page/slide numbers such as [1, 3]."""
+    if spec is None:
+        return lambda n, t: True
+    if isinstance(spec, (list, tuple, set)):
+        try:
+            nums = set(int(x) for x in spec)
+            return lambda n, t: n in nums
+        except Exception:
+            pass
+    elif isinstance(spec, int) and not isinstance(spec, bool):
+        return lambda n, t: n == spec
+    else:
+        k = str(spec).strip().lower().replace("_", "-").replace(" ", "-")
+        table = {
+            "all": lambda n, t: True, "every": lambda n, t: True,
+            "cover": lambda n, t: n == 1, "first": lambda n, t: n == 1,
+            "not-cover": lambda n, t: n != 1, "not-first": lambda n, t: n != 1, "except-cover": lambda n, t: n != 1,
+            "last": lambda n, t: n == t,
+        }
+        if k in table:
+            return table[k]
+    print("logo_pages %r was not understood, so the logo goes on every page. Use \"all\", \"cover\", \"not-cover\", \"last\" or a list like [1, 3]." % (spec,))
+    return lambda n, t: True
+
+
+def pdf(path, blocks, title=None, page="A4", logo=None, logo_pages="all"):
+    """Write a simple, clean PDF. `blocks` is described at the top of this module. logo= a PNG/JPEG path stamped on every page."""
+    logo_im, _logo_data = _prep_logo(logo)
+    logo_on = _logo_pages(logo_pages)
     W, H = (612.0, 792.0) if str(page).lower() == "letter" else (595.0, 842.0)
     M = 64.0
     pages = [[]]
@@ -554,8 +602,18 @@ def pdf(path, blocks, title=None, page="A4"):
         else:
             draw_para(val, 11, M, cw, False, align, 8, C_BODY)
 
+    logo_box = None
+    if logo_im and any(logo_on(n, len(pages)) for n in range(1, len(pages) + 1)):
+        lw_max, lh_max = 150.0, 36.0
+        sc = min(lw_max / logo_im["w"], lh_max / logo_im["h"])
+        lw, lh = logo_im["w"] * sc, logo_im["h"] * sc
+        pdf_images.append(("ImLogo", logo_im))
+        logo_box = (W - M - lw, H - 8 - 12 - lh, lw, lh)
+
     for pn, ops in enumerate(pages, 1):
         ops.insert(0, "%s rg 0 %.2f %.2f 8 re f" % (C_ACC, H - 8, W))
+        if logo_box and logo_on(pn, len(pages)):
+            ops.append("q %.2f 0 0 %.2f %.2f %.2f cm /ImLogo Do Q" % (logo_box[2], logo_box[3], logo_box[0], logo_box[1]))
         ops.append("%s rg BT /F1 8.5 Tf %.2f 28 Td (%s) Tj ET" % ("0.45 0.5 0.58", M, _pdf_escape(_cp(_tt[:70]))))
         lab = "%d / %d" % (pn, len(pages))
         ops.append("%s rg BT /F2 8.5 Tf %.2f 28 Td (%s) Tj ET" % (C_ACCT, W - M - _tw(lab, 8.5, True), lab))
@@ -644,10 +702,13 @@ def _pal(i):
     return p
 
 
-def pptx(path, blocks, title=None, author="Cognita", palette=None):
+def pptx(path, blocks, title=None, author="Cognita", palette=None, logo=None, logo_pages="all"):
     """Make a designed 16:9 .pptx. A "title" block makes the cover; every h1 starts a new slide.
     Bullets become cards, steps or rows; tables become real tables; images are placed beside the text.
-    Long lists and tables continue on a following slide. Pass palette=0..5 to pick a colour theme."""
+    Long lists and tables continue on a following slide. Pass palette=0..5 to pick a colour theme.
+    Pass logo="/path/logo.png" (PNG or JPEG) to stamp a logo on every slide, the cover included."""
+    logo_im, logo_data = _prep_logo(logo)
+    logo_on = _logo_pages(logo_pages)
     A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
     REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     W, H = 12192000, 6858000
@@ -834,6 +895,30 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
     LM = 700000
     RW = W - 2 * LM
     total = len(slides)
+    logo_name = None
+    if logo_im and any(logo_on(n, len(slides)) for n in range(1, len(slides) + 1)):
+        logo_name = "logo.%s" % ("png" if logo_im["kind"] == "png" else "jpeg")
+        media.append((logo_name, logo_data, "png" if logo_im["kind"] == "png" else "jpeg"))
+
+    def stamp_logo(sl, dark):
+        """One shared picture file, one small placement per slide."""
+        if not logo_name or not logo_on(len(out_slides) + 1, len(slides)):
+            return
+        rid = "rId%d" % (len(sl.rels) + 2)
+        sl.rels.append((rid, logo_name))
+        if dark:
+            mw, mh, pad = 2200000, 640000, 90000
+            sc = min(mw / float(logo_im["w"]), mh / float(logo_im["h"]))
+            lw, lh = int(logo_im["w"] * sc), int(logo_im["h"] * sc)
+            x, y = LM + 200000, 420000
+            sl.shape(x - pad, y - pad, lw + 2 * pad, lh + 2 * pad, "FFFFFF", "roundRect", adj=12000, name="LogoPlate")
+        else:
+            mw, mh = 1700000, 380000
+            sc = min(mw / float(logo_im["w"]), mh / float(logo_im["h"]))
+            lw, lh = int(logo_im["w"] * sc), int(logo_im["h"] * sc)
+            x, y = W - LM - 560000 - 220000 - lw, H - 470000 + (320000 - lh) // 2
+        sl.pic(x, y, lw, lh, rid, "Logo")
+
     out_slides = []
     sec = 0
 
@@ -860,6 +945,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
             subs = subs[:4]
             if subs:
                 sl.text(LM + 200000, 4550000, 7000000, 1500000, "".join(para(t, 22, P["soft"], after=400) for t in subs), "t", "Subtitle")
+            stamp_logo(sl, True)
             out_slides.append(sl)
             continue
         # ---- section divider (heading only) ----
@@ -870,6 +956,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
             sl.shape(0, 0, 220000, H, P["accent"], name="Bar")
             sl.text(LM + 200000, 1900000, 3000000, 1400000, para("%02d" % sec, 72, P["accent"], True, font=HEAD), "b", "Number")
             sl.text(LM + 200000, 3400000, 9000000, 1800000, para(s["head"], 40 if len(s["head"]) <= 40 else 32, "FFFFFF", True, font=HEAD, lead=95), "t", "Title")
+            stamp_logo(sl, True)
             out_slides.append(sl)
             continue
         # ---- content ----
@@ -1000,6 +1087,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
             while tsz > 10 and tsz * 2.3 * PT * len(rows) > avail:
                 tsz -= 1
             sl.table(LM, y, RW, rows, tsz)
+        stamp_logo(sl, False)
         out_slides.append(sl)
 
     # ── 3. package ──
