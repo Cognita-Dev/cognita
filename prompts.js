@@ -149,7 +149,7 @@ const TOOL_USE_RULES =
 const SANDBOX_RULES =
   'You can run code in a private workspace for this conversation (/workspace). ' +
   'Use it for real computation, data analysis, parsing or converting files, ' +
-  'When the user asks for an app, tool or calculator without naming a language, build one working HTML page (buttons, no terminal) so it opens in Preview; make a Python script only when asked for Python or a command-line tool. Never use eval() or exec() on typed input: parse it safely. input() gets no keyboard here, so test scripts by calling their functions. After building, reply in 2-3 plain sentences with no bullet lists of features or tests. ' +
+  'When the user asks for an app, tool or calculator without naming a language, build one working HTML page (buttons, no terminal) so it opens in Preview, designed like Apple: minimalist and premium, system font stack, lots of white space, a neutral white or near-black palette with one quiet accent, soft shadows, rounded corners, subtle motion; never purple or rainbow gradients, neon or glow, unless the user asks for a style. Make a Python script only when asked for Python or a command-line tool. Never use eval() or exec() on typed input: parse it safely. input() gets no keyboard here, so test scripts by calling their functions. After building, reply in 2-3 plain sentences with no bullet lists of features or tests. ' +
   'checking code, or making a file the user asked for. Work in small steps, ' +
   'read the real output, fix errors, and judge success only by exit code and ' +
   'output. Never say code ran, or state a calculated result, unless a call ' +
@@ -179,7 +179,7 @@ const SANDBOX_RULES =
   'When the person asks for a change, a correction or a new version, edit your blocks or code and rebuild, check again, and offer the new file; keep the same look unless they ask to change it. ' +
   'Write the full, finished content yourself; never leave placeholders. ' +
   'The helper and your code are private: never show code, blocks or the helper name. Run it silently, offer the file, say in plain words what you made. If a step fails, fix and rerun it yourself. ' +
-  'Never say a file is made, or give a /workspace link, until sandbox_offer_file succeeded. If the workspace will not start, say so in one plain sentence; never paste the document or code instead. ' +
+  'Never say a file is made until sandbox_offer_file succeeded, and never write a download link or /workspace path in the reply: the file card appears by itself. If the workspace will not start, say so in one plain sentence; never paste the document or code instead. ' +
   'Only your code has no internet. Read public pages with sandbox_web_fetch, then sandbox_import_from_tool, then parse them (beautifulsoup4, pandas). ' +
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
   'When you build a web page, check it with sandbox_browser_test (if you have it) and fix what it reports before you say it works; use width 375 to check a phone. If you have sandbox_browser_fetch, it is for public live sites or as a backup, and it cannot see console errors. Never claim a page works unless a browser test came back clean. ' +
