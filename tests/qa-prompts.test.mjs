@@ -62,8 +62,8 @@ test('token budget (chat ~2550, +tools ~3180, +sandbox ~4140, all ~5160)', () =>
   const t = (a, b, c, v) => chatPromptInfo({ hasTools: a, hasSandbox: b, hasMedia: c }).approxTokens;
   assert.ok(t(false, false, false) <= 2600, 'chat ' + t(false, false, false));
   assert.ok(t(true, false, false) <= 3250, 'chat+tools ' + t(true, false, false));
-  assert.ok(t(false, true, false) <= 4550, 'chat+sandbox ' + t(false, true, false));
-  assert.ok(t(true, true, true) <= 5500, 'all ' + t(true, true, true));
+  assert.ok(t(false, true, false) <= 4700, 'chat+sandbox ' + t(false, true, false));
+  assert.ok(t(true, true, true) <= 5700, 'all ' + t(true, true, true));
 });
 
 test('vision prompt stays slim and version is bumped', () => {

@@ -1,0 +1,13 @@
+import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+const src = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+const re = new Function('return ' + src.match(/const _WORKSPACE_LINK_RE = (\/.*\/gi);/)[1])();
+const strip = (t) => t.indexOf('](') !== -1 ? t.replace(re, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') : t;
+assert.equal(strip('Ready.\n\n[Download Scientific Calculator](sandbox:/workspace/scientific_calculator.html)'), 'Ready.');
+assert.equal(strip('See [the docs](https://example.com) now.'), 'See [the docs](https://example.com) now.');
+assert.equal(strip('a [x](file:///workspace/a.pdf) b'), 'a  b');
+assert.equal(strip('Done.\n[Get it](/workspace/out.pdf)\nEnjoy.'), 'Done.\n\nEnjoy.');
+const p = readFileSync(new URL('../prompts.js', import.meta.url), 'utf8');
+assert(/designed like Apple: minimalist and premium/.test(p) && /never purple or rainbow gradients/.test(p));
+assert(/never write a download link or \/workspace path/.test(p));
+console.log('workspace-links-and-design tests ok');
