@@ -1933,9 +1933,16 @@ def _taste_pdf(m):
     _np = len(m["pages"])
     for pn, pg in enumerate(m["pages"], 1):
         rows = [i for i in pg if i["y"] > 40 and i["t"].strip()]
-        if pn < _np and len(rows) <= 6 and _np > 1:
-            pen.append((10, "Page %d is almost empty. Start the content on page 1 and keep the page count the person asked for; no title-only cover page." % pn))
-            break
+        if _np > 1 and len(rows) <= 6:
+            # A short page 1 or last page with large type is a cover or back cover. That is right for
+            # some documents (reports, proposals, brochures, books) and wrong for others (letters,
+            # one-pagers, a 2-page request), so it is a note to decide on, not a fault.
+            _cover = (pn == 1 or pn == _np) and any(i["sz"] >= bodysz * 1.5 for i in rows)
+            if _cover:
+                pen.append((0, "Page %d looks like a %s. Keep it only if this kind of document or the request calls for one (formal report, proposal, book, brochure); otherwise remove it so the content starts on page 1 and the page count matches what was asked." % (pn, "cover" if pn == 1 else "back cover")))
+            elif pn < _np:
+                pen.append((10, "Page %d is almost empty. Fill it, merge it with the next page, or remove it, keeping the page count the person asked for." % pn))
+                break
     _all = [i for i in items if i["t"].strip()]
     _bul = sum(1 for i in _all if i["t"].strip() == u"\u2022")
     _words = sum(len(i["t"].split()) for i in _all)
