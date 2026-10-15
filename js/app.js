@@ -2300,7 +2300,7 @@ async function runStreamedTurn(payload, resume) {
     conversationMeta[conversation.length - 1] = {
       // Time the backend was really thinking before the first output (see createLiveTurnIndicator).
       thoughtMs: live.thoughtMs(),
-      sources: data.sources || null,
+      sources: (Array.isArray(data.sources) && data.sources.length ? data.sources : null) || sourcesFromSteps(turn.carry.concat(Array.isArray(data.steps) ? data.steps : [])),
       elapsedMs,
       workMs,
       pendingToolCall: data.pendingToolCall ? { ...data.pendingToolCall, status: 'pending' } : null,
@@ -3496,7 +3496,7 @@ const LABEL_GLYPHS = {
   'GitHub': 'ph-github-logo', 'Google Drive': 'ph-google-drive-logo', 'Gmail': 'ph-envelope-simple',
   'Google Calendar': 'ph-calendar-blank', 'Facebook': 'ph-facebook-logo', 'Instagram': 'ph-instagram-logo',
   'Figma': 'ph-figma-logo', 'Canva': 'ph-paint-brush', 'Code': 'ph-terminal-window', 'Browser': 'ph-globe',
-  'Image': 'ph-image', 'Design': 'ph-paint-brush',
+  'Image': 'ph-image', 'Design': 'ph-paint-brush', 'Web': 'ph-globe',
 };
 function stepIconFor(step) {
   const label = step && step.providerLabel;
@@ -3549,17 +3549,78 @@ function actItemHtml(o) {
   );
 }
 
+/* ── Web search steps ─────────────────────────────────────────────────
+ * A search step carries `query` and `sources` ([{ title, url }]). The row opens into the list of
+ * sites it found. The small site pictures come from Google's favicon service, which is told only
+ * the site name (never the question). Change FAVICON_URL to switch service, or return '' to show
+ * only the globe. A picture that fails to load is removed and the globe underneath shows instead. */
+const FAVICON_URL = (host) => 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(host);
+document.addEventListener('error', (ev) => {
+  const t = ev.target;
+  if (t && t.tagName === 'IMG' && t.classList && t.classList.contains('act-src-img')) t.remove();
+}, true);
+
+function isWebSearchStep(st) { return !!st && st.type !== 'sandbox' && st.name === 'web_search'; }
+
+// The question that was searched. Older saved steps have only the sentence, so fall back to it.
+function webSearchQuery(st) {
+  if (st && typeof st.query === 'string' && st.query) return st.query;
+  const m = /^Search(?:ing|ed) the web for "([\s\S]*)"\.?$/.exec(String((st && st.summary) || ''));
+  return m ? m[1] : '';
+}
+
+function webSourcesHtml(sources) {
+  const items = (Array.isArray(sources) ? sources : []).map((s) => {
+    let u = null;
+    try { u = new URL(s && s.url); } catch (_) { return ''; }
+    if (u.protocol !== 'https:') return '';
+    const host = u.hostname.replace(/^www\./, '');
+    const fav = FAVICON_URL(host);
+    return '<li><a class="act-src" href="' + escapeHtml(u.href) + '" target="_blank" rel="noopener noreferrer">' +
+      '<span class="act-src-ico" aria-hidden="true"><i class="ph ph-globe"></i>' +
+        (fav ? '<img class="act-src-img" src="' + escapeHtml(fav) + '" alt="" width="16" height="16" loading="lazy" referrerpolicy="no-referrer">' : '') +
+      '</span>' +
+      '<span class="act-src-text"><span class="act-src-title">' + escapeHtml((s && s.title) || host) + '</span>' +
+      '<span class="act-src-host">' + escapeHtml(host) + '</span></span></a></li>';
+  }).filter(Boolean);
+  return items.length ? '<ul class="act-sources">' + items.join('') + '</ul>' : '';
+}
+
+// Sources for the list under the answer when the server did not send one (for example after a
+// code run that paused the turn): the sites from this turn's search steps, no repeats, at most 8.
+function sourcesFromSteps(steps) {
+  const seen = new Set();
+  const out = [];
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!isWebSearchStep(st) || !Array.isArray(st.sources)) continue;
+    for (const x of st.sources) {
+      if (!x || typeof x.url !== 'string' || seen.has(x.url)) continue;
+      seen.add(x.url);
+      out.push({ title: x.title || x.url, url: x.url });
+    }
+  }
+  return out.length ? out.slice(0, 8) : null;
+}
+
 function renderStepItemHtml(step, msgIndex) {
   if (step && step.type === 'sandbox') return renderSandboxStepHtml(step, msgIndex);
   const blocked = step.type === 'blocked';
   const ok = step.ok !== false;
+  let title = step.summary || step.name || 'Action performed';
+  let detailHtml = '';
+  if (isWebSearchStep(step) && !blocked && ok) {
+    // Finished, so it reads in the past tense, and it opens into the sites it found.
+    title = title.replace(/^Searching the web/, 'Searched the web');
+    detailHtml = webSourcesHtml(step.sources);
+  }
   return actItemHtml({
     state: blocked ? 'stopped' : (ok ? 'done' : 'fail'),
-    title: step.summary || step.name || 'Action performed',
+    title,
     sub: step.providerLabel || '',
     ms: formatDuration(step.ms),
     icon: stepIconFor(step),
     reason: !ok && !blocked && typeof step.reason === 'string' ? step.reason.slice(0, 200) : '',
+    detailHtml,
   });
 }
 
@@ -3748,11 +3809,21 @@ function renderActivityHtml(meta, index, isUser) {
     const n = j - i + 1;
     if (n >= 2) {
       const group = steps.slice(i, j + 1);
-      items.push(actItemHtml({
-        state: 'done', title: 'Read ' + n + ' items', sub: steps[i].providerLabel, icon: stepIconFor(steps[i]),
-        ms: formatDuration(group.reduce((t, g) => t + (Number.isFinite(g.ms) ? g.ms : 0), 0)),
-        detailHtml: '<ul class="act-list">' + group.map((g) => '<li>' + escapeHtml(g.summary || g.name || '') + '</li>').join('') + '</ul>',
-      }));
+      const groupMs = formatDuration(group.reduce((t, g) => t + (Number.isFinite(g.ms) ? g.ms : 0), 0));
+      if (group.every(isWebSearchStep)) {
+        // Several searches in a row: "Searched the web", then each question with the sites it found.
+        items.push(actItemHtml({
+          state: 'done', title: 'Searched the web', sub: plural(n, 'search', 'searches'), icon: stepIconFor(steps[i]), ms: groupMs,
+          detailHtml: group.map((g) =>
+            '<div class="act-search"><div class="act-search-q">' + escapeHtml(webSearchQuery(g) || 'Search') + '</div>' + webSourcesHtml(g.sources) + '</div>'
+          ).join(''),
+        }));
+      } else {
+        items.push(actItemHtml({
+          state: 'done', title: 'Read ' + n + ' items', sub: steps[i].providerLabel, icon: stepIconFor(steps[i]), ms: groupMs,
+          detailHtml: '<ul class="act-list">' + group.map((g) => '<li>' + escapeHtml(g.summary || g.name || '') + '</li>').join('') + '</ul>',
+        }));
+      }
       i = j + 1;
     } else {
       items.push(renderStepItemHtml(steps[i], index));
