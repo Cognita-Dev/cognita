@@ -37,10 +37,10 @@
     ]
     docx("/workspace/report.docx", blocks)
     pdf("/workspace/report.pdf", blocks)
-    pptx("/workspace/deck.pptx", blocks)   # slides: title block = cover, each h1 = new slide
+    pptx("/workspace/deck.pptx", blocks)   # designed slides: title block = cover, each h1 = new slide; pass palette=0..5 to pick colours
 
 Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, image, spacer, pagebreak.
-A picture (PNG or JPEG, e.g. a matplotlib chart or organogram saved with savefig) is ("image", "/workspace/chart.png", {"width": 420, "caption": "Figure 1"}); width is in points. Word and PDF only.
+A picture (PNG or JPEG, e.g. a matplotlib chart or organogram saved with savefig) is ("image", "/workspace/chart.png", {"width": 420, "caption": "Figure 1"}); width is in points. Word, PDF and PowerPoint (placed beside the slide text).
 An optional last item in a block is a dict: {"align": "left|center|right|justify"}.
 A table may be given as ("table", rows, {"header": True}).
 """
@@ -467,24 +467,38 @@ def pdf(path, blocks, title=None, page="A4"):
     items = _norm(blocks)
     if title and not any(k == "title" for k, _, _ in items):
         items.insert(0, ("title", title, {}))
+    _tt = next((str(v) for k, v, _o in items if k == "title"), "")
+    _P = _PALETTES[sum(ord(c) for c in (_tt or "doc")) % len(_PALETTES)]
+
+    def rgb(h):
+        return "%.3f %.3f %.3f" % tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    C_INK, C_ACC, C_ACC2, C_TINT, C_DARK = rgb(_P["ink"]), rgb(_P["accent"]), rgb(_P["accent2"]), rgb(_P["tint"]), rgb(_P["dark"])
+    C_BODY = "0.2 0.25 0.33"
     for kind, val, opts in items:
         align = opts.get("align", "left")
         if kind == "title":
-            draw_para(val, 24, M, cw, True, align, 14, "0.12 0.23 0.2")
+            ensure(80)
+            draw_para(val, 26, M, cw, True, align, 8, C_INK, 1.2)
+            pages[-1].append("%s rg %.2f %.2f 64 4 re f %s rg %.2f %.2f 18 4 re f" % (C_ACC, M, state["y"] - 4, C_ACC2, M + 70, state["y"] - 4))
+            state["y"] -= 26
         elif kind in ("h1", "h2", "h3"):
             size = {"h1": 16, "h2": 13.5, "h3": 12}[kind]
             ensure(size * 3)
-            state["y"] -= 6
-            draw_para(val, size, M, cw, True, align, 6, "0.18 0.36 0.31")
+            state["y"] -= 10
+            pages[-1].append("%s rg %.2f %.2f 4 %.2f re f" % (C_ACC, M - 12, state["y"] - size * 1.2, size * 1.1))
+            draw_para(val, size, M, cw, True, align, 6, C_INK)
         elif kind == "quote":
-            draw_para(val, 11, M + 28, cw - 56, False, align, 8, "0.35 0.35 0.35")
+            q0 = state["y"]
+            draw_para(val, 12.5, M + 28, cw - 56, False, align, 10, C_INK, 1.4)
+            pages[-1].append("%s rg %.2f %.2f 3 %.2f re f" % (C_ACC, M + 10, state["y"] + 8, q0 - state["y"] - 6))
         elif kind in ("bullets", "numbered"):
             for n, item in enumerate(val, 1):
                 ensure(16)
                 mark = u"\u2022" if kind == "bullets" else "%d." % n
                 y0 = state["y"] - 11 * 1.35
-                text_at(M + 8, y0, mark, 11, "F1")
-                draw_para(item, 11, M + 28, cw - 28, False, "left", 3)
+                text_at(M + 8, y0, mark, 11, "F2", C_ACC)
+                draw_para(item, 11, M + 28, cw - 28, False, "left", 4, C_BODY)
             state["y"] -= 4
         elif kind == "table":
             rows = [list(r) for r in val if r is not None]
@@ -498,16 +512,19 @@ def pdf(path, blocks, title=None, page="A4"):
                 rh = max(len(c) for c in cells) * 13.5 + 8
                 ensure(rh)
                 top = state["y"]
-                if opts.get("header", True) and ri == 0:
-                    pages[-1].append("0.91 0.93 0.94 rg %.2f %.2f %.2f %.2f re f" % (M, top - rh, cw, rh))
-                pages[-1].append("0.75 0.75 0.75 RG 0.5 w %.2f %.2f %.2f %.2f re S" % (M, top - rh, cw, rh))
+                hdr_row = opts.get("header", True) and ri == 0
+                if hdr_row:
+                    pages[-1].append("%s rg %.2f %.2f %.2f %.2f re f" % (C_DARK, M, top - rh, cw, rh))
+                elif ri % 2 == 0:
+                    pages[-1].append("%s rg %.2f %.2f %.2f %.2f re f" % (C_TINT, M, top - rh, cw, rh))
+                pages[-1].append("0.88 0.9 0.93 RG 0.5 w %.2f %.2f m %.2f %.2f l S" % (M, top - rh, M + cw, top - rh))
                 for ci, lines in enumerate(cells):
                     cy = top - 4
                     for line in lines:
                         cy -= 13.5
                         cx = M + ci * colw + 5
                         for word, font, b in line:
-                            text_at(cx, cy + 3, word, 10, font)
+                            text_at(cx, cy + 3, word, 10, font, "1 1 1" if hdr_row else C_INK)
                             cx += _tw(_cp(word), 10, b)
                 state["y"] = top - rh
             state["y"] -= 10
@@ -533,7 +550,13 @@ def pdf(path, blocks, title=None, page="A4"):
         elif kind == "pagebreak":
             newpage()
         else:
-            draw_para(val, 11, M, cw, False, align, 8)
+            draw_para(val, 11, M, cw, False, align, 8, C_BODY)
+
+    for pn, ops in enumerate(pages, 1):
+        ops.insert(0, "%s rg 0 %.2f %.2f 8 re f" % (C_ACC, H - 8, W))
+        ops.append("%s rg BT /F1 8.5 Tf %.2f 28 Td (%s) Tj ET" % ("0.45 0.5 0.58", M, _pdf_escape(_cp(_tt[:70]))))
+        lab = "%d / %d" % (pn, len(pages))
+        ops.append("%s rg BT /F2 8.5 Tf %.2f 28 Td (%s) Tj ET" % (C_ACC, W - M - _tw(lab, 8.5, True), lab))
 
     objs = []
 
@@ -591,71 +614,367 @@ def pdf(path, blocks, title=None, page="A4"):
 
 # ───────────────────────── PowerPoint ─────────────────────────
 
-def pptx(path, blocks, title=None, author="Cognita"):
-    """Make a .pptx. A "title" block makes the opening slide; every h1 starts a new slide.
-    p / bullets / numbered / quote / table blocks fill the slide they follow."""
-    A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
-    slides = []
-    cur = None
-    for kind, val, opts in _norm(blocks):
-        if kind in ("title", "h1"):
-            cur = {"head": str(val), "title": kind == "title", "lines": []}
-            slides.append(cur)
-            continue
-        if cur is None:
-            cur = {"head": title or "", "title": True, "lines": []}
-            slides.append(cur)
-        if kind in ("pagebreak", "spacer"):
-            if kind == "pagebreak":
-                cur = {"head": "", "title": False, "lines": []}
-                slides.append(cur)
-        elif kind in ("bullets", "numbered"):
-            for i, it in enumerate(val or []):
-                cur["lines"].append(("%d. " % (i + 1) if kind == "numbered" else "• ") + str(it))
-        elif kind == "table":
-            for row in val or []:
-                cur["lines"].append("  |  ".join(str(c) for c in row))
-        elif kind == "image":
-            if opts.get("caption"):
-                cur["lines"].append(str(opts["caption"]))
-        else:
-            cur["lines"].append(str(val))
-    if not slides:
-        slides.append({"head": title or "Presentation", "title": True, "lines": []})
+_PALETTES = [
+    dict(dark="0F172A", mid="1E293B", accent="14B8A6", accent2="F59E0B", tint="E7F7F5", ink="0F172A", muted="64748B", soft="99F6E4"),
+    dict(dark="1E1B4B", mid="312E81", accent="6366F1", accent2="F43F5E", tint="ECEEFF", ink="1E1B4B", muted="64748B", soft="C7D2FE"),
+    dict(dark="0B2545", mid="13315C", accent="2563EB", accent2="F97316", tint="E8F0FE", ink="0B2545", muted="64748B", soft="BFDBFE"),
+    dict(dark="14301F", mid="1F4630", accent="16A34A", accent2="EAB308", tint="E8F5EC", ink="14301F", muted="5B6B61", soft="BBF7D0"),
+    dict(dark="2B0F1A", mid="44182A", accent="E11D48", accent2="0EA5E9", tint="FDECEF", ink="2B0F1A", muted="6B5B60", soft="FECDD3"),
+    dict(dark="1C1917", mid="292524", accent="EA580C", accent2="0D9488", tint="FEF1E7", ink="1C1917", muted="6B6560", soft="FED7AA"),
+]
 
-    def txt(text, sz, bold=False, color="1F2937"):
+
+def pptx(path, blocks, title=None, author="Cognita", palette=None):
+    """Make a designed 16:9 .pptx. A "title" block makes the cover; every h1 starts a new slide.
+    Bullets become cards, steps or rows; tables become real tables; images are placed beside the text.
+    Long lists and tables continue on a following slide. Pass palette=0..5 to pick a colour theme."""
+    A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    W, H = 12192000, 6858000
+    PT = 12700
+    HEAD, BODY = "Georgia", "Calibri"
+    items = _norm(blocks)
+
+    # ── 1. group blocks into slides ──
+    deck_title = title or ""
+    for k, v, o in items:
+        if k == "title":
+            deck_title = str(v)
+            if isinstance(o, dict) and o.get("palette") is not None:
+                palette = o.get("palette")
+            break
+    if palette is None:
+        palette = sum(ord(c) for c in (deck_title or "deck")) % len(_PALETTES)
+    P = _PALETTES[int(palette) % len(_PALETTES)]
+
+    raw = []
+    cur = None
+    for kind, val, opts in items:
+        if kind == "title":
+            cur = {"head": str(val), "kind": "cover", "els": []}
+            raw.append(cur)
+        elif kind == "h1":
+            cur = {"head": str(val), "kind": "content", "els": []}
+            raw.append(cur)
+        elif kind == "pagebreak":
+            cur = {"head": "", "kind": "content", "els": [], "cont": True}
+            raw.append(cur)
+        elif kind == "spacer":
+            continue
+        else:
+            if cur is None:
+                cur = {"head": title or "", "kind": "cover", "els": []}
+                raw.append(cur)
+            cur["els"].append((kind, val, opts))
+    if not raw:
+        raw.append({"head": title or "Presentation", "kind": "cover", "els": []})
+
+    # split long lists / tables so nothing overflows
+    slides = []
+    for s in raw:
+        if s["kind"] == "cover":
+            slides.append(s)
+            continue
+        cap = 4 if any(e[0] == "image" for e in s["els"]) else 6
+        big = None
+        for n, e in enumerate(s["els"]):
+            if (e[0] in ("bullets", "numbered") and len(e[1] or []) > cap) or (e[0] == "table" and len(e[1] or []) > 8):
+                big = n
+                break
+        if big is None:
+            slides.append(s)
+            continue
+        kind, val, opts = s["els"][big]
+        val = list(val)
+        if kind == "table":
+            hdr, body = val[0], val[1:]
+            chunks = [[hdr] + body[i:i + 7] for i in range(0, len(body), 7)]
+        else:
+            chunks = [val[i:i + cap] for i in range(0, len(val), cap)]
+        for ci, ch in enumerate(chunks):
+            if ci == 0:
+                els = list(s["els"][:big]) + [(kind, ch, opts)] + list(s["els"][big + 1:])
+                slides.append({"head": s["head"], "kind": "content", "els": els})
+            else:
+                slides.append({"head": s["head"] + " (cont.)", "kind": "content", "els": [(kind, ch, opts)]})
+
+    # ── 2. drawing helpers ──
+    def est_lines(text, sz, width):
+        cpl = max(4, int((width / PT) / (sz * 0.5)))
+        n = 0
+        for part in str(text).split("\n"):
+            n += max(1, -(-len(part) // cpl))
+        return n
+
+    def fit(texts, width, height, mx, mn, gap=0, lead=1.22):
+        sz = mx
+        while sz > mn:
+            tot = sum(est_lines(t, sz, width) * sz * lead * PT + gap for t in texts)
+            if tot <= height:
+                break
+            sz -= 1
+        return sz
+
+    def run(t, sz, color, bold=False, italic=False, font=BODY):
         out = ""
-        for t, b, i in _runs(text):
-            out += ('<a:r><a:rPr lang="en-US" sz="%d"%s%s dirty="0"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:rPr><a:t>%s</a:t></a:r>'
-                    % (sz, ' b="1"' if (b or bold) else "", ' i="1"' if i else "", color, _esc(t)))
+        for tx, b, i in _runs(t):
+            out += ('<a:r><a:rPr lang="en-US" sz="%d"%s%s dirty="0"><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:latin typeface="%s"/><a:cs typeface="%s"/></a:rPr><a:t>%s</a:t></a:r>'
+                    % (int(sz * 100), ' b="1"' if (b or bold) else "", ' i="1"' if (i or italic) else "", color, font, font, _esc(tx)))
         return out
 
-    def shape(i, name, x, y, w, h, paras):
-        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
-                '<p:txBody><a:bodyPr wrap="square" anchor="t"><a:normAutofit/></a:bodyPr><a:lstStyle/>%s</p:txBody></p:sp>' % (i, name, x, y, w, h, paras))
+    def para(t, sz, color, bold=False, italic=False, algn="l", font=BODY, after=0, lead=100):
+        segs = str(t).split("\n")
+        out = ""
+        for j, seg in enumerate(segs):
+            out += ('<a:p><a:pPr algn="%s"><a:lnSpc><a:spcPct val="%d000"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="%d"/></a:spcAft><a:buNone/></a:pPr>%s</a:p>'
+                    % (algn, lead, after if j == len(segs) - 1 else 0, run(seg, sz, color, bold, italic, font)))
+        return out
 
-    def slide_xml(s):
-        W, H = 12192000, 6858000
-        if s["title"]:
-            body = shape(2, "Title", 900000, 2200000, W - 1800000, 1300000, '<a:p><a:pPr algn="l"/>%s</a:p>' % txt(s["head"], 4400, True, "111827"))
-            if s["lines"]:
-                body += shape(3, "Subtitle", 900000, 3600000, W - 1800000, 1800000, "".join('<a:p>%s</a:p>' % txt(l, 2000, False, "4B5563") for l in s["lines"][:4]))
+    class Slide:
+        def __init__(self, bg):
+            self.bg, self.xml, self.n, self.rels = bg, "", 1, []
+
+        def nid(self):
+            self.n += 1
+            return self.n
+
+        def shape(self, x, y, w, h, fill=None, geom="rect", paras="", anchor="t", ins=(0, 0, 0, 0), adj=None, name="Shape"):
+            i = self.nid()
+            g = '<a:prstGeom prst="%s"><a:avLst>%s</a:avLst></a:prstGeom>' % (geom, ('<a:gd name="adj" fmla="val %d"/>' % adj) if adj is not None else "")
+            f = ('<a:solidFill><a:srgbClr val="%s"/></a:solidFill>' % fill) if fill else "<a:noFill/>"
+            tb = ""
+            if paras:
+                tb = ('<p:txBody><a:bodyPr wrap="square" lIns="%d" tIns="%d" rIns="%d" bIns="%d" anchor="%s"><a:noAutofit/></a:bodyPr><a:lstStyle/>%s</p:txBody>'
+                      % (ins[0], ins[1], ins[2], ins[3], anchor, paras))
+            self.xml += ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s %d"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>%s%s<a:ln><a:noFill/></a:ln></p:spPr>%s</p:sp>'
+                         % (i, name, i, x, y, max(w, 1), max(h, 1), g, f, tb))
+
+        def text(self, x, y, w, h, paras, anchor="t", name="Text"):
+            self.shape(x, y, w, h, None, "rect", paras, anchor, name=name)
+
+        def pic(self, x, y, w, h, rid, descr):
+            i = self.nid()
+            self.xml += ('<p:pic><p:nvPicPr><p:cNvPr id="%d" name="Picture %d" descr="%s"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+                         % (i, i, _esc(descr or "Picture", {'"': "&quot;"}), rid, x, y, w, h))
+
+        def table(self, x, y, w, rows, sz):
+            i = self.nid()
+            nc = max(len(r) for r in rows)
+            lens = [max([len(str(r[c])) if c < len(r) else 0 for r in rows] + [4]) for c in range(nc)]
+            lens = [min(max(l, 6), 40) for l in lens]
+            tot = float(sum(lens))
+            cws = [int(w * l / tot) for l in lens]
+            cws[-1] = w - sum(cws[:-1])
+            rh = int(sz * 2.3 * PT)
+            trs = ""
+            for ri, r in enumerate(rows):
+                tcs = ""
+                for c in range(nc):
+                    cell = str(r[c]) if c < len(r) else ""
+                    hd = ri == 0
+                    fill = P["dark"] if hd else (P["tint"] if ri % 2 == 0 else "FFFFFF")
+                    col = "FFFFFF" if hd else P["ink"]
+                    tcs += ('<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>%s</a:txBody><a:tcPr marL="137160" marR="137160" marT="64008" marB="64008" anchor="ctr"><a:lnL w="0"><a:noFill/></a:lnL><a:lnR w="0"><a:noFill/></a:lnR><a:lnT w="0"><a:noFill/></a:lnT><a:lnB w="9525"><a:solidFill><a:srgbClr val="E2E8F0"/></a:solidFill></a:lnB><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:tcPr></a:tc>'
+                            % (para(cell, sz, col, bold=hd), fill))
+                trs += '<a:tr h="%d">%s</a:tr>' % (rh, tcs)
+            grid = "".join('<a:gridCol w="%d"/>' % c for c in cws)
+            self.xml += ('<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="%d" name="Table %d"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"/><a:tblGrid>%s</a:tblGrid>%s</a:tbl></a:graphicData></a:graphic></p:graphicFrame>'
+                         % (i, i, x, y, w, rh * len(rows), grid, trs))
+            return rh * len(rows)
+
+        def render(self):
+            return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld %s><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>'
+                    % (A, self.bg, self.xml))
+
+    def split_lead(t):
+        t = str(t)
+        m = re.match(r"^\*\*(.{1,48}?)\*\*[\s:\-\u2013\u2014]*(.*)$", t, re.S)
+        if m and m.group(2):
+            return m.group(1), m.group(2)
+        m = re.match(r"^([^:\u2013\u2014]{2,40}?)(?::|\s[-\u2013\u2014]\s)\s*(.{6,})$", t, re.S)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+        return "", t
+
+    media = []  # (name, bytes, ext)
+
+    def add_image(sl, p):
+        try:
+            im = _load_image(p)
+            with open(p, "rb") as f:
+                data = f.read()
+        except Exception:
+            return None
+        ext = "png" if im["kind"] == "png" else "jpeg"
+        media.append(("image%d.%s" % (len(media) + 1, ext), data, ext))
+        rid = "rId%d" % (len(sl.rels) + 2)
+        sl.rels.append((rid, media[-1][0]))
+        return rid, im["w"], im["h"]
+
+    LM = 700000
+    RW = W - 2 * LM
+    total = len(slides)
+    out_slides = []
+    sec = 0
+
+    for idx, s in enumerate(slides):
+        els = s["els"]
+        # ---- cover ----
+        if s["kind"] == "cover":
+            sl = Slide(P["dark"])
+            sl.shape(7400000, -1200000, 6200000, 6200000, P["mid"], "ellipse", name="Deco")
+            sl.shape(9700000, 3900000, 3600000, 3600000, P["accent"], "ellipse", name="Deco")
+            sl.shape(8300000, 2300000, 900000, 900000, P["accent2"], "ellipse", name="Deco")
+            sl.shape(0, 0, 220000, H, P["accent"], name="Bar")
+            tsz = 48 if len(s["head"]) <= 28 else 40 if len(s["head"]) <= 56 else 32
+            sl.text(LM + 200000, 1500000, 7600000, 2600000, para(s["head"], tsz, "FFFFFF", True, font=HEAD, lead=95), "b", "Title")
+            sl.shape(LM + 200000, 4300000, 1100000, 60000, P["accent"], name="Rule")
+            subs = []
+            for k, v, o in els:
+                if k in ("bullets", "numbered"):
+                    subs += [str(x) for x in (v or [])]
+                elif k == "table":
+                    subs += ["  |  ".join(str(c) for c in r) for r in (v or [])]
+                elif k != "image":
+                    subs.append(str(v))
+            subs = subs[:4]
+            if subs:
+                sl.text(LM + 200000, 4550000, 7000000, 1500000, "".join(para(t, 22, P["soft"], after=400) for t in subs), "t", "Subtitle")
+            out_slides.append(sl)
+            continue
+        # ---- section divider (heading only) ----
+        if not els:
+            sec += 1
+            sl = Slide(P["dark"])
+            sl.shape(8800000, -900000, 5200000, 5200000, P["mid"], "ellipse", name="Deco")
+            sl.shape(0, 0, 220000, H, P["accent"], name="Bar")
+            sl.text(LM + 200000, 1900000, 3000000, 1400000, para("%02d" % sec, 72, P["accent"], True, font=HEAD), "b", "Number")
+            sl.text(LM + 200000, 3400000, 9000000, 1800000, para(s["head"], 40 if len(s["head"]) <= 40 else 32, "FFFFFF", True, font=HEAD, lead=95), "t", "Title")
+            out_slides.append(sl)
+            continue
+        # ---- content ----
+        sl = Slide("FFFFFF")
+        sl.shape(0, 0, W, 150000, P["accent"], name="Top")
+        hsz = 36 if len(s["head"]) <= 36 else 30 if len(s["head"]) <= 56 else 24
+        sl.text(LM, 420000, RW, 820000, para(s["head"], hsz, P["ink"], True, font=HEAD, lead=95), "ctr", "Title")
+        sl.shape(LM, 1290000, 900000, 50000, P["accent2"], name="Rule")
+        # footer
+        sl.text(LM, H - 460000, 8000000, 300000, para(deck_title or "", 11, P["muted"]), "ctr", "Footer")
+        sl.shape(W - LM - 560000, H - 470000, 560000, 320000, P["accent"], "roundRect", para(str(idx + 1), 12, "FFFFFF", True, algn="ctr"), "ctr", adj=50000, name="PageNo")
+        top, bottom = 1600000, H - 640000
+        RH = bottom - top
+
+        paras_t = [str(v) for k, v, o in els if k == "p"]
+        quotes = [str(v) for k, v, o in els if k == "quote"]
+        lists = [(k, [str(x) for x in (v or [])]) for k, v, o in els if k in ("bullets", "numbered")]
+        tables = [(v, o) for k, v, o in els if k == "table"]
+        imgs = [(v, o) for k, v, o in els if k == "image"]
+        for k, v, o in els:
+            if k in ("h2", "h3"):
+                paras_t.insert(0, "**%s**" % v)
+        y = top
+        # image layout
+        placed = None
+        if imgs:
+            for pth, o in imgs:
+                r = add_image(sl, pth)
+                if r:
+                    placed = (r, o)
+                    break
+        has_text = bool(paras_t or lists or quotes)
+        if placed:
+            (rid, iw, ih), o = placed
+            cap = o.get("caption") if isinstance(o, dict) else None
+            bx = LM + (int(RW * 0.46) if has_text else 0)
+            bw = RW - (int(RW * 0.46) if has_text else 0)
+            capH = 380000 if cap else 0
+            bh = RH - capH
+            sc = min(bw / float(iw), bh / float(ih))
+            pw, ph = int(iw * sc), int(ih * sc)
+            px = bx + (bw - pw) // 2
+            py = top + (bh - ph) // 2
+            sl.shape(px - 60000, py - 60000, pw + 120000, ph + 120000, P["tint"], "roundRect", adj=2500, name="Frame")
+            sl.pic(px, py, pw, ph, rid, str(cap or s["head"]))
+            if cap:
+                sl.text(bx, py + ph + 110000, bw, 300000, para(str(cap), 11, P["muted"], italic=True, algn="ctr"), "t", "Caption")
+            RWt = int(RW * 0.46) - 300000 if has_text else RW
         else:
-            n = max(len(s["lines"]), 1)
-            sz = 2400 if n <= 6 else 2000 if n <= 9 else 1600 if n <= 13 else 1300
-            body = shape(2, "Title", 600000, 350000, W - 1200000, 900000, '<a:p>%s</a:p>' % txt(s["head"], 3200, True, "111827"))
-            body += shape(3, "Body", 600000, 1400000, W - 1200000, H - 1900000, "".join('<a:p><a:spcAft><a:spcPts val="600"/></a:spcAft>%s</a:p>' % txt(l, sz) for l in s["lines"]) or "<a:p><a:endParaRPr lang=\"en-US\"/></a:p>")
-        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld %s><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>' % (A, body))
+            RWt = RW
+        # text column
+        if has_text:
+            if paras_t:
+                psz = fit(paras_t, RWt, int(RH * (0.3 if (lists or tables) else 0.9)), 26, 14, 150000)
+                ph_ = int(sum(est_lines(t, psz, RWt) * psz * 1.22 * PT + 150000 for t in paras_t))
+                sl.text(LM, y, RWt, ph_ + 60000, "".join(para(t, psz, "334155", after=11) for t in paras_t), "t", "Body")
+                y += ph_ + 100000
+            for q in quotes:
+                qh = 1500000
+                sl.shape(LM, y, 70000, qh, P["accent"], name="QuoteBar")
+                qs = fit([q], RWt - 350000, qh, 26, 16)
+                sl.text(LM + 280000, y, RWt - 280000, qh, para(q, qs, P["ink"], italic=True, font=HEAD), "ctr", "Quote")
+                y += qh + 150000
+            for kind, lst in lists:
+                avail = bottom - y
+                n = len(lst)
+                lead = [split_lead(t) for t in lst]
+                if kind == "numbered" and 2 <= n <= 6 and not placed:
+                    rh_ = min(int(avail / n), 880000)
+                    tsz = min(fit([("%s %s" % (a, b))], RWt - 1000000, rh_ - 40000, 26, 14) for a, b in lead)
+                    for j, (a, b) in enumerate(lead):
+                        ry = y + j * rh_
+                        sl.shape(LM, ry + (rh_ - 560000) // 2, 560000, 560000, P["accent"], "ellipse", para(str(j + 1), 18, "FFFFFF", True, algn="ctr", font=HEAD), "ctr", name="Step")
+                        if j < n - 1:
+                            sl.shape(LM + 275000, ry + (rh_ - 560000) // 2 + 560000, 10000, rh_ - 560000, P["soft"], name="Link")
+                        body = (para(a, tsz, P["ink"], True) if a else "") + para(b, tsz - (1 if a else 0), "475569")
+                        sl.text(LM + 800000, ry, RWt - 800000, rh_, body, "ctr", "StepText")
+                elif kind == "bullets" and 2 <= n <= 4 and not placed and all(len(t) <= 130 for t in lst) and not paras_t:
+                    cols = n if n <= 3 else 2
+                    rows_ = -(-n // cols)
+                    gap = 260000
+                    cw_ = int((RWt - gap * (cols - 1)) / cols)
+                    ch_ = int(min(avail, 3600000 if rows_ == 1 else 2000000 * rows_) / rows_) - (gap if rows_ > 1 else 0)
+                    for j, (a, b) in enumerate(lead):
+                        cx = LM + (j % cols) * (cw_ + gap)
+                        cy = y + (j // cols) * (ch_ + gap)
+                        acc = P["accent"] if j % 2 == 0 else P["accent2"]
+                        sl.shape(cx, cy, cw_, ch_, P["tint"], "roundRect", adj=4000, name="Card")
+                        sl.shape(cx, cy + 200000, 70000, 520000, acc, name="CardAccent")
+                        sl.text(cx + 220000, cy + 190000, 700000, 520000, para("%02d" % (j + 1), 22, acc, True, font=HEAD), "ctr", "Num")
+                        tb = a if a else ""
+                        bsz = fit([b], cw_ - 440000, ch_ - 1000000, 22, 12)
+                        paras = (para(tb, bsz + 3, P["ink"], True, font=HEAD, after=6) if tb else "") + para(b, bsz, "475569")
+                        sl.text(cx + 220000, cy + 800000, cw_ - 440000, ch_ - 900000, paras, "t", "CardText")
+                else:
+                    gap = 90000
+                    rh_ = min(int(avail / n), 820000)
+                    tsz = min(fit([("%s %s" % (a, b))], RWt - 520000, rh_ - 30000, 26, 12) for a, b in lead)
+                    for j, (a, b) in enumerate(lead):
+                        ry = y + j * rh_
+                        sl.shape(LM, ry + rh_ // 2 - 80000, 160000, 160000, P["accent"] if j % 2 == 0 else P["accent2"], "roundRect", adj=30000, name="Marker")
+                        body = para(("**%s** %s" % (a, b)) if a else b, tsz, "334155")
+                        sl.text(LM + 400000, ry, RWt - 400000, rh_, body, "ctr", "Row")
+                y = bottom
+        for rows, o in tables[:1]:
+            rows = [list(r) for r in rows]
+            if not rows:
+                continue
+            avail = bottom - y
+            tsz = 20 if len(rows) <= 6 else 16
+            while tsz > 10 and tsz * 2.3 * PT * len(rows) > avail:
+                tsz -= 1
+            sl.table(LM, y, RW, rows, tsz)
+        out_slides.append(sl)
 
-    ct = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>',
+    # ── 3. package ──
+    ct = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/>',
           '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
           '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>',
           '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>',
-          '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>']
-    REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+          '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>',
+          '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>']
     prels = ['<Relationship Id="rId1" Type="%s/slideMaster" Target="slideMasters/slideMaster1.xml"/>' % REL]
     ids = []
-    for n in range(1, len(slides) + 1):
+    for n in range(1, len(out_slides) + 1):
         ct.append('<Override PartName="/ppt/slides/slide%d.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>' % n)
         prels.append('<Relationship Id="rId%d" Type="%s/slide" Target="slides/slide%d.xml"/>' % (n + 1, REL, n))
         ids.append('<p:sldId id="%d" r:id="rId%d"/>' % (255 + n, n + 1))
@@ -664,17 +983,20 @@ def pptx(path, blocks, title=None, author="Cognita"):
     tree = '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>'
     master = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster %s>%s<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>' % (A, tree))
     layout = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout %s type="blank">%s<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>' % (A, tree)
-    clr = "".join('<a:%s><a:srgbClr val="%s"/></a:%s>' % (n, v, n) for n, v in [("dk1", "000000"), ("lt1", "FFFFFF"), ("dk2", "1F2937"), ("lt2", "F3F4F6"), ("accent1", "2563EB"), ("accent2", "059669"), ("accent3", "D97706"), ("accent4", "DC2626"), ("accent5", "7C3AED"), ("accent6", "0891B2"), ("hlink", "2563EB"), ("folHlink", "7C3AED")])
-    fnt = '<a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/>'
+    clr = "".join('<a:%s><a:srgbClr val="%s"/></a:%s>' % (n, v, n) for n, v in [("dk1", "000000"), ("lt1", "FFFFFF"), ("dk2", P["dark"]), ("lt2", P["tint"]), ("accent1", P["accent"]), ("accent2", P["accent2"]), ("accent3", "2563EB"), ("accent4", "DC2626"), ("accent5", "7C3AED"), ("accent6", "0891B2"), ("hlink", P["accent"]), ("folHlink", "7C3AED")])
+    fnt_h = '<a:latin typeface="%s"/><a:ea typeface=""/><a:cs typeface=""/>' % HEAD
+    fnt_b = '<a:latin typeface="%s"/><a:ea typeface=""/><a:cs typeface=""/>' % BODY
     fill = '<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>'
     ln = '<a:lnStyleLst>' + '<a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>' * 3 + '</a:lnStyleLst>'
     eff = '<a:effectStyleLst>' + '<a:effectStyle><a:effectLst/></a:effectStyle>' * 3 + '</a:effectStyleLst>'
-    bg = '<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>'
-    theme = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Cognita"><a:themeElements><a:clrScheme name="Cognita">%s</a:clrScheme><a:fontScheme name="Cognita"><a:majorFont>%s</a:majorFont><a:minorFont>%s</a:minorFont></a:fontScheme><a:fmtScheme name="Cognita">%s%s%s%s</a:fmtScheme></a:themeElements></a:theme>' % (clr, fnt, fnt, fill, ln, eff, bg))
+    bgs = '<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>'
+    theme = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Cognita"><a:themeElements><a:clrScheme name="Cognita">%s</a:clrScheme><a:fontScheme name="Cognita"><a:majorFont>%s</a:majorFont><a:minorFont>%s</a:minorFont></a:fontScheme><a:fmtScheme name="Cognita">%s%s%s%s</a:fmtScheme></a:themeElements></a:theme>' % (clr, fnt_h, fnt_b, fill, ln, eff, bgs))
+    core = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>%s</dc:title><dc:creator>%s</dc:creator></cp:coreProperties>' % (_esc(deck_title or "Presentation"), _esc(author)))
     rels_hdr = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", "".join(ct))
-        z.writestr("_rels/.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/officeDocument" Target="ppt/presentation.xml"/></Relationships>' % REL)
+        z.writestr("_rels/.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>' % REL)
+        z.writestr("docProps/core.xml", core)
         z.writestr("ppt/presentation.xml", pres)
         z.writestr("ppt/_rels/presentation.xml.rels", rels_hdr + "".join(prels) + "</Relationships>")
         z.writestr("ppt/slideMasters/slideMaster1.xml", master)
@@ -682,9 +1004,12 @@ def pptx(path, blocks, title=None, author="Cognita"):
         z.writestr("ppt/slideLayouts/slideLayout1.xml", layout)
         z.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", rels_hdr + '<Relationship Id="rId1" Type="%s/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>' % REL)
         z.writestr("ppt/theme/theme1.xml", theme)
-        for n, sl in enumerate(slides, 1):
-            z.writestr("ppt/slides/slide%d.xml" % n, slide_xml(sl))
-            z.writestr("ppt/slides/_rels/slide%d.xml.rels" % n, rels_hdr + '<Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>' % REL)
+        for name, data, ext in media:
+            z.writestr("ppt/media/" + name, data)
+        for n, sl in enumerate(out_slides, 1):
+            z.writestr("ppt/slides/slide%d.xml" % n, sl.render())
+            extra = "".join('<Relationship Id="%s" Type="%s/image" Target="../media/%s"/>' % (rid, REL, nm) for rid, nm in sl.rels)
+            z.writestr("ppt/slides/_rels/slide%d.xml.rels" % n, rels_hdr + '<Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>%s</Relationships>' % (REL, extra))
     return path
 </script>
 

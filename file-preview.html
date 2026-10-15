@@ -56,6 +56,15 @@
   .doc td, .doc th { white-space:normal; max-width:none; }
 
   /* powerpoint outline */
+  .deck { display:flex; flex-direction:column; gap:14px; }
+  .slide-wrap { width:100%; }
+  .slide-canvas { position:relative; width:100%; aspect-ratio:16/9; --sw:100cqw; container-type:inline-size; border-radius:10px; overflow:hidden; border:1px solid var(--line); box-shadow:0 2px 10px rgba(0,0,0,.08); font-family:Calibri,"Segoe UI",system-ui,sans-serif; }
+  .slide-canvas .sp { position:absolute; box-sizing:border-box; overflow:hidden; }
+  .slide-canvas .sp-p { line-height:1.2; overflow-wrap:anywhere; }
+  .slide-canvas img.sp { object-fit:contain; }
+  .slide-canvas table.tbl { border-collapse:collapse; table-layout:fixed; height:auto; }
+  .slide-canvas table.tbl td { padding:.4% 1.1%; border-bottom:1px solid #E2E8F0; vertical-align:middle; }
+  .slide-num { font-size:11px; color:var(--muted); text-align:right; margin-top:4px; }
   .slide { border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:0 0 10px; background:var(--soft); }
   .slide h3 { margin:0 0 6px; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
   .slide p { margin:0 0 4px; overflow-wrap:anywhere; }
@@ -288,22 +297,97 @@
       var files = Object.keys(zip.files).filter(function (n) { return /^ppt\/slides\/slide\d+\.xml$/.test(n); })
         .sort(function (a, b) { return parseInt(a.replace(/\D/g, ''), 10) - parseInt(b.replace(/\D/g, ''), 10); });
       if (!files.length) return say('No slides found in this file.', true);
-      var box = el('div');
-      box.appendChild(note('Text outline only. Download the file to see the design, pictures and layout.'));
+      var box = el('div', 'deck');
       show(box);
-      return files.slice(0, 60).reduce(function (chain, name, i) {
-        return chain.then(function () { return zip.file(name).async('string'); }).then(function (xml) {
-          var card = el('div', 'slide');
-          card.appendChild(el('h3', '', 'Slide ' + (i + 1)));
-          var paras = xml.split('</a:p>'), any = false;
-          paras.forEach(function (p) {
-            var parts = [], re = /<a:t[^>]*>([\s\S]*?)<\/a:t>/g, mt;
-            while ((mt = re.exec(p))) parts.push(unxml(mt[1]));
-            var line = parts.join('').trim();
-            if (line) { any = true; card.appendChild(el('p', '', line)); }
+      var SW = 12192000, SH = 6858000;
+      function pct(v, t) { return (v / t * 100).toFixed(3) + '%'; }
+      function q(node, sel) { return node.getElementsByTagName(sel); }
+      function fillOf(node) {
+        var sf = null, kids = node.children;
+        for (var i = 0; i < kids.length; i++) if (kids[i].localName === 'solidFill') sf = kids[i];
+        var c = sf && q(sf, 'a:srgbClr')[0];
+        return c ? '#' + c.getAttribute('val') : '';
+      }
+      function xfrm(n) {
+        var o = q(n, 'a:off')[0], e = q(n, 'a:ext')[0];
+        return o && e ? { x: +o.getAttribute('x'), y: +o.getAttribute('y'), w: +e.getAttribute('cx'), h: +e.getAttribute('cy') } : null;
+      }
+      function place(d, r) { d.style.left = pct(r.x, SW); d.style.top = pct(r.y, SH); d.style.width = pct(r.w, SW); d.style.height = pct(r.h, SH); }
+      function paras(parent, cw) {
+        var out = [];
+        Array.prototype.forEach.call(q(parent, 'a:p'), function (p) {
+          var d = document.createElement('div'); d.className = 'sp-p';
+          var pr = q(p, 'a:pPr')[0]; if (pr) { var al = pr.getAttribute('algn'); d.style.textAlign = al === 'ctr' ? 'center' : al === 'r' ? 'right' : 'left'; }
+          var any = false;
+          Array.prototype.forEach.call(q(p, 'a:r'), function (r) {
+            var t = q(r, 'a:t')[0]; if (!t) return;
+            var rp = q(r, 'a:rPr')[0], s = document.createElement('span'); s.textContent = t.textContent; any = true;
+            if (rp) {
+              var sz = +rp.getAttribute('sz') || 1800; s.style.fontSize = 'calc(var(--sw) * ' + (sz / 100 * 12700 / SW).toFixed(5) + ')';
+              if (rp.getAttribute('b') === '1') s.style.fontWeight = '700';
+              if (rp.getAttribute('i') === '1') s.style.fontStyle = 'italic';
+              var c = q(rp, 'a:srgbClr')[0]; if (c) s.style.color = '#' + c.getAttribute('val');
+              var lt = q(rp, 'a:latin')[0]; if (lt && /georgia|cambria|times/i.test(lt.getAttribute('typeface'))) s.style.fontFamily = 'Georgia, "Times New Roman", serif';
+            }
+            d.appendChild(s);
           });
-          if (!any) card.appendChild(el('p', '', '(no text on this slide)'));
-          box.appendChild(card);
+          if (any) out.push(d);
+        });
+        return out;
+      }
+      return files.slice(0, 80).reduce(function (chain, name, i) {
+        return chain.then(function () {
+          var relName = name.replace('slides/', 'slides/_rels/') + '.rels';
+          return Promise.all([zip.file(name).async('string'), zip.file(relName) ? zip.file(relName).async('string') : Promise.resolve('')]);
+        }).then(function (res) {
+          var doc = new DOMParser().parseFromString(res[0], 'application/xml');
+          var rels = {}; res[1].replace(/<Relationship [^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"/g, function (_, id, tg) { rels[id] = tg; });
+          var card = el('div', 'slide-wrap'), sl = el('div', 'slide-canvas');
+          var bg = q(doc, 'p:bg')[0]; var bgc = bg && q(bg, 'a:srgbClr')[0];
+          sl.style.background = bgc ? '#' + bgc.getAttribute('val') : '#fff';
+          var tree = q(doc, 'p:spTree')[0], jobs = [];
+          Array.prototype.forEach.call(tree.children, function (n) {
+            var ln = n.localName;
+            if (ln === 'sp') {
+              var r = xfrm(n); if (!r) return;
+              var d = document.createElement('div'); d.className = 'sp'; place(d, r);
+              var spPr = q(n, 'p:spPr')[0], f = fillOf(spPr); if (f) d.style.background = f;
+              var g = q(spPr, 'a:prstGeom')[0], gp = g && g.getAttribute('prst');
+              if (gp === 'ellipse') d.style.borderRadius = '50%';
+              else if (gp === 'roundRect') { var gd = q(g, 'a:gd')[0], adj = gd ? +gd.getAttribute('fmla').replace(/\D/g, '') : 16667; d.style.borderRadius = 'calc(var(--sw) * ' + (Math.min(adj, 50000) / 100000 * Math.min(r.w, r.h) / SW).toFixed(5) + ')'; }
+              var tb = q(n, 'p:txBody')[0];
+              if (tb) {
+                var bp = q(tb, 'a:bodyPr')[0], an = bp && bp.getAttribute('anchor');
+                d.style.display = 'flex'; d.style.flexDirection = 'column'; d.style.justifyContent = an === 'ctr' ? 'center' : an === 'b' ? 'flex-end' : 'flex-start';
+                if (bp) d.style.padding = [bp.getAttribute('tIns'), bp.getAttribute('rIns'), bp.getAttribute('bIns'), bp.getAttribute('lIns')].map(function (v) { return pct(+v || 0, SW); }).join(' ');
+                paras(tb).forEach(function (p) { d.appendChild(p); });
+              }
+              sl.appendChild(d);
+            } else if (ln === 'pic') {
+              var r2 = xfrm(n), bl = q(n, 'a:blip')[0]; if (!r2 || !bl) return;
+              var tg = rels[bl.getAttribute('r:embed')]; if (!tg) return;
+              var path = 'ppt/' + tg.replace('../', ''), im = document.createElement('img'); im.className = 'sp'; place(im, r2); im.alt = '';
+              sl.appendChild(im);
+              var ext = /\.png$/i.test(path) ? 'image/png' : 'image/jpeg';
+              if (zip.file(path)) jobs.push(zip.file(path).async('base64').then(function (b64) { im.src = 'data:' + ext + ';base64,' + b64; }));
+            } else if (ln === 'graphicFrame') {
+              var xf = q(n, 'p:xfrm')[0], r3 = xf && xfrm(xf); if (!r3) return;
+              var t = document.createElement('table'); t.className = 'sp tbl'; place(t, r3);
+              Array.prototype.forEach.call(q(n, 'a:tr'), function (tr) {
+                var row = t.insertRow();
+                Array.prototype.forEach.call(tr.children, function (tc) {
+                  if (tc.localName !== 'tc') return;
+                  var cell = row.insertCell(), tp = q(tc, 'a:tcPr')[0], cf = tp ? fillOf(tp) : '';
+                  if (cf) cell.style.background = cf;
+                  paras(tc).forEach(function (p) { cell.appendChild(p); });
+                });
+              });
+              sl.appendChild(t);
+            }
+          });
+          var num = el('div', 'slide-num', (i + 1) + ' / ' + files.length);
+          card.appendChild(sl); card.appendChild(num); box.appendChild(card);
+          return Promise.all(jobs);
         });
       }, Promise.resolve());
     });
