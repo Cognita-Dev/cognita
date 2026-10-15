@@ -2878,6 +2878,7 @@ function createLiveTurnIndicator() {
     // The answer has started, so the generic "Working" row has nothing left to wait for.
     if (pendingItem) { pendingItem.remove(); pendingItem = null; }
     liveFull += t;
+    showStreamOrbit('live');
     if (!liveRaf) liveRaf = requestAnimationFrame(liveFrame);
   }
   function showUi(blocks, pending) {
@@ -2890,6 +2891,7 @@ function createLiveTurnIndicator() {
   }
   function resetStream() {
     stopLiveLoop();
+    hideStreamOrbit('live');
     if (liveTextEl) { liveTextEl.remove(); liveTextEl = null; }
     liveFull = ''; livePos = 0; liveCut = 0; liveStartT = 0; liveUiShown = false;
     const liveUi = el.querySelector('[data-cui-live]');
@@ -2904,6 +2906,7 @@ function createLiveTurnIndicator() {
     if (interrupted) return;
     interrupted = true;
     stopLiveLoop();
+    hideStreamOrbit('live');
     const timers = activeThinkingTimers[id];
     if (timers) { clearInterval(timers.wordInterval); clearInterval(timers.timerInterval); delete activeThinkingTimers[id]; }
     if (pendingItem) { pendingItem.remove(); pendingItem = null; }
@@ -2927,7 +2930,7 @@ function createLiveTurnIndicator() {
     streamedText: () => liveFull.length > 0,
     shownText: () => liveFull.slice(0, liveCut),   // exactly what the person has seen so far
     uiShown: () => liveUiShown,
-    remove() { stopLiveLoop(); remove(); },
+    remove() { stopLiveLoop(); hideStreamOrbit('live'); remove(); },
   };
 }
 
@@ -4277,6 +4280,7 @@ function startAssistantStream({ messageEl, contentEl, fullText, sources, index, 
     cancel() {
       done = true;
       if (rafId) cancelAnimationFrame(rafId);
+      hideStreamOrbit('reveal');
     },
   };
 
@@ -4292,6 +4296,7 @@ function startAssistantStream({ messageEl, contentEl, fullText, sources, index, 
     contentEl.classList.remove('is-typing');
     messageEl.classList.remove('is-streaming');
     messageEl.classList.add('stream-done');
+    hideStreamOrbit('reveal');
     scrollToBottom();
     if (activeStream === handle) activeStream = null;
   }
@@ -4321,6 +4326,7 @@ function startAssistantStream({ messageEl, contentEl, fullText, sources, index, 
     finish();
     return;
   }
+  showStreamOrbit('reveal');
   // Draw what was already on screen right now, before the first paint, so there is no blank flash.
   if (resumeAt > 0) streamPatch(contentEl, streamSafePrefix(fullText.slice(0, resumeAt)), sources, idPrefix);
   rafId = requestAnimationFrame(frame);
@@ -5194,6 +5200,75 @@ function appendSystemNotice(text, kind) {
     '</div></div>';
   list.appendChild(el);
   scrollToBottom();
+}
+
+/* ── Streaming orbit ───────────────────────────────────────────────
+   A small orbiting mark under the newest text while a reply is still
+   arriving, so the person can tell the answer is alive even when the
+   connection is slow and the text pauses. It lives in #conversation
+   right after the message list, so it is always the last thing on the
+   page: it moves down by itself as the text above it grows. It sits
+   outside the list because the list is rebuilt when a reply finishes
+   arriving, and the mark must carry on across that without blinking.
+   Two parts of the app can ask for it ("live" = text arriving from the
+   server, "reveal" = the finished reply being shown); it stays until
+   both are done. Pure CSS animation (see .stream-orbit in app.css). */
+const streamOrbit = { holds: new Set(), el: null, leaveTimer: 0 };
+
+function streamOrbitEl() {
+  if (streamOrbit.el && streamOrbit.el.isConnected) return streamOrbit.el;
+  const list = document.getElementById('messageList');
+  if (!list || !list.parentNode) return null;
+  const el = document.createElement('div');
+  el.className = 'stream-orbit';
+  el.id = 'streamOrbit';
+  el.hidden = true;
+  el.setAttribute('role', 'status');
+  el.innerHTML =
+    '<span class="so-mark" aria-hidden="true">' +
+      '<span class="so-glow"></span>' +
+      '<span class="so-ring so-ring-a"><i></i></span>' +
+      '<span class="so-ring so-ring-b"><i></i></span>' +
+      '<span class="so-ring so-ring-c"><i></i></span>' +
+    '</span>' +
+    '<span class="so-sr">Cognita is still replying</span>';
+  list.parentNode.insertBefore(el, list.nextSibling);
+  streamOrbit.el = el;
+  return el;
+}
+
+function showStreamOrbit(key) {
+  streamOrbit.holds.add(key);
+  const el = streamOrbitEl();
+  if (!el) return;
+  clearTimeout(streamOrbit.leaveTimer);
+  el.classList.remove('is-leaving');
+  if (el.hidden) {
+    el.hidden = false;
+    void el.offsetWidth; // let the entrance transition run from the hidden state
+  }
+  el.classList.add('is-on');
+  scrollToBottom(); // follows only if the person is still reading at the bottom
+}
+
+function hideStreamOrbit(key) {
+  streamOrbit.holds.delete(key);
+  const el = streamOrbit.el;
+  if (!el || streamOrbit.holds.size) return;
+  // Wait a beat: when one part hands over to the other (live text, then the
+  // finished reply) the mark is asked for again at once and never blinks.
+  clearTimeout(streamOrbit.leaveTimer);
+  streamOrbit.leaveTimer = setTimeout(() => {
+    if (streamOrbit.holds.size) return;
+    el.classList.remove('is-on');
+    el.classList.add('is-leaving');
+    streamOrbit.leaveTimer = setTimeout(() => {
+      if (streamOrbit.holds.size) return;
+      el.hidden = true;
+      el.classList.remove('is-leaving');
+      scrollToBottom();
+    }, 260);
+  }, 120);
 }
 
 // Keeps the newest text in view, but only while the person is reading at
