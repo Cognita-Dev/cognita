@@ -1,0 +1,12 @@
+import { qaGate } from '../sandbox-tools.js';
+const P='/workspace/deck.pptx';
+const mk=(r,c)=>({k:'sbx',r:JSON.stringify({stdout:r}),...(c?{c:[{p:P,s:9}]}:{})});
+const t=(name,got,want)=>console.log(name, (got===null)===want?'OK':'FAIL', got&&got.slice(0,60));
+t('no report', qaGate(P,[mk('built',true)]), false);
+t('pass', qaGate(P,[mk('QA REPORT [deck.pptx]: PASS',true)]), true);
+t('fail', qaGate(P,[mk('QA REPORT [deck.pptx]: NEEDS FIXES (1)\n- x',true)]), false);
+t('fix then pass', qaGate(P,[mk('QA REPORT [deck.pptx]: NEEDS FIXES (1)',true),mk('QA REPORT [deck.pptx]: PASS',true)]), true);
+t('stale', qaGate(P,[mk('QA REPORT [deck.pptx]: PASS',true),mk('edit',true)]), false);
+t('3 fails allowed', qaGate(P,[1,2,3].map(()=>mk('QA REPORT [deck.pptx]: NEEDS FIXES (1)',true))), true);
+t('other file ignored', qaGate('/workspace/a.csv',[]), true);
+t('other name report', qaGate(P,[mk('QA REPORT [other.pptx]: PASS',true)]), false);
