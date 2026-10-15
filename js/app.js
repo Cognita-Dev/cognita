@@ -4544,6 +4544,9 @@ function renderMessage(msg, index) {
         documentFileHtml +
         (!isUser ? renderDeliverablesHtml(meta, index) : '') +
         sourcesHtml +
+        (!isUser && index === conversation.length - 1 && /reply\s+["\u201c]continue["\u201d]/i.test(String(msg.content || ''))
+          ? '<button type="button" class="continue-btn" data-action="continue" style="margin:10px 0 4px;padding:8px 16px;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer"><i class="ph ph-arrow-right" aria-hidden="true"></i> Continue</button>'
+          : '') +
         (isUser ? '' :
           '<div class="message-actions">' +
             '<button class="message-action-btn" data-action="copy" data-index="' + index + '" title="Copy" aria-label="Copy reply"><i class="ph ph-copy" aria-hidden="true"></i></button>' +
@@ -4556,6 +4559,13 @@ function renderMessage(msg, index) {
 }
 
 function wireMessageActionButtons() {
+  document.querySelectorAll('[data-action="continue"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (isSending) return;
+      btn.disabled = true;
+      sendMessage('continue');
+    });
+  });
   document.querySelectorAll('[data-action="copy"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.index, 10);
