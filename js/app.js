@@ -5580,8 +5580,16 @@ function stripLeakedToolText(text) {
   return typeof text === 'string' && text.indexOf('](') !== -1 ? text.replace(_LEAKED_CALL_RE, '').replace(/\s+$/, '') : text;
 }
 
+// A link the model wrote to a workspace file, such as [Download X](sandbox:/workspace/x.html), is never
+// clickable and the file card already carries the download, so it is dropped instead of shown as raw text.
+const _WORKSPACE_LINK_RE = /\[[^\[\]\n]*\]\((?:sandbox:|file:|\/?workspace\/|\/mnt\/)[^()\s]*\)/gi;
+function stripWorkspaceLinks(text) {
+  return typeof text === 'string' && text.indexOf('](') !== -1
+    ? text.replace(_WORKSPACE_LINK_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') : text;
+}
+
 function renderMarkdownLite(text, sources, idPrefix) {
-  let raw = escapeHtml(text);
+  let raw = escapeHtml(stripWorkspaceLinks(text));
   raw = _unescapeAllowedTags(raw);
 
   // Code goes first, before LaTeX and every other pass, so nothing inside it
