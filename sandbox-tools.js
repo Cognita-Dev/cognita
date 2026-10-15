@@ -152,11 +152,11 @@ const CATALOG = [
 
   // Cloud browser (Studio and Admin only). Offered per request by chat-endpoint.js, never by a provider.
   { cap: CAPS.BROWSER_REMOTE, tool: _fn('sandbox_browser_fetch',
-    'Cloud browser. Render a public https web page (or html you give) in real Chrome and return the rendered text, html, links, or measurements of elements. Use it for live sites, or when sandbox_browser_test cannot run. It cannot report console errors.',
+    'Cloud browser. Render a public https web page (or html you give) in real Chrome and return the rendered text, html, links, or measurements of elements. Use it for live sites, or when sandbox_browser_test cannot run. Mode "screenshot" takes a picture and returns a short written design review of it (you cannot see pictures). It cannot report console errors.',
     {
       url: { type: 'string', description: 'Public https address. Give url or html, not both.' },
       html: { type: 'string' },
-      mode: { type: 'string', description: '"text" (default), "html", "links" or "elements".' },
+      mode: { type: 'string', description: '"text" (default), "html", "links", "elements" or "screenshot" (a written design review of how the page looks).' },
       selectors: { type: 'array', items: { type: 'string' }, description: 'For mode "elements": up to 10 CSS selectors.' },
     }, []) },
 
@@ -353,6 +353,13 @@ export function normalizeResult(raw, fallbackCommand) {
   };
   if (files.length) out.files = files;
   if (offered.length) out.offered = offered;
+  // Small JPEGs of the drawn pages / page-test screenshot, for the vision review in chat-endpoint.js only.
+  // They are never stored and never shown to the model as text.
+  if (Array.isArray(r.reviewImages)) {
+    const ri = r.reviewImages.filter((x) => x && typeof x.dataUrl === 'string' && x.dataUrl.length <= 190000 && /^data:image\/jpeg;base64,/.test(x.dataUrl))
+      .slice(0, 2).map((x) => ({ kind: x.kind === 'page-test' ? 'page-test' : 'pages', dataUrl: x.dataUrl }));
+    if (ri.length) out.reviewImages = ri;
+  }
   if (r.cancelled) out.cancelled = true;
   if (typeof r.note === 'string' && r.note) out.note = _str(r.note, 600);
   // Set by the browser test only when the test page could not be run here at all

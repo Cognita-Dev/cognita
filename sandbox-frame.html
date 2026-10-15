@@ -956,9 +956,20 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
                     gap = 260000
                     cw_ = int((RWt - gap * (cols - 1)) / cols)
                     ch_ = int(min(avail, 3600000 if rows_ == 1 else 2000000 * rows_) / rows_) - (gap if rows_ > 1 else 0)
+                    # Size the cards to their content (a tall, half-empty card looks unfinished), then sit the
+                    # group slightly above the centre of the free space.
+                    need_ = 0
+                    for (a_, b_) in lead:
+                        bs_ = fit([b_], cw_ - 440000, ch_ - 1000000, 22, 12)
+                        cpl_ = max(6, int((cw_ - 440000) / 12700.0 / (bs_ * 0.5)))
+                        ln_ = -(-len(b_) // cpl_) + (-(-len(a_) // max(6, int(cpl_ * 0.85))) if a_ else 0)
+                        need_ = max(need_, 800000 + int(ln_ * (bs_ + 2) * 1.25 * 12700) + 300000)
+                    ch_ = max(1500000, min(ch_, need_))
+                    used_ = rows_ * ch_ + (rows_ - 1) * gap
+                    y_off = max(0, int((avail - used_) * 0.35))
                     for j, (a, b) in enumerate(lead):
                         cx = LM + (j % cols) * (cw_ + gap)
-                        cy = y + (j // cols) * (ch_ + gap)
+                        cy = y + y_off + (j // cols) * (ch_ + gap)
                         acc = P["accent"] if j % 2 == 0 else P["accent2"]
                         acct = P["at"] if j % 2 == 0 else P["a2t"]
                         sl.shape(cx, cy, cw_, ch_, P["tint"], "roundRect", adj=4000, name="Card")
@@ -1298,6 +1309,549 @@ def _qa_xlsx(path, issues, notes):
             issues.append("%s contains formula errors (#REF!, #DIV/0! and so on)." % n.split("/")[-1])
 
 
+# ───────────────────────── Taste ─────────────────────────
+# check() also scores how a file LOOKS (not just whether it is broken): out of 100, failing below 78.
+# The rules are measurable ones: hierarchy, margins, alignment, whitespace, balance, colour, rhythm, word count,
+# filler wording and stretched pictures. Every penalty comes with the fix. The same pass draws a small picture
+# of the pages (slides, Word and PDF) into /workspace/.cognita-taste/preview.jpg so a vision model can review it.
+
+_TASTE_PASS = 78
+_FILLER = re.compile(
+    r"in today'?s (?:fast[- ]paced|digital|ever[- ]changing)|\bdelve\b|\bleverag(?:e|es|ing)\b|\bsynerg(?:y|ies)\b|game[- ]changer|"
+    r"unlock the (?:power|potential)|it is (?:important|worth) to note|in conclusion|cutting[- ]edge|\bseamless(?:ly)?\b|\brobust\b|"
+    r"\bholistic\b|\btapestry\b|rich landscape|ever[- ]evolving|at the end of the day|navigate the complexities|\bcomprehensive solution", re.I)
+
+
+def _t_filler(text, where, pen):
+    hits = sorted(set(m.group(0).lower() for m in _FILLER.finditer(text)))
+    if hits:
+        pen.append((min(16, 4 * len(hits)), "%s uses filler wording (%s). Say the plain thing instead." % (where, ", ".join(hits[:4]))))
+
+
+def _img_size(data):
+    """Pixel size of a PNG or JPEG without any library."""
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return struct.unpack(">II", data[16:24])
+        if data[:2] == b"\xff\xd8":
+            i = 2
+            while i < len(data) - 9:
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                mk = data[i + 1]
+                if mk in (0xC0, 0xC1, 0xC2):
+                    h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                    return w, h
+                i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+    except Exception:
+        pass
+    return None
+
+
+def _slide_model(path):
+    import xml.etree.ElementTree as ET
+    A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+    R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    z = zipfile.ZipFile(path)
+    names = sorted([n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)], key=lambda n: int(re.sub(r"\D", "", n)))
+    SW, SH = 12192000, 6858000
+    m = re.search(r'<p:sldSz cx="(\d+)" cy="(\d+)"', z.read("ppt/presentation.xml").decode("utf8", "ignore"))
+    if m:
+        SW, SH = int(m.group(1)), int(m.group(2))
+    slides = []
+    for n in names:
+        root = ET.fromstring(z.read(n))
+        relp = n.replace("slides/", "slides/_rels/") + ".rels"
+        rels = {}
+        if relp in z.namelist():
+            for rid, tgt in re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', z.read(relp).decode("utf8", "ignore")):
+                rels[rid] = tgt
+            for tgt, rid in re.findall(r'Target="([^"]+)"[^>]*Id="([^"]+)"', z.read(relp).decode("utf8", "ignore")):
+                rels.setdefault(rid, tgt)
+        bg = "FFFFFF"
+        bgn = root.find(".//" + P + "bg")
+        if bgn is not None and bgn.find(".//" + A + "srgbClr") is not None:
+            bg = bgn.find(".//" + A + "srgbClr").get("val")
+        sh, pics, tables = [], [], []
+        for el in root.iter():
+            if el.tag == P + "sp":
+                nm = (el.find(".//" + P + "cNvPr").get("name") or "").strip()
+                off, ext = el.find(".//" + A + "off"), el.find(".//" + A + "ext")
+                if off is None or ext is None:
+                    continue
+                fill = None
+                spPr = el.find(P + "spPr")
+                if spPr is not None and spPr.find(A + "solidFill") is not None and spPr.find(A + "solidFill").find(A + "srgbClr") is not None:
+                    fill = spPr.find(A + "solidFill").find(A + "srgbClr").get("val")
+                paras = []
+                for p in el.findall(".//" + A + "p"):
+                    t = "".join(x.text or "" for x in p.iter(A + "t"))
+                    rp = [r for r in p.iter(A + "rPr")]
+                    szs = [int(r.get("sz")) / 100.0 for r in rp if r.get("sz")]
+                    cols = [c.get("val") for r in rp for c in r.iter(A + "srgbClr")]
+                    bullet = p.find(".//" + A + "buChar") is not None or p.find(".//" + A + "buAutoNum") is not None
+                    paras.append({"t": t, "sz": max(szs) if szs else 18.0, "bold": any(r.get("b") == "1" for r in rp), "cols": cols, "bullet": bullet})
+                text = "\n".join(p["t"] for p in paras).strip()
+                sh.append({"name": nm, "x": int(off.get("x")), "y": int(off.get("y")), "cx": int(ext.get("cx")), "cy": int(ext.get("cy")),
+                           "fill": fill, "paras": paras, "text": text, "words": len(text.split())})
+            elif el.tag == P + "pic":
+                off, ext = el.find(".//" + A + "off"), el.find(".//" + A + "ext")
+                bl = el.find(".//" + A + "blip")
+                if off is None or ext is None:
+                    continue
+                nat = None
+                try:
+                    rid = bl.get(R + "embed")
+                    tgt = rels.get(rid, "")
+                    mp = "ppt/" + tgt.replace("../", "") if not tgt.startswith("/") else tgt[1:]
+                    nat = _img_size(z.read(mp))
+                except Exception:
+                    nat = None
+                crop = el.find(".//" + A + "srcRect") is not None
+                pics.append({"x": int(off.get("x")), "y": int(off.get("y")), "cx": int(ext.get("cx")), "cy": int(ext.get("cy")), "nat": nat, "crop": crop})
+            elif el.tag == P + "graphicFrame":
+                off, ext = el.find(".//" + P + "xfrm/" + A + "off"), el.find(".//" + P + "xfrm/" + A + "ext")
+                if off is not None and ext is not None:
+                    tables.append({"x": int(off.get("x")), "y": int(off.get("y")), "cx": int(ext.get("cx")), "cy": int(ext.get("cy")),
+                                   "text": " ".join(t.text or "" for t in el.iter(A + "t"))})
+        slides.append({"bg": bg, "shapes": sh, "pics": pics, "tables": tables})
+    return {"SW": SW, "SH": SH, "slides": slides}
+
+
+def _taste_pptx(model):
+    pen = []
+    SW, SH, slides = model["SW"], model["SH"], model["slides"]
+    content = slides[1:] if len(slides) > 1 else slides
+    title_boxes, sigs, allcols, totw, filler_all = [], [], set(), 0, []
+    for i, s in enumerate(slides, 1):
+        txt = [x for x in s["shapes"] if x["text"] and not any(k in x["name"] for k in ("Footer", "PageNo", "Deco"))]
+        for x in s["shapes"]:
+            for p in x["paras"]:
+                allcols.update(c.upper() for c in p["cols"])
+            if x["fill"] and x["cx"] * x["cy"] < SW * SH * 0.5:
+                allcols.add(x["fill"].upper())
+        body = [x for x in txt if "Title" not in x["name"]]
+        titles = [x for x in txt if "Title" in x["name"]]
+        is_content = i > 1 or len(slides) == 1
+        if is_content and titles and body:
+            tsz = max(p["sz"] for p in titles[0]["paras"] if p["t"].strip()) if any(p["t"].strip() for p in titles[0]["paras"]) else 0
+            bsz = max([p["sz"] for x in body for p in x["paras"] if p["t"].strip()] or [0])
+            if tsz and bsz and tsz < bsz * 1.35:
+                pen.append((6, "Slide %d: the title (%d pt) is barely bigger than the body (%d pt). Make the title at least 1.4x the body size so the eye knows where to start." % (i, tsz, bsz)))
+        if is_content and titles:
+            title_boxes.append((i, titles[0]["x"], titles[0]["y"], titles[0]["cx"]))
+        # margins
+        out = [x for x in txt if x["x"] < SW * 0.04 or x["x"] + x["cx"] > SW * 0.96]
+        out += [{"name": "picture"} for q in s["pics"] if q["x"] < SW * 0.03 or q["x"] + q["cx"] > SW * 0.97]
+        if is_content and out:
+            pen.append((4, "Slide %d: content sits closer than 4%% to the slide edge. Keep a clear margin on every side." % i))
+        # alignment: too many different left edges
+        lefts = set(round(x["x"] / (SW * 0.015)) for x in txt)
+        lefts |= set(round(q["x"] / (SW * 0.015)) for q in s["pics"])
+        if is_content and len(lefts) > 5:
+            pen.append((4, "Slide %d: text starts at %d different left edges. Line things up on two or three shared edges." % (i, len(lefts))))
+        # whitespace and balance
+        boxes = [(x["x"], x["y"], x["cx"], x["cy"]) for x in txt if x["words"] > 0] + [(q["x"], q["y"], q["cx"], q["cy"]) for q in s["pics"]] + [(t["x"], t["y"], t["cx"], t["cy"]) for t in s["tables"]]
+        if is_content and boxes:
+            x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+            x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+            cover = (x1 - x0) * (y1 - y0) / float(SW * SH)
+            if cover < 0.20 and len(boxes) <= 3:
+                pen.append((5, "Slide %d: the content fills only %d%% of the slide, so it looks empty. Add the missing point or enlarge the content." % (i, cover * 100)))
+            elif cover > 0.82:
+                pen.append((5, "Slide %d: the slide is crammed edge to edge. Cut something so it can breathe." % i))
+            mass = sum(b[2] * b[3] for b in boxes) or 1
+            mx = sum((b[0] + b[2] / 2.0) * b[2] * b[3] for b in boxes) / mass
+            if len(boxes) >= 2 and abs(mx - SW / 2.0) > SW * 0.24:
+                pen.append((4, "Slide %d: everything leans to one side. Balance it with a picture, a table or a second column." % i))
+        # words and walls of text
+        words = sum(x["words"] for x in txt) + sum(len(t["text"].split()) for t in s["tables"])
+        totw += words
+        for x in body:
+            if x["words"] > 55 and not any(p["bullet"] for p in x["paras"]):
+                pen.append((5, "Slide %d: '%s' is a block of %d words. Break it into short points or numbered steps." % (i, x["name"], x["words"])))
+                break
+        # stretched pictures
+        for q in s["pics"]:
+            if q["nat"] and not q["crop"] and q["cy"] and q["nat"][1]:
+                ratio = (q["cx"] / float(q["cy"])) / (q["nat"][0] / float(q["nat"][1]))
+                if abs(ratio - 1) > 0.08:
+                    pen.append((8, "Slide %d: a picture is stretched out of shape (%d%% off its real proportions). Keep the original width-to-height ratio." % (i, abs(ratio - 1) * 100)))
+                    break
+        filler_all.append(" ".join(x["text"] for x in txt))
+        sigs.append(tuple(sorted((x["name"].split()[0] if x["name"] else "x") for x in txt)) + tuple("pic" for _ in s["pics"]) + tuple("table" for _ in s["tables"]))
+    _t_filler(" ".join(filler_all), "The deck", pen)
+    if len(title_boxes) >= 3:
+        xs = [t[1] for t in title_boxes]
+        ys = [t[2] for t in title_boxes]
+        if max(xs) - min(xs) > SW * 0.02 or max(ys) - min(ys) > SH * 0.03:
+            pen.append((6, "The slide titles jump around from slide to slide. Put every title in the same spot at the same size."))
+    if len(allcols) > 12:
+        pen.append((6, "The deck uses %d different colours. Stay with one main colour, one accent and neutrals." % len(allcols)))
+    if len(slides) >= 5 and len(set(sigs[1:])) == 1:
+        pen.append((8, "Every content slide has the same layout. Mix in a table, numbered steps, a big number or a picture where the content suits it."))
+    elif len(sigs) >= 6:
+        run, best = 1, 1
+        for a, b in zip(sigs[1:], sigs[2:]):
+            run = run + 1 if a == b else 1
+            best = max(best, run)
+        if best >= 5:
+            pen.append((4, "Five or more slides in a row look identical. Break the rhythm."))
+    if len(content) >= 3 and totw / float(len(slides)) > 70:
+        pen.append((6, "The slides average %d words each. Presentations read better at 30 to 50 words a slide." % (totw / len(slides))))
+    return pen
+
+
+def _font(size):
+    from PIL import ImageFont
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(p, int(size))
+        except Exception:
+            pass
+    try:
+        return ImageFont.load_default(size=int(size))
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _wrap_px(draw, text, font, maxw):
+    out = []
+    for part in text.split("\n"):
+        line = ""
+        for w in part.split(" "):
+            t = (line + " " + w).strip()
+            if draw.textlength(t, font=font) <= maxw or not line:
+                line = t
+            else:
+                out.append(line)
+                line = w
+        out.append(line)
+    return out
+
+
+def _draw_pptx(model, maxn=6, width=480):
+    from PIL import Image, ImageDraw
+    SW, SH = model["SW"], model["SH"]
+    k = width / float(SW)
+    H = int(SH * k)
+    shots = []
+    for s in model["slides"][:maxn]:
+        bg = s["bg"] if re.match(r"^[0-9A-Fa-f]{6}$", s["bg"] or "") else "FFFFFF"
+        im = Image.new("RGB", (width, H), "#" + bg)
+        d = ImageDraw.Draw(im)
+        for x in s["shapes"]:
+            bx, by, bw, bh = x["x"] * k, x["y"] * k, x["cx"] * k, x["cy"] * k
+            if x["fill"]:
+                d.rectangle([bx, by, bx + bw, by + bh], fill="#" + x["fill"])
+            yy = by + 3
+            for p in x["paras"]:
+                if not p["t"].strip():
+                    yy += 4
+                    continue
+                px = max(7, p["sz"] * 12700 * k * 1.0)
+                f = _font(px)
+                col = "#" + (p["cols"][0] if p["cols"] else "222222")
+                for ln in _wrap_px(d, p["t"], f, max(10, bw - 8)):
+                    if yy > by + bh + 2 or yy > H:
+                        break
+                    d.text((bx + 4, yy), ln, fill=col, font=f)
+                    yy += px * 1.2
+        for q in s["pics"]:
+            bx, by = q["x"] * k, q["y"] * k
+            d.rectangle([bx, by, bx + q["cx"] * k, by + q["cy"] * k], outline="#888888", fill="#E6E6E6")
+        for t in s["tables"]:
+            bx, by = t["x"] * k, t["y"] * k
+            d.rectangle([bx, by, bx + t["cx"] * k, by + t["cy"] * k], outline="#888888", fill="#F3F3F3")
+        shots.append(im)
+    return shots
+
+
+def _docx_model(path):
+    import xml.etree.ElementTree as ET
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    Aa = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    z = zipfile.ZipFile(path)
+    xml = z.read("word/document.xml").decode("utf8", "ignore")
+    root = ET.fromstring(xml)
+    paras, imgs = [], []
+    for p in root.iter(W + "p"):
+        t = "".join(x.text or "" for x in p.iter(W + "t"))
+        st = p.find(W + "pPr/" + W + "pStyle")
+        style = (st.get(W + "val") if st is not None else "") or ""
+        szs = [int(s.get(W + "val")) / 2.0 for s in p.iter(W + "sz") if s.get(W + "val", "").isdigit()]
+        fonts = [f.get(W + "ascii") for f in p.iter(W + "rFonts") if f.get(W + "ascii")]
+        paras.append({"t": t, "style": style, "sz": max(szs) if szs else 11.0, "fonts": fonts,
+                      "bold": p.find(".//" + W + "b") is not None, "bullet": p.find(".//" + W + "numPr") is not None})
+        for dr in p.iter("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"):
+            imgs.append((int(dr.get("cx", 0)), int(dr.get("cy", 0)), p))
+    nat = []
+    for n in z.namelist():
+        if n.startswith("word/media/"):
+            nat.append(_img_size(z.read(n)))
+    mar = re.search(r"<w:pgMar[^>]*>", xml)
+    margins = {}
+    if mar:
+        for k2, v in re.findall(r'w:(top|left|right|bottom)="(-?\d+)"', mar.group(0)):
+            margins[k2] = int(v)
+    return {"paras": paras, "imgs": [(a, b) for a, b, _ in imgs], "nat": nat, "margins": margins}
+
+
+def _taste_docx(m):
+    pen = []
+    paras = m["paras"]
+    words = sum(len(p["t"].split()) for p in paras)
+    heads = [(p, int(re.sub(r"\D", "", p["style"]) or 1)) for p in paras if p["style"].lower().startswith("heading")]
+    titles = [p for p in paras if p["style"].lower() == "title"]
+    if words > 150 and not heads and not titles:
+        pen.append((10, "There are no headings, so the reader cannot find their way. Add a title and section headings."))
+    if words > 150 and heads and not titles and heads[0][1] != 1:
+        pen.append((4, "The first heading is not a top-level heading. Start with a title or Heading 1."))
+    last = 0
+    for p, lv in heads:
+        if last and lv > last + 1:
+            pen.append((5, "Headings skip a level (Heading %d straight to Heading %d). Go down one level at a time." % (last, lv)))
+            break
+        last = lv
+    walls = [p for p in paras if len(p["t"].split()) > 140]
+    if walls:
+        pen.append((min(12, 6 * len(walls)), "%d paragraph(s) run past 140 words. Split them, or turn a list inside them into bullets." % len(walls)))
+    fonts = set(f for p in paras for f in p["fonts"])
+    if len(fonts) > 3:
+        pen.append((5, "%d different fonts are used. Two is enough: one for headings, one for body." % len(fonts)))
+    sizes = set(round(p["sz"]) for p in paras if p["t"].strip())
+    if words > 250 and len(sizes) < 2 and not heads:
+        pen.append((5, "Everything is one text size, so nothing stands out. Make headings larger than the body."))
+    mg = m["margins"]
+    if mg and min(mg.get(k, 1440) for k in ("top", "left", "right", "bottom")) < 720:
+        pen.append((6, "The page margins are under 1.27 cm. Use about 2 cm so the text does not crowd the edge."))
+    for i, (cx, cy) in enumerate(m["imgs"]):
+        if i < len(m["nat"]) and m["nat"][i] and cy:
+            r = (cx / float(cy)) / (m["nat"][i][0] / float(m["nat"][i][1]))
+            if abs(r - 1) > 0.08:
+                pen.append((8, "A picture is stretched out of shape. Keep its original width-to-height ratio."))
+                break
+    _t_filler(" ".join(p["t"] for p in paras), "The text", pen)
+    return pen
+
+
+def _draw_docx(m, maxn=3, width=420):
+    from PIL import Image, ImageDraw
+    H = int(width * 1.414)
+    pages = []
+    mx, my = int(width * 0.11), int(H * 0.09)
+    k = width / 595.0
+
+    def new():
+        im = Image.new("RGB", (width, H), "white")
+        return im, ImageDraw.Draw(im)
+    im, d = new()
+    y = my
+    for p in m["paras"]:
+        if not p["t"].strip():
+            y += 5 * k
+            continue
+        sz = p["sz"] * (1.5 if p["style"].lower() == "title" else 1.0)
+        if p["style"].lower().startswith("heading"):
+            sz = max(sz, 15 - 2 * (int(re.sub(r"\D", "", p["style"]) or 1) - 1))
+        px = max(6, sz * k)
+        f = _font(px)
+        for ln in _wrap_px(d, p["t"], f, width - 2 * mx):
+            if y + px > H - my:
+                pages.append(im)
+                if len(pages) >= maxn:
+                    return pages
+                im, d = new()
+                y = my
+            d.text((mx, y), ln, fill="#111111", font=f)
+            y += px * 1.35
+        y += 4 * k
+    pages.append(im)
+    return pages[:maxn]
+
+
+def _pdf_model(path):
+    data = open(path, "rb").read()
+    streams = [s for s in re.findall(rb"stream\n(.*?)\nendstream", data, re.S) if b" Tj" in s]
+    pages = []
+    for s in streams:
+        items = []
+        for blk in re.findall(rb"BT(.*?)ET", s, re.S):
+            fs = re.search(rb"/F\d+ ([\d.]+) Tf", blk)
+            td = re.search(rb"([\d.]+) ([\d.]+) Td", blk)
+            tj = re.findall(rb"\(((?:\\.|[^\\)])*)\) Tj", blk)
+            if td and tj:
+                items.append({"x": float(td.group(1)), "y": float(td.group(2)), "sz": float(fs.group(1)) if fs else 11.0,
+                              "t": b"".join(tj).decode("latin-1").replace("\\(", "(").replace("\\)", ")").replace("\\\\", "\\")})
+        pages.append(items)
+    mb = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)", data)
+    size = (float(mb.group(1)), float(mb.group(2))) if mb else (595.0, 842.0)
+    return {"pages": pages, "size": size}
+
+
+def _taste_pdf(m):
+    pen = []
+    W, H = m["size"]
+    items = [i for pg in m["pages"] for i in pg if i["y"] > 40 and i["t"].strip()]
+    if not items:
+        return pen
+    body = [i for i in items if i["sz"] <= 13]
+    lens = [len(i["t"]) for i in body]
+    if lens and sum(lens) / float(len(lens)) > 100:
+        pen.append((6, "Lines are very long (about %d characters). 60 to 90 characters a line is easier to read; widen the margins or use columns." % (sum(lens) / len(lens))))
+    if min(i["x"] for i in items) < 36:
+        pen.append((6, "Text starts less than 0.5 inch from the left edge. Use a margin of about 2 cm."))
+    sizes = sorted(set(round(i["sz"]) for i in items))
+    if len(items) > 25 and len(sizes) < 2:
+        pen.append((8, "Everything is one text size, so there is no hierarchy. Make the title and headings clearly larger than the body."))
+    elif sizes and len(sizes) > 5:
+        pen.append((5, "%d different text sizes. Keep to a title, headings and body." % len(sizes)))
+    bodysz = max(set(round(i["sz"]) for i in body) or {11}, key=lambda s: sum(1 for i in body if round(i["sz"]) == s)) if body else 11
+    for pn, pg in enumerate(m["pages"], 1):
+        rows = sorted([i for i in pg if i["y"] > 40 and i["t"].strip()], key=lambda i: -i["y"])
+        if len(rows) >= 2 and rows[-1]["sz"] >= bodysz * 1.2 and rows[-1]["sz"] > 11:
+            pen.append((8, "Page %d ends with a heading and no text under it. Move the heading to the next page." % pn))
+            break
+    for pn, pg in enumerate(m["pages"], 1):
+        rows = [i for i in pg if i["y"] > 40 and i["t"].strip()]
+        if len(rows) > 70:
+            pen.append((5, "Page %d is a wall of text (%d lines). Add spacing, headings or bullets." % (pn, len(rows))))
+            break
+    _t_filler(" ".join(i["t"] for i in items), "The text", pen)
+    return pen
+
+
+def _draw_pdf(m, maxn=3, width=420):
+    from PIL import Image, ImageDraw
+    W, H = m["size"]
+    k = width / W
+    out = []
+    for pg in m["pages"][:maxn]:
+        im = Image.new("RGB", (width, int(H * k)), "white")
+        d = ImageDraw.Draw(im)
+        for i in pg:
+            px = max(5, i["sz"] * k * 0.92)
+            d.text((i["x"] * k, (H - i["y"]) * k - px), i["t"][:140], fill="#111111", font=_font(px))
+        out.append(im)
+    return out
+
+
+def _taste_xlsx(path):
+    pen = []
+    z = zipfile.ZipFile(path)
+    sheets = sorted(n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n))
+    styles = z.read("xl/styles.xml").decode("utf8", "ignore") if "xl/styles.xml" in z.namelist() else ""
+    shared = z.read("xl/sharedStrings.xml").decode("utf8", "ignore") if "xl/sharedStrings.xml" in z.namelist() else ""
+    for n in sheets:
+        x = z.read(n).decode("utf8", "ignore")
+        rows = re.findall(r"<row[^>]*>(.*?)</row>", x, re.S)
+        if len(rows) < 2:
+            continue
+        first = re.findall(r'<c [^>]*?s="(\d+)"', rows[0])
+        if not first or all(s == "0" for s in first):
+            pen.append((14, "Sheet %s: the header row has no styling. Make it bold with a fill colour." % n.split("/")[-1]))
+        if len(rows) > 15 and "state=\"frozen\"" not in x:
+            pen.append((6, "Sheet %s: the header row is not frozen. Set ws.freeze_panes = 'A2'." % n.split("/")[-1]))
+        raw = 0
+        for tag, v in re.findall(r"<c ([^>]*)>\s*<v>([^<]*)</v>", "".join(rows[1:])):
+            if 't="s"' in tag or 't="str"' in tag or 't="b"' in tag:
+                continue
+            try:
+                num = float(v)
+            except ValueError:
+                continue
+            sm = re.search(r'\bs="(\d+)"', tag)
+            if (not sm or sm.group(1) == "0") and (abs(num) >= 10000 or (abs(num - round(num, 2)) > 1e-9)):
+                raw += 1
+        if raw >= 3:
+            pen.append((10, "Sheet %s: %d numbers have no number format (long decimals or no thousands separators). Set cell.number_format, e.g. '#,##0.00'." % (n.split("/")[-1], raw)))
+        if "<fill>" not in styles and "<fills" in styles and styles.count("<fill>") < 3 and first and all(s == "0" for s in first):
+            pass
+    _t_filler(shared, "The sheet text", pen)
+    return pen
+
+
+def _taste_img(path):
+    pen = []
+    try:
+        from PIL import Image, ImageChops
+    except Exception:
+        return pen
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    if w < 1000:
+        pen.append((8, "The picture is %d px wide. Save it larger (figsize and dpi=200) so it stays sharp." % w))
+    if h and (w / float(h) > 3.2 or w / float(h) < 0.3):
+        pen.append((6, "The picture has an extreme shape (%d by %d). Use a ratio nearer 4:3 or 16:9." % (w, h)))
+    bg = im.getpixel((0, 0))
+    box = ImageChops.difference(im, Image.new("RGB", im.size, bg)).convert("L").point(lambda v: 255 if v > 30 else 0).getbbox()
+    if box:
+        cover = (box[2] - box[0]) * (box[3] - box[1]) / float(w * h)
+        if cover < 0.35:
+            pen.append((16, "The content fills only %d%% of the picture; the rest is empty. Crop it or enlarge the content." % (cover * 100)))
+        cx = (box[0] + box[2]) / 2.0
+        if abs(cx - w / 2.0) > w * 0.2:
+            pen.append((4, "The content leans to one side of the picture. Centre it."))
+    return pen
+
+
+def _taste(path, ext):
+    """Returns (score, messages, preview_images)."""
+    pen, shots = [], []
+    if ext == "pptx":
+        mo = _slide_model(path)
+        pen = _taste_pptx(mo)
+        try:
+            shots = _draw_pptx(mo)
+        except Exception:
+            shots = []
+    elif ext == "docx":
+        mo = _docx_model(path)
+        pen = _taste_docx(mo)
+        try:
+            shots = _draw_docx(mo)
+        except Exception:
+            shots = []
+    elif ext == "pdf":
+        mo = _pdf_model(path)
+        pen = _taste_pdf(mo)
+        try:
+            shots = _draw_pdf(mo)
+        except Exception:
+            shots = []
+    elif ext == "xlsx":
+        pen = _taste_xlsx(path)
+    elif ext in ("png", "jpg", "jpeg"):
+        pen = _taste_img(path)
+    score = max(0, 100 - sum(p for p, _ in pen))
+    return score, [m for _, m in sorted(pen, key=lambda t: -t[0])], shots
+
+
+def _save_preview(shots):
+    """Tile the drawn pages side by side into one small JPEG the page can pick up for the vision review."""
+    import os
+    from PIL import Image
+    if not shots:
+        return
+    shots = shots[:6]
+    h = max(s.size[1] for s in shots)
+    cols = min(3, len(shots))
+    rows = -(-len(shots) // cols)
+    w = max(s.size[0] for s in shots)
+    sheet = Image.new("RGB", (cols * (w + 8) + 8, rows * (h + 8) + 8), "#BBBBBB")
+    for i, s in enumerate(shots):
+        sheet.paste(s, (8 + (i % cols) * (w + 8), 8 + (i // cols) * (h + 8)))
+    if sheet.size[0] > 1100:
+        sheet = sheet.resize((1100, int(sheet.size[1] * 1100.0 / sheet.size[0])))
+    os.makedirs("/workspace/.cognita-taste", exist_ok=True)
+    for q in (62, 50, 40, 30):
+        sheet.save("/workspace/.cognita-taste/preview.jpg", "JPEG", quality=q)
+        if os.path.getsize("/workspace/.cognita-taste/preview.jpg") < 130000:
+            break
+
+
 def check(path, quiet=False):
     """Inspect a finished file for layout and content problems and return a short report.
     Run it on every file before offering it; fix what it lists, rebuild, and run it again until it says PASS."""
@@ -1325,6 +1879,21 @@ def check(path, quiet=False):
             notes.append("check pages with the browser test tool instead")
     except Exception as e:
         notes.append("could not fully inspect this file (%s)" % str(e)[:80])
+    # Taste: how the file looks, not only whether it is broken. Runs after the functional checks.
+    if ext in ("pptx", "docx", "pdf", "xlsx", "png", "jpg", "jpeg") and os.path.exists(path) and os.path.getsize(path) >= 50:
+        try:
+            score, tmsgs, shots = _taste(path, ext)
+            if score < _TASTE_PASS:
+                issues.append("Design taste score %d/100 (it must reach %d). Fix these, most costly first:" % (score, _TASTE_PASS))
+                issues.extend(tmsgs[:6])
+            else:
+                notes.append("taste %d/100" % score + ("; " + "; ".join(tmsgs[:2]) if tmsgs else ""))
+            try:
+                _save_preview(shots)
+            except Exception:
+                pass
+        except Exception as e:
+            notes.append("taste check skipped (%s)" % str(e)[:60])
     seen, uniq = set(), []
     for s in issues:
         if s not in seen:
@@ -1332,7 +1901,7 @@ def check(path, quiet=False):
             uniq.append(s)
     head = "QA REPORT [%s]: " % name
     if uniq:
-        return head + "NEEDS FIXES (%d)\n- " % len(uniq) + "\n- ".join(uniq[:8]) + "\nFix these, rebuild the file and run check() again."
+        return head + "NEEDS FIXES (%d)\n- " % len(uniq) + "\n- ".join(uniq[:10]) + "\nFix these, rebuild the file and run check() again."
     return head + "PASS" + ((" (" + "; ".join(notes) + ")") if notes else "")
 
 
@@ -2318,12 +2887,24 @@ self.onmessage = async function (ev) {
     } catch (e) {
       exitCode = exitCode || 1; io.err((e && e.message || String(e)) + '\n');
     }
+    // The taste check leaves a small picture of the pages in a hidden folder. Take it for the vision review
+    // (the page forwards it to the server) and remove it so it never shows up as one of the person's files.
+    var tastePicture;
+    try {
+      var tp = '/workspace/.cognita-taste/preview.jpg';
+      if (vfs.isFile(tp)) {
+        var tb = vfs.readBytes(tp), bin = '';
+        for (var ti = 0; ti < tb.length; ti += 8192) bin += String.fromCharCode.apply(null, tb.subarray(ti, ti + 8192));
+        if (tb.length <= 140000) tastePicture = 'data:image/jpeg;base64,' + btoa(bin);
+        vfs.remove('/workspace/.cognita-taste', true);
+      }
+    } catch (e) { tastePicture = undefined; }
     var changes = vfs.diffSince(before);
     var res = {
       command: command, cwd: cwd, stdout: col.stdout, stderr: col.stderr, exitCode: exitCode,
       durationMs: Math.round(performance.now() - t0), truncated: col.truncated, files: changes,
       cancelled: exitCode === 130 || undefined, note: note, fallback: fallback,
-      screenshot: screenshot, previewHtml: previewHtml, previewSize: previewSize
+      screenshot: screenshot, previewHtml: previewHtml, previewSize: previewSize, tastePicture: tastePicture
     };
     var off = [];
     offered.forEach(function (title, p) { if (vfs.isFile(p)) off.push({ path: p, title: title, size: vfs.readBytes(p).length }); });

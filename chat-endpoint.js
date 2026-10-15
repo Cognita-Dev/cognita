@@ -5,6 +5,7 @@ import { resolveAccountWithRole, assertPlan } from './subscription.js';
 import { checkAndIncrement, getUsage, refundUsage, getMonthlyUsage, checkAndIncrementMonthly, refundMonthlyUsage } from './usage.js';
 import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox, planHasRemoteBrowser } from './entitlements.js';
 import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
+import { reviewPictures } from './vision-review.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
@@ -166,6 +167,21 @@ async function _cloudBrowser(args, { uid, planId, plan, env }) {
     await refundUsage('__cf_browser_global', 'browserRemote', env);
   }
   return r;
+}
+
+// Shows the pictures attached to a sandbox result (the drawn pages, a page-test screenshot or a cloud screenshot)
+// to the vision model and appends its notes to the result's text. Advice only: it never changes ok/exitCode, it
+// costs one vision allowance per run, and every failure is silent. The pictures are always removed afterwards.
+async function _applyVisionReview(result, { uid, planId, plan, env }) {
+  const imgs = result && result.reviewImages;
+  if (result) delete result.reviewImages;
+  if (!imgs || !result.ok || !planHasVision(planId) || !env.AI) return;
+  try {
+    const vq = await checkAndIncrement(uid, 'vision', plan.limits.visionPerDay, env);
+    if (!vq.allowed) return;
+    const note = await reviewPictures(imgs, env);
+    if (note) result.stdout = (result.stdout ? result.stdout + '\n' : '') + note;
+  } catch (e) { console.warn('[chat][vision-review] skipped:', e && e.message); }
 }
 
 // The browser's report of a sandbox run it just did for us (Tier 1). It is
@@ -965,9 +981,17 @@ export async function handleChatRequest(request, env) {
               const cloud = await _cloudBrowser(
                 { html: fb.html, mode: fb.selectors.length ? 'elements' : 'text', selectors: fb.selectors },
                 { uid: identity.uid, planId: account.planId, plan, env });
+              // The local browser would have sent a screenshot; here the cloud browser takes one instead, so the
+              // page still gets its visual review. It is a second cloud render, so it is skipped when the first failed.
+              let shot = null;
+              if (cloud.ok && planHasVision(account.planId) && env.AI) {
+                const sr = await _cloudBrowser({ html: fb.html, mode: 'screenshot' }, { uid: identity.uid, planId: account.planId, plan, env });
+                if (sr.ok && sr.image) shot = sr.image;
+              }
               normalized = sandboxTools.normalizeResult({
                 exitCode: cloud.ok ? 0 : 1, error: !cloud.ok, command: normalized.command, stdout: cloud.stdout, stderr: cloud.stderr,
                 durationMs: cloud.durationMs, note: cloud.ok ? 'The local browser could not run this page, so the cloud browser did. ' + (cloud.note || '') : 'The local browser could not run this page and the cloud browser failed too.',
+                reviewImages: shot ? [shot] : undefined,
               });
               console.log('[chat][sandbox] browser test fell back to cloud ok=' + normalized.ok);
             } else {
@@ -976,6 +1000,9 @@ export async function handleChatRequest(request, env) {
             }
             delete normalized.fallback;
           }
+          // Second opinion on how the file or page looks (see _applyVisionReview).
+          if (!sandboxResume.cancelled) await _applyVisionReview(normalized, { uid: identity.uid, planId: account.planId, plan, env });
+          else delete normalized.reviewImages;
           // The person asked for a file, this run made one, and nothing has been
           // offered yet this turn: tell the model to offer it (see resultForModel).
           const offeredSoFar = turnTrace.some((e) => e.o);
@@ -1455,7 +1482,13 @@ export async function handleChatRequest(request, env) {
                 const cbResult = sandboxTools.normalizeResult({
                   exitCode: cb.ok ? 0 : (cb.exitCode || 1), error: !cb.ok, command: describeTool(call.name, call.args),
                   stdout: cb.stdout, stderr: cb.stderr, durationMs: cb.durationMs, note: cb.note,
+                  reviewImages: cb.image ? [cb.image] : undefined,
                 }, sandboxTools.describe(call.name, call.args));
+                // The model cannot see a picture, so a screenshot is turned into the vision model's notes.
+                if (cb.image) {
+                  await _applyVisionReview(cbResult, { uid: identity.uid, planId: account.planId, plan, env });
+                  if (!/VISION REVIEW/.test(cbResult.stdout || '')) cbResult.stdout = (cbResult.stdout ? cbResult.stdout + '\n' : '') + 'No visual review was available for this screenshot (it needs a plan with image understanding).';
+                }
                 steps.push({
                   type: 'sandbox', name: call.name, provider: 'sandbox', providerLabel: 'Browser', kind: 'run', ms: cbResult.durationMs, ok: cbResult.ok,
                   summary: describeTool(call.name, call.args), sandbox: cbResult,

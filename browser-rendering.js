@@ -9,12 +9,13 @@
 //
 // What it can do: render a public https page, or a piece of HTML the model wrote,
 // in a real headless Chrome, and return the rendered text, links or element
-// measurements. What it cannot do: report console errors (the REST API does
-// not expose them) or show a screenshot to the model (tool results are text).
+// measurements, or (mode "screenshot") a small JPEG that vision-review.js can look at. What it cannot do:
+// report console errors (the REST API does not expose them).
 
 const API = 'https://api.cloudflare.com/client/v4/accounts/';
-export const MODES = ['text', 'html', 'links', 'elements'];
-const ENDPOINT = { text: 'markdown', html: 'content', links: 'links', elements: 'scrape' };
+export const MODES = ['text', 'html', 'links', 'elements', 'screenshot'];
+const ENDPOINT = { text: 'markdown', html: 'content', links: 'links', elements: 'scrape', screenshot: 'screenshot' };
+const MAX_SHOT_BYTES = 140_000;
 const MAX_HTML_CHARS = 200_000;
 const MAX_OUT_CHARS = 12_000;
 const MAX_SELECTORS = 10;
@@ -79,6 +80,11 @@ export async function renderRemote(args, env) {
     if (!sel.length) return fail('mode "elements" needs at least one CSS selector.');
     body.elements = sel.map((selector) => ({ selector }));
   }
+  if (mode === 'screenshot') {
+    // A small JPEG so it can be passed to the vision model (see vision-review.js).
+    body.screenshotOptions = { type: 'jpeg', quality: 55, fullPage: false };
+    body.viewport = { width: 1000, height: 640 };
+  }
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   const t0 = Date.now();
@@ -97,6 +103,15 @@ export async function renderRemote(args, env) {
       console.warn('[browser-rendering] auth rejected status=' + res.status);
       return fail('The cloud browser is not available right now.', 3);
     }
+    if (mode === 'screenshot' && res.ok && /^image\//i.test(res.headers.get('content-type') || '')) {
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (!buf.length || buf.length > MAX_SHOT_BYTES) return fail('The screenshot was empty or too large to review.');
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
+      return { ok: true, exitCode: 0, stdout: 'Screenshot captured (' + buf.length + ' bytes).', stderr: '', durationMs: Date.now() - t0,
+        image: { dataUrl: 'data:image/jpeg;base64,' + btoa(bin), kind: 'page-test' },
+        note: 'Rendered by the cloud browser (mode screenshot).' };
+    }
     let data = null;
     try { data = await res.json(); } catch (_) { /* not JSON */ }
     if (!res.ok || !data || data.success === false) {
@@ -114,6 +129,8 @@ export async function renderRemote(args, env) {
           top: g.results[0].top, left: g.results[0].left, width: g.results[0].width, height: g.results[0].height,
         } : null,
       }));
+    } else if (mode === 'screenshot') {
+      return fail('The cloud browser did not return a picture.');
     } else {
       out = data.result;
     }
