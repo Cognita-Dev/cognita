@@ -100,7 +100,7 @@ def _load_image(path):
     with open(path, "rb") as f:
         data = f.read()
     if data[:8] == b"\x89PNG\r\n\x1a\n":
-        pos, idat, plte, hdr = 8, [], None, None
+        pos, idat, plte, hdr, trns = 8, [], None, None, None
         while pos + 8 <= len(data):
             n, typ = struct.unpack(">I4s", data[pos:pos + 8])
             body = data[pos + 8:pos + 8 + n]
@@ -108,6 +108,8 @@ def _load_image(path):
                 hdr = struct.unpack(">IIBBBBB", body)
             elif typ == b"PLTE":
                 plte = body
+            elif typ == b"tRNS":
+                trns = body
             elif typ == b"IDAT":
                 idat.append(body)
             elif typ == b"IEND":
@@ -118,7 +120,7 @@ def _load_image(path):
         w, h, depth, ctype, _c, _f, interlace = hdr
         if depth != 8 or interlace != 0 or ctype not in (0, 2, 3, 4, 6):
             raise ValueError("unsupported png (needs 8-bit, not interlaced)")
-        return {"kind": "png", "w": w, "h": h, "ctype": ctype, "plte": plte, "idat": b"".join(idat), "ext": "png"}
+        return {"kind": "png", "w": w, "h": h, "ctype": ctype, "plte": plte, "trns": trns, "idat": b"".join(idat), "ext": "png"}
     if data[:2] == b"\xff\xd8":
         pos = 2
         while pos + 9 < len(data):
@@ -159,6 +161,16 @@ def _png_planes(im):
     pos = 0
     pal = im["plte"] or b""
     tr = [bytes(pal[i::3][:256]).ljust(256, b"\0") for i in range(3)] if ct == 3 else None
+    # Transparency stored in a tRNS chunk: a per-colour alpha table (palette) or one see-through colour (grey / RGB).
+    trns = im.get("trns")
+    atab, key = None, None
+    if trns and ct == 3:
+        atab = bytes(trns[:256]).ljust(256, b"\xff")
+    elif trns and ct == 0 and len(trns) >= 2:
+        key = trns[1]
+        atab = bytes(0 if v == key else 255 for v in range(256))
+    elif trns and ct == 2 and len(trns) >= 6:
+        key = (trns[1], trns[3], trns[5])
     for _ in range(h):
         ft = raw[pos]
         line = bytearray(raw[pos + 1:pos + 1 + stride])
@@ -186,11 +198,15 @@ def _png_planes(im):
         row = bytearray(w * 3)
         if ct == 2:
             row = line
+            if key:
+                alp += bytes(0 if (line[i], line[i + 1], line[i + 2]) == key else 255 for i in range(0, stride, 3))
         elif ct == 6:
             row[0::3], row[1::3], row[2::3] = line[0::4], line[1::4], line[2::4]
             alp += line[3::4]
         elif ct == 0:
             row[0::3] = row[1::3] = row[2::3] = line
+            if atab:
+                alp += bytes(line).translate(atab)
         elif ct == 4:
             g = line[0::2]
             row[0::3] = row[1::3] = row[2::3] = g
@@ -198,6 +214,8 @@ def _png_planes(im):
         else:  # palette
             idx = bytes(line)
             row[0::3], row[1::3], row[2::3] = idx.translate(tr[0]), idx.translate(tr[1]), idx.translate(tr[2])
+            if atab:
+                alp += idx.translate(atab)
         rgb += row
     return bytes(rgb), (bytes(alp) if alp and any(b != 255 for b in alp) else None)
 
