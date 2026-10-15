@@ -177,6 +177,24 @@ button.act-toggle { min-height: 44px; margin: -10px 0; padding: 10px 0; }
 .act-list { margin: 0; padding-left: 1.1em; font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 2px; }
 .act-list li { overflow-wrap: anywhere; }
 
+/* ── web search: the sites a search found ── */
+.act-sources { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.act-src {
+  display: flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: 4px 6px; margin: 0 -6px;
+  border-radius: var(--radius-md); color: var(--text-1); text-decoration: none;
+}
+.act-src:hover { background: var(--bg-elevated); }
+.act-src:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The globe sits underneath; the site's own picture covers it once it has loaded. */
+.act-src-ico { position: relative; flex-shrink: 0; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); font-size: 14px; }
+.act-src-img { position: absolute; inset: 0; width: 16px; height: 16px; border-radius: 3px; background: var(--bg-elevated); }
+.act-src-text { min-width: 0; display: flex; flex-direction: column; }
+.act-src-title { font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-src-host { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Several searches in one row: each question, then its sites. */
+.act-search + .act-search { margin-top: var(--space-3); }
+.act-search-q { font-size: 13px; color: var(--text-2); line-height: 1.4; overflow-wrap: anywhere; margin-bottom: 2px; }
+
 /* ── code run detail ── */
 .sbx-body { display: flex; flex-direction: column; gap: 8px; }
 .sbx-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
