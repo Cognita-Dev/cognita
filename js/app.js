@@ -355,7 +355,7 @@ function conversationHasMedia() {
 
 function conversationHasSandbox() {
   return conversationMeta.some((m) => m && Array.isArray(m.steps) && m.steps.some((s) => s && s.type === 'sandbox')) ||
-    conversation.some((m) => m && Array.isArray(m.attachments) && m.attachments.some((a) => a && a.kind === 'workspace'));
+    conversation.some((m) => m && Array.isArray(m.attachments) && m.attachments.some((a) => a && (a.kind === 'workspace' || (a.kind === 'image' && a.workspacePath))));
 }
 
 /* Fills one usage meter. entitlements.js's UNLIMITED sentinel (999999) is a real,
@@ -1644,7 +1644,11 @@ async function handlePickedFile(file) {
 function _buildSentAttachment(a, savedToWorkspace) {
   if (a.kind === 'data') return savedToWorkspace.get(a) || { kind: 'unsupported', name: a.name };
   if (a.kind === 'workspace') return { kind: 'workspace', name: a.name, path: a.path, size: a.size, stub: a.stub };
-  if (a.kind === 'image') return { kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType };
+  if (a.kind === 'image') {
+    const saved = savedToWorkspace && savedToWorkspace.get(a);
+    const keptPath = (saved && saved.path) || a.workspacePath || '';
+    return Object.assign({ kind: 'image', name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType }, keptPath ? { workspacePath: keptPath } : {});
+  }
   if (a.kind === 'text') return { kind: 'file', name: a.name, text: a.text };
   return { kind: 'unsupported', name: a.name };
 }
@@ -2040,6 +2044,7 @@ function buildEffectiveContent(msg) {
     const fileAtts = msg.attachments.filter((a) => a.kind === 'file');
     const unsupportedAtts = msg.attachments.filter((a) => a.kind === 'unsupported');
     const workspaceAtts = msg.attachments.filter((a) => a.kind === 'workspace' && a.stub);
+    const savedPictures = msg.attachments.filter((a) => a.kind === 'image' && a.workspacePath);
 
     if (fileAtts.length) {
       text += fileAtts.map((a) =>
@@ -2048,6 +2053,13 @@ function buildEffectiveContent(msg) {
     }
     if (workspaceAtts.length) {
       text += workspaceAtts.map((a) => '\n\n' + a.stub).join('');
+    }
+    if (savedPictures.length) {
+      text += savedPictures.map((a) =>
+        '\n\n[The picture "' + a.name + '" is also saved in the workspace at ' + a.workspacePath +
+        '. To put it in a file (for example as a logo on every page or slide), pass that path as logo= to pdf() or pptx(), ' +
+        'or use it in an image block. If the file is missing later, ask the user to attach it again.]'
+      ).join('');
     }
     if (unsupportedAtts.length) {
       text += unsupportedAtts.map((a) =>
@@ -2148,6 +2160,64 @@ async function putDataAttachments(list) {
   return out;
 }
 
+/* A picture goes to the vision model first. When it is a PNG or JPEG and the
+ * person is likely to want it inside a file (a logo on a PDF or slide, a picture in a
+ * report), a copy is also saved in /workspace/uploads so the document helper can use it.
+ * Best effort: on any failure the picture still reaches the vision model. Resolves a
+ * Map from each pending picture to { path, size }. */
+const LOGO_INTENT_RE = /\b(logo|watermark|letterhead|brand(?:ing)?|stamp|pdf|slides?|deck|powerpoint|pptx|presentation|word|docx|document|report|embed|insert|place|put|add)\b/i;
+function _b64ToBuffer(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+async function putImageAttachments(list, text) {
+  const out = new Map();
+  const usable = list.filter((a) => a && a.base64 && /^image\/(png|jpe?g)$/i.test(a.mimeType || ''));
+  if (!usable.length) return out;
+  // Pictures already saved earlier (a retried message) are reused, not saved twice.
+  const fresh = [];
+  usable.forEach((a) => { if (a.workspacePath) out.set(a, { path: a.workspacePath }); else fresh.push(a); });
+  const wanted = LOGO_INTENT_RE.test(String(text || '')) || conversationHasSandbox();
+  if (!fresh.length || !wanted) return out;
+  const lim = currentSandboxLimits || {};
+  const items = [];
+  fresh.forEach((a) => {
+    let data;
+    try { data = _b64ToBuffer(a.base64); } catch (_) { return; }
+    const ext = /png/i.test(a.mimeType) ? '.png' : '.jpg';
+    const stem = String(a.name || 'image').replace(/\.[a-z0-9]{1,5}$/i, '') || 'image';
+    items.push({ owner: a, name: stem + ext, data });
+  });
+  if (!items.length) return out;
+  let res;
+  try {
+    res = await getSandbox().putFiles(
+      ensureConversationId(),
+      items.map((it) => ({ name: it.name, data: it.data })),
+      { maxFileBytes: sandboxFileLimitBytes(), maxWorkspaceBytes: (lim.maxWorkspaceMB || 10) * 1024 * 1024 }
+    );
+  } catch (e) {
+    res = { saved: [], errors: [] };
+  }
+  // Two pictures can share a name; match them in order, not by name alone.
+  const queue = new Map();
+  (res.saved || []).forEach((sv) => {
+    if (!queue.has(sv.name)) queue.set(sv.name, []);
+    queue.get(sv.name).push(sv);
+  });
+  items.forEach((it) => {
+    const q = queue.get(it.name);
+    const sv = q && q.length ? q.shift() : null;
+    if (sv) out.set(it.owner, { path: sv.path, size: sv.size });
+  });
+  if (out.size < usable.length && LOGO_INTENT_RE.test(String(text || ''))) {
+    showToast('The picture was read, but could not be saved for use inside a file.');
+  }
+  return out;
+}
+
 /* Starts loading the Python core in the background, but only when it is likely
  * to be needed and the connection can afford it: this chat already ran code, a
  * data file is attached, or the message matches the sandbox gate. Never on
@@ -2200,10 +2270,13 @@ async function sendMessage(text) {
   // sandbox tools must be offered for this message (see sandboxHint below).
   // This must run BEFORE the attachment list is built, because that list
   // looks up where each data file was saved.
-  const sendingDataFile = staged.some((a) => a.kind === 'data' || a.kind === 'workspace');
+  let sendingDataFile = staged.some((a) => a.kind === 'data' || a.kind === 'workspace');
   let savedToWorkspace = new Map();
   try {
     savedToWorkspace = await putDataAttachments(staged.filter((a) => a.kind === 'data'));
+    const savedPictures = await putImageAttachments(staged.filter((a) => a.kind === 'image'), text);
+    savedPictures.forEach((v, k) => savedToWorkspace.set(k, v));
+    if (savedPictures.size > 0) sendingDataFile = true;
   } catch (err) {
     console.error('[app] Could not save attachments:', err && err.message);
     showToast('Could not add your file. Please try again.');
@@ -4511,6 +4584,7 @@ function wireMessageActionButtons() {
             dataUrl: a.dataUrl,
             mimeType: a.mimeType,
             base64: (a.dataUrl || '').split(',')[1] || '',
+            workspacePath: a.workspacePath || '',
           };
         }
         if (a.kind === 'file') return { kind: 'text', name: a.name, text: a.text };
