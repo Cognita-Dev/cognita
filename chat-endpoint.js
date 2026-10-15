@@ -792,6 +792,9 @@ export async function handleChatRequest(request, env) {
   let stepNo = 0;
   let webFetchesThisTurn = 0;
   let webSearchesThisTurn = 0;
+  // Every source the searches found this turn, in the order the model was told about them (numbered 1, 2, 3...
+  // across all searches, so a [2] in the answer always points at the same site). Sent with the final answer.
+  const webTurnSources = [];
   let codeInChatRetries = 0;
   const MAX_WEB_FETCHES_PER_TURN = 6;
   const MAX_WEB_SEARCHES_PER_TURN = 4;
@@ -1187,10 +1190,26 @@ export async function handleChatRequest(request, env) {
                   emit('step_start', { name: call.name, provider: 'web', ...wsMeta, summary: wsSummary });
                   wsResult = await webSearch.searchWeb(call.args, env);
                   if (!wsResult.ok) await refundMonthlyUsage(identity.uid, 'webSearches', env);
+                  else {
+                    // Give each result its number for the whole turn (the same address keeps its first number).
+                    for (const r of wsResult.results) {
+                      let at = webTurnSources.findIndex((x) => x.url === r.url);
+                      if (at < 0) { webTurnSources.push({ title: r.title, url: r.url }); at = webTurnSources.length - 1; }
+                      r.n = at + 1;
+                    }
+                  }
                 }
               }
               console.log('[chat][web] search ok=' + !!wsResult.ok + (wsResult.ok ? ' results=' + wsResult.results.length : ''));
-              steps.push({ type: 'executed', name: call.name, provider: 'web', ...wsMeta, ms: 0, ok: !!wsResult.ok, ...(wsResult.ok ? {} : { reason: 'The search did not work.' }), summary: wsSummary });
+              const wsQuery = typeof call.args.query === 'string' ? call.args.query.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+              const wsShown = wsResult.ok ? webSearch.sourcesForClient(wsResult.results) : [];
+              steps.push({
+                type: 'executed', name: call.name, provider: 'web', ...wsMeta, ms: 0, ok: !!wsResult.ok,
+                ...(wsResult.ok ? {} : { reason: 'The search did not work.' }),
+                summary: wsSummary, query: wsQuery,
+                // Title and link of each source, so the row can open into a list of them.
+                ...(wsShown.length ? { sources: wsShown } : {}),
+              });
               emit('step', steps[steps.length - 1]);
               const wsEntry = sandboxTools.makeTraceEntry({
                 n: ++stepNo, kind: 'tool', assistantText: (result.text && result.text.trim()) ? result.text : '',
@@ -1675,6 +1694,8 @@ export async function handleChatRequest(request, env) {
     uiPatches,
     remainingToday: plan.limits.messagesPerDay - quota.used,
     pendingToolCall,
+    // Web pages the searches found (at most 8), for the "Sources" list under the answer.
+    sources: webTurnSources.length ? webTurnSources.slice(0, 8) : undefined,
     // Set when create_design needs details or files from the person first.
     pendingDesignRequest,
     // Set only when a Tier 1 sandbox call has to run in the person's browser.
