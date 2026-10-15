@@ -898,6 +898,7 @@ export async function handleChatRequest(request, env) {
         let workingMessages = messages;
         let round = 0;
         let invalidArgAttempts = {}; // tool name -> consecutive invalid-arg count
+        let qaGateRedirects = {}; // file path -> times a download was held back for a quality check
         let groundingRetries = 0;
         let stallRetries = 0;
 
@@ -1366,6 +1367,20 @@ export async function handleChatRequest(request, env) {
                 result = null;
                 round++;
                 continue;
+              }
+              // Quality gate: slides, Word, PDF, Excel and pictures are inspected before they are handed over.
+              if (sbName === 'sandbox_offer_file') {
+                const qaMsg = sandboxTools.qaGate(sbArgs.path, turnTrace);
+                const qaKey = String(sbArgs.path);
+                if (qaMsg && (qaGateRedirects[qaKey] = (qaGateRedirects[qaKey] || 0) + 1) <= sandboxTools.MAX_QA_REDIRECTS) {
+                  workingMessages = workingMessages.concat([
+                    { role: 'assistant', content: 'Attempting sandbox_offer_file.' },
+                    { role: 'user', content: qaMsg },
+                  ]);
+                  result = null;
+                  round++;
+                  continue;
+                }
               }
               if (turnTrace.filter((e) => e.k === 'sbx').length >= sandboxTools.MAX_SANDBOX_CALLS_PER_TURN) {
                 result = {

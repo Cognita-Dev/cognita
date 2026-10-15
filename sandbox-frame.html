@@ -39,6 +39,8 @@
     pdf("/workspace/report.pdf", blocks)
     pptx("/workspace/deck.pptx", blocks)   # designed slides: title block = cover, each h1 = new slide; pass palette=0..5 to pick colours
 
+Every build prints a "QA REPORT" for the new file. check("/workspace/file.pptx") re-inspects any docx, pdf, pptx, xlsx or png/jpg.
+
 Block types: title, h1, h2, h3, p, quote, bullets, numbered, table, image, spacer, pagebreak.
 A picture (PNG or JPEG, e.g. a matplotlib chart or organogram saved with savefig) is ("image", "/workspace/chart.png", {"width": 420, "caption": "Figure 1"}); width is in points. Word, PDF and PowerPoint (placed beside the slide text).
 An optional last item in a block is a dict: {"align": "left|center|right|justify"}.
@@ -50,7 +52,7 @@ import zipfile
 import zlib
 from xml.sax.saxutils import escape as _esc
 
-__all__ = ["docx", "pdf", "pptx"]
+__all__ = ["docx", "pdf", "pptx", "check"]
 
 _INLINE = re.compile(r"(\*\*.+?\*\*|\*.+?\*)", re.S)
 
@@ -468,12 +470,12 @@ def pdf(path, blocks, title=None, page="A4"):
     if title and not any(k == "title" for k, _, _ in items):
         items.insert(0, ("title", title, {}))
     _tt = next((str(v) for k, v, _o in items if k == "title"), "")
-    _P = _PALETTES[sum(ord(c) for c in (_tt or "doc")) % len(_PALETTES)]
+    _P = _pal(sum(ord(c) for c in (_tt or "doc")))
 
     def rgb(h):
         return "%.3f %.3f %.3f" % tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
-    C_INK, C_ACC, C_ACC2, C_TINT, C_DARK = rgb(_P["ink"]), rgb(_P["accent"]), rgb(_P["accent2"]), rgb(_P["tint"]), rgb(_P["dark"])
+    C_INK, C_ACC, C_ACC2, C_TINT, C_DARK, C_ACCT = rgb(_P["ink"]), rgb(_P["accent"]), rgb(_P["accent2"]), rgb(_P["tint"]), rgb(_P["dark"]), rgb(_P["at"])
     C_BODY = "0.2 0.25 0.33"
     for kind, val, opts in items:
         align = opts.get("align", "left")
@@ -497,7 +499,7 @@ def pdf(path, blocks, title=None, page="A4"):
                 ensure(16)
                 mark = u"\u2022" if kind == "bullets" else "%d." % n
                 y0 = state["y"] - 11 * 1.35
-                text_at(M + 8, y0, mark, 11, "F2", C_ACC)
+                text_at(M + 8, y0, mark, 11, "F2", C_ACCT)
                 draw_para(item, 11, M + 28, cw - 28, False, "left", 4, C_BODY)
             state["y"] -= 4
         elif kind == "table":
@@ -556,7 +558,7 @@ def pdf(path, blocks, title=None, page="A4"):
         ops.insert(0, "%s rg 0 %.2f %.2f 8 re f" % (C_ACC, H - 8, W))
         ops.append("%s rg BT /F1 8.5 Tf %.2f 28 Td (%s) Tj ET" % ("0.45 0.5 0.58", M, _pdf_escape(_cp(_tt[:70]))))
         lab = "%d / %d" % (pn, len(pages))
-        ops.append("%s rg BT /F2 8.5 Tf %.2f 28 Td (%s) Tj ET" % (C_ACC, W - M - _tw(lab, 8.5, True), lab))
+        ops.append("%s rg BT /F2 8.5 Tf %.2f 28 Td (%s) Tj ET" % (C_ACCT, W - M - _tw(lab, 8.5, True), lab))
 
     objs = []
 
@@ -624,6 +626,24 @@ _PALETTES = [
 ]
 
 
+def _text_safe(hexs, pairs):
+    """Darken a colour until it reads on each (background, minimum contrast) pair; used for text and pills on light slides."""
+    c = [int(hexs[i:i + 2], 16) for i in (0, 2, 4)]
+    for _ in range(40):
+        h = "%02X%02X%02X" % tuple(c)
+        if all(_contrast(h, bg) >= mn for bg, mn in pairs):
+            return h
+        c = [int(v * 0.93) for v in c]
+    return "%02X%02X%02X" % tuple(c)
+
+
+def _pal(i):
+    p = dict(_PALETTES[int(i) % len(_PALETTES)])
+    p["at"] = _text_safe(p["accent"], [("FFFFFF", 4.5), (p["tint"], 3.5)])
+    p["a2t"] = _text_safe(p["accent2"], [("FFFFFF", 4.5), (p["tint"], 3.5)])
+    return p
+
+
 def pptx(path, blocks, title=None, author="Cognita", palette=None):
     """Make a designed 16:9 .pptx. A "title" block makes the cover; every h1 starts a new slide.
     Bullets become cards, steps or rows; tables become real tables; images are placed beside the text.
@@ -645,7 +665,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
             break
     if palette is None:
         palette = sum(ord(c) for c in (deck_title or "deck")) % len(_PALETTES)
-    P = _PALETTES[int(palette) % len(_PALETTES)]
+    P = _pal(palette)
 
     raw = []
     cur = None
@@ -860,7 +880,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
         sl.shape(LM, 1290000, 900000, 50000, P["accent2"], name="Rule")
         # footer
         sl.text(LM, H - 460000, 8000000, 300000, para(deck_title or "", 11, P["muted"]), "ctr", "Footer")
-        sl.shape(W - LM - 560000, H - 470000, 560000, 320000, P["accent"], "roundRect", para(str(idx + 1), 12, "FFFFFF", True, algn="ctr"), "ctr", adj=50000, name="PageNo")
+        sl.shape(W - LM - 560000, H - 470000, 560000, 320000, P["at"], "roundRect", para(str(idx + 1), 12, "FFFFFF", True, algn="ctr"), "ctr", adj=50000, name="PageNo")
         top, bottom = 1600000, H - 640000
         RH = bottom - top
 
@@ -913,8 +933,10 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
                 qs = fit([q], RWt - 350000, qh, 26, 16)
                 sl.text(LM + 280000, y, RWt - 280000, qh, para(q, qs, P["ink"], italic=True, font=HEAD), "ctr", "Quote")
                 y += qh + 150000
+            reserve = (int(len(tables[0][0]) * 14 * 2.3 * PT) + 250000) if (tables and tables[0][0]) else 0
             for kind, lst in lists:
-                avail = bottom - y
+                avail = bottom - reserve - y
+                used = avail
                 n = len(lst)
                 lead = [split_lead(t) for t in lst]
                 if kind == "numbered" and 2 <= n <= 6 and not placed:
@@ -922,11 +944,12 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
                     tsz = min(fit([("%s %s" % (a, b))], RWt - 1000000, rh_ - 40000, 26, 14) for a, b in lead)
                     for j, (a, b) in enumerate(lead):
                         ry = y + j * rh_
-                        sl.shape(LM, ry + (rh_ - 560000) // 2, 560000, 560000, P["accent"], "ellipse", para(str(j + 1), 18, "FFFFFF", True, algn="ctr", font=HEAD), "ctr", name="Step")
+                        sl.shape(LM, ry + (rh_ - 560000) // 2, 560000, 560000, P["at"], "ellipse", para(str(j + 1), 18, "FFFFFF", True, algn="ctr", font=HEAD), "ctr", name="Step")
                         if j < n - 1:
                             sl.shape(LM + 275000, ry + (rh_ - 560000) // 2 + 560000, 10000, rh_ - 560000, P["soft"], name="Link")
                         body = (para(a, tsz, P["ink"], True) if a else "") + para(b, tsz - (1 if a else 0), "475569")
                         sl.text(LM + 800000, ry, RWt - 800000, rh_, body, "ctr", "StepText")
+                    used = n * rh_
                 elif kind == "bullets" and 2 <= n <= 4 and not placed and all(len(t) <= 130 for t in lst) and not paras_t:
                     cols = n if n <= 3 else 2
                     rows_ = -(-n // cols)
@@ -937,13 +960,15 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
                         cx = LM + (j % cols) * (cw_ + gap)
                         cy = y + (j // cols) * (ch_ + gap)
                         acc = P["accent"] if j % 2 == 0 else P["accent2"]
+                        acct = P["at"] if j % 2 == 0 else P["a2t"]
                         sl.shape(cx, cy, cw_, ch_, P["tint"], "roundRect", adj=4000, name="Card")
                         sl.shape(cx, cy + 200000, 70000, 520000, acc, name="CardAccent")
-                        sl.text(cx + 220000, cy + 190000, 700000, 520000, para("%02d" % (j + 1), 22, acc, True, font=HEAD), "ctr", "Num")
+                        sl.text(cx + 220000, cy + 190000, 700000, 520000, para("%02d" % (j + 1), 22, acct, True, font=HEAD), "ctr", "Num")
                         tb = a if a else ""
                         bsz = fit([b], cw_ - 440000, ch_ - 1000000, 22, 12)
                         paras = (para(tb, bsz + 3, P["ink"], True, font=HEAD, after=6) if tb else "") + para(b, bsz, "475569")
                         sl.text(cx + 220000, cy + 800000, cw_ - 440000, ch_ - 900000, paras, "t", "CardText")
+                    used = rows_ * ch_ + (rows_ - 1) * gap
                 else:
                     gap = 90000
                     rh_ = min(int(avail / n), 820000)
@@ -953,7 +978,8 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
                         sl.shape(LM, ry + rh_ // 2 - 80000, 160000, 160000, P["accent"] if j % 2 == 0 else P["accent2"], "roundRect", adj=30000, name="Marker")
                         body = para(("**%s** %s" % (a, b)) if a else b, tsz, "334155")
                         sl.text(LM + 400000, ry, RWt - 400000, rh_, body, "ctr", "Row")
-                y = bottom
+                    used = n * rh_
+                y += used + 200000
         for rows, o in tables[:1]:
             rows = [list(r) for r in rows]
             if not rows:
@@ -1011,6 +1037,319 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None):
             extra = "".join('<Relationship Id="%s" Type="%s/image" Target="../media/%s"/>' % (rid, REL, nm) for rid, nm in sl.rels)
             z.writestr("ppt/slides/_rels/slide%d.xml.rels" % n, rels_hdr + '<Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>%s</Relationships>' % (REL, extra))
     return path
+
+
+# ───────────────────────── Quality check ─────────────────────────
+# The model cannot look at a screenshot, so it reads this report instead. pdf(), docx() and pptx() print it
+# automatically after every build; check("/workspace/file") can be run on any file again after a fix.
+
+def _lum(hexs):
+    def ch(v):
+        v = int(v, 16) / 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * ch(hexs[0:2]) + 0.7152 * ch(hexs[2:4]) + 0.0722 * ch(hexs[4:6])
+
+
+def _contrast(a, b):
+    la, lb = _lum(a), _lum(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+_LEAK = re.compile(r"\*\*[^*\s][^*]*\*\*|(?:^|\n)\s*#{1,6}\s+\S|```|\[\[|\]\]")
+_PLACE = re.compile(r"lorem ipsum|\bTBD\b|\bTODO\b|placeholder|\bXXX+\b|insert (?:name|text|date) here", re.I)
+
+
+def _qa_pptx(path, issues, notes):
+    import xml.etree.ElementTree as ET
+    A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+    R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    z = zipfile.ZipFile(path)
+    names = sorted([n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)], key=lambda n: int(re.sub(r"\D", "", n)))
+    if not names:
+        issues.append("The file has no slides.")
+        return
+    SW, SH = 12192000, 6858000
+    m = re.search(r'<p:sldSz cx="(\d+)" cy="(\d+)"', z.read("ppt/presentation.xml").decode("utf8", "ignore"))
+    if m:
+        SW, SH = int(m.group(1)), int(m.group(2))
+    sigs = []
+
+    def idx_is_content(k):
+        return k > 1
+
+    for i, n in enumerate(names, 1):
+        root = ET.fromstring(z.read(n))
+        relp = n.replace("slides/", "slides/_rels/") + ".rels"
+        rel_ids = set(re.findall(r'Id="([^"]+)"', z.read(relp).decode("utf8", "ignore"))) if relp in z.namelist() else set()
+        bgn = root.find(".//" + P + "bg")
+        bgc = "FFFFFF"
+        if bgn is not None:
+            c = bgn.find(".//" + A + "srgbClr")
+            if c is not None:
+                bgc = c.get("val")
+        placed = []   # (x, y, cx, cy, fill)
+        words, pics, texts, kinds = 0, 0, 0, []
+        for el in root.iter():
+            tag = el.tag
+            if tag == P + "sp":
+                nm = (el.find(".//" + P + "cNvPr").get("name") or "").strip()
+                off, ext = el.find(".//" + A + "off"), el.find(".//" + A + "ext")
+                if off is None or ext is None:
+                    continue
+                x, y, cx, cy = int(off.get("x")), int(off.get("y")), int(ext.get("cx")), int(ext.get("cy"))
+                spPr = el.find(P + "spPr")
+                fillc = None
+                if spPr is not None:
+                    sf = spPr.find(A + "solidFill")
+                    if sf is not None and sf.find(A + "srgbClr") is not None:
+                        fillc = sf.find(A + "srgbClr").get("val")
+                big_deco = cx * cy > SW * SH * 0.5
+                if "Deco" not in nm and not big_deco and (x < -SW * 0.02 or x + cx > SW * 1.02 or y + cy > SH * 1.02):
+                    issues.append("Slide %d: '%s' runs off the slide edge." % (i, nm))
+                paras = el.findall(".//" + A + "p")
+                txt_all = "\n".join("".join(t.text or "" for t in p.iter(A + "t")) for p in paras).strip()
+                if txt_all:
+                    texts += 1
+                    kinds.append(nm.split()[0] if nm else "x")
+                    words += len(txt_all.split())
+                    bp = el.find(".//" + A + "bodyPr")
+                    li = int(bp.get("lIns", 91440)) if bp is not None else 91440
+                    ri = int(bp.get("rIns", 91440)) if bp is not None else 91440
+                    ti = int(bp.get("tIns", 45720)) if bp is not None else 45720
+                    bi = int(bp.get("bIns", 45720)) if bp is not None else 45720
+                    wpt = max(10.0, (cx - li - ri) / 12700.0)
+                    need, minsz = 0.0, 999.0
+                    for p in paras:
+                        t = "".join(t.text or "" for t in p.iter(A + "t"))
+                        szs = [int(r.get("sz")) / 100.0 for r in p.iter(A + "rPr") if r.get("sz")]
+                        sz = max(szs) if szs else 18.0
+                        if t.strip():
+                            minsz = min(minsz, min(szs) if szs else 18.0)
+                        cpl = max(4, int(wpt / (sz * 0.5)))
+                        lines = sum(max(1, -(-len(part) // cpl)) for part in t.split("\n"))
+                        sa = p.find(".//" + A + "spcAft/" + A + "spcPts")
+                        need += lines * sz * 1.2 + (int(sa.get("val")) / 100.0 if sa is not None else 0)
+                    have = (cy - ti - bi) / 12700.0
+                    if need > have * 1.12 + 4:
+                        issues.append("Slide %d: text in '%s' is too long for its box (needs about %d pt of height, has %d). Shorten it or move part to another slide." % (i, nm, need, have))
+                    if minsz < 11 and "Footer" not in nm and "PageNo" not in nm:
+                        issues.append("Slide %d: text in '%s' is only %d pt, too small to read when presented. Use fewer words." % (i, nm, minsz))
+                    if _LEAK.search(txt_all):
+                        issues.append("Slide %d: raw markdown symbols (** or #) are showing in '%s'." % (i, nm))
+                    if _PLACE.search(txt_all):
+                        issues.append("Slide %d: placeholder text found in '%s'. Write the real content." % (i, nm))
+                    # contrast against what is really behind the text
+                    cxm, cym = x + cx // 2, y + cy // 2
+                    back = fillc
+                    if not back:
+                        for (px, py, pw, ph, pf) in reversed(placed):
+                            if pf and px <= cxm <= px + pw and py <= cym <= py + ph:
+                                back = pf
+                                break
+                    back = back or bgc
+                    for r in el.iter(A + "rPr"):
+                        c = r.find(".//" + A + "srgbClr")
+                        if c is not None:
+                            if _contrast(c.get("val"), back) < 3.0:
+                                issues.append("Slide %d: text colour #%s is hard to read on #%s in '%s'." % (i, c.get("val"), back, nm))
+                                break
+                if txt_all and idx_is_content(i) and y + cy > SH - 480000 and not any(k in nm for k in ("Footer", "PageNo", "Deco")):
+                    issues.append("Slide %d: '%s' runs into the footer. Shorten the text or split the slide." % (i, nm))
+                placed.append((x, y, cx, cy, fillc))
+            elif tag == P + "pic":
+                pics += 1
+                bl = el.find(".//" + A + "blip")
+                rid = bl.get(R + "embed") if bl is not None else None
+                if rid not in rel_ids:
+                    issues.append("Slide %d: a picture is missing from the file." % i)
+                off, ext = el.find(".//" + A + "off"), el.find(".//" + A + "ext")
+                if off is not None and ext is not None and int(off.get("y")) + int(ext.get("cy")) > SH * 1.01:
+                    issues.append("Slide %d: a picture runs off the bottom of the slide." % i)
+            elif tag == P + "graphicFrame":
+                kinds.append("table")
+                off, ext = el.find(".//" + P + "xfrm/" + A + "off"), el.find(".//" + P + "xfrm/" + A + "ext")
+                if off is not None and ext is not None and int(off.get("y")) + int(ext.get("cy")) > SH - 520000:
+                    issues.append("Slide %d: the table runs into the footer or off the slide. Use fewer rows per slide." % i)
+                for t in el.iter(A + "t"):
+                    words += len((t.text or "").split())
+                    if _LEAK.search(t.text or ""):
+                        issues.append("Slide %d: raw markdown symbols are showing in the table." % i)
+                        break
+        if words > 95:
+            issues.append("Slide %d has %d words. Slides should hold about 60 or fewer. Split it or cut the text." % (i, words))
+        if texts == 0 and pics == 0 and "graphicFrame" not in z.read(n).decode("utf8", "ignore"):
+            issues.append("Slide %d is empty." % i)
+        sigs.append(tuple(sorted(kinds)))
+    if len(names) >= 6 and len(set(sigs[1:])) == 1:
+        notes.append("every slide uses the same layout; vary it with a table, numbered steps or a picture where the content suits it")
+    if len(names) == 1:
+        notes.append("only one slide")
+
+
+def _qa_docx(path, issues, notes):
+    import xml.etree.ElementTree as ET
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    z = zipfile.ZipFile(path)
+    root = ET.fromstring(z.read("word/document.xml"))
+    rels = z.read("word/_rels/document.xml.rels").decode("utf8", "ignore") if "word/_rels/document.xml.rels" in z.namelist() else ""
+    ids = set(re.findall(r'Id="([^"]+)"', rels))
+    blank, run_blank, heads, words = 0, 0, 0, 0
+    for p in root.iter(W + "p"):
+        t = "".join(x.text or "" for x in p.iter(W + "t"))
+        has_obj = any(True for _ in p.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}blip"))
+        st = p.find(W + "pPr/" + W + "pStyle")
+        if st is not None and (st.get(W + "val") or "").lower().startswith(("heading", "title")):
+            heads += 1
+        if not t.strip() and not has_obj:
+            run_blank += 1
+            if run_blank == 4:
+                blank += 1
+        else:
+            run_blank = 0
+            words += len(t.split())
+        if _LEAK.search(t):
+            issues.append("Raw markdown symbols (** or #) are showing in the text: '%s'." % t.strip()[:50])
+            break
+        if _PLACE.search(t):
+            issues.append("Placeholder text found: '%s'. Write the real content." % t.strip()[:50])
+            break
+        if "could not be added" in t:
+            issues.append("A picture failed to load: '%s'." % t.strip()[:80])
+    if blank:
+        issues.append("There are long runs of empty paragraphs. Use spacing or a page break instead.")
+    for emb in re.findall(r'r:embed="([^"]+)"', z.read("word/document.xml").decode("utf8", "ignore")):
+        if emb not in ids:
+            issues.append("A picture is missing from the file.")
+            break
+    if words > 350 and heads == 0:
+        issues.append("A long document with no headings. Add a title and section headings.")
+    if words < 5:
+        issues.append("The document has almost no text.")
+
+
+def _qa_pdf(path, issues, notes):
+    data = open(path, "rb").read()
+    if not data.startswith(b"%PDF"):
+        issues.append("This is not a valid PDF.")
+        return
+    streams = [s for s in re.findall(rb"stream\n(.*?)\nendstream", data, re.S) if b" Tj" in s]
+    if not streams:
+        notes.append("no text layer found to check (a scanned or image-only PDF)")
+        return
+    alltext = []
+    for pn, s in enumerate(streams, 1):
+        ys = [float(y) for x, y in re.findall(rb"([\d.]+) ([\d.]+) Td \(", s) if float(y) > 40]
+        xs = [float(x) for x, y in re.findall(rb"([\d.]+) ([\d.]+) Td \(", s)]
+        alltext.append(b"".join(re.findall(rb"\(((?:\\.|[^\\)])*)\) Tj", s)).decode("latin-1"))
+        if xs and max(xs) > 560:
+            issues.append("Page %d: text runs past the right margin." % pn)
+        if pn == len(streams) and len(streams) > 1 and ys and (max(ys) - min(ys)) < 60:
+            issues.append("The last page holds only a few lines. Tighten the content so it ends cleanly, or add what is missing.")
+        if not ys:
+            issues.append("Page %d has no body text." % pn)
+    joined = "\n".join(alltext)
+    if _LEAK.search(joined.replace("\\", "")):
+        issues.append("Raw markdown symbols (** or #) are showing in the text.")
+    if _PLACE.search(joined):
+        issues.append("Placeholder text found. Write the real content.")
+    if "could not be added" in joined:
+        issues.append("A picture failed to load.")
+
+
+def _qa_img(path, issues, notes):
+    try:
+        from PIL import Image, ImageStat
+    except Exception:
+        notes.append("picture checks need Pillow")
+        return
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    if w < 600:
+        issues.append("The picture is only %d px wide. Save charts with dpi=150 or more." % w)
+    if sum(ImageStat.Stat(im).stddev) / 3.0 < 3:
+        issues.append("The picture looks blank.")
+        return
+    bg = im.getpixel((0, 0))
+    def far(px):
+        return sum(abs(px[k] - bg[k]) for k in range(3)) > 90
+    for name, box in (("left", (0, 0, 2, h)), ("right", (w - 2, 0, w, h)), ("top", (0, 0, w, 2)), ("bottom", (0, h - 2, w, h))):
+        strip = list(im.crop(box).getdata())
+        if strip and sum(1 for px in strip if far(px)) / float(len(strip)) > 0.04:
+            issues.append("Content touches or is cut off at the %s edge. Use bbox_inches='tight' with pad_inches=0.3, or leave more margin." % name)
+            break
+
+
+def _qa_xlsx(path, issues, notes):
+    z = zipfile.ZipFile(path)
+    sheets = [n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
+    if not sheets:
+        issues.append("The workbook has no sheets.")
+        return
+    shared = z.read("xl/sharedStrings.xml").decode("utf8", "ignore") if "xl/sharedStrings.xml" in z.namelist() else ""
+    for n in sheets:
+        x = z.read(n).decode("utf8", "ignore")
+        if "<c " not in x:
+            issues.append("%s is empty." % n.split("/")[-1])
+        if "<cols>" not in x:
+            issues.append("%s has no column widths set, so text will look cramped. Set ws.column_dimensions widths." % n.split("/")[-1])
+        if re.search(r't="e"', x) or re.search(r"#(?:DIV/0!|REF!|NAME\?|VALUE!|N/A)", shared):
+            issues.append("%s contains formula errors (#REF!, #DIV/0! and so on)." % n.split("/")[-1])
+
+
+def check(path, quiet=False):
+    """Inspect a finished file for layout and content problems and return a short report.
+    Run it on every file before offering it; fix what it lists, rebuild, and run it again until it says PASS."""
+    import os
+    path = str(path)
+    name = os.path.basename(path)
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    issues, notes = [], []
+    try:
+        if not os.path.exists(path):
+            issues.append("The file does not exist.")
+        elif os.path.getsize(path) < 50:
+            issues.append("The file is empty.")
+        elif ext == "pptx":
+            _qa_pptx(path, issues, notes)
+        elif ext == "docx":
+            _qa_docx(path, issues, notes)
+        elif ext == "pdf":
+            _qa_pdf(path, issues, notes)
+        elif ext in ("png", "jpg", "jpeg"):
+            _qa_img(path, issues, notes)
+        elif ext == "xlsx":
+            _qa_xlsx(path, issues, notes)
+        elif ext in ("html", "htm"):
+            notes.append("check pages with the browser test tool instead")
+    except Exception as e:
+        notes.append("could not fully inspect this file (%s)" % str(e)[:80])
+    seen, uniq = set(), []
+    for s in issues:
+        if s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    head = "QA REPORT [%s]: " % name
+    if uniq:
+        return head + "NEEDS FIXES (%d)\n- " % len(uniq) + "\n- ".join(uniq[:8]) + "\nFix these, rebuild the file and run check() again."
+    return head + "PASS" + ((" (" + "; ".join(notes) + ")") if notes else "")
+
+
+def _with_check(fn):
+    def wrapper(*a, **k):
+        p = fn(*a, **k)
+        try:
+            print(check(p))
+        except Exception as e:
+            print("QA REPORT [%s]: could not inspect (%s)" % (p, str(e)[:60]))
+        return p
+    wrapper.__doc__ = fn.__doc__
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+docx, pdf, pptx = _with_check(docx), _with_check(pdf), _with_check(pptx)
 </script>
 
 <script type="text/plain" id="py-worker-src">

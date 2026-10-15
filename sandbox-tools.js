@@ -643,3 +643,44 @@ export async function execute(name, args, ctx) {
   const raw = await provider.execute({ name, args: args || {}, limits: call.limits }, { uid, conversationId, env });
   return normalizeResult(raw, describe(name, args));
 }
+
+
+// ── Quality gate before a file is offered ───────────────────────────────
+// Files the person will open (slides, Word, PDF, Excel, pictures) must be inspected first. The Python helper
+// prints "QA REPORT [name]: PASS" or "NEEDS FIXES" for every file it builds, and check(path) can be run on
+// any file. A file is only offered once its latest report says PASS (or after three failed fix rounds, so a
+// stubborn false alarm can never trap the person). Returns a message for the model, or null to let it through.
+const QA_FILE_RE = /\.(?:pptx|docx|pdf|xlsx|png|jpe?g)$/i;
+export const MAX_QA_REDIRECTS = 2;
+
+export function qaGate(path, trace) {
+  const full = cleanWorkspacePath(path, WORKSPACE_ROOT);
+  if (!full || !QA_FILE_RE.test(full)) return null;
+  const base = full.split('/').pop();
+  const entries = Array.isArray(trace) ? trace : [];
+  let lastReport = -1, lastChange = -1, lastStatus = null, failed = 0;
+  entries.forEach((e, idx) => {
+    if (!e || e.k !== 'sbx') return;
+    if (Array.isArray(e.c) && e.c.some((f) => f && f.p === full)) lastChange = idx;
+    const re = /QA REPORT \[([^\]]+)\]: (PASS|NEEDS FIXES)/g;
+    let m;
+    while ((m = re.exec(String(e.r || ''))) !== null) {
+      if (m[1] !== base) continue;
+      lastReport = idx; lastStatus = m[2];
+      if (m[2] === 'NEEDS FIXES') failed++;
+    }
+  });
+  const stale = lastChange > lastReport;
+  if (lastStatus === 'PASS' && !stale) return null;
+  if (lastStatus === 'NEEDS FIXES' && failed >= 3 && !stale) return null;
+  const how = 'Run Python: from cognita_docs import check; print(check("' + full + '"))';
+  if (lastStatus === null) {
+    return 'Not offered yet. Check ' + base + ' first, the way a careful person would before handing it over. ' + how +
+      ' Read the report, fix anything it lists, rebuild, and check again. Offer the file only after the report says PASS.';
+  }
+  if (stale) {
+    return 'Not offered yet. ' + base + ' changed after its last check. ' + how + ' and offer it once it says PASS.';
+  }
+  return 'Not offered yet. The last quality check of ' + base + ' found problems. Fix each one in the content or layout, rebuild the file, ' +
+    'then run check again. Offer the file only when the report says PASS.';
+}
