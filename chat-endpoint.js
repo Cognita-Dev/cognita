@@ -6,7 +6,7 @@ import { checkAndIncrement, getUsage, refundUsage, getMonthlyUsage, checkAndIncr
 import { getPlan, resolveChatTier, MODEL_TIERS, VISION_MODEL, planHasVision, planHasConnectorTools, planHasSandbox, planHasRemoteBrowser } from './entitlements.js';
 import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
 import { reviewPictures } from './vision-review.js';
-import { callWithFallback, callVisionModel, callWithTools, makeSessionId } from './providers.js';
+import { callWithFallback, callVisionModel, callWithTools, makeSessionId, collapseTextLoops } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
@@ -123,6 +123,10 @@ function _claimsCompletion(text) {
 // hallucination to correct, it's a legitimate task that just needs the
 // model to actually keep going.
 const MAX_STALL_RETRIES = 3;
+
+// A model turn that got stuck writing the same sentence over and over is cut off by the stream reader (see
+// findTextLoop in providers.js). It gets this many chances to carry on properly before the turn ends honestly.
+const MAX_LOOP_RETRIES = 2;
 const CONTINUE_NUDGE = 'I have not finished this yet. Reply "continue" and I will pick up exactly where I stopped.';
 const STALL_PATTERNS = [
   /^(?:I(?:'ll| will)|Let me|I(?:'m| am) going to|I need to)\s+(?:check|examine|look at|review|investigate|explore|dig into|go through|take a look at|see)\b/i,
@@ -258,8 +262,17 @@ function _earlierUiIds(history) {
 }
 
 const _FENCE = '```cognita-ui';
-function _makeTurnStreamer(emit, leakNames) {
+// The parser and the tool-call stripper below look at the WHOLE reply so far, so running them for every few
+// characters that arrive makes the work grow with the square of the reply length (a 16,000 character reply cost
+// about 0.7 s of CPU, and a runaway one hit the Worker CPU limit and cut the connection). Text is therefore gathered
+// and processed in batches: as soon as STREAM_BATCH_CHARS have arrived or STREAM_BATCH_MS have passed. The first
+// piece is never held back, and finish() always processes whatever is left.
+const STREAM_BATCH_CHARS = 160;
+const STREAM_BATCH_MS = 120;
+export function _makeTurnStreamer(emit, leakNames) {
   let raw = '';
+  let queued = '';
+  let lastRunAt = 0;
   let sent = '';
   let ui = createUiStream();
   let lastSig = '';
@@ -299,8 +312,14 @@ function _makeTurnStreamer(emit, leakNames) {
   function onText(delta) {
     if (!delta) return;
     raw += delta;
+    queued += delta;
+    const now = Date.now();
+    if (lastRunAt && queued.length < STREAM_BATCH_CHARS && now - lastRunAt < STREAM_BATCH_MS) return;
+    lastRunAt = now;
+    const chunk = queued;
+    queued = '';
     let r = null;
-    try { r = ui.push(delta); } catch (_) { r = null; }
+    try { r = ui.push(chunk); } catch (_) { r = null; }
     flushText(r ? r.text : raw, false);
     if (!r || raw.indexOf('cognita-ui') === -1) return;
     // Component types the model has started writing but that are not complete yet.
@@ -315,10 +334,13 @@ function _makeTurnStreamer(emit, leakNames) {
   }
   return {
     onText,
-    finish() { let t = raw; try { t = ui.end().text; } catch (_) {} flushText(t, true); },
+    finish() {
+      if (queued) { try { ui.push(queued); } catch (_) {} queued = ''; }
+      let t = raw; try { t = ui.end().text; } catch (_) {} flushText(t, true);
+    },
     reset() {
       if (streamed) emit('text_reset', {});
-      raw = ''; sent = ''; lastSig = ''; streamed = false;
+      raw = ''; queued = ''; lastRunAt = 0; sent = ''; lastSig = ''; streamed = false;
       ui = createUiStream();
     },
   };
@@ -354,7 +376,7 @@ export function _uiBlockFromPseudoCall(call, isRealTool) {
 async function _modelTurn(tierConfig, messages, tools, env, cacheOptions) {
   if (!tools || tools.length === 0) {
     const r = await callWithFallback(tierConfig, messages, env, cacheOptions);
-    return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
+    return { text: r.text, reasoning: r.reasoning || null, toolCalls: null, finishReason: r.finishReason };
   }
   try {
     return await callWithTools(tierConfig, messages, tools, env, cacheOptions);
@@ -362,7 +384,7 @@ async function _modelTurn(tierConfig, messages, tools, env, cacheOptions) {
     if (String(e.message).startsWith('tools_unsupported')) {
       console.warn('[chat] tools unsupported for this tier, falling back to plain reply:', e.message);
       const r = await callWithFallback(tierConfig, messages, env, cacheOptions);
-      return { text: r.text, reasoning: r.reasoning || null, toolCalls: null };
+      return { text: r.text, reasoning: r.reasoning || null, toolCalls: null, finishReason: r.finishReason };
     }
     if (String(e.message).startsWith('All providers unavailable')) {
       // Every tool-capable provider failed (rate limits, a removed model).
@@ -931,6 +953,8 @@ export async function handleChatRequest(request, env) {
         let qaGateRedirects = {}; // file path -> times a download was held back for a quality check
         let groundingRetries = 0;
         let stallRetries = 0;
+        let loopRetries = 0; // model turns cut off because the model kept repeating the same text
+        let lastStallText = ''; // the last "I will do X" reply that was pushed to continue
 
         // If this request is the second half of a confirmation
         // (confirmToolCall), the first "round" is running the action the
@@ -1106,6 +1130,35 @@ export async function handleChatRequest(request, env) {
               if (result && result.toolCalls && result.toolCalls.length) streamer.reset();
             }
 
+            // The model got stuck repeating one sentence and the stream was cut off (see findTextLoop in providers.js).
+            // What it wrote is not an answer and not a step: clear the half-shown text, tell it plainly what went
+            // wrong, and give it a couple of chances. If it keeps happening, end the turn honestly.
+            if (result && result.finishReason === 'repetition') {
+              loopRetries++;
+              console.warn('[chat][loop] model repeated itself and was cut off (' + loopRetries + '/' + MAX_LOOP_RETRIES + ') uid=' + identity.uid);
+              streamer.reset();
+              if (loopRetries <= MAX_LOOP_RETRIES) {
+                workingMessages = workingMessages.concat([
+                  { role: 'assistant', content: 'Continuing.' },
+                  {
+                    role: 'user',
+                    content: 'Your last reply got stuck repeating the same sentence, so it was cut off. Do not write any more commentary about what you are about to do. ' +
+                      'If more work is needed, call the next tool right now with no introduction. If the work is finished, write one short, plain answer for the user, once.',
+                  },
+                ]);
+                result = null;
+                round++;
+                continue;
+              }
+              result = {
+                text: 'I got stuck repeating myself on this step, so I stopped instead of carrying on. Reply "continue" and I will pick it up from where things stand.',
+                reasoning: null, toolCalls: null,
+              };
+              break;
+            }
+            // A reply that ends in a repeated stretch (a model that was cut by its length limit) keeps one copy.
+            if (result && typeof result.text === 'string') result = { ...result, text: collapseTextLoops(result.text) };
+
             const call = result.toolCalls && result.toolCalls.length ? result.toolCalls[0] : null;
             // Only the first proposed tool call per model turn is acted
             // on; if the model asked for several at once, the rest are
@@ -1176,7 +1229,8 @@ export async function handleChatRequest(request, env) {
                   reasoning: result.reasoning || null,
                   toolCalls: null,
                 };
-              } else if (_looksLikeUnfinishedStall(result.text || '', turnTrace.length > 0) && stallRetries < MAX_STALL_RETRIES) {
+              } else if (_looksLikeUnfinishedStall(result.text || '', turnTrace.length > 0) && stallRetries < MAX_STALL_RETRIES &&
+                         (result.text || '').trim() !== lastStallText) {
                 // The model said it would keep investigating and then
                 // stopped instead of actually doing so — push it to
                 // really take the next step rather than letting that
@@ -1184,6 +1238,7 @@ export async function handleChatRequest(request, env) {
                 // show a misleading "Completed" trace in the UI).
                 console.warn('[chat][grounding] stalled mid-task without continuing — retrying. uid=' + identity.uid);
                 stallRetries++;
+                lastStallText = (result.text || '').trim();
                 workingMessages = workingMessages.concat([
                   { role: 'assistant', content: result.text || '' },
                   {

@@ -293,6 +293,50 @@ export async function callVisionModel(model, messages, images, env, opts = {}) {
 // text was already emitted is flagged err.partial = true: the chain must NOT
 // retry another provider then, because the user has already seen output.
 
+// ── Runaway repetition guard ───────────────────────────────────────────
+// A model can get stuck and write the same sentence over and over ("The subtitle is still too long. Let me make
+// it even shorter and rebuild." x 200) until it runs out of room. Nothing in the stream stopped it, so the
+// person watched a wall of repeated text and the connection was often cut before any answer arrived.
+// findTextLoop() spots a stretch of text that repeats itself three times in a row; the streaming readers below stop
+// reading the moment it appears, and collapseTextLoops() keeps one copy.
+const _LOOP_MIN_UNIT = 24;   // shorter repeats ("ha ha ha", table rules, "-----") are never treated as a loop
+const _LOOP_MAX_UNIT = 600;
+const _LOOP_MIN_DISTINCT = 10; // a real sentence has many different characters; a run of dashes does not
+
+/** Returns { start, unit } when the end of `text` is the same unit repeated 3 times, otherwise null.
+ * `start` is where the repeating stretch begins and `unit` is the length of one copy. */
+export function findTextLoop(text) {
+  const s = typeof text === 'string' ? text : '';
+  const n = s.length;
+  if (n < _LOOP_MIN_UNIT * 3) return null;
+  const maxUnit = Math.min(_LOOP_MAX_UNIT, Math.floor(n / 3));
+  const last = s.charCodeAt(n - 1);
+  for (let L = _LOOP_MIN_UNIT; L <= maxUnit; L++) {
+    // cheap reject (last four characters) before comparing whole blocks
+    if (s.charCodeAt(n - 1 - L) !== last || s.charCodeAt(n - 2 - L) !== s.charCodeAt(n - 2) ||
+        s.charCodeAt(n - 3 - L) !== s.charCodeAt(n - 3) || s.charCodeAt(n - 4 - L) !== s.charCodeAt(n - 4)) continue;
+    if (s.slice(n - 2 * L, n) !== s.slice(n - 3 * L, n - L)) continue;
+    const unit = s.slice(n - L);
+    if (new Set(unit).size < _LOOP_MIN_DISTINCT || !/[A-Za-zÀ-ɏЀ-ӿ]/.test(unit)) continue;
+    // Walk back to where the repeating started so exactly one copy can be kept.
+    let start = n - 3 * L;
+    while (start > 0 && s.charCodeAt(start - 1) === s.charCodeAt(start - 1 + L)) start--;
+    return { start, unit: L };
+  }
+  return null;
+}
+
+/** Keeps one copy of a stretch that repeats 3 or more times in a row at the END of a text (where a runaway reply stops). */
+export function collapseTextLoops(text) {
+  let s = typeof text === 'string' ? text : '';
+  for (let guard = 0; guard < 4; guard++) {
+    const hit = findTextLoop(s);
+    if (!hit) break;
+    s = s.slice(0, hit.start + hit.unit);
+  }
+  return s;
+}
+
 // Yields the `data:` payload of each SSE event. Handles chunk boundaries that
 // split a line or a multi-byte UTF-8 character.
 async function* _sseData(stream, signal) {
@@ -349,6 +393,8 @@ async function _streamChatCompletions(name, url, headers, body, ctx, hasTools) {
   let usage = null;
   const calls = []; // by delta index
   let emitted = false;
+  let looped = false;
+  let loopCheckedAt = 0; // the loop check runs every 48 new characters, not on every chunk
   try {
     for await (const data of _sseData(res.body, ctx.signal)) {
       if (data === '[DONE]') break;
@@ -362,6 +408,8 @@ async function _streamChatCompletions(name, url, headers, body, ctx, hasTools) {
       if (typeof d.content === 'string' && d.content) {
         text += d.content;
         emitted = true;
+        // The model is repeating itself: stop reading now instead of streaming a wall of the same sentence.
+        if (text.length - loopCheckedAt >= 48) { loopCheckedAt = text.length; if (findTextLoop(text)) { looped = true; break; } }
         _safeEmit(ctx, d.content);
       }
       const r = d.reasoning || d.reasoning_content;
@@ -382,6 +430,10 @@ async function _streamChatCompletions(name, url, headers, body, ctx, hasTools) {
   } catch (e) {
     if (emitted) e.partial = true;
     throw e;
+  }
+  if (looped) {
+    console.warn('[providers] ' + name + ' stream stopped: the model was repeating the same text');
+    return { text: collapseTextLoops(text).trim(), finishReason: 'repetition', reasoning: reasoning || null, toolCalls: null, usage };
   }
   const toolCalls = calls.filter((c) => c && c.name).map((c) => ({ id: c.id, name: c.name, args: _safeParseToolArgs(c.args) }));
   if (!toolCalls.length && !text.trim()) throw new Error(name + '_empty');
@@ -411,6 +463,8 @@ async function _streamWorkersAI(messages, model, env, ctx) {
   let text = '';
   let usage = null;
   let emitted = false;
+  let looped = false;
+  let loopCheckedAt = 0;
   try {
     for await (const data of _sseData(res, ctx.signal)) {
       if (data === '[DONE]') break;
@@ -418,11 +472,20 @@ async function _streamWorkersAI(messages, model, env, ctx) {
       try { j = JSON.parse(data); } catch (_) { continue; }
       if (j.usage) usage = _usageFrom(j);
       const delta = typeof j.response === 'string' ? j.response : (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || '';
-      if (delta) { text += delta; emitted = true; _safeEmit(ctx, delta); }
+      if (delta) {
+        text += delta;
+        emitted = true;
+        if (text.length - loopCheckedAt >= 48) { loopCheckedAt = text.length; if (findTextLoop(text)) { looped = true; break; } }
+        _safeEmit(ctx, delta);
+      }
     }
   } catch (e) {
     if (emitted) e.partial = true;
     throw e;
+  }
+  if (looped) {
+    console.warn('[providers] workersai stream stopped: the model was repeating the same text');
+    return { text: collapseTextLoops(text).trim(), finishReason: 'repetition', reasoning: null, toolCalls: null, usage };
   }
   if (!text.trim()) throw new Error('workersai_empty');
   return { text: text.trim(), finishReason: 'stop', reasoning: null, usage };

@@ -1051,6 +1051,7 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None, logo=None, lo
             sl.shape(8300000, 2300000, 900000, 900000, P["accent2"], "ellipse", name="Deco")
             sl.shape(0, 0, 220000, H, P["accent"], name="Bar")
             tsz = 48 if len(s["head"]) <= 28 else 40 if len(s["head"]) <= 56 else 32
+            tsz = fit([s["head"]], 7600000, 2450000, tsz, 20)  # a very long title shrinks to fit instead of overflowing
             sl.text(LM + 200000, 1500000, 7600000, 2600000, para(s["head"], tsz, "FFFFFF", True, font=HEAD, lead=95), "b", "Title")
             sl.shape(LM + 200000, 4300000, 1100000, 60000, P["accent"], name="Rule")
             subs = []
@@ -1062,8 +1063,28 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None, logo=None, lo
                 elif k != "image":
                     subs.append(str(v))
             subs = subs[:4]
+            # The subtitle box has a fixed size, so the text size is chosen to fit it (every other slide does this
+            # with fit()). Without this a long cover line overflowed at 22 pt, the quality check kept failing it, and
+            # the only thing left was to shorten the words again and again. If even the smallest size does not fit,
+            # the last lines are dropped rather than overflowing.
+            sub_w, sub_h = 7000000, 1700000
+            sub_sz = 22
+            while subs:
+                sub_sz = 0
+                for try_sz in (22, 20, 18, 16, 14):
+                    need = sum(est_lines(t, try_sz, sub_w) * try_sz * 1.25 * PT + 400 * PT / 100.0 for t in subs)
+                    if need <= sub_h:
+                        sub_sz = try_sz
+                        break
+                if sub_sz or len(subs) == 1:
+                    break
+                subs = subs[:-1]
             if subs:
-                sl.text(LM + 200000, 4550000, 7000000, 1500000, "".join(para(t, 22, P["soft"], after=400) for t in subs), "t", "Subtitle")
+                if not sub_sz:
+                    sub_sz = 14
+                    keep = int((sub_h / (14 * 1.25 * PT)) * ((sub_w / PT) / (14 * 0.5))) - 3
+                    subs = [subs[0][:max(40, keep)].rstrip(" ,;:-") + "..."] if len(subs[0]) > keep else subs
+                sl.text(LM + 200000, 4550000, sub_w, sub_h, "".join(para(t, sub_sz, P["soft"], after=400) for t in subs), "t", "Subtitle")
             stamp_logo(sl, True)
             out_slides.append(sl)
             continue
@@ -1085,7 +1106,10 @@ def pptx(path, blocks, title=None, author="Cognita", palette=None, logo=None, lo
         sl.text(LM, 420000, RW, 820000, para(s["head"], hsz, P["ink"], True, font=HEAD, lead=95), "ctr", "Title")
         sl.shape(LM, 1290000, 900000, 50000, P["accent2"], name="Rule")
         # footer
-        sl.text(LM, H - 460000, 8000000, 300000, para(deck_title or "", 11, P["muted"]), "ctr", "Footer")
+        foot = (deck_title or "").replace("\n", " ")
+        if len(foot) > 100:  # the footer is one line; a long deck title is cut so it cannot wrap and overflow
+            foot = foot[:97].rstrip(" ,;:-") + "..."
+        sl.text(LM, H - 460000, 8000000, 300000, para(foot, 11, P["muted"]), "ctr", "Footer")
         sl.shape(W - LM - 560000, H - 470000, 560000, 320000, P["at"], "roundRect", para(str(idx + 1), 12, "FFFFFF", True, algn="ctr"), "ctr", adj=50000, name="PageNo")
         top, bottom = 1600000, H - 640000
         RH = bottom - top
