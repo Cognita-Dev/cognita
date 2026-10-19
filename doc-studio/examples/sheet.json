@@ -1,0 +1,23 @@
+{
+  "kind": "sheet",
+  "design": "swiss",
+  "sheets": [
+    {
+      "name": "Budget 2027",
+      "columns": [
+        { "header": "Item", "width": 28 },
+        { "header": "Q1", "format": "$#,##0" },
+        { "header": "Q2", "format": "$#,##0" },
+        { "header": "Q3", "format": "$#,##0" },
+        { "header": "Q4", "format": "$#,##0" },
+        { "header": "Total", "format": "$#,##0" }
+      ],
+      "rows": [
+        ["Design", 12000, 12500, 13000, 13500, "=SUM(B2:E2)"],
+        ["Engineering", 48000, 50000, 52000, 54000, "=SUM(B3:E3)"],
+        ["Marketing", 9000, 11000, 15000, 12000, "=SUM(B4:E4)"],
+        ["Total", "=SUM(B2:B4)", "=SUM(C2:C4)", "=SUM(D2:D4)", "=SUM(E2:E4)", "=SUM(F2:F4)"]
+      ]
+    }
+  ]
+}

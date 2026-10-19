@@ -1,0 +1,17 @@
+{
+  "kind": "slides",
+  "design": "aurora",
+  "slides": [
+    { "layout": "title", "kicker": "Seed round · 2026", "title": "Software that finishes the job", "subtitle": "An AI teammate that turns a brief into shipped, polished work.", "meta": "Founders' deck · Confidential" },
+    { "layout": "stat", "value": "6 hrs", "title": "saved per person, per week", "text": "Measured across 120 pilot teams over 90 days." },
+    { "layout": "bullets", "title": "How it works", "bullets": ["Describe the outcome in plain words", "Pick a look, or let it choose one", "Export to PDF, Word, Slides or Excel"] },
+    { "layout": "section", "kicker": "02", "title": "The market is ready" },
+    { "layout": "split", "title": "Three wedges", "text": "We start narrow and expand.", "items": [
+      { "title": "Reports", "text": "Long-form documents with real typography" },
+      { "title": "Decks", "text": "Slides that don't look like slides" },
+      { "title": "Sheets", "text": "Models people actually open" }
+    ]},
+    { "layout": "quote", "text": "It is the first tool whose output I didn't have to redesign.", "by": "Pilot customer, Head of Ops" },
+    { "layout": "closing", "title": "Let's build the quiet kind of software", "subtitle": "hello@example.com" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "poster",
+  "design": "bauhaus",
+  "size": "portrait",
+  "kicker": "Open Workshop",
+  "date": "Sat 14 Nov",
+  "headline": "Make things that look like *you*",
+  "subheadline": "A hands-on day of type, colour and composition for people who are tired of templates.",
+  "details": ["Where: Studio 4, Harbour Street", "Time: 10:00 – 17:00", "Price: Free, 40 seats"],
+  "cta": "Reserve your seat",
+  "footer": "studio4.example · @studio4"
+}

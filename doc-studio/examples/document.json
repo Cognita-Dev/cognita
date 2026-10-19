@@ -1,0 +1,33 @@
+{
+  "kind": "document",
+  "design": "editorial",
+  "kicker": "Annual Report · 2026",
+  "title": "The Quiet Year Ahead",
+  "subtitle": "What a calmer market means for small teams that build carefully",
+  "author": "Cognita Research",
+  "date": "October 2026",
+  "blocks": [
+    { "type": "p", "text": "Most reports open with a promise. This one opens with a **question**: what if the best strategy for the next twelve months is to do fewer things, properly?" },
+    { "type": "stats", "items": [
+      { "value": "42%", "label": "teams shipping fewer features" },
+      { "value": "3.1×", "label": "retention lift from polish" },
+      { "value": "18", "label": "weeks to compounding results" }
+    ]},
+    { "type": "h2", "text": "Why restraint wins" },
+    { "type": "p", "text": "Attention is the scarce resource. Every extra surface you add competes for it, and the products people *love* are almost always the ones that say no more often than yes." },
+    { "type": "quote", "text": "Design is not decoration. It is the order you give to someone's attention.", "by": "Studio principle" },
+    { "type": "h2", "text": "Three moves for the next quarter" },
+    { "type": "list", "ordered": true, "items": [
+      "**Cut** one feature that nobody would miss.",
+      "**Polish** the one flow every customer touches.",
+      "**Measure** retention weekly, not revenue monthly."
+    ]},
+    { "type": "callout", "title": "Rule of thumb", "text": "If you cannot explain a screen in one sentence, it is two screens." },
+    { "type": "h2", "text": "The numbers" },
+    { "type": "table", "head": ["Quarter", "Focus", "Target"], "rows": [
+      ["Q4 2026", "Onboarding polish", "+8% activation"],
+      ["Q1 2027", "Performance", "-30% load time"],
+      ["Q2 2027", "Pricing clarity", "+5% conversion"]
+    ]}
+  ]
+}
