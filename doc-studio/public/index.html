@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>doc-studio</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:#111;color:#eee;display:grid;grid-template-columns:420px 1fr;height:100vh}
+aside{padding:14px;overflow:auto;border-right:1px solid #333;display:flex;flex-direction:column;gap:10px}
+textarea{flex:1;min-height:260px;background:#1b1b1b;color:#eee;border:1px solid #333;border-radius:8px;padding:10px;font:12px ui-monospace,monospace}
+select,button{padding:8px 10px;border-radius:8px;border:1px solid #444;background:#222;color:#eee;cursor:pointer}button:hover{background:#333}
+.row{display:flex;flex-wrap:wrap;gap:6px}h1{font-size:16px;margin:0}small{color:#999}iframe{width:100%;height:100%;border:0;background:#fff}
+#msg{color:#f88;min-height:18px}
+</style></head><body>
+<aside><h1>doc-studio</h1><small>Paste JSON or Markdown, pick a design, export.</small>
+<div class="row"><select id="ex"></select><select id="design"></select></div>
+<textarea id="src" spellcheck="false"></textarea><div id="msg"></div>
+<div class="row"><button id="prev">Preview</button><button id="copy">Copy AI prompt</button></div>
+<div class="row" id="dl"></div></aside><iframe id="f"></iframe>
+<script>
+const $=id=>document.getElementById(id);let examples={};
+function spec(){let t=$('src').value.trim(),s;try{s=JSON.parse(t)}catch{s={markdown:t}}
+ if($('design').value)s.design=$('design').value;return s}
+async function preview(){$('msg').textContent='';const r=await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spec:spec()})});const j=await r.json();
+ if(j.error){$('msg').textContent=j.error;return}$('f').srcdoc=j.html}
+async function exp(fmt){$('msg').textContent='Exporting '+fmt+'…';const r=await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spec:spec(),format:fmt})});
+ if(!r.ok){$('msg').textContent=(await r.json()).error;return}$('msg').textContent='';
+ const b=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=(r.headers.get('content-disposition')||'').split('filename=')[1]?.replace(/"/g,'')||'file.'+fmt;a.click()}
+(async()=>{
+ examples=await (await fetch('/api/examples')).json();
+ $('ex').innerHTML=Object.keys(examples).map(k=>`<option>${k}</option>`).join('');
+ const ds=await (await fetch('/api/designs')).json();
+ $('design').innerHTML='<option value="">Design: auto / from JSON</option>'+ds.map(d=>`<option value="${d.id}">${d.name} — ${d.mood.split('.')[0]}</option>`).join('');
+ const load=()=>{$('src').value=JSON.stringify(examples[$('ex').value],null,2);preview()};$('ex').onchange=load;load();
+ ['pdf','png','docx','pptx','pptx-image','xlsx','html'].forEach(f=>{const b=document.createElement('button');b.textContent='↓ '+f;b.onclick=()=>exp(f);$('dl').append(b)});
+ $('prev').onclick=preview;$('design').onchange=preview;
+ $('copy').onclick=async()=>{await navigator.clipboard.writeText(await (await fetch('/api/prompt')).text());$('msg').style.color='#8f8';$('msg').textContent='Prompt copied — give it to any AI with your request.'};
+})();
+</script></body></html>
