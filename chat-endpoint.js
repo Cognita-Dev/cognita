@@ -19,6 +19,7 @@ import { wantsFileFromImage, isLogoRequest } from './sandbox-intent.js';
 import { fetchPublicText, previewForModel } from './web-fetch.js';
 import * as webSearch from './web-search.js';
 import * as mediaTools from './media-tools.js';
+import { docStudioConfigured } from './docstudio-client.js';
 import { extractUiBlocks, createUiStream, UI_TYPES } from './ui-schema.js';
 import { stripToolLeaks, recoverLeakedCall } from './tool-leak.js';
 
@@ -715,6 +716,8 @@ export async function handleChatRequest(request, env) {
         text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
         hint: body.sandboxHint === true || !!imageTranscript,
         resuming: !!sandboxResume,
+        // With doc-studio on, asking for a Word / PDF / PowerPoint file is handled by create_document, not by code.
+        docsHandled: docStudioConfigured(env),
         recent: trimmedHistory.filter((m) => m && m.role === 'user' && typeof m.content === 'string').slice(-4, -1).map((m) => m.content),
       })
     : { offer: false, reason: hasImages ? 'images' : 'plan' };
@@ -731,6 +734,7 @@ export async function handleChatRequest(request, env) {
     ? mediaTools.shouldOfferMedia({
         text: gateUserMsg && typeof gateUserMsg.content === 'string' ? gateUserMsg.content : '',
         hint: body.mediaHint === true,
+        docs: docStudioConfigured(env),
       })
     : { offer: false, reason: 'images' };
   const mediaEnabled = mediaGate.offer || (!!designResume && !hasImages);
@@ -905,7 +909,8 @@ export async function handleChatRequest(request, env) {
           sandboxToolSchemas = getSandboxToolSchemas(offerCaps);
         }
       }
-      const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas() : [];
+      const docsAvailable = docStudioConfigured(env);
+      const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas({ docs: docsAvailable }) : [];
       const webToolSchemas = webSearchEnabled ? [webSearch.toolSchema()] : [];
       const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas, webToolSchemas);
       const offeredToolNames = new Set(tools.map((t) => t && t.function && t.function.name).filter(Boolean));
@@ -921,6 +926,7 @@ export async function handleChatRequest(request, env) {
             hasTools: connectorTools.length > 0,
             hasSandbox: sandboxToolSchemas.length > 0,
             hasMedia: mediaToolSchemas.length > 0,
+            hasDocs: mediaToolSchemas.some((t) => t.function.name === 'create_document'),
             hasWeb: webToolSchemas.length > 0,
           }) + sandboxLimitNote,
         };

@@ -23,11 +23,19 @@
 // every one has failed (or the safety filter blocks the prompt, which no other
 // model would fix).
 
-import { checkAndIncrement } from './usage.js';
+import { checkAndIncrement, refundUsage } from './usage.js';
 import { toList, toText } from './list-text.js';
 import { deriveDesignDirection, DESIGN_LAYOUTS, KEY_FACT_RX, pickKeyFact } from './design-direction.js';
+import { docStudioConfigured, renderWithDocStudio } from './docstudio-client.js';
 
-export const MEDIA_TOOL_NAMES = new Set(['generate_image', 'create_design']);
+// When the doc-studio service is configured (DOCSTUDIO_URL, see docstudio-client.js):
+//   create_design   builds the flyer / poster / invitation / social post with doc-studio's design systems
+//                   (real fonts, composed layouts) and returns PNG + PDF. If the service is down it falls back
+//                   to the built-in SVG composer below, so a design is never lost.
+//   create_document  (new) makes designed Word, PDF, PowerPoint and Excel files the same way.
+// Without DOCSTUDIO_URL nothing changes: create_design uses the SVG composer and create_document is not offered.
+
+export const MEDIA_TOOL_NAMES = new Set(['generate_image', 'create_design', 'create_document']);
 export const MAX_MEDIA_CALLS_PER_TURN = 3;
 
 export function isMediaTool(name) {
@@ -44,11 +52,23 @@ const MEDIA_INTENT_PATTERNS = [
   { name: 'draw-verb', re: /\b(?:draw|sketch|paint|illustrate)\s+(?:me\s+)?(?:a|an|the|some)\b/i },
 ];
 
-export function shouldOfferMedia({ text, hint } = {}) {
+// Only used when doc-studio is configured: requests for a document someone will open, print or present.
+const DOC_INTENT_PATTERNS = [
+  { name: 'doc-format', re: /\b(?:word (?:doc(?:ument)?s?|files?)|ms word|microsoft word|docx|pdf|pdfs|pptx?|power ?point|slide ?deck|slides?|presentation|pitch deck|xlsx|excel|spreadsheet)\b/i },
+  { name: 'doc-noun', re: /\b(?:report|proposal|resume|r\u00E9sum\u00E9|cv|cover letter|letter|memo|essay|handbook|brochure|e-?book|white ?paper|case study|lesson plan|syllabus|newsletter|invoice|quotation|business plan|policy|agreement|contract|minutes|certificate|one-?pager|fact ?sheet|worksheet|study guide|cheat ?sheet|budget|tracker|timetable|schedule|checklist)\b/i },
+  { name: 'doc-make', re: /\b(?:write|draft|create|make|prepare|generate|produce|compose|build|design|give me|put together|turn (?:this|it|that) into)\b[^.?!\n]{0,40}\b(?:document|doc|file|downloadable|printable)\b/i },
+];
+
+export function shouldOfferMedia({ text, hint, docs } = {}) {
   if (hint === true) return { offer: true, reason: 'hint' };
   const t = typeof text === 'string' ? text.slice(0, 20000) : '';
   for (const p of MEDIA_INTENT_PATTERNS) {
     if (p.re.test(t)) return { offer: true, reason: p.name };
+  }
+  if (docs) {
+    for (const p of DOC_INTENT_PATTERNS) {
+      if (p.re.test(t)) return { offer: true, reason: p.name };
+    }
   }
   return { offer: false, reason: 'none' };
 }
@@ -93,14 +113,41 @@ export const TOOLS = [
       footer: { type: 'string', description: 'Optional small line at the bottom, e.g. website or organiser name.' },
       theme: { type: 'string', description: 'Colour theme: ' + THEME_NAMES.join(', ') + '. Choose to suit the subject.' },
       layout: { type: 'string', description: 'Leave this out unless the person asked for a specific look: the art direction (composition, type, picture placement) is chosen automatically from what the design is for. One of: frame (rounded picture frame over a colour band with a price badge, then type on paper), stack (picture or colour block on top, solid type block below), bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
+      style: { type: 'string', description: 'Optional look, used when the designer service is on: editorial, swiss, brutal, luxe, bauhaus, botanical, newsprint or aurora. Leave out to match the subject automatically.' },
       primary_color: { type: 'string', description: 'Optional hex colour like #0F766E to override the theme background colour.' },
       accent_color: { type: 'string', description: 'Optional hex colour like #F59E0B to override the theme accent colour.' },
       image_prompt: { type: 'string', description: 'English description of a real photograph for the design (no text in it). Include it for almost every design. Describe one concrete, recognisable subject in a real setting, with mood and lighting: people using the product or service, hands holding a phone, a laptop on a tidy desk, the dish, the venue, the crowd. For software or apps show a person using it, never abstract grids, glowing lines or empty rooms. Leave out only for quotes, notices and certificates.' },
     }, ['headline']),
 ];
 
-export function toolSchemas() {
-  return TOOLS;
+const DOC_KINDS = ['document', 'slides', 'sheet'];
+const DOC_DESIGNS = ['editorial', 'swiss', 'brutal', 'luxe', 'bauhaus', 'botanical', 'newsprint', 'aurora'];
+
+TOOLS.push(_fn('create_document',
+  'Make a finished, professionally designed Word, PDF, PowerPoint or Excel file: reports, proposals, CVs and resumes, letters, ' +
+  'memos, brochures, lesson plans, pitch decks, slide presentations, budgets and trackers. Typography, layout and colours are ' +
+  'designed for you with real fonts; you supply only the content. The file is shown to the user automatically with download buttons. ' +
+  'Write the full, finished, specific content yourself (no filler, no placeholders in square brackets); use only facts the person gave for names, dates, figures and contact details. ' +
+  'document: pass `markdown` (# Title, then ## headings, paragraphs, - lists, 1. lists, > quotes, **bold**) for plain text, or `blocks` when you want stats, callouts or tables. ' +
+  'slides: pass `slides`; vary layouts, never five bullet slides in a row. sheet: pass `sheets`.',
+  {
+    kind: { type: 'string', description: 'One of: ' + DOC_KINDS.join(', ') + '. document = report, letter, CV, brochure, plan (Word and PDF). slides = presentation (PowerPoint and PDF). sheet = Excel.' },
+    title: { type: 'string', description: 'Title of the file.' },
+    subtitle: { type: 'string', description: 'Optional one-line subtitle (document).' },
+    kicker: { type: 'string', description: 'Optional small label above the title, e.g. "ANNUAL REPORT 2026" (document).' },
+    author: { type: 'string', description: 'Optional author or organisation name, only if the person gave it.' },
+    date: { type: 'string', description: 'Optional date line, only if the person gave it or it is plainly today.' },
+    design: { type: 'string', description: 'Optional look. Leave out to match the subject automatically. One of: ' + DOC_DESIGNS.join(', ') + '. editorial = magazine style, serif, warm; swiss = bold grid, tech and product; brutal = loud and chunky, events and youth; luxe = dark navy and gold, premium and finance; bauhaus = colourful geometry, education and art; botanical = soft sage, wellness and community; newsprint = broadsheet columns, policy and journalism; aurora = dark gradient, AI and startups. Do not use the same one every time.' },
+    markdown: { type: 'string', description: 'document only: the whole text as Markdown. Use this OR blocks.' },
+    blocks: { type: 'array', items: { type: 'object' }, description: 'document only. Each block is {"type":"h2"|"h3"|"p"|"list"|"quote"|"stats"|"callout"|"table"|"columns"|"divider", ...}. h2/h3/p: {text}. list: {items:[], ordered:bool}. quote: {text, by}. stats: {items:[{value,label}]} (2 to 4 big numbers). callout: {title, text}. table: {head:[], rows:[[]]}. columns: {paragraphs:[]}.' },
+    slides: { type: 'array', items: { type: 'object' }, description: 'slides only. Each slide is {"layout":"title"|"section"|"bullets"|"stat"|"quote"|"split"|"closing","title","subtitle","bullets":[],"value","text","by","items":[{"title","text"}],"notes"}. First slide is layout title, last is closing. stat: big number in value, claim in title. split: title + text on the left, items cards on the right. Keep bullets to 3 to 5 short lines.' },
+    sheets: { type: 'array', items: { type: 'object' }, description: 'sheet only. Each sheet is {"name","columns":[{"header","format":"$#,##0","width":16}],"rows":[["text",123,"=SUM(B2:B5)"]]}. Formulas start with =.' },
+    formats: { type: 'array', items: { type: 'string' }, description: 'Optional files to produce. document: pdf, docx. slides: pptx, pdf. sheet: xlsx. Leave out for the sensible default.' },
+  }, ['kind', 'title']));
+
+export function toolSchemas(opts) {
+  const docs = !!(opts && opts.docs);
+  return docs ? TOOLS : TOOLS.filter((t) => t.function.name !== 'create_document');
 }
 
 // ── describe / validate ─────────────────────────────────────────────────
@@ -114,15 +161,25 @@ export function describe(name, args) {
   const a = args || {};
   if (name === 'generate_image') return 'Creating an image: ' + _short(a.prompt, 80);
   if (name === 'create_design') return 'Designing ' + (DESIGN_KINDS.includes(a.kind) ? 'a ' + a.kind.replace('_', ' ') : 'a graphic') + ': ' + _short(a.headline, 60);
+  if (name === 'create_document') return 'Designing ' + ({ slides: 'a presentation', sheet: 'a spreadsheet' }[a.kind] || 'a document') + ': ' + _short(a.title, 60);
   return 'Creating a visual.';
 }
 
 export function providerLabelFor(name) {
-  return name === 'create_design' ? 'Design' : 'Image';
+  return name === 'create_design' ? 'Design' : (name === 'create_document' ? 'Document' : 'Image');
 }
 
 export function validateArgs(name, args) {
   const a = args && typeof args === 'object' ? args : {};
+  if (name === 'create_document') {
+    const missing = [];
+    if (typeof a.title !== 'string' || !a.title.trim()) missing.push('title');
+    const kind = DOC_KINDS.includes(a.kind) ? a.kind : (Array.isArray(a.slides) ? 'slides' : Array.isArray(a.sheets) ? 'sheet' : 'document');
+    if (kind === 'slides' && !(Array.isArray(a.slides) && a.slides.length)) missing.push('slides');
+    else if (kind === 'sheet' && !(Array.isArray(a.sheets) && a.sheets.length)) missing.push('sheets');
+    else if (kind === 'document' && !((Array.isArray(a.blocks) && a.blocks.length) || (typeof a.markdown === 'string' && a.markdown.trim()))) missing.push('markdown or blocks');
+    return missing.length ? { ok: false, missing } : { ok: true };
+  }
   const required = name === 'generate_image' ? ['prompt'] : ['headline'];
   const missing = required.filter((k) => typeof a[k] !== 'string' || !a[k].trim());
   return missing.length ? { ok: false, missing } : { ok: true };
@@ -329,6 +386,20 @@ export async function execute(name, args, ctx) {
         }
       }
     }
+    // doc-studio first (real fonts, composed layouts). Any failure falls through to the SVG composer below.
+    if (docStudioConfigured(env)) {
+      try {
+        const out = await renderWithDocStudio(env, posterSpecFrom(spec, a, bg, assets.logo || null), ['png', 'pdf']);
+        console.log('[media] create_design via doc-studio ok kind=' + spec.kind + ' design=' + out.design.id + ' bg=' + !!bg);
+        return {
+          ok: true,
+          modelResult: 'The design was created successfully.' + bgNote + SHOWN_NOTE,
+          media: docMedia(out, spec.headline, _short(spec.headline + ' ' + spec.kind, 160)),
+        };
+      } catch (e) {
+        console.warn('[media] doc-studio design failed, using the built-in composer: ' + (e && e.code || '') + ' ' + (e && e.message));
+      }
+    }
     try {
       const built = buildDesignSvg(spec, bg, { logo: assets.logo || null });
       console.log('[media] create_design ok kind=' + spec.kind + ' layout=' + spec.layout + ' bg=' + !!bg + (spec.direction ? ' direction: ' + spec.direction.summary : ''));
@@ -343,7 +414,119 @@ export async function execute(name, args, ctx) {
     }
   }
 
+  if (name === 'create_document') {
+    if (!docStudioConfigured(env)) return { ok: false, modelResult: 'Error: documents cannot be made right now. Tell the user plainly.' };
+    const dlimit = plan && plan.limits ? plan.limits.documentGenPerDay : 0;
+    const quota = await checkAndIncrement(uid, 'documentGen', dlimit, env);
+    if (!quota.allowed) {
+      return { ok: false, modelResult: 'Error: the user has reached today\'s document limit for their plan (' + quota.limit + ' per day). Tell them plainly and that it resets at midnight UTC.' };
+    }
+    try {
+      const spec = documentSpecFrom(a);
+      const out = await renderWithDocStudio(env, spec, Array.isArray(a.formats) ? a.formats.map(String).slice(0, 4) : undefined);
+      console.log('[media] create_document ok kind=' + out.kind + ' design=' + out.design.id + ' files=' + out.files.map((f) => f.format).join(','));
+      const names = out.files.map((f) => f.name).join(', ');
+      return {
+        ok: true,
+        modelResult: 'The ' + (out.kind === 'slides' ? 'presentation' : out.kind === 'sheet' ? 'spreadsheet' : 'document') + ' was created successfully in the "' + (out.design.name || 'custom') + '" design (' + names + ').' + SHOWN_NOTE.replace('image data, links', 'file data, links'),
+        media: docMedia(out, spec.title || spec.headline || 'Document', _short(spec.title, 160)),
+      };
+    } catch (e) {
+      try { await refundUsage(uid, 'documentGen', env); } catch (_) { /* best effort */ }
+      console.error('[media] create_document failed: ' + (e && e.code || '') + ' ' + (e && e.message));
+      return { ok: false, modelResult: e && e.code === 'rejected'
+        ? 'Error: the content could not be turned into a file (' + _short(e.message, 120) + '). Check the fields and try once more.'
+        : 'Error: the document service could not make this file right now. Tell the user plainly and suggest trying again in a moment.' };
+    }
+  }
+
   return { ok: false, modelResult: 'Error: unknown media tool.' };
+}
+
+// ── doc-studio helpers ──────────────────────────────────────────────────
+
+const DESIGN_SIZE_IDS = { flyer: 'a4', poster: 'a3', invitation: 'portrait', social_post: 'square', story: 'story', banner: 'landscape' };
+
+// What the browser gets: a small preview picture plus the files. The browser stores the files itself.
+function docMedia(out, title, alt) {
+  return {
+    kind: 'docfile',
+    title: _short(title, 120),
+    alt,
+    docKind: out.kind,
+    design: out.design.name || '',
+    preview: out.preview,
+    files: out.files.map((f) => ({ format: f.format, name: f.name, mime: f.mime, size: f.size, content: f.content })),
+  };
+}
+
+function _dataUri(img) {
+  if (!img || !img.base64) return null;
+  const mime = /^image\/(?:png|jpeg|webp)$/.test(img.mime) ? img.mime : (String(img.base64).startsWith('iVBOR') ? 'image/png' : 'image/jpeg');
+  return 'data:' + mime + ';base64,' + img.base64;
+}
+
+// The person's own colours (a brand), turned into a doc-studio palette whose text stays readable on them.
+function _brandColors(a) {
+  const out = {};
+  const accent = _hex(a.accent_color);
+  const primary = _hex(a.primary_color);
+  if (accent) out.accent = accent;
+  if (primary) { // _hex() already guarantees #RRGGBB
+    const [r, g, b] = _rgb(primary);
+    const dark = (0.299 * r + 0.587 * g + 0.114 * b) < 140;
+    const ink = dark ? '#FFFFFF' : '#111111';
+    out.bg = primary;
+    out.ink = ink;
+    out.muted = dark ? 'rgba(255,255,255,0.72)' : 'rgba(17,17,17,0.68)';
+    out.card = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)';
+    out.on = dark ? primary : '#FFFFFF';
+    if (!out.accent) out.accent = dark ? '#FFD166' : primary;
+  }
+  return out;
+}
+
+// create_design arguments (already cleaned by normalizeDesignSpec) -> a doc-studio poster spec.
+export function posterSpecFrom(spec, rawArgs, bg, logo) {
+  const a = rawArgs || {};
+  const details = spec.details.slice(0, 6);
+  // doc-studio posters have a headline, one supporting line and a details list; fold the rest in.
+  const sub = spec.subheadline || spec.body || '';
+  const extra = spec.subheadline && spec.body ? [spec.body] : [];
+  const bullets = spec.bullets.map((b) => b.replace(/^[-\u2022*]\s*/, ''));
+  const out = {
+    kind: 'poster',
+    size: DESIGN_SIZE_IDS[spec.kind] || 'a4',
+    kicker: spec.tagline || '',
+    headline: spec.headline,
+    subheadline: sub,
+    details: [...bullets, ...extra, ...details].slice(0, 7),
+    cta: spec.cta || '',
+    footer: spec.footer || '',
+  };
+  const style = String(a.style || a.design || '').toLowerCase();
+  if (DOC_DESIGNS.includes(style)) out.design = style;
+  const colors = _brandColors(a);
+  if (Object.keys(colors).length) out.colors = colors;
+  const photo = _dataUri(bg);
+  if (photo) out.image = photo;
+  const lg = _dataUri(logo);
+  if (lg) out.logo = lg;
+  return out;
+}
+
+// create_document arguments -> a doc-studio content spec.
+export function documentSpecFrom(a) {
+  const kind = DOC_KINDS.includes(a.kind) ? a.kind : (Array.isArray(a.slides) ? 'slides' : Array.isArray(a.sheets) ? 'sheet' : 'document');
+  const spec = { kind, title: String(a.title || '').slice(0, 200) };
+  for (const k of ['subtitle', 'kicker', 'author', 'date']) if (typeof a[k] === 'string' && a[k].trim() && !_hasPh(a[k])) spec[k] = a[k].trim();
+  const d = String(a.design || '').toLowerCase();
+  if (DOC_DESIGNS.includes(d)) spec.design = d;
+  if (kind === 'slides') spec.slides = a.slides;
+  else if (kind === 'sheet') spec.sheets = a.sheets;
+  else if (Array.isArray(a.blocks) && a.blocks.length) spec.blocks = a.blocks;
+  else spec.markdown = String(a.markdown || '');
+  return spec;
 }
 
 // ── Design requirements validator ───────────────────────────────────────

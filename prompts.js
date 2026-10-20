@@ -36,7 +36,7 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-10-14.2';
+export const PROMPT_VERSION = '2026-10-19.1';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
@@ -146,7 +146,9 @@ const TOOL_USE_RULES =
 // Only sent when the agent sandbox is offered (sandbox-tools.js). Kept as its
 // own static module so the cacheable beginning of the prompt stays identical
 // for every user who gets it.
-const SANDBOX_RULES =
+// SANDBOX_RULES is built from three parts so a variant without the Word/PDF/PowerPoint helper text can
+// exist (used when doc-studio is on and create_document makes those files, see DOC_RULES).
+const SANDBOX_HEAD =
   'You can run code in a private workspace for this conversation (/workspace). ' +
   'Use it for real computation, data analysis, parsing or converting files, ' +
   'When the user asks for an app, tool or calculator without naming a language, build one working HTML page (buttons, no terminal) so it opens in Preview, designed like Apple: minimalist and premium, system font stack, lots of white space, a neutral white or near-black palette with one quiet accent, soft shadows, rounded corners, subtle motion; never purple or rainbow gradients, neon or glow, unless the user asks for a style. Make a Python script only when asked for Python or a command-line tool. Never use eval() or exec() on typed input: parse it safely. input() gets no keyboard here, so test scripts by calling their functions. After building, reply in 2-3 plain sentences with no bullet lists of features or tests. ' +
@@ -162,7 +164,9 @@ const SANDBOX_RULES =
   'it and call sandbox_offer_file; it is not delivered until you do. Other ' +
   'files are scratch. Save charts as PNG with matplotlib savefig(dpi=150, ' +
   'bbox_inches="tight"); they appear automatically, so never paste image data. ' +
-  'No markdown fences in file contents. ' +
+  'No markdown fences in file contents. ';
+
+const SANDBOX_DOC_HELPER =
   'The only tools that exist are the ones you were given (names starting with sandbox_); there is no tool called Write, Read, Bash or Edit. Give the person the format they asked for: a PDF request gets a .pdf, Word gets a .docx, slides get a .pptx, built with the helper below. Never hand over a .md or .txt file for those. ' +
   'You can make real Word, PDF and PowerPoint files. A ready-made helper is installed: ' +
   '`from cognita_docs import docx, pdf, pptx`, then `docx(\"/workspace/letter.docx\", blocks)`, ' +
@@ -178,7 +182,14 @@ const SANDBOX_RULES =
   'QUALITY CHECK, always: you cannot see the file, so inspect it like a careful professional before handing it over. Every docx, pdf or pptx you build with the helper prints a QA REPORT automatically; for any other file (a chart PNG, an xlsx, a rebuilt file) run `from cognita_docs import check` then `print(check(\"/workspace/name.ext\"))`. If the report says NEEDS FIXES, change the blocks or code to fix every item (shorter text, fewer rows per slide, bigger margins, real content instead of placeholders), rebuild, and read the new report. Repeat until it says PASS; do not offer the file before then, and do not offer a file you have not checked. The report also scores how the file looks out of 100 (it must reach 78): fix the listed taste items, costliest first, and write plain wording, not filler like leverage or delve. A VISION REVIEW, if shown, is weak advice: act only on what you can verify. Also read your own content once for wrong facts, names and numbers. For a web page, use the browser test and fix what it reports. A download offered without a passing check is held back. ' +
   'When the person asks for a change, a correction or a new version, edit your blocks or code and rebuild, check again, and offer the new file; keep the same look unless they ask to change it. ' +
   'Write the full, finished content yourself; never leave placeholders. ' +
-  'The helper and your code are private: never show code, blocks or the helper name. Run it silently, offer the file, say in plain words what you made. If a step fails, fix and rerun it yourself. ' +
+  'The helper and your code are private: never show code, blocks or the helper name. Run it silently, offer the file, say in plain words what you made. If a step fails, fix and rerun it yourself. ';
+
+// Used instead of SANDBOX_DOC_HELPER when create_document is available.
+const SANDBOX_NO_DOC_HELPER =
+  'The only tools that exist are the ones you were given; there is no tool called Write, Read, Bash or Edit. ' +
+  'Word, PDF and PowerPoint files and designed Excel files are made with create_document, never with code. Use code only for calculations, data work and charts; a data-analysis spreadsheet may still be written with openpyxl. ';
+
+const SANDBOX_TAIL =
   'Never say a file is made until sandbox_offer_file succeeded, and never write a download link or /workspace path in the reply: the file card appears by itself. If the workspace will not start, say so in one plain sentence; never paste the document or code instead. ' +
   'Only your code has no internet. Read public pages with sandbox_web_fetch, then sandbox_import_from_tool, then parse them (beautifulsoup4, pandas). ' +
   'Spreadsheets: openpyxl to .xlsx. Also fine: .csv, .txt, .md, .html. ' +
@@ -186,6 +197,9 @@ const SANDBOX_RULES =
   'Say what you did and found in plain words, name files by file name only, and ' +
   'do not mention tools, sandboxes or workspaces. ' +
   'Tools are used only by calling them. Never type a tool name or a call such as name(...) or [name](...) in your reply.';
+
+const SANDBOX_RULES = SANDBOX_HEAD + SANDBOX_DOC_HELPER + SANDBOX_TAIL;
+const SANDBOX_RULES_NO_DOC_HELPER = SANDBOX_HEAD + SANDBOX_NO_DOC_HELPER + SANDBOX_TAIL;
 
 // Only sent when the picture and design tools are offered (media-tools.js).
 const MEDIA_RULES =
@@ -203,6 +217,18 @@ const MEDIA_RULES =
   'you can answer with sensible choices. After the result, reply in one or two plain ' +
   'sentences and offer one specific tweak (a different colour, layout or wording). Never ' +
   'paste image data or links, and never say you cannot make pictures.';
+
+// Only sent when create_document is offered (doc-studio is configured, see docstudio-client.js).
+const DOC_RULES =
+  'You can make finished, professionally designed files with create_document: Word and PDF documents (reports, proposals, CVs, resumes, letters, memos, brochures, lesson plans), ' +
+  'PowerPoint presentations (also as PDF) and Excel spreadsheets. Always use it for these requests; never answer with a .md or .txt file or paste the document into the chat. ' +
+  'Write the complete, specific content yourself, with real figures and wording from the person, and no placeholders. ' +
+  'For a document pass markdown (# Title, ## headings, paragraphs, lists, > quotes) or blocks when you want stat numbers, callouts or tables; use a few of those in reports and proposals instead of walls of text. ' +
+  'For slides pass slides with varied layouts (title first, closing last, stat, quote, split, section between topics), 3 to 5 short bullets at most, and never several bullet slides in a row. ' +
+  'Leave design out so the look matches the subject, or pick one when the person asks for a mood; do not choose the same design every time. ' +
+  'A formal report, proposal or brochure gets a kicker, subtitle and a date or author only if the person gave them; letters, memos and CVs stay plain and short. ' +
+  'When the person asks for a change or a new version, call create_document again with the full updated content and keep the same design unless they ask to change it. ' +
+  'Flyers, posters, invitations and social graphics still use create_design. After the result reply in one or two plain sentences, name the file types, and offer one specific tweak. Never paste file data or links.';
 
 // Image questions only (the vision model).
 const IMAGE_RULES =
@@ -265,19 +291,23 @@ const CHAT_WITH_TOOLS = join([CHAT_CORE, TOOL_USE_RULES, TOOL_OUTPUT_FORMATTING]
 // the cacheable beginning is shared.
 const CHAT_WITH_SANDBOX = join([CHAT_CORE, SANDBOX_RULES]);
 const CHAT_WITH_TOOLS_AND_SANDBOX = join([CHAT_WITH_TOOLS, SANDBOX_RULES]);
+// Same, for turns where create_document makes the Word/PDF/PowerPoint files (no helper text).
+const CHAT_WITH_SANDBOX_DOCS = join([CHAT_CORE, SANDBOX_RULES_NO_DOC_HELPER]);
+const CHAT_WITH_TOOLS_AND_SANDBOX_DOCS = join([CHAT_WITH_TOOLS, SANDBOX_RULES_NO_DOC_HELPER]);
 
-function _baseFor(hasTools, hasSandbox) {
-  if (hasTools && hasSandbox) return CHAT_WITH_TOOLS_AND_SANDBOX;
-  if (hasSandbox) return CHAT_WITH_SANDBOX;
+function _baseFor(hasTools, hasSandbox, hasDocs) {
+  if (hasTools && hasSandbox) return hasDocs ? CHAT_WITH_TOOLS_AND_SANDBOX_DOCS : CHAT_WITH_TOOLS_AND_SANDBOX;
+  if (hasSandbox) return hasDocs ? CHAT_WITH_SANDBOX_DOCS : CHAT_WITH_SANDBOX;
   return hasTools ? CHAT_WITH_TOOLS : CHAT_CORE;
 }
 
 // The picture/design rules are always appended LAST, so every variant still
 // starts with exactly the same text as the one without them.
-function _staticFor(hasTools, hasSandbox, hasMedia, hasWeb) {
-  const base = _baseFor(hasTools, hasSandbox);
+function _staticFor(hasTools, hasSandbox, hasMedia, hasWeb, hasDocs) {
+  const base = _baseFor(hasTools, hasSandbox, hasDocs);
   const withMedia = hasMedia ? base + '\n\n' + MEDIA_RULES : base;
-  return (hasWeb ? withMedia + '\n\n' + WEB_RULES : withMedia) + '\n\n' + UI_RULES;
+  const withDocs = hasMedia && hasDocs ? withMedia + '\n\n' + DOC_RULES : withMedia;
+  return (hasWeb ? withDocs + '\n\n' + WEB_RULES : withDocs) + '\n\n' + UI_RULES;
 }
 
 // Image questions: its own slim prompt (no reasoning rules, no tool rules).
@@ -323,12 +353,14 @@ function buildSessionBlock(firstName, now) {
  *   are being offered on THIS turn
  * @param {boolean} [opts.hasMedia] - true only when the picture/design tools
  *   (media-tools.js) are being offered on THIS turn
+ * @param {boolean} [opts.hasDocs] - true only when create_document (doc-studio) is
+ *   offered on THIS turn; the sandbox rules then leave out the Word/PDF/PowerPoint helper
  * @param {boolean} [opts.hasWeb] - true only when the web_search tool
  *   (web-search.js) is being offered on THIS turn
  * @param {Date} [opts.now] - injectable for tests
  */
-export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, now } = {}) {
-  return _staticFor(hasTools, hasSandbox, hasMedia, hasWeb) + '\n\n' + buildSessionBlock(firstName, now);
+export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, hasDocs = false, now } = {}) {
+  return _staticFor(hasTools, hasSandbox, hasMedia, hasWeb, hasDocs) + '\n\n' + buildSessionBlock(firstName, now);
 }
 
 /** System prompt for a turn where the user attached images (vision model). */
@@ -359,11 +391,11 @@ export function approxTokens(text) {
  * Logged once per request: if `fingerprint` changes between requests that
  * should be identical, something dynamic has leaked into the static part.
  */
-export function chatPromptInfo({ hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, vision = false } = {}) {
-  const staticPart = vision ? VISION_CORE : _staticFor(hasTools, hasSandbox, hasMedia, hasWeb);
+export function chatPromptInfo({ hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, hasDocs = false, vision = false } = {}) {
+  const staticPart = vision ? VISION_CORE : _staticFor(hasTools, hasSandbox, hasMedia, hasWeb, hasDocs);
   return {
     version: PROMPT_VERSION,
-    variant: vision ? 'vision' : ((hasTools && hasSandbox ? 'chat+tools+sandbox' : hasSandbox ? 'chat+sandbox' : hasTools ? 'chat+tools' : 'chat') + (hasMedia ? '+media' : '') + (hasWeb ? '+web' : '')),
+    variant: vision ? 'vision' : ((hasTools && hasSandbox ? 'chat+tools+sandbox' : hasSandbox ? 'chat+sandbox' : hasTools ? 'chat+tools' : 'chat') + (hasMedia ? '+media' : '') + (hasMedia && hasDocs ? '+docs' : '') + (hasWeb ? '+web' : '')),
     fingerprint: fingerprint(staticPart),
     approxTokens: approxTokens(staticPart),
   };

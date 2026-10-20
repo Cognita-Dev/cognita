@@ -57,11 +57,18 @@ export const SANDBOX_INTENT_PATTERNS = [
  * Returns { offer: boolean, reason: string } where reason is "resume",
  * "hint", the name of the pattern that matched, or "none".
  */
-export function shouldOfferSandbox({ text, hint, resuming, recent } = {}) {
+// Patterns that only mean "the person wants a finished Word / PDF / PowerPoint file". When the designed-document
+// service (doc-studio, create_document in media-tools.js) makes those files, they must not switch the code tools
+// on: it would add about 1,300 tokens to the request for nothing. Everything else (data, code, calculations,
+// a spreadsheet to analyse) still does.
+export const DOCUMENT_ONLY_PATTERNS = new Set(['document-file', 'make-document', 'presentation', 'file-version', 'downloadable', 'finished-file', 'file-request']);
+
+export function shouldOfferSandbox({ text, hint, resuming, recent, docsHandled } = {}) {
   if (resuming) return { offer: true, reason: 'resume' };
   if (hint === true) return { offer: true, reason: 'hint' };
+  const patterns = docsHandled ? SANDBOX_INTENT_PATTERNS.filter((p) => !DOCUMENT_ONLY_PATTERNS.has(p.name)) : SANDBOX_INTENT_PATTERNS;
   const t = typeof text === 'string' ? text.slice(0, 20000) : '';
-  for (const p of SANDBOX_INTENT_PATTERNS) {
+  for (const p of patterns) {
     if (p.re.test(t)) return { offer: true, reason: p.name };
   }
   // Short follow-ups ("Go on", "Where's it?", "Try again") carry no keyword of their own,
@@ -69,7 +76,7 @@ export function shouldOfferSandbox({ text, hint, resuming, recent } = {}) {
   if (t.trim().length <= 80 && Array.isArray(recent)) {
     for (const r of recent.slice(-3)) {
       const rt = typeof r === 'string' ? r.slice(0, 20000) : '';
-      for (const p of SANDBOX_INTENT_PATTERNS) {
+      for (const p of patterns) {
         if (p.re.test(rt)) return { offer: true, reason: 'follow-up:' + p.name };
       }
     }
