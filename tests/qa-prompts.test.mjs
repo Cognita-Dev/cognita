@@ -69,5 +69,5 @@ test('token budget (chat ~2550, +tools ~3180, +sandbox ~4140, all ~5160)', () =>
 test('vision prompt stays slim and version is bumped', () => {
   const v = buildVisionSystemPrompt({ now: new Date('2026-10-09T10:00:00Z') });
   assert.ok(!v.includes('cognita-ui') && !v.includes('connected apps'));
-  assert.equal(PROMPT_VERSION, '2026-10-14.2');
+  assert.equal(PROMPT_VERSION, '2026-10-19.1');
 });
