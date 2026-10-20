@@ -2,6 +2,7 @@
 // HTML/CSS is the layout engine: that is what gives real typographic and layout freedom.
 import { resolveDesign } from './designs.js';
 import { fontCss } from './fonts.js';
+import { cleanImage } from './sanitize.js';
 
 export const POSTER_SIZES = {
   a4: [794, 1123], a3: [1123, 1587], square: [1080, 1080],
@@ -100,7 +101,13 @@ function posterHtml(spec, d) {
     const m = String(x).match(/^([^:]{1,24}):\s*(.+)$/);
     return m ? `<li><span>${esc(m[1])}</span>${inline(m[2])}</li>` : `<li>${inline(x)}</li>`;
   }).join('');
-  return `<div class="poster p-${comp}"><i class="deco"></i><i class="deco b"></i>
+  // Optional pictures. Only inline data: images are accepted (see sanitize.js); anything else is ignored,
+  // so a poster can never make the renderer fetch a URL.
+  const photo = cleanImage(spec.image);
+  const logo = cleanImage(spec.logo);
+  return `<div class="poster p-${comp}${photo ? ' has-photo' : ''}"><i class="deco"></i><i class="deco b"></i>
+${photo ? `<div class="bgphoto" style="background-image:url('${photo}')"></div><i class="scrim"></i>` : ''}
+${logo ? `<img class="plogo" src="${logo}" alt="">` : ''}
 <div class="p-top"><span class="kicker">${esc(spec.kicker || '')}</span><span class="kicker">${esc(spec.date || '')}</span></div>
 <h1>${inline(spec.headline || spec.title || 'Headline')}</h1>
 ${spec.subheadline ? `<p class="lead">${inline(spec.subheadline)}</p>` : ''}
@@ -193,6 +200,21 @@ h1,h2,h3{font-family:var(--head),serif;font-weight:var(--hw);margin:0}
 .p-blocks .deco.b{display:block;width:36cqw;height:36cqw;border-radius:0;background:var(--accent);right:-10cqw;bottom:-6cqw;transform:rotate(14deg);left:auto;top:auto;z-index:0}
 .p-blocks h1{margin-top:auto;font-size:14cqw;text-transform:lowercase}
 .p-blocks .details{margin-top:3cqw}
+/* ---------- poster picture + logo (optional) ----------
+   The picture fills the page; a fade into the design's own background colour keeps the type readable
+   on any photo. The headline block is pushed to the bottom, over the faded area. */
+.poster>.bgphoto{position:absolute;inset:0;z-index:0;background-size:cover;background-position:center}
+.poster>.scrim{position:absolute;inset:0;z-index:1;pointer-events:none}
+.poster.has-photo>.deco{display:none}
+.poster.has-photo>.scrim{background:linear-gradient(180deg,rgba(0,0,0,.42) 0,rgba(0,0,0,0) 20%,rgba(0,0,0,0) 34%,color-mix(in srgb,var(--bg) 82%,transparent) 58%,var(--bg) 78%,var(--bg) 100%)}
+.poster.has-photo .p-top .kicker{color:#fff;text-shadow:0 .2cqw 1.4cqw rgba(0,0,0,.55)}
+.poster.has-photo h1{margin-top:auto!important;order:0!important;font-size:min(13cqw,11.5cqh)}
+.poster.has-photo .lead,.poster.has-photo .cta,.poster.has-photo .foot{order:0!important}
+.poster.has-photo .details{order:0!important;margin-top:3cqw!important;border-top:0!important;padding-top:0!important;grid-template-columns:1fr 1fr}
+.poster.has-photo.p-center .details{grid-template-columns:1fr}
+.poster>.plogo{align-self:flex-start;height:7cqw;max-width:34cqw;object-fit:contain;object-position:left center;margin-bottom:2.4cqw;position:relative;z-index:3}
+.p-center>.plogo{align-self:center;object-position:center}
+.poster.has-photo>.plogo{background:rgba(255,255,255,.92);padding:1.2cqw 1.8cqw;border-radius:1.4cqw;box-sizing:content-box}
 /* ---------- sheet preview ---------- */
 .sheet{padding:24px 40px;font-size:14px}.sheet table{border-collapse:collapse;width:100%}.sheet h2{font-size:28px;margin-bottom:14px}
 .sheet th{background:var(--accent);color:var(--on);text-align:left;padding:10px 14px}.sheet td{padding:9px 14px;border-bottom:1px solid color-mix(in srgb,var(--ink) 18%,transparent)}
@@ -207,13 +229,20 @@ export function kindOf(spec) {
   return 'document';
 }
 
-export function renderHtml(input, { preview = false } = {}) {
+// A spec may carry `markdown` instead of `blocks`. Every exporter (PDF, Word, ...) needs the blocks,
+// so this turns the Markdown into blocks (and takes the title from its first # heading) up front.
+export function normalizeSpec(input) {
   const spec = { ...input };
-  if (spec.markdown) {
+  if (spec.markdown && !spec.blocks) {
     const m = markdownToBlocks(spec.markdown);
     spec.title = spec.title || m.title;
     spec.blocks = m.blocks;
   }
+  return spec;
+}
+
+export function renderHtml(input, { preview = false } = {}) {
+  const spec = normalizeSpec(input);
   const kind = kindOf(spec);
   const d = resolveDesign(spec);
   const f = d.fonts;

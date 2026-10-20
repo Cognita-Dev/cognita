@@ -7,7 +7,7 @@ import {
 } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 import ExcelJS from 'exceljs';
-import { renderHtml, POSTER_SIZES } from './render-html.js';
+import { renderHtml, POSTER_SIZES, kindOf, normalizeSpec } from './render-html.js';
 
 let browser;
 async function getBrowser() {
@@ -23,7 +23,10 @@ export async function closeBrowser() { if (browser) await browser.close(); brows
 
 async function withPage(html, viewport, fn, scale = 1) {
   const b = await getBrowser();
-  const ctx = await b.newContext({ viewport, deviceScaleFactor: scale });
+  const ctx = await b.newContext({ viewport, deviceScaleFactor: scale, javaScriptEnabled: true });
+  // Rendered pages may only use what is inside the HTML itself (fonts and pictures are inlined as data:).
+  // Anything else is refused, so a spec can never make this server fetch a URL.
+  await ctx.route('**/*', (route) => (/^(?:data|blob|about):/i.test(route.request().url()) ? route.continue() : route.abort()));
   const page = await ctx.newPage();
   try {
     await page.setContent(html, { waitUntil: 'load' });
@@ -244,6 +247,62 @@ async function toXlsx(spec) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+// ───────────────────────── preview + bundle ─────────────────────────
+// A small JPEG of the first page / slide / poster, for showing in a chat message.
+export async function renderPreview(spec, maxWidth = 1000) {
+  const { html, kind } = renderHtml(spec);
+  let w = 794;
+  let h = 1123;
+  if (kind === 'slides') { w = 1920; h = 1080; }
+  else if (kind === 'poster') [w, h] = POSTER_SIZES[String(spec.size || 'portrait').toLowerCase()] || POSTER_SIZES.portrait;
+  else if (kind === 'sheet') { w = 1123; h = 794; }
+  const scale = Math.min(2, maxWidth / w);
+  return withPage(html, { width: w, height: h }, async (p) => {
+    if (kind === 'slides') return p.locator('.slide').first().screenshot({ type: 'jpeg', quality: 74 });
+    if (kind === 'poster') return p.locator('.poster').screenshot({ type: 'jpeg', quality: 78 });
+    return p.screenshot({ type: 'jpeg', quality: 74, clip: { x: 0, y: 0, width: w, height: h } });
+  }, scale);
+}
+
+// Which files a kind of content is delivered as when the caller does not say.
+export const DEFAULT_FORMATS = {
+  document: ['pdf', 'docx'],
+  slides: ['pptx', 'pdf'],
+  poster: ['png', 'pdf'],
+  sheet: ['xlsx'],
+};
+// Which formats make sense for which kind (a poster has no Word version, a sheet cannot be a slide deck).
+export const KIND_FORMATS = {
+  document: ['pdf', 'docx', 'png', 'html'],
+  slides: ['pptx', 'pptx-image', 'pdf', 'png'],
+  poster: ['png', 'pdf'],
+  sheet: ['xlsx', 'pdf'],
+};
+
+export function fileStem(spec, kind) {
+  return String(spec.title || spec.headline || kind).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || kind;
+}
+
+/** Renders one spec to several formats plus a preview picture. Returns { kind, design, preview, files }. */
+export async function renderBundle(input, formats) {
+  const spec = normalizeSpec(input);
+  const kind = kindOf(spec);
+  const allowed = KIND_FORMATS[kind] || ['pdf'];
+  let wanted = (Array.isArray(formats) && formats.length ? formats : DEFAULT_FORMATS[kind] || ['pdf']).filter((f) => allowed.includes(f));
+  if (!wanted.length) wanted = DEFAULT_FORMATS[kind] || ['pdf'];
+  wanted = [...new Set(wanted)];
+  const { design } = renderHtml(spec);
+  const stem = fileStem(spec, kind);
+  const files = [];
+  for (const f of wanted) {
+    const buf = await exportAs(spec, f);
+    const meta = FORMATS[f];
+    files.push({ format: f, name: `${stem}${f === 'pptx-image' ? '-image' : ''}.${meta.ext}`, mime: meta.mime.split(';')[0], size: buf.length, content: buf.toString('base64') });
+  }
+  const preview = await renderPreview(spec);
+  return { kind, design: { id: design.id, name: design.name }, preview: { mime: 'image/jpeg', content: preview.toString('base64') }, files };
+}
+
 // ───────────────────────── dispatcher ─────────────────────────
 export const FORMATS = {
   html: { mime: 'text/html; charset=utf-8', ext: 'html' },
@@ -255,7 +314,8 @@ export const FORMATS = {
   xlsx: { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx' },
 };
 
-export async function exportAs(spec, format, opts = {}) {
+export async function exportAs(input, format, opts = {}) {
+  const spec = normalizeSpec(input);
   switch (format) {
     case 'html': return Buffer.from(renderHtml(spec).html);
     case 'pdf': return Buffer.from(await toPdf(spec));
