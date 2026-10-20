@@ -2408,8 +2408,10 @@ async function runStreamedTurn(payload, resume) {
   // browser could run code (see continueAfterSandbox). It carries the live
   // indicator, the start time and the steps already finished, so the person
   // sees one unbroken turn instead of several.
-  const turn = resume || { live: createLiveTurnIndicator(), startedAt: performance.now(), carry: [], media: [] };
+  const turn = resume || { live: createLiveTurnIndicator(), startedAt: performance.now(), carry: [], media: [], stores: [] };
   if (!Array.isArray(turn.media)) turn.media = [];
+  if (!Array.isArray(turn.stores)) turn.stores = [];
+  let finishing = null; // set when the answer waits for designed files to be stored
   const live = turn.live;
   const startedAt = turn.startedAt;
   payload.conversationId = payload.conversationId || ensureConversationId();
@@ -2488,13 +2490,19 @@ async function runStreamedTurn(payload, resume) {
       onRound: () => live.addPendingRow(),
       onStepStart: (m) => live.addStepStart(m),
       onStep: (step) => live.addStep(step),
-      onMedia: (m) => { if (m && turn.media.length < 6) turn.media.push(m); },
+      onMedia: (m) => {
+        if (!m || turn.media.length >= 6) return;
+        turn.media.push(m);
+        if (m.kind === 'docfile') turn.stores.push(storeDocFiles(m, payload.conversationId).catch(() => {}));
+      },
       onUi: (d) => { if (d && Array.isArray(d.ui)) live.showUi(d.ui, d.pending); },
       onText: (d) => { if (d && typeof d.t === 'string') live.showText(d.t); },
       onTextReset: () => live.resetStream(),
       onSandboxCall: (c) => live.addPendingRow(c && c.summary),
       onDone: (data) => {
         if (data && data.pendingSandboxCall) { paused = data; return; }
+        // Designed files are written into the workspace first, so the saved answer knows where they are.
+        if (turn.stores.length) { finishing = Promise.all(turn.stores).then(() => finishWithData(data)); return; }
         finishWithData(data);
       },
       onError: (data) => finishWithError(data && data.message, data && data.status),
@@ -2505,6 +2513,8 @@ async function runStreamedTurn(payload, resume) {
     finishWithError('Could not reach Cognita. Please check your connection.', 0);
     return;
   }
+
+  if (finishing) await finishing;
 
   // The turn paused because the model asked to run code. Run it here, in
   // the browser sandbox, then send the real result back to continue.
@@ -3350,6 +3360,17 @@ function cleanMedia(list) {
     if (!m || typeof m !== 'object') return;
     if (m.kind === 'image' && typeof m.content === 'string' && /^[A-Za-z0-9+/=]+$/.test(m.content) && MEDIA_MIME_RE.test(m.mime || 'image/jpeg')) {
       out.push({ kind: 'image', mime: m.mime || 'image/jpeg', content: m.content, alt: String(m.alt || 'Generated image').slice(0, 200) });
+    } else if (m.kind === 'docfile' && Array.isArray(m.files)) {
+      // A finished document, presentation, spreadsheet or poster from doc-studio. Only small facts are kept:
+      // the file bytes live in this browser's workspace (see storeDocFiles), never in the saved chat.
+      const files = m.files.slice(0, 4).filter((f) => f && typeof f.name === 'string' && /^[A-Za-z0-9._-]{1,80}$/.test(f.name)).map((f) => ({
+        name: f.name, format: String(f.format || '').slice(0, 12), size: Number.isFinite(f.size) ? f.size : 0,
+        path: typeof f.path === 'string' && f.path.startsWith('/workspace/') ? f.path.slice(0, 300) : '',
+      }));
+      if (!files.length) return;
+      const pv = m.preview && /^image\/(jpeg|png)$/.test(m.preview.mime) && typeof m.preview.content === 'string' && m.preview.content.length <= 600000 && /^[A-Za-z0-9+/=]+$/.test(m.preview.content)
+        ? { mime: m.preview.mime, content: m.preview.content } : null;
+      out.push({ kind: 'docfile', docKind: String(m.docKind || '').slice(0, 20), design: String(m.design || '').slice(0, 60), title: String(m.title || 'Document').slice(0, 120), alt: String(m.alt || m.title || 'Generated file').slice(0, 200), preview: pv, files });
     } else if (m.kind === 'design' && typeof m.svg === 'string' && m.svg.startsWith('<svg') && !/<script/i.test(m.svg) && m.width > 0 && m.height > 0) {
       out.push({ kind: 'design', svg: m.svg, width: Math.round(m.width), height: Math.round(m.height), title: String(m.title || 'Design').slice(0, 120), alt: String(m.alt || m.title || 'Generated design').slice(0, 200) });
     }
@@ -3366,6 +3387,7 @@ function renderMediaHtml(meta, msgIndex) {
   if (!list.length) return '';
   return '<div class="gen-media-list">' + list.map((m, i) => {
     const attrs = 'data-msg-index="' + msgIndex + '" data-media-index="' + i + '"';
+    if (m.kind === 'docfile') return renderDocFileHtml(m, attrs);
     if (m.kind === 'design') {
       return '<figure class="gen-media gen-media--design">' +
         '<img src="' + _svgDataUrl(m.svg) + '" alt="' + escapeHtml(m.alt || 'Generated design') + '" width="' + m.width + '" height="' + m.height + '" loading="lazy">' +
@@ -3381,6 +3403,89 @@ function renderMediaHtml(meta, msgIndex) {
         '<button type="button" class="gen-media-btn" ' + attrs + ' data-fmt="image"><i class="ph ph-download-simple" aria-hidden="true"></i> Download</button>' +
       '</figcaption></figure>';
   }).join('') + '</div>';
+}
+
+/* ── Designed files from doc-studio (documents, slides, spreadsheets, posters) ──
+ * The Worker sends the finished files with a small preview picture as one `media` event. The files are written into
+ * this chat's workspace right away (so they survive reloads, open in the preview sheet and can be saved to Cognita),
+ * and the saved chat keeps only the preview picture and where each file is. If the workspace cannot take a file
+ * (too big for the plan, storage full), it stays available for this visit only. */
+const docFileSession = new Map(); // name + size -> Blob, for files that could not be stored
+
+function _docFileKey(f) { return f.name + ':' + f.size; }
+
+async function storeDocFiles(m, conversationId) {
+  const list = (m.files || []).filter((f) => f && typeof f.content === 'string');
+  if (!list.length) return;
+  const items = list.map((f) => ({ name: f.name, data: _base64ToBytes(f.content).buffer }));
+  let res;
+  try {
+    const lim = currentSandboxLimits || {};
+    res = await getSandbox().putFiles(conversationId, items, { maxFileBytes: sandboxFileLimitBytes(), maxWorkspaceBytes: (lim.maxWorkspaceMB || 10) * 1024 * 1024 });
+  } catch (_) { res = { saved: [], errors: [] }; }
+  const saved = new Map((res.saved || []).map((sv) => [sv.name, sv.path]));
+  list.forEach((f) => {
+    const path = saved.get(f.name);
+    if (path) f.path = path;
+    else docFileSession.set(_docFileKey(f), new Blob([_base64ToBytes(f.content)], { type: f.mime || 'application/octet-stream' }));
+    delete f.content;
+  });
+}
+
+const DOC_FORMAT_LABEL = { pdf: 'PDF', docx: 'Word', pptx: 'PowerPoint', 'pptx-image': 'PowerPoint (pictures)', xlsx: 'Excel', png: 'PNG', html: 'HTML' };
+const DOC_FORMAT_ICON = { pdf: 'ph-file-pdf', docx: 'ph-file-doc', pptx: 'ph-file-ppt', 'pptx-image': 'ph-file-ppt', xlsx: 'ph-file-xls', png: 'ph-image', html: 'ph-browser' };
+
+function renderDocFileHtml(m, attrs) {
+  const img = m.preview
+    ? '<button type="button" class="gen-doc-open" ' + attrs + ' data-file-index="0" aria-label="Open ' + escapeHtml(m.title) + '">' +
+        '<img src="data:' + escapeHtml(m.preview.mime) + ';base64,' + escapeHtml(m.preview.content) + '" alt="' + escapeHtml(m.alt) + '" loading="lazy"></button>'
+    : '';
+  const btns = m.files.map((f, fi) =>
+    '<button type="button" class="gen-media-btn gen-doc-btn" ' + attrs + ' data-file-index="' + fi + '">' +
+      '<i class="ph ' + (DOC_FORMAT_ICON[f.format] || 'ph-download-simple') + '" aria-hidden="true"></i> ' +
+      escapeHtml(DOC_FORMAT_LABEL[f.format] || f.format.toUpperCase() || 'File') +
+      (f.size ? ' <span class="gen-doc-size">' + escapeHtml(formatBytes(f.size)) + '</span>' : '') + '</button>').join('');
+  const canView = m.files.some((f) => canPreview(f.name));
+  return '<figure class="gen-media gen-media--doc gen-media--' + escapeHtml(m.docKind || 'file') + '">' + img +
+    '<figcaption class="gen-media-actions">' +
+      (canView ? '<button type="button" class="gen-media-btn gen-doc-open" ' + attrs + ' data-file-index="0"><i class="ph ph-eye" aria-hidden="true"></i> Preview</button>' : '') +
+      btns + '</figcaption>' +
+    (m.design ? '<span class="gen-doc-design">' + escapeHtml(m.design) + ' design</span>' : '') + '</figure>';
+}
+
+function _docFileFor(el) {
+  const meta = conversationMeta[parseInt(el.dataset.msgIndex, 10)];
+  const m = meta && Array.isArray(meta.media) ? meta.media[parseInt(el.dataset.mediaIndex, 10)] : null;
+  const f = m && Array.isArray(m.files) ? m.files[parseInt(el.dataset.fileIndex, 10) || 0] : null;
+  return m && f ? { m, f } : null;
+}
+
+async function downloadDocFile(btn) {
+  const hit = _docFileFor(btn);
+  if (!hit || btn.disabled) return;
+  const { f } = hit;
+  btn.disabled = true;
+  try {
+    const blob = (f.path && await getSandbox().exportFile(ensureConversationId(), f.path)) || docFileSession.get(_docFileKey(f));
+    if (!blob) { showToast('That file is no longer on this device. Ask Cognita to make it again.'); return; }
+    _saveBlob(blob, f.name);
+  } finally { btn.disabled = false; }
+}
+
+function openDocFile(btn) {
+  const hit = _docFileFor(btn);
+  if (!hit) return;
+  const { m, f } = hit;
+  // Prefer a format the sheet can draw well (PDF first); the other files stay one tap away.
+  const pick = m.files.find((x) => x.format === 'pdf') || m.files.find((x) => x.format === 'png') || f;
+  const msgIndex = parseInt(btn.dataset.msgIndex, 10);
+  if (pick.path) {
+    previewDeliverable({ path: pick.path, name: pick.name, title: m.title, size: pick.size, msgIndex });
+  } else {
+    const blob = docFileSession.get(_docFileKey(pick));
+    if (!blob) { showToast('That file is no longer on this device. Ask Cognita to make it again.'); return; }
+    openFilePreview({ name: pick.name, title: m.title, size: pick.size, getBlob: async () => blob, save: null });
+  }
 }
 
 function _saveBlob(blob, filename) {
@@ -4707,9 +4812,11 @@ function wireMessageActionButtons() {
       if (!ok) showToast('That file is no longer on this device. Ask Cognita to make it again.');
     });
   });
-  document.querySelectorAll('.gen-media-btn').forEach((btn) => {
+  document.querySelectorAll('.gen-media-btn:not(.gen-doc-btn):not(.gen-doc-open)').forEach((btn) => {
     btn.addEventListener('click', () => downloadGeneratedMedia(btn));
   });
+  document.querySelectorAll('.gen-doc-btn').forEach((btn) => btn.addEventListener('click', () => downloadDocFile(btn)));
+  document.querySelectorAll('.gen-doc-open').forEach((btn) => btn.addEventListener('click', () => openDocFile(btn)));
   document.querySelectorAll('.sbx-save, .deliv-save').forEach((btn) => {
     btn.addEventListener('click', () => saveFileToCognita(btn));
   });
