@@ -25,7 +25,9 @@
 
 import { checkAndIncrement, refundUsage } from './usage.js';
 import { toList, toText } from './list-text.js';
-import { deriveDesignDirection, DESIGN_LAYOUTS, KEY_FACT_RX, pickKeyFact } from './design-direction.js';
+import { deriveDesignDirection, DESIGN_LAYOUTS, KEY_FACT_RX, pickKeyFact, stylesForDirection } from './design-direction.js';
+import { chooseDirection, buildBackgroundPrompt, lookAtDesign, needsRedo } from './design-critic.js';
+import { fontFaceStyle } from './design-fonts.js';
 import { docStudioConfigured, renderWithDocStudio } from './docstudio-client.js';
 
 // When the doc-studio service is configured (DOCSTUDIO_URL, see docstudio-client.js):
@@ -114,6 +116,7 @@ export const TOOLS = [
       theme: { type: 'string', description: 'Colour theme: ' + THEME_NAMES.join(', ') + '. Choose to suit the subject.' },
       layout: { type: 'string', description: 'Leave this out unless the person asked for a specific look: the art direction (composition, type, picture placement) is chosen automatically from what the design is for. One of: frame (rounded picture frame over a colour band with a price badge, then type on paper), stack (picture or colour block on top, solid type block below), bold (full-colour, strong left-aligned type), poster (picture-led, giant headline at the bottom, best with image_prompt and little text), split (coloured header over a light information page, best for text-heavy flyers), editorial (light paper, serif headline and a picture window, refined and modern), centered (formal and elegant, best for invitations and certificates).' },
       style: { type: 'string', description: 'Optional look, used when the designer service is on: editorial, swiss, brutal, luxe, bauhaus, botanical, newsprint or aurora. Leave out to match the subject automatically.' },
+      seed: { type: 'integer', description: 'Leave out for a new design: every request then gets a fresh composition. When the person asks for a small change to a design you already made ("make it bluer", "shorter headline"), pass the seed reported with that design so the composition stays the same.' },
       primary_color: { type: 'string', description: 'Optional hex colour like #0F766E to override the theme background colour.' },
       accent_color: { type: 'string', description: 'Optional hex colour like #F59E0B to override the theme accent colour.' },
       image_prompt: { type: 'string', description: 'English description of a real photograph for the design (no text in it). Include it for almost every design. Describe one concrete, recognisable subject in a real setting, with mood and lighting: people using the product or service, hands holding a phone, a laptop on a tidy desk, the dish, the venue, the crowd. For software or apps show a person using it, never abstract grids, glowing lines or empty rooms. Leave out only for quotes, notices and certificates.' },
@@ -295,9 +298,10 @@ function _buildPrompt(prompt, style, classroomSafe) {
  */
 export async function generateImage(prompt, env, opts = {}) {
   if (!env || !env.AI) throw new Error('Workers AI is not bound.');
-  const finalPrompt = _buildPrompt(prompt, opts.style, !!opts.classroomSafe);
+  const finalPrompt = opts.rawPrompt ? String(prompt).trim() : _buildPrompt(prompt, opts.style, !!opts.classroomSafe);
   const size = opts.size && opts.size.width && opts.size.height ? opts.size : { width: 1024, height: 1024 };
   let lastError = null;
+
 
   for (const model of IMAGE_MODELS) {
     const dead = _deadUntil.get(model.id);
@@ -368,7 +372,21 @@ export async function execute(name, args, ctx) {
     const assets = ctx.assets || {};
     const userPhoto = assets.photo || assets.artwork || null;
     const said = String(ctx.userText || '') + ' ' + Object.values(ctx.facts || {}).join(' ');
-    const spec = normalizeDesignSpec(scrubInventedFacts(a, said), { hasPhoto: !!userPhoto, userText: ctx.userText, hasLogo: !!assets.logo });
+    const scrubbed = scrubInventedFacts(a, said);
+    const exactSeed = a.seed != null && a.seed !== '' && Number.isFinite(Number(a.seed));
+    const seed = exactSeed ? (Number(a.seed) >>> 0) : ((Math.random() * 0x100000000) >>> 0);
+    const specOpts = { hasPhoto: !!userPhoto, userText: ctx.userText, hasLogo: !!assets.logo, seed };
+    let spec = normalizeDesignSpec(scrubbed, specOpts);
+    // Self-evaluation 1: several compositions are derived and scored by a design lint; the best one is built.
+    try {
+      const f = _designFacts(spec, !!userPhoto);
+      const pick = chooseDirection(cleanDesignArgs(scrubbed), { userText: ctx.userText, userImage: !!userPhoto, hasLogo: !!assets.logo, seed }, f, { exact: exactSeed });
+      if (pick && pick.direction && pick.seed !== spec.seed) spec = normalizeDesignSpec(scrubbed, { ...specOpts, seed: pick.seed, direction: pick.direction });
+      if (pick) console.log('[media] design critic pick seed=' + pick.seed + ' lint=' + pick.score + (pick.issues.length ? ' issues=' + pick.issues.join('; ') : ''));
+    } catch (e) {
+      console.warn('[media] design critic pick skipped:', e && e.message);
+    }
+    const seedNote = ' (Design seed ' + spec.seed + '. If the person asks for a small change to this same design, call create_design again with seed ' + spec.seed + ' so the composition stays; leave seed out when they want a fresh look.)';
     let bg = userPhoto ? { mime: userPhoto.mime, base64: userPhoto.base64, user: true } : null;
     let bgNote = '';
     if (spec.imagePrompt) {
@@ -379,7 +397,7 @@ export async function execute(name, args, ctx) {
       } else {
         try {
           const size = designSize(spec.kind);
-          bg = await generateImage(spec.imagePrompt, env, { style: 'photo', size: { width: Math.min(1024, size.width), height: Math.min(1024, size.height) } });
+          bg = await generateImage(spec.imagePrompt, env, { rawPrompt: true, size: { width: Math.min(1024, size.width), height: Math.min(1024, size.height) } });
         } catch (e) {
           console.warn('[media] design background failed:', e && e.message);
           bgNote = ' (The background picture could not be made, so the design is colour only. Mention this briefly.)';
@@ -389,11 +407,25 @@ export async function execute(name, args, ctx) {
     // doc-studio first (real fonts, composed layouts). Any failure falls through to the SVG composer below.
     if (docStudioConfigured(env)) {
       try {
-        const out = await renderWithDocStudio(env, posterSpecFrom(spec, a, bg, assets.logo || null), ['png', 'pdf']);
-        console.log('[media] create_design via doc-studio ok kind=' + spec.kind + ' design=' + out.design.id + ' bg=' + !!bg);
+        const explicit = String(a.style || a.design || '').toLowerCase();
+        const styles = DOC_DESIGNS.includes(explicit) ? [explicit] : stylesForDirection(spec.direction, spec.seed);
+        let out = await renderWithDocStudio(env, posterSpecFrom(spec, a, bg, assets.logo || null, styles[0]), ['png', 'pdf']);
+        // Self-evaluation 2: the finished picture is looked at; a poor result gets ONE redo in another design system.
+        const look = await _lookAllowed(ctx, limitVision(plan)) ? await lookAtDesign(out.preview, env) : null;
+        if (needsRedo(look) && styles.length > 1 && await _lookAllowed(ctx, limitVision(plan))) {
+          try {
+            const out2 = await renderWithDocStudio(env, posterSpecFrom(spec, a, bg, assets.logo || null, styles[1]), ['png', 'pdf']);
+            const look2 = await lookAtDesign(out2.preview, env);
+            console.log('[media] design critic redo: first=' + look.score + ' (' + look.problems.join('; ') + ') second=' + (look2 ? look2.score : 'n/a'));
+            if (look2 && look2.score > look.score) out = out2;
+          } catch (e) {
+            console.warn('[media] design redo failed, keeping the first version: ' + (e && e.message));
+          }
+        }
+        console.log('[media] create_design via doc-studio ok kind=' + spec.kind + ' design=' + out.design.id + ' bg=' + !!bg + ' seed=' + spec.seed + (look ? ' look=' + look.score : ''));
         return {
           ok: true,
-          modelResult: 'The design was created successfully.' + bgNote + SHOWN_NOTE,
+          modelResult: 'The design was created successfully.' + bgNote + seedNote + SHOWN_NOTE,
           media: docMedia(out, spec.headline, _short(spec.headline + ' ' + spec.kind, 160)),
         };
       } catch (e) {
@@ -405,7 +437,7 @@ export async function execute(name, args, ctx) {
       console.log('[media] create_design ok kind=' + spec.kind + ' layout=' + spec.layout + ' bg=' + !!bg + (spec.direction ? ' direction: ' + spec.direction.summary : ''));
       return {
         ok: true,
-        modelResult: 'The design was created successfully.' + bgNote + SHOWN_NOTE,
+        modelResult: 'The design was created successfully.' + bgNote + seedNote + SHOWN_NOTE,
         media: { kind: 'design', title: spec.headline, width: built.width, height: built.height, svg: built.svg, alt: _short(spec.headline + ' ' + spec.kind, 160) },
       };
     } catch (e) {
@@ -447,6 +479,26 @@ export async function execute(name, args, ctx) {
 
 const DESIGN_SIZE_IDS = { flyer: 'a4', poster: 'a3', invitation: 'portrait', social_post: 'square', story: 'story', banner: 'landscape' };
 
+// Facts the design lint needs, read from a built spec.
+function _designFacts(spec, hasPhoto) {
+  const items = (spec.bullets ? spec.bullets.length : 0) + (spec.details ? spec.details.length : 0);
+  const bodyWords = spec.body ? spec.body.split(/\s+/).length : 0;
+  return { headline: spec.headline, items, words: bodyWords + items * 4, hasImage: !!spec.imagePrompt || !!hasPhoto, colors: spec.colors };
+}
+
+function limitVision(plan) { return plan && plan.limits ? plan.limits.visionPerDay : 0; }
+
+// Looking at a finished design uses the plan's image-understanding allowance. No allowance, no look; never an error.
+async function _lookAllowed(ctx, perDay) {
+  try {
+    if (!ctx || !ctx.env || !ctx.env.AI || !(perDay > 0)) return false;
+    const q = await checkAndIncrement(ctx.uid, 'vision', perDay, ctx.env);
+    return !!(q && q.allowed);
+  } catch (_) {
+    return false;
+  }
+}
+
 // What the browser gets: a small preview picture plus the files. The browser stores the files itself.
 function docMedia(out, title, alt) {
   return {
@@ -487,7 +539,7 @@ function _brandColors(a) {
 }
 
 // create_design arguments (already cleaned by normalizeDesignSpec) -> a doc-studio poster spec.
-export function posterSpecFrom(spec, rawArgs, bg, logo) {
+export function posterSpecFrom(spec, rawArgs, bg, logo, styleOverride) {
   const a = rawArgs || {};
   const details = spec.details.slice(0, 6);
   // doc-studio posters have a headline, one supporting line and a details list; fold the rest in.
@@ -506,6 +558,7 @@ export function posterSpecFrom(spec, rawArgs, bg, logo) {
   };
   const style = String(a.style || a.design || '').toLowerCase();
   if (DOC_DESIGNS.includes(style)) out.design = style;
+  else if (DOC_DESIGNS.includes(styleOverride)) out.design = styleOverride;
   const colors = _brandColors(a);
   if (Object.keys(colors).length) out.colors = colors;
   const photo = _dataUri(bg);
@@ -934,7 +987,9 @@ export function normalizeDesignSpec(a0, opts) {
   // content-length rules below still produce a clean design.
   let direction = null;
   try {
-    direction = deriveDesignDirection(a, { userText: opts && opts.userText, userImage: hasPhoto, hasLogo: !!(opts && opts.hasLogo) });
+    direction = opts && opts.direction
+      ? opts.direction
+      : deriveDesignDirection(a, { userText: opts && opts.userText, userImage: hasPhoto, hasLogo: !!(opts && opts.hasLogo), seed: opts && opts.seed, avoid: opts && opts.avoid });
   } catch (e) {
     console.warn('[media] design direction failed, using classic layout:', e && e.message);
   }
@@ -943,13 +998,12 @@ export function normalizeDesignSpec(a0, opts) {
     ? direction.layout
     : (LAYOUTS.includes(layoutRaw) ? layoutRaw : _autoLayout(kind, !!rawImg || hasPhoto, { bullets, details, body }));
   const room = direction && direction.image && direction.image.brief ? direction.image.brief : 'uncluttered composition with calm negative space';
-  const imagePrompt = rawImg && !hasPhoto
-    ? rawImg + ', ' + room + ', professional commercial photography, vibrant natural colour, crisp focus on one clear real-world subject, soft natural light, not an abstract background, not an empty scene, no text, no lettering, no logos, no watermark'
-    : '';
+  const imagePrompt = rawImg && !hasPhoto ? buildBackgroundPrompt(rawImg, room, direction, direction ? direction.seed : 0) : '';
   return {
     kind,
     layout,
     direction,
+    seed: direction && Number.isInteger(direction.seed) ? direction.seed : 0,
     headline: _clean(a.headline, 90) || 'Your headline',
     tagline: _clean(a.tagline, 40),
     subheadline: _clean(a.subheadline, 120),
@@ -974,9 +1028,15 @@ export function normalizeDesignSpec(a0, opts) {
 // type up top, practical information anchored low, breathing room in
 // between. Each layout is a different arrangement of the same blocks.
 
-const FONT_HEAD = "'Arial Black','Helvetica Neue',Arial,sans-serif";
-const FONT_BODY = "'Helvetica Neue',Helvetica,Arial,sans-serif";
-const FONT_SERIF = "Georgia,'Times New Roman',serif";
+// Real typefaces are embedded in every design by design-fonts.js (Inter, Inter Display, Poppins, Lora). The system
+// fonts stay in each list as the fallback, so a design still renders if an embedded face is ever missing.
+const FONT_HEAD = "'CgHead','Arial Black','Helvetica Neue',Arial,sans-serif";
+const FONT_ROUND = "'CgRound','CgHead','Arial Black','Helvetica Neue',Arial,sans-serif";
+const FONT_BODY = "'CgSans','Helvetica Neue',Helvetica,Arial,sans-serif";
+const FONT_SERIF = "'CgSerif','CgSans',Georgia,'Times New Roman',serif";
+// Text-width allowance for body type, measured against the real Inter (it runs about 5% wider than the Helvetica the
+// estimate was first tuned for). Headline factors below were measured the same way and are tighter than before.
+const KB = 1.05;
 
 function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1160,9 +1220,11 @@ function _compose(spec, bg, scale, extras) {
 
   // Display type: heavy grotesque in caps, or a bold serif in sentence case.
   const clean = voice === 'clean';
-  const dFam = serif ? FONT_SERIF : (clean ? FONT_BODY : FONT_HEAD);
-  const dWeight = serif ? 700 : (clean ? 800 : 900);
-  const dF = serif ? 1.12 : (clean ? 1.14 : 1.22);
+  // Playful briefs get the rounder geometric face; every other heavy headline uses Inter Display Black.
+  const round = !serif && !clean && hasD && D.tone === 'playful';
+  const dFam = serif ? FONT_SERIF : (clean ? FONT_BODY : (round ? FONT_ROUND : FONT_HEAD));
+  const dWeight = serif ? 700 : (clean ? 800 : (round ? 700 : 900));
+  const dF = serif ? 1.08 : (clean ? 1.1 : (round ? 1.05 : 1.06));
   const dSpR = serif ? -0.008 : (clean ? -0.018 : -0.012);
   const dLH = serif ? 1.08 : (clean ? 1.06 : 1.03);
   const dCase = (t) => (serif || clean ? t : t.toUpperCase());
@@ -1277,7 +1339,7 @@ function _compose(spec, bg, scale, extras) {
   function bSub(tone) {
     if (!spec.subheadline) return null;
     const ss = Math.round(S(wide ? 29 : 40) * scale * tsc);
-    const sub = _fit(spec.subheadline, ss, S(22), w, 3, 1.0, 0, true);
+    const sub = _fit(spec.subheadline, ss, S(22), w, 3, KB, 0, true);
     return {
       h: Math.round(sub.lines.length * sub.size * 1.25), gap: S(wide ? 18 : 28),
       draw: (y) => _lines(sub.lines, x0, y, sub.size, {
@@ -1291,7 +1353,7 @@ function _compose(spec, bg, scale, extras) {
     if (!spec.body) return null;
     const bs = Math.round(S(wide ? 24 : 30) * scale * tsc);
     const measure = Math.min(w, S(centered ? 680 : 760));
-    const lines = centered ? _balance(spec.body, bs, measure, 1.0, 0) : _wrap(spec.body, bs, measure, 1.0, 0);
+    const lines = centered ? _balance(spec.body, bs, measure, KB, 0) : _wrap(spec.body, bs, measure, KB, 0);
     return {
       h: Math.round(lines.length * bs * 1.5), gap: S(wide ? 18 : 36),
       draw: (y) => _lines(lines, x0, y, bs, { family: FONT_BODY, weight: 400, fill: tone.ink, anchor, lh: 1.5, opacity: 0.88 }),
@@ -1306,13 +1368,13 @@ function _compose(spec, bg, scale, extras) {
     const ind = centered ? 0 : S(42);
     const items = spec.bullets;
     const colGap = S(48);
-    const twoCol = !centered && !wide && items.length >= 4 && items.every((t) => _tw(t, bs, 1.0, 0) < (w - colGap) / 2 - ind);
+    const twoCol = !centered && !wide && items.length >= 4 && items.every((t) => _tw(t, bs, KB, 0) < (w - colGap) / 2 - ind);
     const mk = (cx, cy) => '<rect x="' + Math.round(cx - S(7)) + '" y="' + Math.round(cy - S(7)) + '" width="' + S(14) + '" height="' + S(14) + '" rx="' + S(3) + '" fill="' + c.accent + '"/>';
 
     if (twoCol) {
       const cw = Math.floor((w - colGap) / 2);
       const rows = [];
-      for (let i = 0; i < items.length; i += 2) rows.push(items.slice(i, i + 2).map((t) => _wrap(t, bs, cw - ind, 1.0, 0)));
+      for (let i = 0; i < items.length; i += 2) rows.push(items.slice(i, i + 2).map((t) => _wrap(t, bs, cw - ind, KB, 0)));
       const rh = rows.map((r) => Math.max(...r.map((l) => l.length)) * bs * lh + padY * 2);
       return {
         h: Math.round(rh.reduce((a, b) => a + b, 0)), gap: S(wide ? 20 : 38),
@@ -1331,7 +1393,7 @@ function _compose(spec, bg, scale, extras) {
     }
 
     const sepH = centered ? S(30) : 0;
-    const rows = items.map((t) => _wrap(t, bs, w - ind, 1.0, 0));
+    const rows = items.map((t) => _wrap(t, bs, w - ind, KB, 0));
     const rh = rows.map((l) => l.length * bs * lh + padY * 2 + sepH);
     const total = rh.reduce((a, b) => a + b, 0) - sepH;
     return {
@@ -1372,9 +1434,9 @@ function _compose(spec, bg, scale, extras) {
     // side as columns, the way an event poster would set them.
     const cgap = S(34);
     const cw = Math.floor((w - cgap * (n - 1)) / Math.max(n, 1));
-    const colLines = rows.map((r) => _wrap(r.value, ds, cw, 1.0, 0));
+    const colLines = rows.map((r) => _wrap(r.value, ds, cw, KB, 0));
     const useCols = n >= 2 && n <= 3 && rows.every((r) => r.label) && colLines.every((l) => l.length <= 2) &&
-      rows.every((r) => lw(r) <= cw && r.value.split(' ').every((wd) => _tw(wd, ds, 1.0, 0) <= cw));
+      rows.every((r) => lw(r) <= cw && r.value.split(' ').every((wd) => _tw(wd, ds, KB, 0) <= cw));
 
     if (useCols) {
       const padT = S(24), labH = ls * 1.3, mid = S(10);
@@ -1400,7 +1462,7 @@ function _compose(spec, bg, scale, extras) {
     const padY = S(wide ? 12 : 17);
     const labW = centered ? 0 : Math.min(Math.round(w * 0.32), Math.max(0, ...rows.filter((r) => r.label).map(lw)) + S(30));
     const laid = rows.map((r) => {
-      const lines = _wrap(r.value, ds, centered || !r.label ? w : w - labW, 1.0, 0);
+      const lines = _wrap(r.value, ds, centered || !r.label ? w : w - labW, KB, 0);
       const h = centered
         ? (r.label ? ls * 1.3 + S(8) : 0) + lines.length * ds * 1.25 + padY * 2
         : Math.max(lines.length * ds * 1.25, ls * 1.3) + padY * 2;
@@ -1513,7 +1575,7 @@ function _compose(spec, bg, scale, extras) {
       if (badge) {
         const br = S(92), bx = Math.round(ox + ww - S(30)), by = Math.round(y + S(30));
         const ls = S(17);
-        const val = _fit(badge.value, S(48), S(20), Math.round(br * 1.5), 1, 1.1, 0, false);
+        const val = _fit(badge.value, S(48), S(20), Math.round(br * 1.5), 1, 1.2, 0, false);
         const ink = _onColor(c.accent);
         out += '<g transform="rotate(-8 ' + bx + ' ' + by + ')">' +
           '<circle cx="' + bx + '" cy="' + by + '" r="' + (br + S(8)) + '" fill="' + c.light + '"/>' +
@@ -1801,5 +1863,7 @@ function _compose(spec, bg, scale, extras) {
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + _esc(spec.headline) + '">' +
     '<defs>' + defs.join('') + '</defs>' + back + content + '</svg>';
-  return { svg, width: W, height: H, fits };
+  // Embed the real typefaces this design uses (a design is shown as an image, so it cannot load fonts from outside).
+  const withFonts = svg.replace('<defs>', '<defs>' + fontFaceStyle(svg));
+  return { svg: withFonts, width: W, height: H, fits };
 }

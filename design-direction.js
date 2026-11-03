@@ -429,7 +429,10 @@ export function deriveDesignDirection(args, ctx) {
   const forcedRaw = String(a.layout || '').toLowerCase();
   const forced = DESIGN_LAYOUTS.includes(forcedRaw) ? forcedRaw : null;
 
-  const h = _hash(f.headline + '|' + f.kind);
+  // `seed` makes the direction spontaneous: a new request gets a new seed, so the same words can be composed
+  // differently; passing the same seed back (a follow-up tweak) keeps the composition. Seed 0 = the old behaviour.
+  const seed = Number.isInteger(x.seed) ? (x.seed >>> 0) : 0;
+  const h = (_hash(f.headline + '|' + f.kind) ^ Math.imul(seed, 0x85ebca6b)) >>> 0;
   const rnd = (n, salt) => (Math.imul(h ^ Math.imul(salt + 1, 0x9e3779b1), 2654435761) >>> 0) % n;
   const pick = (arr, salt) => arr[rnd(arr.length, salt)];
 
@@ -457,6 +460,10 @@ export function deriveDesignDirection(args, ctx) {
   if (forced) {
     const same = variants.filter((v) => v.layout === forced);
     if (same.length) pool = same;
+  } else if (Array.isArray(x.avoid) && x.avoid.length) {
+    // The critic asks for a different composition from ones it already judged weak or just used.
+    const fresh = variants.filter((v) => !x.avoid.includes(v.layout));
+    if (fresh.length) pool = fresh;
   }
   const r = pool[rnd(pool.length, 0)];
 
@@ -496,8 +503,37 @@ export function deriveDesignDirection(args, ctx) {
 
   _picturePlan(d, T);
 
-  d.summary = 'intent=' + intent + ' tone=' + (tone || 'none') + ' energy=' + energy + ' focal=' + focal +
+  d.seed = seed;
+  d.summary = 'seed=' + seed + ' intent=' + intent + ' tone=' + (tone || 'none') + ' energy=' + energy + ' focal=' + focal +
     ' layout=' + d.layout + ' voice=' + d.voice + ' anchor=' + d.vAnchor + ' space=' + d.space +
     ' scheme=' + d.scheme + ' graphic=' + (d.graphic || 'auto') + ' keyFact=' + d.keyFact;
   return d;
+}
+
+// ── Style for the designer service ──────────────────────────────────────
+// doc-studio has eight complete design systems. Returns three of them, best fit first, rotated by the seed so two
+// requests of the same kind do not always land on the same system. The critic uses the 2nd and 3rd for a retry.
+const STYLE_BY_TONE = {
+  luxury: ['luxe', 'editorial', 'aurora'],
+  corporate: ['swiss', 'editorial', 'aurora'],
+  warm: ['editorial', 'botanical', 'newsprint'],
+  calm: ['botanical', 'editorial', 'luxe'],
+  loud: ['brutal', 'bauhaus', 'swiss'],
+  playful: ['bauhaus', 'brutal', 'aurora'],
+};
+const STYLE_BY_INTENT = {
+  promo: ['bauhaus', 'brutal', 'swiss', 'aurora'],
+  event: ['aurora', 'bauhaus', 'swiss', 'editorial'],
+  info: ['swiss', 'newsprint', 'editorial'],
+  editorial: ['editorial', 'newsprint', 'luxe'],
+  message: ['editorial', 'aurora', 'botanical'],
+  formal: ['luxe', 'editorial', 'botanical'],
+};
+
+export function stylesForDirection(d, seed) {
+  const base = (d && STYLE_BY_TONE[d.tone]) || (d && STYLE_BY_INTENT[d.intent]) || STYLE_BY_INTENT.promo;
+  const start = base.length ? (Number(seed) >>> 0) % base.length : 0;
+  const rotated = base.slice(start).concat(base.slice(0, start));
+  // Keep the strongest fit first half the time, so quality does not depend on luck alone.
+  return (Number(seed) >>> 0) % 2 === 0 ? base.slice(0, 3) : rotated.slice(0, 3);
 }
