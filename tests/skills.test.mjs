@@ -148,3 +148,11 @@ test('messageText reads string and part-list messages; the router sees them', ()
   assert.equal(messageText(null), '');
   assert.ok(selectSkills({ userTexts: [messageText([{ type: 'text', text: 'make a poster' }])] }).includes('design-media'));
 });
+
+test('router: plain-words requests for a printable sign load the design skill', () => {
+  for (const t of [
+    'I need something I can stick on my shop door saying we close at 2pm this Friday',
+    'print a sign for my door', 'a notice for the gate', 'sticker for my bottles', 'label for jars', 'put up a closed notice',
+  ]) assert.ok(selectSkills({ userTexts: [t] }).includes('design-media'), t);
+  assert.deepEqual(selectSkills({ userTexts: ['what is the capital of Kenya'] }), []);
+});
