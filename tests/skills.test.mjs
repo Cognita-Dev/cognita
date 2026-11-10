@@ -98,3 +98,53 @@ test('chatPromptInfo reports skills and a smaller size', () => {
   assert.ok(lean.variant.includes('+skills[]'));
   assert.ok(lean.approxTokens < full.approxTokens - 1000, lean.approxTokens + ' vs ' + full.approxTokens);
 });
+
+// ── load_skill: the model can pull in a skill the router missed ──
+import { SKILLS, skillCatalog, unloadedSkills, loadSkill, validateLoadSkillArgs, loadSkillToolSchema, messageText, LOAD_SKILL_TOOL } from '../skills.js';
+const flags = { hasTools: false, hasSandbox: true, hasMedia: true, hasDocs: false };
+
+test('catalog lists only skills that are not loaded and apply to this turn', () => {
+  assert.equal(skillCatalog(null, flags), '');
+  assert.equal(skillCatalog(SKILL_NAMES, flags), '');
+  const c = skillCatalog([], flags);
+  assert.ok(c.includes('office-files') && c.includes('design-media') && c.includes('rich-components'));
+  assert.ok(!c.includes('create-document'), 'needs create_document, which is not offered');
+  assert.ok(!skillCatalog(['design-media'], flags).includes('design-media'));
+  assert.deepEqual(unloadedSkills(undefined, flags), []);
+});
+
+test('prompt gets the catalog only when the load_skill tool is on', () => {
+  const base = { ...all, skills: [], now };
+  assert.ok(!buildChatSystemPrompt(base).includes('load_skill'));
+  const p = buildChatSystemPrompt({ ...base, skillTool: true });
+  assert.ok(p.includes('load_skill') && p.indexOf('load_skill') < p.indexOf('Session details'));
+  assert.ok(!buildChatSystemPrompt({ ...all, skills: null, skillTool: true, now }).includes('load_skill'));
+  // start of prompt is still shared with the version without a catalog
+  assert.ok(p.startsWith(buildChatSystemPrompt(base).split('\n\nSession details')[0]));
+});
+
+test('loadSkill returns the text, tolerates name spelling, and never throws', () => {
+  const r = loadSkill('Design_Media', flags);
+  assert.ok(r.ok && r.name === 'design-media' && r.text.includes(MEDIA_RULES));
+  assert.ok(loadSkill(' RICH components ', flags).ok);
+  assert.equal(loadSkill('design-media', flags, new Set(['design-media'])).text.includes(MEDIA_RULES), false);
+  const bad = loadSkill('nope', flags);
+  assert.ok(!bad.ok && bad.error.includes('design-media'));
+  assert.ok(!loadSkill('create-document', flags).ok, 'skill that does not fit the offered tools');
+  for (const v of [undefined, null, 5, {}, [], 'x'.repeat(5000)]) assert.doesNotThrow(() => loadSkill(v, undefined));
+});
+
+test('validateLoadSkillArgs and the schema', () => {
+  assert.ok(validateLoadSkillArgs({ name: 'rich-components' }).ok);
+  for (const a of [undefined, null, {}, { name: '  ' }, 'x']) assert.deepEqual(validateLoadSkillArgs(a), { ok: false, missing: ['name'] });
+  assert.equal(loadSkillToolSchema().function.name, LOAD_SKILL_TOOL);
+  assert.equal(SKILLS.length, SKILL_NAMES.length);
+  assert.deepEqual(SKILLS.map((k) => k.name), SKILL_NAMES);
+});
+
+test('messageText reads string and part-list messages; the router sees them', () => {
+  assert.equal(messageText('hi'), 'hi');
+  assert.equal(messageText([{ type: 'text', text: 'make a poster' }, { type: 'image' }]), 'make a poster');
+  assert.equal(messageText(null), '');
+  assert.ok(selectSkills({ userTexts: [messageText([{ type: 'text', text: 'make a poster' }])] }).includes('design-media'));
+});
