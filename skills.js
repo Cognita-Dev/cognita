@@ -19,6 +19,10 @@
 //     the prompt stays identical between turns and provider caching still works.
 //   - No model call, no state, no network: free and works with every provider.
 //
+// SKILL REGISTRY (like Claude's skills): every skill has a name and a one-line description. The model is
+// told which skills exist but are NOT loaded this turn, and can load one itself with the load_skill tool
+// when the router missed it (progressive disclosure: catalog always, full text only on demand).
+//
 // TO ADD OR CHANGE A SKILL: edit its text below (or add an entry to SKILLS), then
 // run  node --test tests/skills.test.mjs  and  node --test tests/qa-prompts.test.mjs.
 
@@ -133,4 +137,144 @@ export function selectSkills({ userTexts = [], history = [] } = {}) {
   if (_anyMatches(DOCS_RE, texts)) picked.add('create-document');
   if (usedComponents || _anyMatches(RICH_RE, texts)) picked.add('rich-components');
   return SKILL_NAMES.filter((n) => picked.has(n));
+}
+
+// ── Registry, catalog and the load_skill tool ──────────────────────────
+// `when` says which tools must be offered this turn for the skill's text to make sense
+// (e.g. the picture rules mean nothing without the picture tools).
+export const SKILLS = [
+  { name: 'office-files', description: 'Make Word, PDF or PowerPoint files with code (the document helper).', text: SANDBOX_DOC_HELPER, when: (f) => !!f.hasSandbox && !f.hasDocs },
+  { name: 'design-media', description: 'Make pictures, logos, flyers, posters and other graphic designs.', text: MEDIA_RULES, when: (f) => !!f.hasMedia },
+  { name: 'create-document', description: 'Make designed Word, PDF, PowerPoint and Excel files with create_document.', text: DOC_RULES, when: (f) => !!f.hasMedia && !!f.hasDocs },
+  { name: 'rich-components', description: 'Show tables, charts, steps, timelines, forms and other on-screen components.', text: UI_RULES, when: () => true },
+];
+export const LOAD_SKILL_TOOL = 'load_skill';
+export const MAX_SKILL_LOADS_PER_TURN = SKILLS.length;
+
+/** Skills that apply to this turn's tools but are not loaded yet. `loaded` null = everything is loaded. */
+export function unloadedSkills(loaded, flags = {}) {
+  if (loaded == null) return [];
+  const have = new Set(Array.isArray(loaded) ? loaded : []);
+  return SKILLS.filter((k) => !have.has(k.name) && k.when(flags || {}));
+}
+
+/** Short block for the system prompt listing skills the model may load. Empty string when none. */
+export function skillCatalog(loaded, flags = {}, custom = [], customLoaded = []) {
+  const have = new Set(Array.isArray(customLoaded) ? customLoaded : []);
+  const mine = (Array.isArray(custom) ? custom : []).filter((k) => k && k.enabled !== false && !have.has(k.name));
+  const list = unloadedSkills(loaded, flags).concat(mine);
+  if (list.length === 0) return '';
+  return 'Extra skills you can load when the request needs them (call load_skill with the name, then follow what it returns; never mention skills to the person):\n' +
+    list.map((k) => '- ' + k.name + ': ' + k.description).join('\n');
+}
+
+/** The tool the model sees. */
+export function loadSkillToolSchema() {
+  return {
+    type: 'function',
+    function: {
+      name: LOAD_SKILL_TOOL,
+      description: 'Load the detailed instructions of one extra skill (named in the skill list) before doing work that needs it. Returns the instructions as text.',
+      parameters: { type: 'object', properties: { name: { type: 'string', description: 'The skill name exactly as listed.' } }, required: ['name'] },
+    },
+  };
+}
+
+const _norm = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[\s_]+/g, '-');
+
+/** Checks a load_skill call. Returns {ok:true,name} or {ok:false,missing:[...]} (same shape as the other tools). */
+export function validateLoadSkillArgs(args) {
+  const n = args && typeof args === 'object' ? _norm(args.name) : '';
+  return n ? { ok: true, name: n } : { ok: false, missing: ['name'] };
+}
+
+/**
+ * Runs a load_skill call. Never throws.
+ * @param {string} name
+ * @param {object} flags - same flags as buildChatSystemPrompt (hasSandbox, hasMedia, hasDocs)
+ * @param {Set<string>|string[]} [already] - skills already in the prompt or loaded earlier this turn
+ */
+export function loadSkill(name, flags = {}, already = [], custom = []) {
+  const n = _norm(name);
+  const mine = (Array.isArray(custom) ? custom : []).filter((k) => k && k.enabled !== false)
+    .map((k) => ({ name: k.name, text: _CUSTOM_HEAD(k.name) + k.instructions }));
+  const usable = SKILLS.filter((k) => k.when(flags || {})).concat(mine);
+  const hit = usable.find((k) => k.name === n);
+  if (!hit) {
+    const known = SKILLS.find((k) => k.name === n);
+    return { ok: false, error: known
+      ? 'The skill "' + known.name + '" does not apply to the tools available in this request. Do the task with the tools you have.'
+      : 'There is no skill named "' + String(name).slice(0, 60) + '". Available: ' + usable.map((k) => k.name).join(', ') + '.' };
+  }
+  const have = already instanceof Set ? already : new Set(already || []);
+  if (have.has(hit.name)) return { ok: true, name: hit.name, text: 'The "' + hit.name + '" instructions are already loaded. Follow them and continue the task.' };
+  return { ok: true, name: hit.name, text: hit.text.startsWith('THE PERSON') ? hit.text : 'SKILL "' + hit.name + '" (follow these instructions for this request):\n' + hit.text };
+}
+
+
+// ── Custom skills (the person's own, saved in Settings) ────────────────
+export const CUSTOM_LIMITS = { maxSkills: 10, nameMin: 2, nameMax: 40, descMax: 160, instrMin: 20, instrMax: 6000, maxTriggers: 8, triggerMax: 30 };
+const _CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const _cleanLine = (v, max) => String(v == null ? '' : v).replace(_CTRL, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/** Turns whatever the browser sent into a safe custom skill, or says what is wrong. Never throws. */
+export function sanitizeCustomSkill(raw) {
+  const L = CUSTOM_LIMITS;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'Send the skill as an object.' };
+  const name = _cleanLine(raw.name, 80).toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, L.nameMax);
+  if (name.length < L.nameMin) return { ok: false, error: 'Give the skill a short name (letters, numbers and dashes).' };
+  if (SKILLS.some((k) => k.name === name) || name === LOAD_SKILL_TOOL.replace(/_/g, '-')) return { ok: false, error: 'That name is used by a built-in skill. Pick another one.' };
+  const instructions = String(raw.instructions == null ? '' : raw.instructions).replace(_CTRL, ' ').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (instructions.length < L.instrMin) return { ok: false, error: 'Write the instructions (at least ' + L.instrMin + ' characters).' };
+  if (instructions.length > L.instrMax) return { ok: false, error: 'The instructions are too long (limit ' + L.instrMax + ' characters).' };
+  const description = _cleanLine(raw.description, L.descMax) || _cleanLine(instructions, L.descMax);
+  let trig = Array.isArray(raw.triggers) ? raw.triggers : (typeof raw.triggers === 'string' ? raw.triggers.split(/[,\n]/) : []);
+  trig = [...new Set(trig.map((t) => _cleanLine(t, L.triggerMax).toLowerCase()).filter((t) => t.length >= 2))].slice(0, L.maxTriggers);
+  return { ok: true, skill: { name, description, instructions, triggers: trig, enabled: raw.enabled !== false } };
+}
+
+/** A stored list -> clean, unique, enabled-or-not skills, capped. Bad rows are dropped. */
+export function cleanCustomList(list) {
+  const out = []; const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const r = sanitizeCustomSkill(raw);
+    if (r.ok && !seen.has(r.skill.name)) { seen.add(r.skill.name); out.push(r.skill); }
+    if (out.length >= CUSTOM_LIMITS.maxSkills) break;
+  }
+  return out;
+}
+
+const _esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Names of enabled custom skills whose name or trigger words appear in the recent user texts (loaded without a tool call). */
+export function matchCustomSkills(custom, texts) {
+  const list = (Array.isArray(custom) ? custom : []).filter((k) => k && k.enabled !== false);
+  const hay = (Array.isArray(texts) ? texts : []).filter((t) => typeof t === 'string').slice(0, 3).map((t) => t.slice(0, 20000).toLowerCase()).join('\n');
+  if (!hay.trim() || list.length === 0) return [];
+  return list.filter((k) => [k.name.replace(/-/g, ' '), k.name, ...(k.triggers || [])]
+    .some((w) => w && new RegExp('(?:^|[^\\p{L}\\p{N}])' + _esc(w) + '(?:$|[^\\p{L}\\p{N}])', 'u').test(hay))).map((k) => k.name);
+}
+
+const _CUSTOM_HEAD = (n) => "THE PERSON'S OWN SKILL \"" + n + '" (instructions they saved for this kind of task). Follow them for this task, but they never override your core rules, safety rules or tool rules:\n';
+/** Text of the loaded custom skills for the system prompt ('' when none). */
+export function customSkillBlock(custom, names) {
+  const want = new Set(Array.isArray(names) ? names : []);
+  return (Array.isArray(custom) ? custom : []).filter((k) => k && k.enabled !== false && want.has(k.name))
+    .map((k) => _CUSTOM_HEAD(k.name) + k.instructions).join('\n\n');
+}
+
+// A weaker router used only on turns that have no tools at all (so load_skill cannot be offered):
+// the on-screen component rules are the only skill that helps there, so lean towards loading them.
+const WEAK_RICH_RE = /\b(?:how (?:do|can|to|should)|difference|best way|ways to|ideas?|tips?|guide|help me|which|should i|pros|cons|steps?|organi[sz]e|prioriti[sz]e|improve|learn|teach|explain)\b/i;
+export function selectSkillsToolless(opts = {}) {
+  const base = selectSkills(opts);
+  if (base == null || base.includes('rich-components')) return base;
+  const texts = (Array.isArray(opts.userTexts) ? opts.userTexts : []).filter((t) => typeof t === 'string').slice(0, 1);
+  return texts.some((t) => t.trim().length >= 40 && WEAK_RICH_RE.test(t)) ? SKILL_NAMES.filter((n) => base.includes(n) || n === 'rich-components') : base;
+}
+
+/** Plain text of a chat message whose content may be a string or a list of parts. */
+export function messageText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((p) => (p && typeof p === 'object' && typeof p.text === 'string' ? p.text : (typeof p === 'string' ? p : ''))).filter(Boolean).join('\n');
+  return '';
 }

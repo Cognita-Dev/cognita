@@ -36,12 +36,12 @@
 // recipes, meeting notes, AI Inbox, Insights Digest) keep living next to the
 // code that uses them. They are static strings already, so they cache fine.
 
-export const PROMPT_VERSION = '2026-11-10.1';
+export const PROMPT_VERSION = '2026-11-10.2';
 
 // ── Static modules (never contain user- or day-specific text) ──────────
 
 // Who Cognita is, how it sounds, and what it says about its origin.
-import { SANDBOX_DOC_HELPER, MEDIA_RULES, DOC_RULES, UI_RULES } from './skills.js';
+import { SANDBOX_DOC_HELPER, MEDIA_RULES, DOC_RULES, UI_RULES, skillCatalog, customSkillBlock } from './skills.js';
 
 const IDENTITY =
   'You are Cognita, an AI assistant created by the Cognita team. You help with professional ' +
@@ -300,10 +300,16 @@ function buildSessionBlock(firstName, now) {
  * @param {boolean} [opts.hasWeb] - true only when the web_search tool
  *   (web-search.js) is being offered on THIS turn
  * @param {string[]|null} [opts.skills] - skill names to load (see skills.js); null loads everything
+ * @param {boolean} [opts.skillTool] - true only when the load_skill tool is offered on THIS turn (adds the list of unloaded skills)
+ * @param {object[]} [opts.custom] - the person's saved skills (skills.js cleanCustomList)
+ * @param {string[]} [opts.customLoaded] - names of those skills to put in the prompt now
  * @param {Date} [opts.now] - injectable for tests
  */
-export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, hasDocs = false, skills = null, now } = {}) {
-  return _staticFor(hasTools, hasSandbox, hasMedia, hasWeb, hasDocs, skills) + '\n\n' + buildSessionBlock(firstName, now);
+export function buildChatSystemPrompt({ firstName = null, hasTools = false, hasSandbox = false, hasMedia = false, hasWeb = false, hasDocs = false, skills = null, skillTool = false, custom = [], customLoaded = [], now } = {}) {
+  // The skill list and the person's own skills go after every static part and before the session block, so the shared start stays identical.
+  const cat = skillTool ? skillCatalog(skills, { hasTools, hasSandbox, hasMedia, hasDocs }, custom, customLoaded) : '';
+  const mine = customSkillBlock(custom, customLoaded);
+  return _staticFor(hasTools, hasSandbox, hasMedia, hasWeb, hasDocs, skills) + (mine ? '\n\n' + mine : '') + (cat ? '\n\n' + cat : '') + '\n\n' + buildSessionBlock(firstName, now);
 }
 
 /** System prompt for a turn where the user attached images (vision model). */

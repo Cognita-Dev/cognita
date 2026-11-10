@@ -8,7 +8,8 @@ import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
 import { reviewPictures } from './vision-review.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId, collapseTextLoops } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
-import { selectSkills } from './skills.js';
+import { loadUserSkills } from './user-skills-endpoint.js';
+import { selectSkills, selectSkillsToolless, matchCustomSkills, SKILL_NAMES, messageText, loadSkillToolSchema, loadSkill, validateLoadSkillArgs, skillCatalog, LOAD_SKILL_TOOL, MAX_SKILL_LOADS_PER_TURN } from './skills.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
   executeConnectorTool, shouldOfferConnectorTools, validateToolArgs, approvalScopeForTool, isToolApproved,
@@ -682,16 +683,17 @@ export async function handleChatRequest(request, env) {
   //                         added further down, only if tools are offered)
   // Skills (skills.js): the big optional rule blocks are only added when the newest messages need them.
   // Set SKILLS_DISABLED=1 in the Worker variables to switch this off (every skill is loaded, as before).
-  const activeSkills = env.SKILLS_DISABLED === '1' ? null : selectSkills({
-    userTexts: [...trimmedHistory].reverse().filter((m) => m && m.role === 'user' && typeof m.content === 'string').map((m) => m.content),
-    history: trimmedHistory,
-  });
+  const _skillTexts = [...trimmedHistory].reverse().filter((m) => m && m.role === 'user').map((m) => messageText(m.content)).filter((t) => t.trim());
+  const activeSkills = env.SKILLS_DISABLED === '1' ? null : selectSkills({ userTexts: _skillTexts, history: trimmedHistory });
+  // The person's own skills (Settings > Skills). One quick read; any problem or a slow read just means none this turn.
+  const customSkills = (env.SKILLS_DISABLED === '1' || hasImages) ? [] : await loadUserSkills(identity.uid, env);
+  const customLoaded = matchCustomSkills(customSkills, _skillTexts);
   const messages = [
     {
       role: 'system',
       content: hasImages
         ? buildVisionSystemPrompt({ firstName: userFirstName })
-        : buildChatSystemPrompt({ firstName: userFirstName, hasTools: false, skills: activeSkills }),
+        : buildChatSystemPrompt({ firstName: userFirstName, hasTools: false, skills: activeSkills, custom: customSkills, customLoaded }),
     },
     ...trimmedHistory,
   ];
@@ -919,7 +921,17 @@ export async function handleChatRequest(request, env) {
       const docsAvailable = docStudioConfigured(env);
       const mediaToolSchemas = mediaEnabled ? mediaTools.toolSchemas({ docs: docsAvailable }) : [];
       const webToolSchemas = webSearchEnabled ? [webSearch.toolSchema()] : [];
-      const tools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas, webToolSchemas);
+      const _skillFlags = {
+        hasTools: connectorTools.length > 0, hasSandbox: sandboxToolSchemas.length > 0, hasMedia: mediaToolSchemas.length > 0,
+        hasDocs: mediaToolSchemas.some((t) => t.function.name === 'create_document'),
+      };
+      const baseTools = connectorTools.concat(sandboxToolSchemas, mediaToolSchemas, webToolSchemas);
+      // load_skill is only offered next to other tools (plain chats keep the fast streaming path) and only
+      // when some skill that applies to this turn was left out of the prompt.
+      const skillToolOn = baseTools.length > 0 && !!skillCatalog(activeSkills, _skillFlags, customSkills, customLoaded);
+      const tools = skillToolOn ? baseTools.concat([loadSkillToolSchema()]) : baseTools;
+      const loadedSkillNames = new Set((Array.isArray(activeSkills) ? activeSkills : []).concat(customLoaded));
+      let skillLoadsThisTurn = 0;
       const offeredToolNames = new Set(tools.map((t) => t && t.function && t.function.name).filter(Boolean));
       offeredToolNames.forEach((n) => leakNames.add(n));
       if (tools.length > 0 || sandboxLimitNote) {
@@ -936,8 +948,18 @@ export async function handleChatRequest(request, env) {
             hasDocs: mediaToolSchemas.some((t) => t.function.name === 'create_document'),
             hasWeb: webToolSchemas.length > 0,
             skills: activeSkills,
+            skillTool: skillToolOn,
+            custom: customSkills,
+            customLoaded,
           }) + sandboxLimitNote,
         };
+      }
+      if (baseTools.length === 0 && !sandboxLimitNote && activeSkills && !activeSkills.includes('rich-components')) {
+        // A turn with no tools cannot offer load_skill, so lean towards loading the on-screen component rules.
+        const wide = selectSkillsToolless({ userTexts: _skillTexts, history: trimmedHistory });
+        if (wide && wide.includes('rich-components') && !hasImages) {
+          messages[0] = { role: 'system', content: buildChatSystemPrompt({ firstName: userFirstName, hasTools: false, skills: wide, custom: customSkills, customLoaded }) };
+        }
       }
       const maxRounds = sandboxToolSchemas.length > 0 ? MAX_AGENT_ROUNDS_SANDBOX : MAX_AGENT_ROUNDS;
       let mediaCallsThisTurn = 0;
@@ -1299,6 +1321,27 @@ export async function handleChatRequest(request, env) {
                 round++;
                 continue;
               }
+            }
+
+            if (call.name === LOAD_SKILL_TOOL) {
+              // Silent: no step card, no quota. The instructions come back as the tool result.
+              const sv = validateLoadSkillArgs(call.args);
+              let skText;
+              if (!sv.ok) skText = 'Give the skill name, one of the names in the skill list.';
+              else if (++skillLoadsThisTurn > MAX_SKILL_LOADS_PER_TURN + 2 + customSkills.length) skText = 'Enough skills are loaded. Continue the task.';
+              else {
+                const lr = loadSkill(sv.name, _skillFlags, loadedSkillNames, customSkills);
+                if (lr.ok) loadedSkillNames.add(lr.name);
+                skText = lr.ok ? lr.text : lr.error;
+                console.log('[chat][skill] load ' + sv.name + ' ok=' + lr.ok);
+              }
+              const skEntry = sandboxTools.makeTraceEntry({
+                n: ++stepNo, kind: 'tool', assistantText: '', description: 'Load instructions', resultText: skText,
+              });
+              workingMessages = sandboxTools.appendExchange(workingMessages, skEntry);
+              result = null;
+              round++;
+              continue;
             }
 
             if (call.name === webSearch.TOOL_NAME) {

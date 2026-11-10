@@ -7,6 +7,7 @@ import { handleImageRequest } from './image-endpoint.js';
 import { handlePaymentInitialize, handlePaymentStatus } from './payment-endpoint.js';
 import { handlePaystackWebhook } from './webhook-endpoint.js';
 import { handleAccountRequest, handleUsageRequest } from './account-endpoint.js';
+import { handleUserSkillsRequest } from './user-skills-endpoint.js';
 import { handleAccountDeletionRequest } from './account-deletion-endpoint.js';
 import { handleSubscriptionCancel } from './cancel-endpoint.js';
 import { handleChatSave, handleChatDelete, handleChatList, handleChatGet } from './chat-sync-endpoint.js';
@@ -156,6 +157,10 @@ const _app = {
 
     if (request.method === 'GET' && url.pathname === '/api/plans') {
       return handlePlansRequest(env);
+    }
+
+    if (url.pathname === '/api/skills' && ['GET', 'PUT', 'DELETE'].includes(request.method)) {
+      return handleUserSkillsRequest(request, env);
     }
 
     if (request.method === 'GET' && url.pathname === '/api/account') {
@@ -517,7 +522,7 @@ function _isExemptFromBodyCap(path) {
 const SMALL_BODY_PREFIXES = [
   '/api/auth/', '/api/payment/initialize', '/api/subscription/', '/api/account/',
   '/api/reminders', '/api/inbox', '/api/admin/roles', '/api/connectors/',
-  '/api/insights/schedule', '/api/studio/', '/api/chat/title',
+  '/api/insights/schedule', '/api/studio/', '/api/chat/title', '/api/skills',
 ];
 
 function _maxBodyBytes(path) {

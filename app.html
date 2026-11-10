@@ -552,6 +552,23 @@
             Connect an account to let Cognita use it in chat — for example, reading a file from Drive or listing your GitHub repos. Cognita only acts when you ask it to, and always asks first before making any change on your behalf.
           </p>
 
+          <!-- ── Skills ── -->
+          <div class="settings-group-label">Skills</div>
+          <div class="settings-group" id="skillsList"></div>
+          <form class="settings-group" id="skillForm" hidden autocomplete="off" style="padding:12px; display:none; gap:8px; flex-direction:column;">
+            <input id="skillName" type="text" maxlength="40" placeholder="Name, e.g. weekly-report" aria-label="Skill name" required>
+            <input id="skillDesc" type="text" maxlength="160" placeholder="What it is for (one line)" aria-label="Skill description">
+            <textarea id="skillInstr" rows="7" maxlength="6000" placeholder="Write the instructions Cognita should follow for this kind of task" aria-label="Skill instructions" required></textarea>
+            <input id="skillTriggers" type="text" placeholder="Optional words that load it automatically, separated by commas" aria-label="Trigger words">
+            <p class="settings-footnote" id="skillMsg" role="status" aria-live="polite"></p>
+            <div style="display:flex; gap:8px;">
+              <button type="submit" class="settings-row--button" id="skillSave">Save skill</button>
+              <button type="button" class="settings-row--button" id="skillCancel">Cancel</button>
+            </div>
+          </form>
+          <div class="settings-group"><button type="button" class="settings-row settings-row--button" id="skillAdd"><span class="settings-row-label"><i class="ph ph-plus"></i> Add a skill</span></button></div>
+          <p class="settings-footnote">Skills are your own saved instructions for a kind of task. Cognita loads one when your message uses its name or a trigger word, or when it decides the skill fits. You can save up to 10.</p>
+
           <!-- ── Social Scheduler ── -->
           <div class="settings-group-label">Social Scheduler</div>
           <div class="settings-group">
