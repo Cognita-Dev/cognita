@@ -6,6 +6,7 @@
 // label is refreshed from the same /api/account response.
 
 import { openModal, closeModal, applySidebarAccount } from './shell.js';
+import { mountSkills } from './skills-ui.js';
 
 const WORKER_URL = 'https://api.cognita.com.ng';
 
@@ -533,6 +534,7 @@ export async function mount() {
   document.getElementById('detailEmail').textContent = user.email || '\u2014';
 
   showConnectorRedirectBanner();
+  try { const sk = mountSkills(); if (sk) sk.load(); } catch (e) { console.warn('[skills] settings card failed:', e && e.message); }
   loadConnections();
   loadAccount();
   loadUsage();
