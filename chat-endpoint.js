@@ -8,6 +8,7 @@ import { renderRemote, remoteBrowserConfigured } from './browser-rendering.js';
 import { reviewPictures } from './vision-review.js';
 import { callWithFallback, callVisionModel, callWithTools, makeSessionId, collapseTextLoops } from './providers.js';
 import { buildChatSystemPrompt, buildVisionSystemPrompt, chatPromptInfo, stableHistoryWindow } from './prompts.js';
+import { selectSkills } from './skills.js';
 import {
   getAvailableTools, toolRequiresConfirmation, describeTool, providerForTool,
   executeConnectorTool, shouldOfferConnectorTools, validateToolArgs, approvalScopeForTool, isToolApproved,
@@ -679,12 +680,18 @@ export async function handleChatRequest(request, env) {
   //   - image questions  -> a slim vision prompt
   //   - normal chat      -> the core chat prompt (connected-app rules are
   //                         added further down, only if tools are offered)
+  // Skills (skills.js): the big optional rule blocks are only added when the newest messages need them.
+  // Set SKILLS_DISABLED=1 in the Worker variables to switch this off (every skill is loaded, as before).
+  const activeSkills = env.SKILLS_DISABLED === '1' ? null : selectSkills({
+    userTexts: [...trimmedHistory].reverse().filter((m) => m && m.role === 'user' && typeof m.content === 'string').map((m) => m.content),
+    history: trimmedHistory,
+  });
   const messages = [
     {
       role: 'system',
       content: hasImages
         ? buildVisionSystemPrompt({ firstName: userFirstName })
-        : buildChatSystemPrompt({ firstName: userFirstName, hasTools: false }),
+        : buildChatSystemPrompt({ firstName: userFirstName, hasTools: false, skills: activeSkills }),
     },
     ...trimmedHistory,
   ];
@@ -777,7 +784,7 @@ export async function handleChatRequest(request, env) {
   // Fingerprint of the cacheable (never-changing) part of the prompt. If this
   // value differs between two requests of the same kind, something that
   // varies has leaked into the static part and caching will suffer.
-  const _pi = chatPromptInfo({ hasTools: false, vision: hasImages });
+  const _pi = chatPromptInfo({ hasTools: false, skills: activeSkills, vision: hasImages });
   console.log('[chat][prompt] version=' + _pi.version + ' variant=' + _pi.variant + ' fp=' + _pi.fingerprint + ' ~tokens=' + _pi.approxTokens);
 
   // ── Real-time streaming (Server-Sent Events) ──
@@ -928,6 +935,7 @@ export async function handleChatRequest(request, env) {
             hasMedia: mediaToolSchemas.length > 0,
             hasDocs: mediaToolSchemas.some((t) => t.function.name === 'create_document'),
             hasWeb: webToolSchemas.length > 0,
+            skills: activeSkills,
           }) + sandboxLimitNote,
         };
       }
